@@ -1,0 +1,28 @@
+{
+    "format_version": 2,
+    "header": {
+        "min_engine_version": [
+            1,
+            18,
+            0
+        ],
+        "uuid": "768d4c94-d9d4-40ed-ac90-561e91f873b2",
+        "version": [
+            0,
+            0,
+            1
+        ],
+        "name": "STNCResPack"
+    },
+    "modules": [
+        {
+            "type": "resources",
+            "uuid": "25c380f4-9e15-452b-bd16-b31a1961d3f9",
+            "version": [
+                0,
+                0,
+                1
+            ]
+        }
+    ]
+}
