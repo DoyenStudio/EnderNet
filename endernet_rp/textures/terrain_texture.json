@@ -1,0 +1,15 @@
+{
+    "resource_pack_name": "vanilla",
+    "texture_data": {
+        "endernet:bus_item_io": {
+            "textures": "textures/devices/bus_item_io"
+        },
+        "endernet:frame_top": {
+            "textures": "textures/devices/frame_top"
+        },
+        "endernet:network_baseband_8": {
+            "textures": "textures/devices/network_baseband_8"
+        }
+    },
+    "texture_name": "atlas.terrain"
+}
