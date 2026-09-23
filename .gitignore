@@ -1,0 +1,22 @@
+.mcs
+.trae
+.*
+
+work.mcscfg
+studio.json
+editor.name
+description.txt
+addon.zip
+pack_addon.py
+run_pack.cmd
+test*
+dev*
+# dev* 是按目录名匹配的，会连带命中名为 devices 的目录。
+# 下面两处是交付物（01 的设备注册表与方块贴图），显式放回。
+!endernet_bp/endernet_scripts/endernet/server/devices/
+!endernet_rp/textures/endernet/devices/
+TODO
+AGENTS.md
+CLAUDE.md
+
+*.cmd

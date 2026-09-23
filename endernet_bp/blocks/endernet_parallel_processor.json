@@ -1,0 +1,34 @@
+{
+    "format_version": "1.21.70",
+    "minecraft:block": {
+        "components": {
+            "minecraft:destructible_by_mining": {
+                "seconds_to_destroy": 3.0
+            },
+            "netease:tier": {
+                "destroy_special": true,
+                "digger": "pickaxe",
+                "level": 2
+            },
+            "minecraft:material_instances": {
+                "*": {
+                    "render_method": "opaque",
+                    "texture": "endernet:parallel_processor"
+                }
+            },
+            "netease:block_entity": {
+                "tick": true
+            },
+            "netease:listen_block_remove": {
+                "value": true
+            },
+            "netease:custom_tips": {
+                "value": "\n§7为网络提供 1 个配方处理槽位，须经连接器接入。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:parallel_processor"
+        }
+    }
+}

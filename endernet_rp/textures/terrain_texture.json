@@ -1,14 +1,71 @@
 {
     "resource_pack_name": "vanilla",
     "texture_data": {
+        "endernet:assemble_chamber": {
+            "textures": "textures/endernet/devices/assemble_chamber"
+        },
+        "endernet:bus_fluid_input_io": {
+            "textures": "textures/endernet/devices/bus_fluid_input_io"
+        },
+        "endernet:bus_fluid_io": {
+            "textures": "textures/endernet/devices/bus_fluid_io"
+        },
+        "endernet:bus_fluid_output_io": {
+            "textures": "textures/endernet/devices/bus_fluid_output_io"
+        },
+        "endernet:bus_item_input_io": {
+            "textures": "textures/endernet/devices/bus_item_input_io"
+        },
         "endernet:bus_item_io": {
-            "textures": "textures/devices/bus_item_io"
+            "textures": "textures/endernet/devices/bus_item_io"
+        },
+        "endernet:bus_item_output_io": {
+            "textures": "textures/endernet/devices/bus_item_output_io"
+        },
+        "endernet:bus_template_io": {
+            "textures": "textures/endernet/devices/bus_template_io"
+        },
+        "endernet:common_terminal_panel": {
+            "textures": "textures/endernet/devices/common_terminal_panel"
+        },
+        "endernet:crafting_terminal_panel": {
+            "textures": "textures/endernet/devices/crafting_terminal_panel"
+        },
+        "endernet:dos_network_endpoint": {
+            "textures": "textures/endernet/devices/dos_network_endpoint"
+        },
+        "endernet:energy_input_interface": {
+            "textures": "textures/endernet/devices/energy_input_interface"
+        },
+        "endernet:factoric_terminal_panel": {
+            "textures": "textures/endernet/devices/factoric_terminal_panel"
         },
         "endernet:frame_top": {
-            "textures": "textures/devices/frame_top"
+            "textures": "textures/endernet/devices/frame_top"
+        },
+        "endernet:memory_slot": {
+            "textures": "textures/endernet/devices/memory_slot"
+        },
+        "endernet:network_baseband_16": {
+            "textures": "textures/endernet/devices/network_baseband_16"
+        },
+        "endernet:network_baseband_32": {
+            "textures": "textures/endernet/devices/network_baseband_32"
         },
         "endernet:network_baseband_8": {
-            "textures": "textures/devices/network_baseband_8"
+            "textures": "textures/endernet/devices/network_baseband_8"
+        },
+        "endernet:parallel_processor": {
+            "textures": "textures/endernet/devices/parallel_processor"
+        },
+        "endernet:parallel_processor_connector": {
+            "textures": "textures/endernet/devices/parallel_processor_connector"
+        },
+        "endernet:template_terminal_panel": {
+            "textures": "textures/endernet/devices/template_terminal_panel"
+        },
+        "endernet:tiny_network_endpoint": {
+            "textures": "textures/endernet/devices/tiny_network_endpoint"
         }
     },
     "texture_name": "atlas.terrain"

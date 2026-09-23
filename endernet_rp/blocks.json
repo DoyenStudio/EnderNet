@@ -1,0 +1,95 @@
+{
+    "endernet:assemble_chamber": {
+        "textures": "endernet:assemble_chamber",
+        "sound": "stone"
+    },
+    "endernet:bus_fluid_input_io": {
+        "textures": "endernet:bus_fluid_input_io",
+        "sound": "stone"
+    },
+    "endernet:bus_fluid_io": {
+        "textures": "endernet:bus_fluid_io",
+        "sound": "stone"
+    },
+    "endernet:bus_fluid_output_io": {
+        "textures": "endernet:bus_fluid_output_io",
+        "sound": "stone"
+    },
+    "endernet:bus_item_input_io": {
+        "textures": "endernet:bus_item_input_io",
+        "sound": "stone"
+    },
+    "endernet:bus_item_io": {
+        "textures": "endernet:bus_item_io",
+        "sound": "stone"
+    },
+    "endernet:bus_item_output_io": {
+        "textures": "endernet:bus_item_output_io",
+        "sound": "stone"
+    },
+    "endernet:bus_template_io": {
+        "textures": "endernet:bus_template_io",
+        "sound": "stone"
+    },
+    "endernet:common_terminal_panel": {
+        "textures": "endernet:common_terminal_panel",
+        "sound": "stone"
+    },
+    "endernet:crafting_terminal_panel": {
+        "textures": "endernet:crafting_terminal_panel",
+        "sound": "stone"
+    },
+    "endernet:dos_network_endpoint": {
+        "textures": "endernet:dos_network_endpoint",
+        "sound": "stone"
+    },
+    "endernet:energy_input_interface": {
+        "textures": "endernet:energy_input_interface",
+        "sound": "stone"
+    },
+    "endernet:factoric_terminal_panel": {
+        "textures": "endernet:factoric_terminal_panel",
+        "sound": "stone"
+    },
+    "endernet:memory_slot": {
+        "textures": "endernet:memory_slot",
+        "sound": "stone"
+    },
+    "endernet:network_baseband_16": {
+        "textures": "endernet:network_baseband_16",
+        "sound": "stone"
+    },
+    "endernet:network_baseband_32": {
+        "textures": "endernet:network_baseband_32",
+        "sound": "stone"
+    },
+    "endernet:network_baseband_8": {
+        "textures": "endernet:network_baseband_8",
+        "sound": "stone"
+    },
+    "endernet:parallel_processor": {
+        "textures": "endernet:parallel_processor",
+        "sound": "stone"
+    },
+    "endernet:parallel_processor_connector": {
+        "textures": "endernet:parallel_processor_connector",
+        "sound": "stone"
+    },
+    "endernet:storage_driver": {
+        "textures": "endernet:frame_top",
+        "sound": "stone"
+    },
+    "endernet:template_terminal_panel": {
+        "textures": "endernet:template_terminal_panel",
+        "sound": "stone"
+    },
+    "endernet:tiny_network_endpoint": {
+        "textures": "endernet:tiny_network_endpoint",
+        "sound": "stone"
+    },
+    "format_version": [
+        1,
+        1,
+        0
+    ]
+}

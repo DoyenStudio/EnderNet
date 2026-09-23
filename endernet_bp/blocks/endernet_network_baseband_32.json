@@ -1,0 +1,34 @@
+{
+    "format_version": "1.21.70",
+    "minecraft:block": {
+        "components": {
+            "minecraft:destructible_by_mining": {
+                "seconds_to_destroy": 2.0
+            },
+            "netease:tier": {
+                "destroy_special": true,
+                "digger": "pickaxe",
+                "level": 1
+            },
+            "minecraft:material_instances": {
+                "*": {
+                    "render_method": "opaque",
+                    "texture": "endernet:network_baseband_32"
+                }
+            },
+            "netease:block_entity": {
+                "tick": false
+            },
+            "netease:listen_block_remove": {
+                "value": true
+            },
+            "netease:custom_tips": {
+                "value": "\n§7网络传输介质，可接受最多 32u 网络负载。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:network_baseband_32"
+        }
+    }
+}
