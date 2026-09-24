@@ -11,9 +11,10 @@
    「每个独立网络拥有独立服务状态」是结构性的，不靠自觉。
 2. **依赖关系要显式，成环或缺依赖在装配期就报错**，而不是等到某个
    只在特定玩法下才走到的分支里 `AttributeError`。
-3. **替身与正式实现必须在装配期就能区分。** 04/05/09 尚未实现，
-   开发档允许替身占位；正式档必须拒绝替身，也要拒绝「未定规则用
-   替身值悄悄定案」（全局约束 7，01 交付说明第八节的第二项契约）。
+3. **替身与正式实现必须在装配期就能区分。** 能源（04 的另一半）、
+   存储（05）与工厂（09）尚未实现，开发档允许替身占位；正式档必须拒绝
+   替身，也要拒绝「未定规则用替身值悄悄定案」（全局约束 7，
+   01 交付说明第八节的第二项契约）。
 
 **服务只能通过主控签发的许可取用。** 取服务要走
 `NetworkRuntime.service(service_id, grant)`，那里会校验许可；本模块的
@@ -146,6 +147,16 @@ class NetworkService(object):
         """解除该节点的提供者、监听与到期任务。返回是否有东西被解除。"""
         return False
 
+    def on_wake(self, node_key):
+        # type: (object) -> bool
+        """收到了该位置的唤醒信号（方块实体 tick）。返回是否处理了。
+
+        **唤醒不是命令**：它与 `add_node` / `note_domain_change` 同属内部
+        信号路径，因此不经主控签发许可，也不得产生业务副作用。默认不处理。
+        目前只有调度服务覆盖它（把退避打回初值）。
+        """
+        return False
+
     def note_domain_change(self, node, from_domain_ids, to_domain_ids):
         # type: (object, tuple, tuple) -> bool
         """负载域归属变了，但分量没变（迁移通知的 `DOMAIN` 种类）。
@@ -252,13 +263,18 @@ class StandInService(NetworkService):
 
 def default_stand_ins():
     # type: () -> list
-    """04/05/09 落地前的默认服务集合。"""
-    return [
-        StandInService(ServiceId.SCHEDULER, "04", "逻辑时钟、到期队列与执行预算"),
-        StandInService(ServiceId.ENERGY, "04", "EN 供用能与能源预留"),
-        StandInService(ServiceId.STORAGE, "05", "介质、库存、预留与限速"),
-        StandInService(ServiceId.FACTORY, "09", "样板、规划、订单与执行"),
-    ]
+    """默认服务实例集合：**由 `default_builders()` 派生，不是另一份清单**。
+
+    此前这里与 `default_builders()` 各写一份完整清单，靠一条测试拦着不让
+    它们分叉。04 把 SCHEDULER 换成正式实现时必须同时改两处，于是索性只留
+    一处：裸 `ServiceRegistry()`（离线测试直接构造时走这条）与工厂造的运行时
+    从此**不可能**拿到不同的调度器。
+
+    `builders[...](None)` 是合法的：服务的 `__init__` 不碰运行时，
+    绑定发生在 `attach()`。
+    """
+    builders = default_builders()
+    return [builders[service_id](None) for service_id in sorted(ServiceId.ALL)]
 
 
 # -- 装配表 ----------------------------------------------------------------
@@ -408,8 +424,8 @@ class ServiceFactory(object):
 
     def __init__(self, builders=None):
         # type: (dict) -> None
-        # 留一份默认表的引用：`stand_in_slots()` 靠**身份**判断某个槽位
-        # 是否还是默认替身，因此默认表只能生成一次。
+        # 留一份默认表的引用：`pending_tasks()` 要靠**身份**区分「默认表里的
+        # 替身」与「调用方自己塞的替身」，因此默认表只能生成一次。
         self._defaults = default_builders()
         self._builders = dict(self._defaults)
         for service_id, builder in (builders or {}).items():
@@ -438,27 +454,46 @@ class ServiceFactory(object):
 
     def stand_in_slots(self):
         # type: () -> tuple
-        """仍在使用默认替身构造器的槽位。
+        """仍在使用**默认替身实现**的槽位。
 
-        按**身份**而不是按类名判断：04/05/09 落地时会替换构造器，
-        只要换了就是正式实现，不需要它们再声明一次「我不是替身」。
+        两个条件同时成立才算：构造器还是默认表里的那一个（说明没被换过），
+        且该槽位的默认实现本来就是替身（`default_pending_tasks()` 就是
+        「哪些槽位的默认实现仍是替身」的表）。
+
+        只看身份曾经够用（04 之前默认表里全是替身，谁换了谁就是正式实现），
+        但 04 落地后 SCHEDULER 的**默认构造器本身就是正式实现**——它仍然
+        「是默认的那一个」，却显然不再是替身，于是被误报成「待任务 04 实现」。
+        第二个条件就是为了把它排除掉。
+
+        **不构造实例**：构造器只被承诺可以接受一个运行时（`replace()` 只查
+        callable），要求它必须能用 `None` 构造会给 05/09 的实现加一条没写进
+        契约的隐含义务，而这里只是诊断路径——一个在 `__init__` 里读
+        `runtime.registry` 的实现会让 `debug_query("assembly")` 直接炸。
+        需要知道**某个实例**是不是替身时，读实例自己的 `is_stand_in`。
         """
+        defaults = default_pending_tasks()
         return tuple(
             sorted(
                 service_id
                 for service_id in self._builders
-                if self._builders[service_id] is self._defaults.get(service_id)
+                if service_id in defaults
+                and self._builders[service_id] is self._defaults.get(service_id)
             )
         )
 
     def pending_tasks(self):
         # type: () -> dict
-        """`service_id -> 尚未实现该服务的任务编号`，只列替身槽位。"""
+        """`service_id -> 尚未实现该服务的任务编号`，只列**默认表里的**替身槽位。
+
+        只报默认表里的那一个：调用方自己塞一个替身（哪怕它挂在同一个槽位上）
+        时，写这里的任务编号会对不上——那是它自己的替身，不是本项目的待办。
+        """
         defaults = default_pending_tasks()
         return dict(
             (service_id, defaults[service_id])
             for service_id in self.stand_in_slots()
             if service_id in defaults
+            and self._builders[service_id] is self._defaults.get(service_id)
         )
 
     def create(self, runtime):
@@ -480,9 +515,12 @@ class ServiceFactory(object):
 
 def default_pending_tasks():
     # type: () -> dict
-    """`service_id -> 尚未实现该服务的任务编号`。"""
+    """`service_id -> 尚未实现该服务的任务编号`。**只列替身槽位。**
+
+    SCHEDULER 不在表里：它的调度核心已在任务 04 落地。能源仍在，
+    因为耗能结算与 EN 计量是 04 的另一半，尚未开始。
+    """
     return {
-        ServiceId.SCHEDULER: "04",
         ServiceId.ENERGY: "04",
         ServiceId.STORAGE: "05",
         ServiceId.FACTORY: "09",
@@ -494,16 +532,23 @@ def default_builders():
     """`service_id -> callable(runtime) -> NetworkService` 的默认装配。
 
     返回的是**构造器**而不是实例：同一份装配表要能为多个运行时各造一套。
+    SCHEDULER 是正式实现，其余三个槽位仍是替身。
+
+    **导入写在函数体里是有意的。** 本模块是契约层，`ticking.py` 是实现层，
+    后者在模块级 import 本模块；若在这里也模块级 import 回去就成环了。
+    而 `default_builders()` 只在构造工厂/注册表时被调用，不在导入期，
+    因此函数内导入不引入环——**不要把它提到模块顶部**。
     """
+    from .ticking import SchedulerService
+
     pending = default_pending_tasks()
     notes = {
-        ServiceId.SCHEDULER: "逻辑时钟、到期队列与执行预算",
         ServiceId.ENERGY: "EN 供用能与能源预留",
         ServiceId.STORAGE: "介质、库存、预留与限速",
         ServiceId.FACTORY: "样板、规划、订单与执行",
     }
-    out = {}
-    for service_id in sorted(ServiceId.ALL):
+    out = {ServiceId.SCHEDULER: SchedulerService}
+    for service_id in sorted(ServiceId.ALL - frozenset([ServiceId.SCHEDULER])):
         out[service_id] = _stand_in_builder(
             service_id, pending[service_id], notes[service_id]
         )

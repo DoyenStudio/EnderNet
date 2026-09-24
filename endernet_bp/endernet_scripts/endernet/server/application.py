@@ -33,7 +33,12 @@ from ..common.protocol import (
     Reason,
     reason_code,
 )
-from .network.services import AssemblyProfile, is_read_only, route_of
+from .network.services import (
+    AssemblyProfile,
+    ServiceId,
+    is_read_only,
+    route_of,
+)
 
 #: `debug_query` 允许的只读操作。白名单而不是黑名单：新增查询要显式登记，
 #: 而新增**写操作**永远不会因为「忘了加进黑名单」而漏出去。
@@ -53,6 +58,8 @@ DEBUG_OPS = frozenset(
         "ledger",
         #: 本应用层的装配档位与统计。
         "assembly",
+        #: 调度指标（04-07）：时钟、轮转、唤醒与队列合计。
+        "scheduler",
     ]
 )
 
@@ -291,6 +298,18 @@ class ApplicationService(object):
             return runtime.master.ledger.diagnostics()
         if op == "assembly":
             return self.assembly_view()
+        if op == "scheduler":
+            # 带 component_id 就看那一个网络的调度服务细节，否则给跨网合计。
+            component_id = kwargs.get("component_id")
+            if component_id is None:
+                return self.runtimes.scheduler_view()
+            runtime = self.runtimes.runtime(component_id)
+            if runtime is None:
+                return {"error": "没有这个网络", "component_id": component_id}
+            service = runtime.services.get(ServiceId.SCHEDULER)
+            if service is None:
+                return {"error": "该网络没有装配调度服务"}
+            return service.diagnostics()
         # 白名单与非白名单之间没有第三条路：走到这里说明 DEBUG_OPS 加了
         # 一项却没在 `_run_query` 里实现，那是个缺陷，不该静默返回空。
         raise NotImplementedError("调试操作 %r 已在白名单中但未实现" % (op,))

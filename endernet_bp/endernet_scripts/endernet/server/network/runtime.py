@@ -47,7 +47,10 @@ from .services import (
     AssemblyProfile,
     NetworkService,  # noqa: F401（供 # type: 注释）
     ServiceFactory,
+    ServiceId,
 )
+from ..runtime.scheduler import SchedulerPolicy
+from .ticking import NodeLocator, RotationCursor
 from .topology import MigrationKind
 
 #: 运行时记录与节点记录的存档类型。任务 12 会用它们组织存档。
@@ -181,6 +184,10 @@ class NetworkRuntime(object):
         #: 图版本：最近一次同步到的快照版本。
         self.version = 0
         self.tick_count = 0
+        #: 上一次推进时的帧号（`context["frame"]`）。公平轮转的余量轮会让
+        #: 同一个运行时在一帧里被访问两次，靠它把「按帧走的东西」去重——
+        #: 主控时钟与 `stats["ticks"]` 都在其中，见 `tick()`。
+        self._frame_marker = None
 
         self._nodes = {}
         #: node_key -> 该节点的局部恢复数据（由 12 通过 `import_node_data` 注入）。
@@ -195,6 +202,17 @@ class NetworkRuntime(object):
             "nodes_dropped": 0,
             "opened": False or 0,
             "ticks": 0,
+            #: 服务返回负数 / 超出额度的次数。非零即实现缺陷的痕迹：
+            #: 负数会反向放大同帧后续服务的额度，超支则让预算形同虚设。
+            "negative_costs": 0,
+            "budget_overruns": 0,
+            #: **处理了唤醒的服务数**（不是信号数——一个信号可能被多个服务
+            #: 处理）。管理器那层的 `wakes_delivered` 数的是送达的信号数。
+            "wakes_handled": 0,
+            #: 网络关闭时被拦下的唤醒。**分列出来**：它与「送到了但没人处理」
+            #: （`deliver_wakes` 的未命中）是两件事，混在一起就查不出
+            #: 「唤醒为什么没生效」。
+            "wakes_withheld": 0,
         }
 
     # -- 成员 ----------------------------------------------------------
@@ -514,11 +532,26 @@ class NetworkRuntime(object):
         主控的时钟**无论开不开都走**（去重账本的保留期按它计算）；
         服务只在开放业务时推进——网络不能工作时还让服务跑，等于让它们
         绕过运行条件自己动起来。
+
+        消耗量逐服务钳位：`int(x or 0)` 原样收下负值会让**后续服务**的额度
+        反向变大（额度是 `budget - spent`），而症状是「某个服务偶尔多做一堆
+        事」，几乎不可能从现象倒推回原因。
+
+        **帧号由 `context["frame"]` 判定，同一帧里被访问两次只推进一步。**
+        公平轮转的余量轮会让同一个运行时在一帧里被访问两次；若无条件
+        `advance_tick()`，主控时钟会走两倍，而去重账本的保留期是按它算的
+        ——「两次调用算两帧」会把保留窗口压缩一半，重复请求可能提前被遗忘。
+        `stats["ticks"]` 同理，它记的是帧数而不是调用次数。
+        没有 `frame`（直接调用、离线单测）时按每次调用算一帧，与引入轮转前一致。
         """
-        self.tick_count += 1
-        self.stats["ticks"] += 1
-        if self.master is not None:
-            self.master.advance_tick()
+        context = context or {}
+        frame = context.get("frame")
+        if frame is None or frame != self._frame_marker:
+            self._frame_marker = frame
+            self.tick_count += 1
+            self.stats["ticks"] += 1
+            if self.master is not None:
+                self.master.advance_tick()
         if not self._open:
             return 0
         spent = 0
@@ -526,8 +559,42 @@ class NetworkRuntime(object):
             remaining = budget - spent
             if remaining <= 0:
                 break
-            spent += int(service.tick(context or {}, remaining) or 0)
+            cost = int(service.tick(context, remaining) or 0)
+            if cost < 0:
+                cost = 0
+                self.stats["negative_costs"] += 1
+            elif cost > remaining:
+                cost = remaining
+                self.stats["budget_overruns"] += 1
+            spent += cost
         return spent
+
+    def wake_node(self, node_key):
+        # type: (object) -> int
+        """把唤醒信号转给各服务，返回处理了它的服务数。
+
+        **不检查许可。** 唤醒不是命令：它与 `add_node` / `note_domain_change`
+        同属内部信号路径，不产生任何业务副作用，因此不违反「设备不得绕过
+        主控改库存」。
+
+        **但检查 `_open`。** 理由与 `tick()` 里那道门一样：网络不能工作时
+        服务不该自己动起来。唤醒会改服务状态（调度器会把退避打回初值），
+        放它进去等于让关闭中的网络继续被外部脉冲驱动——而且那台网络重新
+        开放的一刻，所有设备的退避都被重置过，会以最短间隔同时轮询。
+        """
+        if not self._open:
+            self.stats["wakes_withheld"] += 1
+            return 0
+        hit = 0
+        for service in self.services.assembly_order():
+            if service.on_wake(node_key):
+                hit += 1
+        if hit:
+            # 名字与管理器那层区分开：这里是**处理了它的服务数**（一个信号
+            # 可能被多个服务处理），管理器那层数的是**送达的信号数**。
+            # 三处报表用同一个名字却含义不同，对齐数字时会得到恒不相等的值。
+            self.stats["wakes_handled"] += hit
+        return hit
 
     def import_node_data(self, node_key, data):
         # type: (object, dict) -> None
@@ -646,6 +713,7 @@ class RuntimeManager(object):
         ledger_policy=None,
         session_check=None,
         repository=None,
+        scheduler_policy=None,
     ):
         # type: (...) -> None
         self.definitions = definitions
@@ -662,12 +730,35 @@ class RuntimeManager(object):
         self._runtimes = {}
         self._listeners = []
         self._buffer = None
+        #: 调用方没给帧号时由本层补的帧序号（见 `tick()`）。
+        self._frame_seq = 0
+        #: 调度策略。**与各网络的 `SchedulerService` 是同一个对象**
+        #: （由 `ServerBootstrap` 创建并分发）：轮转的轮数与保底额度既在这里
+        #: 生效，也在这里被报告成「未定项」——两处若各存一份，
+        #: `unresolved_report()` 报的就不是生效值了（全局约束 7 要防的正是这个）。
+        self.scheduler_policy = (
+            scheduler_policy if scheduler_policy is not None else SchedulerPolicy()
+        )
+        #: 跨网公平轮转的游标与统计（04-03）。此前这里什么都没有，
+        #: 于是 `tick()` 是「按分量编号先到先得」——见 `tick()` 的说明。
+        self._rotation = RotationCursor(
+            max_passes=self.scheduler_policy.rotation_max_passes,
+            min_share_floor=self.scheduler_policy.min_share_floor,
+        )
+        #: `NodeKey -> component_id`，供唤醒信号路由（04-02）。
+        self._locator = NodeLocator()
         self.stats = {
             "publications": 0,
             "created": 0,
             "retired": 0,
             "handovers": 0,
             "changes_emitted": 0,
+            "wakes_delivered": 0,
+            #: 运行时（不是服务）自报负数消耗 / 超出额度的次数。
+            #: 与 `NetworkRuntime.stats` 的同名键**分开**：一个是运行时违约，
+            #: 一个是服务违约，混在一起就查不出是谁。
+            "negative_costs": 0,
+            "budget_overruns": 0,
         }
         # 订阅在最末：构造期间的任何发布都不该漏掉。
         topology.add_listener(self.on_publication)
@@ -706,6 +797,9 @@ class RuntimeManager(object):
             self.stats["retired"] += 1
         for component_id in sorted(self._runtimes):
             self._runtimes[component_id].open_if_ready(snapshot)
+        # 成员集合变了就得重建唤醒索引。放在最后：索引必须反映**本帧最终**
+        # 的归属，否则本帧刚放下、又在本帧从 A 迁到 B 的设备会被唤醒到 A。
+        self._locator.rebuild([self._runtimes[key] for key in sorted(self._runtimes)])
         return len(self._runtimes)
 
     def _apply_migration(self, notice):
@@ -829,15 +923,159 @@ class RuntimeManager(object):
 
     def tick(self, budget=64, context=None):
         # type: (int, dict) -> int
-        """按预算推进各运行时。顺序按分量编号，保证可复现。"""
+        """按预算推进各运行时。**公平轮转，不是先到先得。**
+
+        此前这里是「按分量编号排序 + 全局预算递减」：排在字典序前面的分量
+        把预算吃满，后面的每帧拿到 0，会被**永久饿死**——不是「慢」，是
+        「不动」。而分量编号在进程重启后会重新分配，连「谁排在前面」都是
+        碰运气。这是 04-03 要修的东西，分配算法在 `RotationCursor`。
+
+        形状是两轮：**保底一轮**（按环序，每个运行时至多
+        `share = max(保底, 预算 // n)`）+ **余量一轮**（没花完的额度按同一
+        环序再分，直到预算用尽）。`remaining` 只按**实际消耗**递减，因此
+        空闲网络不会浪费额度——它们没花掉的部分仍留给同帧的繁忙网络。
+
+        能兑现的保证（不要吹成更强的）：`budget >= n` 时，每帧每个网络至少
+        获得 1 单位额度；`budget < n` 时不保证人人每帧有份，但环序起点逐帧
+        前移，连续 `n` 帧内人人当过一次首位。总消耗永不超过预算。
+        """
+        budget = int(budget)
+        keys = sorted(self._runtimes)
         spent = 0
-        for component_id in sorted(self._runtimes):
-            remaining = budget - spent
-            if remaining <= 0:
+        if budget <= 0 or not keys:
+            return 0
+        # 帧号：调用方给了就用它的（`ServerBootstrap` 传引擎帧号），没给就
+        # 由本层补一个——`ApplicationService.tick` 那条入口就没有帧号，而它
+        # 同样会走余量轮、同样会把同一个运行时访问两次。**去重不能只在
+        # bootstrap 这条路上成立**，否则换条入口主控时钟照样走两倍。
+        if context is None or "frame" not in context:
+            self._frame_seq += 1
+            forwarded = dict(context or {})
+            forwarded["frame"] = "manager#%d" % (self._frame_seq,)
+        else:
+            forwarded = context
+        ring, share = RotationCursor.plan_frame(
+            keys,
+            budget,
+            self._rotation.cursor(),
+            self._rotation.min_share_floor,
+        )
+        allocations = []
+        remaining = budget
+        for pass_index in range(self._rotation.max_passes):
+            progressed = False
+            for index in ring:
+                if remaining <= 0:
+                    break
+                component_id = keys[index]
+                runtime = self._runtimes.get(component_id)
+                if runtime is None:
+                    # 同一帧内被退役（合网/拆网）。跳过即可，不是错误。
+                    continue
+                # 第一轮是额度上限，第二轮起是「剩下的都给你」。
+                allowance = share if pass_index == 0 else remaining
+                grant = min(allowance, remaining)
+                if grant <= 0:
+                    continue
+                cost = int(runtime.tick(forwarded, grant) or 0)
+                if cost < 0:
+                    # 负的消耗量会反向放大同一帧里后续运行时的额度，
+                    # 而且看上去什么错都没有——留痕，不静默吃下。
+                    # 计数记在**管理器自己**的 stats 上：运行时内部那道钳位
+                    # 也写同名键，两处混在一个 dict 里就分不清是哪一层拦下的。
+                    cost = 0
+                    self.stats["negative_costs"] += 1
+                elif cost > grant:
+                    cost = grant
+                    self.stats["budget_overruns"] += 1
+                allocations.append((component_id, grant, cost))
+                if cost > 0:
+                    progressed = True
+                spent += cost
+                remaining -= cost
+            if not progressed:
                 break
-            runtime = self._runtimes[component_id]
-            spent += runtime.tick(context, remaining)
+        self._rotation.note_frame(allocations)
+        self._rotation.advance()
         return spent
+
+    def deliver_wakes(self, signals):
+        # type: (object) -> int
+        """把唤醒信号按位置路由到所属运行时，返回送达条数。
+
+        接受 `ServerEventBinder.take_wakes()` 的输出（`WakeSignal`），也接受
+        裸的 `NodeKey`——离线测试里直接投递一个位置更省事。
+
+        **未命中不是错误**：方块实体 tick 会在设备刚放下的那一帧到达，而那时
+        运行时还没同步成员。丢一条唤醒不丢设备——注册与到期任务都不经过它，
+        `NodeLocator` 里的 `unrouted` 记着数量。
+        """
+        delivered = 0
+        for signal in signals:
+            node_key = getattr(signal, "node_key", signal)
+            component_id = self._locator.locate(node_key)
+            if component_id is None:
+                continue
+            runtime = self._runtimes.get(component_id)
+            if runtime is None:
+                continue
+            if runtime.wake_node(node_key):
+                delivered += 1
+        self.stats["wakes_delivered"] += delivered
+        return delivered
+
+    def rotation_view(self):
+        # type: () -> dict
+        report = self._rotation.describe()
+        report["locator"] = self._locator.describe()
+        return report
+
+    def scheduler_view(self):
+        # type: () -> dict
+        """汇总各网络的调度指标（04-07），供诊断与任务 14 的验收读取。
+
+        只统计**正式实现**的服务：替身槽位没有这些指标，把它算进来会让
+        「队列长度 0」既可能是「真没有任务」也可能是「还没实现」——
+        两者必须能分辨。
+        """
+        report = {
+            "networks": 0,
+            "queued": 0,
+            "queued_worst": 0,
+            "lanes": 0,
+            "sleeping": 0,
+            "executions": 0,
+            "deferred_total": 0,
+            "budget_spent": 0,
+            #: **没有可汇总指标的**非替身服务数。必须与 0 分开：
+            #: 「队列长度 0」既可能是真没有任务，也可能是那个实现没报，
+            #: 两者在验收时是完全不同的结论（仓库口径：缺项不等于 0）。
+            "unreported": 0,
+        }
+        for component_id in sorted(self._runtimes):
+            service = self._runtimes[component_id].services.get(ServiceId.SCHEDULER)
+            if service is None or service.is_stand_in:
+                continue
+            # 走**契约方法**而不是戳实现字段：`diagnostics()` 是
+            # `NetworkService` 的一部分，而 `stats` 不是。
+            detail = service.diagnostics()
+            stats = detail.get("stats")
+            if not isinstance(stats, dict):
+                # 别的调度实现没有报指标。**不计入合计、也不折成 0**——
+                # 折成 0 会让一整份全 0 的报表看起来像「一切正常」。
+                report["unreported"] += 1
+                continue
+            report["networks"] += 1
+            queued = int(detail.get("queued") or 0)
+            report["queued"] += queued
+            report["lanes"] += int(detail.get("lanes") or 0)
+            report["sleeping"] += int(detail.get("sleeping") or 0)
+            report["executions"] += int(stats.get("executions") or 0)
+            report["deferred_total"] += int(stats.get("deferred_total") or 0)
+            report["budget_spent"] += int(stats.get("budget_spent") or 0)
+            if queued > report["queued_worst"]:
+                report["queued_worst"] = queued
+        return report
 
     # -- 诊断 ----------------------------------------------------------
 
@@ -856,6 +1094,7 @@ class RuntimeManager(object):
         report.update(
             {
                 "count": len(self._runtimes),
+                "rotation": self.rotation_view(),
                 "runtimes": dict(
                     (key, self._runtimes[key].diagnostics())
                     for key in sorted(self._runtimes)

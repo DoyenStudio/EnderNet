@@ -8,6 +8,9 @@
 - 依赖按拓扑排序；缺依赖与成环都抛 `AssemblyError`。
 - 替身**不假装能用**：不挂载能力、业务一律 `service_absent`。
 - 开发档容忍替身并逐条列出；正式档直接报错，不做「先跑起来再说」的妥协。
+- 调度槽位已由任务 04 换成正式实现，其余三个仍是替身；「哪些槽位还是替身」
+  按**实例**判断，不按构造器身份（见
+  `test_stand_in_slots_is_judged_by_instance_not_by_identity`）。
 
 **未定规则仍在。** `BandwidthPolicy()` 的字段全是测试替身，本文件只验证
 「替身不会被静默使用」这一机制。**不调用 `assert_settled()`**——那意味着
@@ -39,9 +42,14 @@ from endernet.server.network.services import (
     StandInService,
     default_builders,
     default_pending_tasks,
+    default_stand_ins,
     is_read_only,
     route_of,
 )
+
+#: 仍是替身的槽位。调度核心已在任务 04 落地，能源（04 的另一半）、
+#: 存储（05）与工厂（09）尚未开始。
+STAND_IN_SLOTS = (ServiceId.ENERGY, ServiceId.FACTORY, ServiceId.STORAGE)
 
 
 class EchoService(NetworkService):
@@ -127,11 +135,18 @@ class TestAssemblyProfile(unittest.TestCase):
 
 
 class TestServiceRegistry(unittest.TestCase):
-    def test_empty_registry_gets_the_default_stand_ins(self):
-        """不给服务即装默认替身——这是开发档最常用的形态。"""
+    def test_empty_registry_gets_the_default_services(self):
+        """不给服务即装默认集合——这是开发档最常用的形态。
+
+        默认集合里 SCHEDULER 已是正式实现（任务 04 的调度核心），
+        因此断言的是「哪些槽位还是替身」，不是「一共几个」。
+        """
         registry = ServiceRegistry()
         self.assertEqual(sorted(registry.ids()), sorted(ServiceId.ALL))
-        self.assertEqual(len(registry.stand_ins()), 4)
+        self.assertEqual(
+            sorted(item.service_id for item in registry.stand_ins()),
+            sorted(STAND_IN_SLOTS),
+        )
 
     def test_explicit_services_do_not_get_defaults(self):
         registry = ServiceRegistry([EchoService(ServiceId.STORAGE)])
@@ -206,8 +221,9 @@ class TestServiceRegistry(unittest.TestCase):
 
     def test_diagnostics_lists_stand_ins(self):
         report = ServiceRegistry().diagnostics()
-        self.assertEqual(sorted(report["stand_ins"]), sorted(ServiceId.ALL))
-        self.assertEqual(len(report["services"]), 4)
+        self.assertEqual(sorted(report["stand_ins"]), sorted(STAND_IN_SLOTS))
+        # 槽位一个都不能少：装配表是完整的，只是部分槽位还没实现。
+        self.assertEqual(len(report["services"]), len(ServiceId.ALL))
 
 
 class TestStandInService(unittest.TestCase):
@@ -257,7 +273,8 @@ class TestServiceFactory(unittest.TestCase):
     def test_every_slot_has_a_builder(self):
         factory = ServiceFactory()
         self.assertEqual(sorted(factory.ids()), sorted(ServiceId.ALL))
-        self.assertEqual(sorted(factory.stand_in_slots()), sorted(ServiceId.ALL))
+        # 每个槽位都有构造器；其中尚未实现的那些仍会造出替身。
+        self.assertEqual(sorted(factory.stand_in_slots()), sorted(STAND_IN_SLOTS))
 
     def test_create_gives_fresh_instances_each_time(self):
         """两个运行时绝不共享服务实例（验收 #4）。"""
@@ -269,8 +286,18 @@ class TestServiceFactory(unittest.TestCase):
     def test_create_returns_a_full_registry(self):
         registry = ServiceFactory().create(None)
         self.assertEqual(sorted(registry.ids()), sorted(ServiceId.ALL))
-        for service in registry.services():
-            self.assertTrue(service.is_stand_in)
+        self.assertFalse(
+            registry.get(ServiceId.SCHEDULER).is_stand_in,
+            "调度器已是正式实现（任务 04）",
+        )
+        self.assertTrue(registry.get(ServiceId.SCHEDULER).is_ready())
+        for service_id in STAND_IN_SLOTS:
+            self.assertTrue(registry.get(service_id).is_stand_in)
+        # 没有替身混进别的槽位。
+        self.assertEqual(
+            sorted(item.service_id for item in registry.stand_ins()),
+            sorted(STAND_IN_SLOTS),
+        )
 
     def test_partial_override_keeps_other_slots(self):
         """只换一个槽位不该把别的槽位弄丢。
@@ -282,7 +309,9 @@ class TestServiceFactory(unittest.TestCase):
             {ServiceId.STORAGE: lambda runtime: EchoService(ServiceId.STORAGE)}
         )
         self.assertEqual(sorted(factory.ids()), sorted(ServiceId.ALL))
-        self.assertEqual(factory.stand_in_slots(), (ServiceId.ENERGY, ServiceId.FACTORY, ServiceId.SCHEDULER))
+        self.assertEqual(
+            factory.stand_in_slots(), (ServiceId.ENERGY, ServiceId.FACTORY)
+        )
         registry = factory.create(None)
         self.assertFalse(registry.get(ServiceId.STORAGE).is_stand_in)
 
@@ -297,7 +326,9 @@ class TestServiceFactory(unittest.TestCase):
     def test_replace_after_construction(self):
         factory = ServiceFactory()
         factory.replace(ServiceId.FACTORY, lambda runtime: EchoService(ServiceId.FACTORY))
-        self.assertEqual(factory.stand_in_slots(), (ServiceId.ENERGY, ServiceId.SCHEDULER, ServiceId.STORAGE))
+        self.assertEqual(
+            factory.stand_in_slots(), (ServiceId.ENERGY, ServiceId.STORAGE)
+        )
 
     def test_pending_tasks_match_the_documented_tasks(self):
         """替身槽位对应的任务编号是可查的，界面才能说清「等哪个任务」。"""
@@ -305,7 +336,20 @@ class TestServiceFactory(unittest.TestCase):
         self.assertEqual(pending[ServiceId.STORAGE], "05")
         self.assertEqual(pending[ServiceId.FACTORY], "09")
         self.assertEqual(pending[ServiceId.ENERGY], "04")
-        self.assertEqual(pending[ServiceId.SCHEDULER], "04")
+        # 调度核心已落地，这个槽位不该再被报成「等某个任务」。
+        self.assertNotIn(ServiceId.SCHEDULER, pending)
+
+    def test_stand_in_slots_is_judged_by_instance_not_by_identity(self):
+        """默认构造器**本身**是正式实现时，身份判断就不成立了。
+
+        这是 04 带出来的一处真实退化：`stand_in_slots()` 原先比的是
+        「构造器还是默认表里那一个」，而 SCHEDULER 的默认构造器现在是
+        `SchedulerService`——它仍然「是默认的那一个」，却显然不是替身。
+        """
+        factory = ServiceFactory()
+        self.assertNotIn(ServiceId.SCHEDULER, factory.stand_in_slots())
+        # 反向：替身槽位仍然被认出来，别把判据改成了「什么都不算替身」。
+        self.assertIn(ServiceId.STORAGE, factory.stand_in_slots())
 
     def test_no_pending_tasks_after_full_override(self):
         builders = dict(
@@ -319,7 +363,23 @@ class TestServiceFactory(unittest.TestCase):
     def test_default_builders_cover_every_slot(self):
         """默认表与会话槽位表必须同步，否则新增槽位会漏装。"""
         self.assertEqual(sorted(default_builders()), sorted(ServiceId.ALL))
-        self.assertEqual(sorted(default_pending_tasks()), sorted(ServiceId.ALL))
+        # 待办表只列替身槽位：调度核心已落地，不再列在这里。
+        self.assertEqual(
+            sorted(default_pending_tasks()), sorted(STAND_IN_SLOTS)
+        )
+
+    def test_the_default_tables_are_one_table(self):
+        """**只有一张默认表。** 此前 `default_stand_ins()` 与
+        `default_builders()` 各写一份清单，靠测试拦着不让它们分叉；
+        04 换成「由构造器表派生」之后，两边不可能再给出不同的调度器。"""
+        builders = default_builders()
+        for service in default_stand_ins():
+            builder = builders[service.service_id]
+            self.assertIs(
+                builder(None).is_stand_in,
+                service.is_stand_in,
+                "%s 的实例与构造器给出的替身判定不一致" % (service.service_id,),
+            )
 
 
 class TestProfileGuard(unittest.TestCase):

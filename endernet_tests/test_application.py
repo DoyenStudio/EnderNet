@@ -474,6 +474,29 @@ class TestDebugQuery(RoutedFixture):
         self.assertEqual(payload["size"], 1)
         self.assertEqual(payload["open"], 0)
 
+    def test_scheduler_query_gives_totals_or_one_network(self):
+        """04-07 的指标要能一条命令查出来，否则真机验收只能靠翻日志。
+
+        本夹具把所有槽位换成了记录型双件，因此这里验的是**路由**：
+        不带分量给跨网合计，带了就给那一个网络的调度服务 `diagnostics()`。
+        真实调度器的指标字段由 `test_scheduler.py` 覆盖。
+        """
+        totals = self.application.debug_query("scheduler").payload
+        self.assertIn("networks", totals)
+        self.assertIn("queued", totals)
+        runtime = self.runtime_for(self.A_DEV)
+        detail = self.application.debug_query(
+            "scheduler", component_id=runtime.component_id
+        ).payload
+        # 走的是契约方法 `diagnostics()`，不是去戳某个实现的字段。
+        self.assertEqual(detail, runtime.services.get(ServiceId.SCHEDULER).diagnostics())
+
+    def test_scheduler_query_on_an_unknown_network_is_an_error_payload(self):
+        payload = self.application.debug_query(
+            "scheduler", component_id="没有这个分量"
+        ).payload
+        self.assertIn("error", payload)
+
     def test_queries_are_counted(self):
         self.application.debug_query("snapshot")
         self.assertEqual(self.application.stats["queries"], 1)

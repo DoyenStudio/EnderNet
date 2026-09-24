@@ -30,10 +30,27 @@ from .devices.catalog import DeviceCatalog
 from .devices.registry import DeviceRegistry
 from .network.admission import AdmissionService
 from .network.runtime import RuntimeManager
-from .network.services import AssemblyProfile, ServiceFactory
+from .network.services import AssemblyProfile, ServiceId, ServiceFactory
+from .network.ticking import SchedulerService
 from .network.topology import TopologyService
 from .runtime.events import EventQueue
 from .runtime.lifecycle import DeviceLifecycle
+from .runtime.scheduler import LogicalClock, SchedulerPolicy
+
+
+def _scheduler_builder(policy):
+    # type: (object) -> object
+    """把调度策略绑进调度服务的构造器（供 `ServiceFactory` 使用）。
+
+    写成显式工厂而不是 `lambda runtime: SchedulerService(runtime, policy=policy)`：
+    默认参数之外的闭包捕获容易在循环或后续重构里指向错的对象，而这里绑的
+    是**全进程唯一**的那份策略。
+    """
+    def build(runtime):
+        # type: (object) -> SchedulerService
+        return SchedulerService(runtime, policy=policy)
+
+    return build
 
 
 class ServerBootstrap(object):
@@ -59,9 +76,16 @@ class ServerBootstrap(object):
         repository=None,
         runtime_budget=64,
         session_check=None,
+        clock=None,
+        scheduler_policy=None,
     ):
-        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object) -> None
+        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
+        #: 逻辑时钟（04-01）。**它是业务时间的唯一依据**，由 `drive_once()`
+        #: 每帧推进一步，经 `context["tick"]` 下传给各服务。注入自有实例即可
+        #: 在离线测试里精确控制时间（`clock.advance(200); server.tick()`），
+        #: 这就是「假时钟可精确重现低速累积、卡顿和恢复」的入口。
+        self.clock = clock if clock is not None else LogicalClock()
         self.world = world if world is not None else ToolDeltaWorldAdapter()
         self.drain_limit = int(drain_limit)
         self.backfill_chunks_per_tick = int(backfill_chunks_per_tick)
@@ -86,11 +110,24 @@ class ServerBootstrap(object):
         self.runtime_budget = int(runtime_budget)
         self.assembly_profile = AssemblyProfile.validate(assembly_profile)
         self.repository = repository
+        #: 调度策略（04-03 的轮转旋钮与 04-02 的退避数值）。
+        #: **全进程只有这一份对象**：跨网轮转（`RuntimeManager`）与每个网络的
+        #: `SchedulerService` 都读它。各存一份的代价是
+        #: `SchedulerPolicy.unresolved_report()` 报出来的数字与真正生效的
+        #: 不是同一个（全局约束 7 要防的正是「用替身值悄悄定案」）。
+        self.scheduler_policy = (
+            scheduler_policy if scheduler_policy is not None else SchedulerPolicy()
+        )
         #: 网络服务装配表。`ServiceFactory` 为**每个运行时**各造一套实例，
         #: 因此两个网络绝不共享库存或订单状态（03 验收 #4）。
-        self.service_factories = (
-            service_factories if service_factories is not None else ServiceFactory()
-        )
+        if service_factories is not None:
+            self.service_factories = service_factories
+        else:
+            # 默认装配表 + 把上面那份策略绑进调度槽位。只覆盖这一个槽位，
+            # 其余槽位仍是默认替身（`ServiceFactory` 从默认表起步）。
+            self.service_factories = ServiceFactory(
+                {ServiceId.SCHEDULER: _scheduler_builder(self.scheduler_policy)}
+            )
         # 运行时管理器**必须在 `AdmissionService` 之后构造**：两者都订阅
         # 拓扑发布，准入先订阅才能保证每次发布时带宽判定已按新版本刷新过，
         # 而运行时在同一帧内读到的就是刷新后的结论。
@@ -105,6 +142,7 @@ class ServerBootstrap(object):
             ledger_policy=dedup_policy,
             session_check=session_check,
             repository=repository,
+            scheduler_policy=self.scheduler_policy,
         )
         self.application = ApplicationService(
             self.runtimes,
@@ -116,7 +154,12 @@ class ServerBootstrap(object):
         #: 引擎事件 API。注入替身即可在无引擎环境跑通真实的 `bind()` 路径，
         #: 从而验证注册与注销，而不用进游戏试。
         self.event_binder = ServerEventBinder(
-            self.queue, self.world, self.registry, self.definitions, event_api=event_api
+            self.queue,
+            self.world,
+            self.registry,
+            self.definitions,
+            clock=self.clock,
+            event_api=event_api,
         )
         # 生命周期把变化发布到这里，这是**唯一**出口：
         # 事件处理与启动补查/手动重扫都走它，不会有一条路径绕过去。
@@ -186,14 +229,25 @@ class ServerBootstrap(object):
 
     def drive_once(self):
         # type: () -> None
-        """推进一帧。异常只记录不抛出。
+        """推进一帧：**先走时钟，再走业务**。异常只记录不抛出。
 
-        引擎会以每秒数十次的频率调用它，任何一次抛出都会变成刷屏日志，
-        而且会让后续帧全部失效。因此这里捕获并记下前若干条堆栈，
-        既保证循环继续，又不把错误藏起来——诊断里能看到 `tick_errors`。
+        **时钟只在这里前进一步。** 引擎每帧调用一次 `OnScriptTickServer`，
+        因此 `LogicalClock` 的读数就是「引擎帧序」。放在这个回调里而不是
+        「消费队列里的 `SCRIPT_TICK` 事件」，是因为后者受三件事影响而这三件
+        都不可靠：`drain_limit`（一次区块加载的积压就能让时钟停走，而
+        `tick_count` 照走，于是有了两套「帧」）、队列空时仍会推进别的步骤、
+        以及同帧两个 `OnScriptTickServer` 监听器的注册顺序。放在这里，
+        无论谁先谁后，每帧都恰好推进一次。
+
+        `tick()` **自己不动时钟**：离线测试直接调 `tick()` 就是为了精确
+        控制时间（04 验收要的「假时钟」入口）。
+
+        异常只记录不抛出：引擎会以每秒数十次的频率调用它，任何一次抛出都会
+        变成刷屏日志，而且会让后续帧全部失效。诊断里能看到 `tick_errors`。
         """
         import traceback
 
+        self.clock.advance()
         try:
             self.tick()
         except Exception:
@@ -213,6 +267,9 @@ class ServerBootstrap(object):
             return
         self.event_binder.unbind()
         self.queue.clear()
+        # 停机时把未处理的唤醒信号也丢掉：它们是「这一帧该醒醒了」，
+        # 留着会在下次启动的第一帧集中投递一批早已过期的信号。
+        self.event_binder.clear_wakes()
         self._backfill_generator = None
         self._backfill_finished = False
         self.started = False
@@ -234,10 +291,15 @@ class ServerBootstrap(object):
         drained, changes = self._drain_events()
         # 事件消费完再重建：同帧的多次变化只算一次重建（02-02）。
         rebuild = self.topology.advance(self.rebuild_steps_per_tick)
+        # 唤醒投递必须夹在**重建之后、推进之前**：放前面会丢掉「本帧刚放下、
+        # 运行时还没同步成员」的设备（它的 lane 还不存在）；放后面则本帧
+        # 白等一帧。集合为空时 `take_wakes()` 是 O(1)，空闲帧几乎不花钱。
+        wakes = self.event_binder.take_wakes()
+        delivered = self.runtimes.deliver_wakes(wakes) if wakes else 0
         # 重建之后才推进运行时：发布 → 运行时同步（含主控绑定与服务挂载）
         # → 服务推进。顺序不能倒——先在旧图上推进服务，等于让它们按已经
         # 不成立的归属动手。
-        service_steps = self.runtimes.tick(self.runtime_budget)
+        service_steps = self.runtimes.tick(self.runtime_budget, self._tick_context())
 
         return {
             "tick": self.tick_count,
@@ -251,10 +313,29 @@ class ServerBootstrap(object):
             "topology_steps": rebuild.steps,
             "components_rebuilt": rebuild.components_rebuilt,
             "topology_version": self.topology.version,
-            #: 本帧服务推进消耗的工作量（03）。当前服务都是替身，恒为 0。
+            #: 本帧服务推进消耗的工作量（03）。受 `runtime_budget` 约束；
+            #: 调度器落地后它不再恒为 0——有到期任务时才会有消耗。
             "service_steps": service_steps,
+            #: 本帧送达的唤醒信号数（04-02）。未命中不报错，见 `deliver_wakes`。
+            "wakes": delivered,
             "runtimes": len(self.runtimes.runtimes()),
             "queue": self.queue.stats(),
+        }
+
+    def _tick_context(self):
+        # type: () -> dict
+        """下传给服务的每帧上下文。只放两个**权威读数**，不放别的。
+
+        - `tick`：逻辑时钟的帧序。服务不得自己数帧——那会在关网、跨帧重建、
+          热重载时与它漂移（调度器曾经有一个 `_local_tick` 回退计数器，
+          两者混用会让时间倒流，见交付说明）。
+        - `frame`：引擎帧号。给「一帧只该发生一次」的东西去重用：
+          公平轮转的余量轮会让同一个运行时在一帧里被访问两次，主控时钟
+          与 `stats["ticks"]` 靠它按帧而不是按调用次数走。
+        """
+        return {
+            "tick": self.clock.current_tick(),
+            "frame": self.tick_count,
         }
 
     def _drain_events(self):
@@ -360,12 +441,36 @@ class ServerBootstrap(object):
             "assembly": self.assembly_diagnostics(),
             "runtimes": self.runtimes.diagnostics(),
             "application": self.application.diagnostics(),
+            "scheduler": self.scheduler_diagnostics(),
             "world": self.world.diagnostics(),
             "scope_note": (
-                "已装配任务 01 的设备层、任务 02 的拓扑/负载层与任务 03 的主控/运行时；"
-                "装配档位 %s，存储、工厂、能源与调度服务仍是替身（任务 04/05/09），"
+                "已装配任务 01 的设备层、任务 02 的拓扑/负载层、任务 03 的主控/运行时，"
+                "以及任务 04 的调度核心（逻辑时钟、到期队列、跨网轮转与唤醒）；"
+                "装配档位 %s，存储、工厂与能源服务仍是替身（任务 04 的另一半/05/09），"
                 "因此**网络业务命令会被拒绝并给出 service_absent**——这是尚未实现的"
                 "诚实结果，不是故障。" % (self.assembly_profile,)
+            ),
+        }
+
+    def scheduler_diagnostics(self):
+        # type: () -> dict
+        """调度诊断（04-01/04-07）：时钟读数、脉冲计数、跨网轮转、唤醒与各网合计。
+
+        `clock` 只有帧序（`tick`/`advances`）；**三种引擎脉冲的计数在
+        `pulses` 里**，它们来自事件适配器那唯一一份 `counts`，
+        供真机实测算比值——**代码里不出现任何频率换算**：
+        `OnScriptTickServer`（实测约 30 Hz）与 `OnSimTickServerEvent`
+        （实测约 17.3 Hz）是两个不同的时钟。
+        """
+        return {
+            "clock": self.clock.describe(),
+            "pulses": self.event_binder.pulse_counts(),
+            "rotation": self.runtimes.rotation_view(),
+            "wakes": self.event_binder.wakes.stats(),
+            "totals": self.runtimes.scheduler_view(),
+            "scope_note": (
+                "调度核心已落地；能源服务仍是替身，因此设备状态里的能源判定"
+                "一律是「尚未实现」而不是「没电」。"
             ),
         }
 

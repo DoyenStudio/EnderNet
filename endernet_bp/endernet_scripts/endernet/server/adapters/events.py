@@ -17,7 +17,7 @@
 """
 
 from ...common.identity import ChunkKey, NodeKey
-from ..runtime.events import EventKind, NormalizedEvent
+from ..runtime.events import EventKind, NormalizedEvent, WakeSet
 
 
 class ToolDeltaEventApi(object):
@@ -50,9 +50,9 @@ class ToolDeltaEventApi(object):
     # `endernet_tests/testsupport.py` 的 `declared_event_class_names`）。
     # 单列一份清单会多一处需要同步的地方，而它在运行时毫无用处。
     #
-    # 注意**没有** `ServerBlockEntityTickEvent`：设备级 tick 是任务 04
-    # 的休眠/唤醒机制要用的唤醒信号，本批次没有任何监听器消费它。
-    # 04 接入时加上赋值即可，测试的反向检查会一并覆盖。
+    # 声明了就必须在 `bind()` 里真的注册——反向检查
+    # （`test_import_boundaries.py` 的 `test_declared_classes_are_all_used`）
+    # 会立刻发现「声明了没用」，不必等到真机。
 
     def __init__(self):
         from ....tooldelta import events as events_module
@@ -81,6 +81,11 @@ class ToolDeltaEventApi(object):
         self.OnScriptTickServer = events_module.OnScriptTickServer
         self.OnSimTickServerEvent = events_module.OnSimTickServerEvent
         self.DestroyBlockEvent = events_module.DestroyBlockEvent
+        # 设备级 tick（任务 04-02 的唤醒信号）。**它在游戏里本来就会触发**：
+        # `scripts/gen_blocks.py` 的 TICKING 让两类控制器、装配仓、并行处理器
+        # 与能源接入口声明了 `netease:block_entity.tick = true`，
+        # `test_assets.py` 正断言这一点。
+        self.ServerBlockEntityTickEvent = events_module.ServerBlockEntityTickEvent
 
     # 下面两个方法刻意**不写 `# type:` 注释**：它们的返回值是引擎的装饰器，
     # 而 `tooldelta` 的类型信息在本仓库无法解析。写成 `-> object` 会让
@@ -120,6 +125,8 @@ class ServerEventBinder(object):
         #: 引擎事件 API。None 表示首次 bind 时惰性构造真实实现。
         self.event_api = event_api
         self._bound = False
+        #: 方块实体 tick 的唤醒信号。**不进 `EventQueue`**，理由见 `WakeSet`。
+        self.wakes = WakeSet()
         #: `[(event_cls, func, priority)]`，unbind 时逐一注销
         self._registrations = []
         self.unregistered = 0
@@ -233,6 +240,11 @@ class ServerEventBinder(object):
             # 避免两条路径各注销一次。
             self._count("destroy_after")
 
+        @self.listen(api.ServerBlockEntityTickEvent)
+        def on_block_entity_tick(event):
+            self._on_block_entity_tick(event.dimension, event.posX, event.posY,
+                                       event.posZ, event.blockName)
+
         self._bound = True
 
     def unbind(self):
@@ -339,12 +351,64 @@ class ServerEventBinder(object):
         self.queue.push(NormalizedEvent.chunk_unloaded(chunk_key, tick=self._tick()))
 
     def _on_tick(self, kind):
+        # 计数只走 `counts` 一份（见 `pulse_counts`）。时钟只由 `drive_once()`
+        # 推进，与这里无关。
         self._count(kind)
         self.queue.push(NormalizedEvent(kind, tick=self._tick()))
+
+    def _on_block_entity_tick(self, dimension, x, y, z, block_name):
+        """方块实体 tick → 唤醒信号，**不入 `EventQueue`**（理由见 `WakeSet`）。
+
+        只翻译与记录，不做任何业务判断：真正决定「醒来之后干什么」的是
+        调度服务，而它按位置路由（实测坐标与放置事件同一坐标系）。
+
+        **它不是时钟。** 这是逐方块实体派发的，引擎不保证同一时间窗口内
+        各方块实体的 tick 次数一致，也不保证与全局 game tick 一一对应。
+        所以它只被当作「该醒醒了」的提示，**不参与任何计时或判定**——
+        到期与退避走的是逻辑帧（见 `EventKind.BLOCK_ENTITY_TICK`）。
+
+        另一个实测限制：它只在**模拟距离内**的区块里派发。玩家走远时这里
+        一条都不会来，因此唤醒不能是唯一的发现手段——低频退避轮询是必需的
+        兜底（`SchedulerService` 的 `PollBackoff`）。
+        """
+        self._count("block_entity_tick")
+        if not self._is_ours(block_name):
+            return
+        self.wakes.add(EventKind.BLOCK_ENTITY_TICK, NodeKey(dimension, x, y, z))
+
+    #: 04-01 要在真机上算比值的那三种引擎脉冲。
+    #:
+    #: **计数只有一份**：`counts` 里本来就有它们（`_count` 对每种事件都调）。
+    #: 曾经时钟那边另存过一份 `pulses`，而这里只更新自己的，于是
+    #: `pulses["block_entity_tick"]` 永远是 0——真机量出来的比值会是 0，
+    #: 看起来像「引擎根本没派发这个事件」。
+    PULSE_KINDS = (
+        EventKind.SCRIPT_TICK,
+        EventKind.SIM_TICK,
+        EventKind.BLOCK_ENTITY_TICK,
+    )
+
+    def pulse_counts(self):
+        # type: () -> dict
+        """三种引擎脉冲各自发生了多少次。`0` 是真实的 0，不是「没记」。"""
+        return dict(
+            (kind, self.counts.get(kind, 0)) for kind in self.PULSE_KINDS
+        )
+
+    def take_wakes(self):
+        # type: () -> tuple
+        """取走本帧累计的唤醒信号。调用方负责按位置路由。"""
+        return self.wakes.take()
+
+    def clear_wakes(self):
+        # type: () -> int
+        """丢弃未处理的唤醒信号（停机时用）。"""
+        return self.wakes.clear()
 
     def diagnostics(self):
         # type: () -> dict
         return {
             "bound": self._bound,
             "event_counts": dict(self.counts),
+            "wakes": self.wakes.stats(),
         }

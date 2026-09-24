@@ -674,9 +674,20 @@ class TestRuntimeWiring(unittest.TestCase):
         self.assertFalse(after.is_open(), "没有主控就不能再开放业务")
 
     def test_tick_reports_the_service_budget(self):
+        """服务推进量落在预算内；没有到期工作时为 0。
+
+        原先断言的是恒为 0（「服务都是替身」），那在调度器落地后既太弱也不
+        真实——真正要钉住的是**预算上界**这条不变量。
+        """
         report = self.build_network()
         self.assertIn("service_steps", report)
-        self.assertEqual(report["service_steps"], 0, "替身服务不消耗预算")
+        self.assertGreaterEqual(report["service_steps"], 0)
+        self.assertLessEqual(
+            report["service_steps"], self.server.runtime_budget
+        )
+        self.assertEqual(
+            report["service_steps"], 0, "本帧没有到期任务，不该消耗预算"
+        )
 
     def test_diagnostics_include_the_three_new_sections(self):
         self.build_network()
@@ -685,9 +696,10 @@ class TestRuntimeWiring(unittest.TestCase):
         self.assertEqual(
             sorted(report["assembly"]["stand_ins"]),
             [
+                # 调度核心已在任务 04 落地，不再列在这里；
+                # 能源的耗能结算与 EN 计量属 04 的另一半，仍未开始。
                 "替身服务 energy（待任务 04 实现）",
                 "替身服务 factory（待任务 09 实现）",
-                "替身服务 scheduler（待任务 04 实现）",
                 "替身服务 storage（待任务 05 实现）",
             ],
         )

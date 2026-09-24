@@ -40,7 +40,19 @@ class EventKind(object):
     CHUNK_LOADED = "chunk_loaded"
     #: 区块被卸载/丢弃
     CHUNK_UNLOADED = "chunk_unloaded"
-    #: 自定义方块实体 tick（每秒 20 次，仅对声明了 tick 的方块）
+    #: 自定义方块实体 tick（实测约 20 Hz，仅对声明了 tick 的方块）。
+    #:
+    #: **它不是时钟，只是「该醒醒了」的提示。** 它是**逐方块实体**派发的，
+    #: 而引擎**不保证**同一个时间窗口内所有方块实体的 tick 次数一致，
+    #: 也不保证与全局 game tick 一一对应——各设备的计数会有微小浮动、
+    #: 可能漏拍。因此：
+    #:
+    #: - **不能拿它当时间基准**，也不能假设「设备 A 数到 N 次时设备 B 也数到 N 次」；
+    #: - 能当基准的只有脚本 tick（`LogicalClock` 用的就是它）与模拟 tick
+    #:   （`OnSimTickServerEvent` 是**全局**时钟，全世界一个事件）。
+    #:
+    #: 本模组据此只把它当唤醒信号用：到期与退避一律走**逻辑帧**，
+    #: 方块实体 tick 从不参与任何计时或判定。
     BLOCK_ENTITY_TICK = "block_entity_tick"
     #: 脚本 tick（平台「每秒若干次」的这一种）
     SCRIPT_TICK = "script_tick"
@@ -53,6 +65,11 @@ class EventKind(object):
 
 
 #: 可以在同一帧内按位置合并的事件种类。
+#:
+#: `BLOCK_ENTITY_TICK` 留在这里是**防御性**的：适配器实际把它送进 `WakeSet`
+#: 而不是本队列（理由见 `WakeSet` 的 docstring），但万一将来有人改了路径，
+#: 合并语义仍然正确——它的合并键退化成 `(kind, node_key)`，也就是
+#: 「这个位置该醒醒了」。
 _COALESCIBLE = frozenset(
     [
         EventKind.PLACE,
@@ -267,4 +284,105 @@ class EventQueue(object):
             "pushed": self.pushed,
             "coalesced": self.coalesced,
             "dropped": self.dropped,
+        }
+
+
+class WakeSignal(object):
+    """一次唤醒信号 `(kind, node_key)`。"""
+
+    __slots__ = ("kind", "node_key")
+
+    def __init__(self, kind, node_key):
+        # type: (str, NodeKey) -> None
+        self.kind = kind
+        self.node_key = node_key
+
+    def as_key(self):
+        # type: () -> tuple
+        return (self.kind, self.node_key.as_key())
+
+    def to_dict(self):
+        # type: () -> dict
+        return {"kind": self.kind, "node_key": self.node_key.to_dict()}
+
+    def __repr__(self):
+        return "WakeSignal(%s, %r)" % (self.kind, self.node_key)
+
+
+class WakeSet(object):
+    """有界唤醒集合：**同位置同类只保留一条，且没有顺序语义**。
+
+    与 `EventQueue` 分开是刻意的，三条理由任一都足够：
+
+    1. **脉冲会挤掉真正的事件。** 引擎按固定顺序遍历方块实体，产生的是
+       `A, B, A, B…` 这种跨位置交替的脉冲，而 `EventQueue` 只合并**紧邻**的
+       重复通知，因此这些脉冲一条都合并不掉，会吃掉 `drain_limit` 的大半；
+       队列满时 `push` 丢的是**新来的**事件，也就是放置事件——
+       设备会凭空消失。
+    2. **没人消费。** `DeviceLifecycle` 里没有 `BLOCK_ENTITY_TICK` 的处理器，
+       进队列只是白占一个 drain 名额做一次查空。
+    3. **语义不同。** 唤醒是集合性质的「这个位置该醒醒了」，同位置重复不携带
+       新信息；而队列的承诺是「绝不改变生命周期阶段的先后顺序」。把集合塞进
+       队列会污染那个承诺。
+
+    **丢一条唤醒不会丢设备**：唤醒只是让轮询提前，注册、到期任务与拓扑
+    都不经过它。因此这里的溢出是丢新来的并计数，而不是报错。
+    """
+
+    def __init__(self, max_pending=1024):
+        # type: (int) -> None
+        self.max_pending = int(max_pending)
+        self._pending = {}
+        self.added = 0
+        self.coalesced = 0
+        self.dropped = 0
+        self.taken = 0
+
+    def add(self, kind, node_key):
+        # type: (str, NodeKey) -> bool
+        """记一条唤醒。同一个 `(kind, 位置)` 只保留一条。
+
+        返回 False 表示集合已满、这条被丢了（已计入 `dropped`）。
+        """
+        self.added += 1
+        key = (kind, node_key.as_key())
+        if key in self._pending:
+            self.coalesced += 1
+            return True
+        if len(self._pending) >= self.max_pending:
+            self.dropped += 1
+            return False
+        self._pending[key] = WakeSignal(kind, node_key)
+        return True
+
+    def take(self):
+        # type: () -> tuple
+        """取走全部唤醒并清空。
+
+        按 `(kind, 位置)` 排序返回：集合的遍历顺序不该决定谁先被唤醒，
+        否则同样的输入在不同进程里会唤醒出不同的次序，问题也就不可复现。
+        """
+        keys = sorted(self._pending)
+        out = tuple(self._pending[key] for key in keys)
+        self._pending = {}
+        self.taken += len(out)
+        return out
+
+    def clear(self):
+        # type: () -> int
+        count = len(self._pending)
+        self._pending = {}
+        return count
+
+    def __len__(self):
+        return len(self._pending)
+
+    def stats(self):
+        # type: () -> dict
+        return {
+            "pending": len(self._pending),
+            "added": self.added,
+            "coalesced": self.coalesced,
+            "dropped": self.dropped,
+            "taken": self.taken,
         }
