@@ -10,7 +10,6 @@
 约定：能力实现由设备侧提供（真实设备在后续任务的设备类里），
 本模块只定义**名字与语义**，以及一个用于装配期自检的注册表。
 """
-from __future__ import absolute_import, division, print_function
 
 #: 能力名。与 `common/definitions.py` 的 CAP_* 常量必须一致。
 STORAGE_PROVIDER = "storage_provider"

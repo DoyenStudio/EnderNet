@@ -1,6 +1,5 @@
 # coding=utf-8
 """脚本共用的控制台辅助。"""
-from __future__ import absolute_import, division, print_function
 
 import sys
 

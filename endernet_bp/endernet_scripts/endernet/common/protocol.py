@@ -12,7 +12,9 @@
 「成功」不等于「全部完成」，部分完成必须显式表示为 `STATUS_PARTIAL`，
 并按实际数量提交（架构规划 6.3）。
 """
-from __future__ import absolute_import, division, print_function
+
+from .resource_key import ResourceKey, _require_count
+from . import settings
 
 # -- 结果状态 --------------------------------------------------------------
 
@@ -60,6 +62,18 @@ class Reason(object):
     TOPOLOGY_UNKNOWN = "topology_unknown"
     REBUILDING = "rebuilding"
     NOT_A_CANDIDATE = "not_a_candidate"
+    #: 控制器实例存在但没有主控运行时接管它（运行时尚未建立或刚失效）。
+    MASTER_ABSENT = "master_absent"
+    #: 主控实例的区块未加载。**不等于控制器已被拆除**（架构规划 6.1）：
+    #: 图保留已知拓扑，但业务必须暂停，也不能因此绕过「最多 1 个」的限制。
+    MASTER_UNLOADED = "master_unloaded"
+    #: 主控恢复流程尚未完成（启动恢复 / 迁移校验中）。
+    MASTER_RECOVERING = "master_recovering"
+    #: 该设备型号不被当前主控支持。blocks.md 给了控制器各自能控制的方块集合，
+    #: 「拥有主控」不等于「支持全部功能」。
+    CONTROLLER_DOES_NOT_SERVE = "controller_does_not_serve"
+    #: 命令的目标设备不属于本网络。请求被路由到了错误的运行时。
+    WRONG_NETWORK = "wrong_network"
 
     # 拓扑结构变化（02-07）
     COMPONENT_SPLIT = "component_split"
@@ -68,12 +82,20 @@ class Reason(object):
     PROCESSOR_GROUP_UNRESOLVED = "r03_processor_group_ownership"
     PORT_MISMATCH = "port_mismatch"
     UNLOADED_MEMBER = "unloaded_member"
+    #: 异容量网络基带相邻。blocks.md 明确「8/16/32 位基带只与同容量基带
+    #: 直接连通」，不同容量即使贴在一起也不建边、不合并网络与负载域。
+    #: 注意这与「同一控制器分别接两条不同容量的独立分支」是两回事，后者允许。
+    BASEBAND_CAPACITY_MISMATCH = "baseband_capacity_mismatch"
 
     # 带宽（02）
     BANDWIDTH_DENIED = "bandwidth_denied"
     BANDWIDTH_UNKNOWN = "bandwidth_unknown"
     BANDWIDTH_UNCONFIGURED = "bandwidth_unconfigured"
     BANDWIDTH_OVERLOADED = "bandwidth_overloaded"
+    #: 单台设备的需求就超过整个负载域的总容量——域**还空着**也放不下它。
+    #: 与 `BANDWIDTH_OVERLOADED`（被别的设备挤掉、域确实满了）是两回事：
+    #: 都拒绝，但界面必须分开说，否则会告诉玩家「已满载」而他看到的是一个空域。
+    BANDWIDTH_DEMAND_EXCEEDS_DOMAIN = "bandwidth_demand_exceeds_domain"
     NO_BANDWIDTH_DOMAIN = "no_bandwidth_domain"
     #: 多接入待定（R02）：同一设备同时落在多个互不相连的负载域上，
     #: 归属未定，不擅自选一个。
@@ -95,6 +117,23 @@ class Reason(object):
     OUT_OF_RANGE = "out_of_range"
     BAD_PARAMETER = "bad_parameter"
     UNSUPPORTED = "unsupported"
+    #: 会话已失效（终端关闭、玩家离开、会话被顶替）。与「越权」分开：
+    #: 前者要重新开会话，后者是权限问题（架构规划 6.6）。
+    SESSION_INVALID = "session_invalid"
+    #: 处理过程中抛出了异常。只在 `ApplicationService` 这一层使用——
+    #: 引擎每帧调用数十次，把异常抛回去会刷屏并让后续帧全废
+    #: （与 `ServerBootstrap.tick()` 同一条纪律）。**主控内部不吞异常**：
+    #: 缺陷要在自己的层次上炸出来，不能伪装成一条业务失败。
+    INTERNAL = "internal_error"
+
+    # 服务装配（03-01）
+    #: 所需业务服务未装配（开发档下的替身、或该功能尚未实现）。
+    #: **不是 0、也不是「没有需求」**——未实现与已实现但不满足是两回事。
+    SERVICE_ABSENT = "service_absent"
+    #: 服务已装配但尚未就绪（依赖未满足、初始化未完成）。
+    SERVICE_NOT_READY = "service_not_ready"
+    #: 该判定依赖尚未定案的玩法规则（R02/R03/R13 等），正式档拒绝用替身值代替。
+    ASSEMBLY_UNRESOLVED = "assembly_unresolved"
 
     # 存储与转移（05/06）
     NO_CAPACITY = "no_capacity"
@@ -153,6 +192,30 @@ def reason_code(reason):
 
 
 # -- 命令 ------------------------------------------------------------------
+
+
+class CommandKind(object):
+    """命令的用途分类。
+
+    主控按它决定路由到哪个网络服务（`network/services.py` 的 `COMMAND_ROUTES`），
+    以及该命令是不是只读。分类必须显式：设备不得「顺便」改库存（全局约束 2），
+    因此未知 kind 一律 `BAD_PARAMETER`，不做兜底推断。
+    """
+
+    #: 从网络存取资源（终端、取货口、存货口）。
+    STORAGE = "storage"
+    #: 修改设备配置（过滤、朝向相关设置等）。仍属写操作，走 storage 之外的
+    #: 同一条准入链，但不改动库存。
+    CONFIGURE = "configure"
+    #: 提交/取消订单。
+    ORDER = "order"
+    #: 只读查询。走到运行条件检查为止，不要求带宽、能源与业务服务可用。
+    STATUS = "status"
+    #: 必要的恢复管理。**只读或受控的诊断动作**，不得用来绕过运行条件
+    #: 改库存或推进订单（03 验收末条）。
+    RECOVERY = "recovery"
+
+    ALL = frozenset([STORAGE, CONFIGURE, ORDER, STATUS, RECOVERY])
 
 
 class CommandSource(object):
@@ -476,22 +539,60 @@ class StorageChanged(Notification):
     __slots__ = ("network_id", "resource_key", "stored", "reserved", "version")
 
     def __init__(self, network_id, resource_key, stored, reserved, version):
+        if settings.DEBUG:
+            if not isinstance(resource_key, ResourceKey):
+                raise TypeError("StorageChanged requires an available ResourceKey")
+            for label, value in (("stored", stored), ("reserved", reserved), ("version", version)):
+                _require_count(value, label)
+            if reserved > stored:
+                raise ValueError("Reserved count exceeds stored count")
         self.network_id = network_id
         self.resource_key = resource_key
         self.stored = stored
         self.reserved = reserved
         self.version = version
 
-    def to_dict(self):
-        return {
+    def to_dict(self, descriptions=None, include_description=False):
+        """默认自包含；传入会话描述表后使用序号，首次或重同步附完整描述。"""
+        result = {
             "kind": self.kind,
             "network_id": self.network_id,
-            "resource_key": self.resource_key.canonical(),
             "stored": self.stored,
             "reserved": self.reserved,
             "available": self.stored - self.reserved,
             "version": self.version,
         }
+        if descriptions is None:
+            result["resource_key"] = self.resource_key.canonical()
+            result["resource_description"] = self.resource_key.to_dict()
+        else:
+            if descriptions.network_id != self.network_id:
+                raise ValueError("Resource description network mismatch")
+            result["resource_ref"] = descriptions.encode(self.resource_key, include_description)
+        return result
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        if not isinstance(data, dict) or data.get("kind") != cls.kind:
+            raise ValueError("Expected a storage change notification")
+        # 在注册资源描述之前校验数量，失败消息不能污染映射。
+        for field in ("stored", "reserved", "version"):
+            _require_count(data[field], field)
+        if data["reserved"] > data["stored"]:
+            raise ValueError("Reserved count exceeds stored count")
+        if data.get("available") != data["stored"] - data["reserved"]:
+            raise ValueError("Inconsistent available count")
+        if "resource_ref" in data:
+            if "resource_description" in data or "resource_key" in data:
+                raise ValueError("Ambiguous resource representation")
+            if descriptions is None or descriptions.network_id != data["network_id"]:
+                raise ValueError("Resource description network mismatch")
+            key = descriptions.decode(data["resource_ref"])
+        else:
+            key = ResourceKey.from_dict(data["resource_description"])
+            if data["resource_key"] != key.canonical():
+                raise ValueError("Resource fingerprint mismatch")
+        return cls(data["network_id"], key, data["stored"], data["reserved"], data["version"])
 
 
 class TopologyChanged(Notification):

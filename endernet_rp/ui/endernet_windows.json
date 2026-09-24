@@ -1,0 +1,187 @@
+{
+    "device_status_window_basic": {
+        "type": "panel",
+        "size": [
+            128.0,
+            64.0
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "bg": {
+                    "type": "image",
+                    "layer": 1,
+                    "texture": "textures/ui/endernet/background_panel_opaque"
+                }
+            },
+            {
+                "title": {
+                    "type": "image",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "size": [
+                        "default",
+                        16.0
+                    ],
+                    "layer": 1,
+                    "texture": "textures/ui/endernet/background_panel_2_flat",
+                    "controls": [
+                        {
+                            "device_status_tip": {
+                                "type": "label",
+                                "font_type": "default",
+                                "shadow": true,
+                                "text": "设备状态",
+                                "text_alignment": "center"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "close@endernet_ui_common.close_btn": {
+                    "anchor_from": "top_right",
+                    "anchor_to": "top_right",
+                    "size": [
+                        16,
+                        16
+                    ]
+                }
+            },
+            {
+                "controller_conn_stat": {
+                    "type": "panel",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0.0,
+                        20.0
+                    ],
+                    "size": [
+                        108.0,
+                        16.0
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "icon": {
+                                "type": "image",
+                                "anchor_from": "left_middle",
+                                "anchor_to": "left_middle",
+                                "size": [
+                                    16.0,
+                                    16.0
+                                ],
+                                "layer": 1,
+                                "texture": "textures/ui/endernet/controller_simple_icon",
+                                "controls": [
+                                    {
+                                        "stat_mask": {
+                                            "type": "image",
+                                            "anchor_from": "bottom_right",
+                                            "anchor_to": "bottom_right",
+                                            "size": [
+                                                "64%+0px",
+                                                "64%+0px"
+                                            ],
+                                            "layer": 1,
+                                            "texture": "textures/ui/endernet/corner_error"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "text": {
+                                "type": "label",
+                                "anchor_from": "left_middle",
+                                "anchor_to": "left_middle",
+                                "offset": [
+                                    20.0,
+                                    0.0
+                                ],
+                                "color": [
+                                    0.2588235294117647,
+                                    0.2588235294117647,
+                                    0.2588235294117647
+                                ],
+                                "font_type": "default",
+                                "text": "未连接到控制器",
+                                "text_alignment": "center"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "network_conn_stat": {
+                    "type": "panel",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0.0,
+                        40.0
+                    ],
+                    "size": [
+                        108.0,
+                        16.0
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "icon": {
+                                "type": "image",
+                                "anchor_from": "left_middle",
+                                "anchor_to": "left_middle",
+                                "size": [
+                                    16.0,
+                                    16.0
+                                ],
+                                "layer": 1,
+                                "texture": "textures/ui/endernet/network_simple_icon",
+                                "controls": [
+                                    {
+                                        "stat_mask": {
+                                            "type": "image",
+                                            "anchor_from": "bottom_right",
+                                            "anchor_to": "bottom_right",
+                                            "size": [
+                                                "64%+0px",
+                                                "64%+0px"
+                                            ],
+                                            "layer": 1,
+                                            "texture": "textures/ui/endernet/corner_error"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "text": {
+                                "type": "label",
+                                "anchor_from": "left_middle",
+                                "anchor_to": "left_middle",
+                                "offset": [
+                                    20.0,
+                                    0.0
+                                ],
+                                "color": [
+                                    0.2588235294117647,
+                                    0.2588235294117647,
+                                    0.2588235294117647
+                                ],
+                                "font_type": "default",
+                                "text": "网络故障中",
+                                "text_alignment": "center"
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "main": {
+        "type": "screen"
+    },
+    "namespace": "endernet_windows"
+}

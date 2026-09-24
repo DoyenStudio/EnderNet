@@ -22,7 +22,6 @@
 读取不产生副作用：`status_of()` 只查拓扑快照与设备记录，
 不预留、不消耗、不改变任何资格。
 """
-from __future__ import absolute_import, division, print_function
 
 from ...common.definitions import (
     CATEGORY_BASEBAND,
@@ -306,6 +305,14 @@ class DomainAdmission(object):
 
     def is_overloaded(self):
         # type: () -> bool
+        """本域是否存在**未获额度**的设备。
+
+        **不等于「域已满」。** 单台设备需求超过域总容量时，域可能还空着
+        （`used_quarters == 0`）却已经有 `denied`。判断「是否真的满了」
+        看 `used_quarters >= capacity_quarters`，不要用这个方法——
+        文案「负载域已满载」曾经由它推出，那是错的（见
+        `Reason.BANDWIDTH_DEMAND_EXCEEDS_DOMAIN`）。
+        """
         return bool(self.denied)
 
     def to_dict(self):
@@ -855,15 +862,37 @@ class AdmissionService(object):
         reasons = []
         notes = []
         if not granted:
+            # 第一条始终给出「本设备要多少 · 域已经用了多少」这两个数，
+            # 让玩家自己也能算出结论；具体归属哪一种原因另说。
             reasons.append(
                 BlockReason(
                     Reason.BANDWIDTH_DENIED,
-                    "域 %s 已占用 %d/%d 个四分之一 u"
-                    % (domain_ids[0], admission.used_quarters, admission.capacity_quarters),
+                    "本设备需求 %s，域 %s 已占用 %d/%d 个四分之一 u"
+                    % (
+                        "未知" if demand is UNCONFIGURED else "%d" % (demand,),
+                        domain_ids[0],
+                        admission.used_quarters,
+                        admission.capacity_quarters,
+                    ),
                 )
             )
-            if admission.is_overloaded():
+            if demand is not UNCONFIGURED and demand > admission.capacity_quarters:
+                # 域还空着也放不下：这不是「被别的设备挤掉」，而是单机需求
+                # 超过整个域的承载上限。两种情形都拒绝，但原因必须分开报——
+                # 否则界面会告诉玩家「负载域已满载」，而他看到一个 0/N 的空域。
+                reasons.append(
+                    BlockReason(
+                        Reason.BANDWIDTH_DEMAND_EXCEEDS_DOMAIN,
+                        "单台设备需求 %d 个四分之一 u 已超过本域总容量 %d"
+                        % (demand, admission.capacity_quarters),
+                    )
+                )
+            elif admission.used_quarters >= admission.capacity_quarters:
+                # 真的满了：额度全部分配出去，被拒是「挤不进来」。
                 reasons.append(BlockReason(Reason.BANDWIDTH_OVERLOADED, "负载域已满载"))
+            # 剩下的情形是「域没满，但剩余额度不够本设备用」——第一条原因里
+            # 已经给了需求与占用的两个数，结论由玩家自己算得出，这里不再补
+            # 一句会误导的「满载」。三种情形都拒绝，区别只在解释。
         elif admission.used_quarters >= admission.capacity_quarters:
             # 恰好满载：按 R13 的建议口径仍然是 OK，这里只做辅助说明。
             notes.append("负载域已满载，本设备为已获准设备")

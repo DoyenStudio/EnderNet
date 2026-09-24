@@ -3,15 +3,14 @@
 
 对应任务 01-01 的客户端入口。
 
-**本批次刻意做得很薄。** 终端界面、网络槽与背包槽的自定义渲染属于任务 11，
-在服务端还没有库存可显示之前实现它们没有意义。这里只保证：
+终端基础 UI 在 client/ui 中注册，目前只提供本地模拟背包交互。
+真实库存同步与服务端交易仍属于任务 11 的后续工作。这里保证：
 
 - 模组在客户端能正常初始化与销毁，不会因为缺少客户端入口而报错；
 - 客户端**不持有任何权威状态**（架构规划 6.6）：它不判断库存、订单完成或能量余额。
 
-后续任务在这里挂 UI 注册与会话订阅即可，不需要改动服务端。
+后续任务在这里挂会话订阅，模拟 UI 不会修改真实玩家库存。
 """
-from __future__ import absolute_import, division, print_function
 
 #: 进程内的客户端单例
 _CLIENT = None
@@ -55,6 +54,9 @@ def start_client():
     # type: () -> ClientBootstrap
     """由 `modMain.OnClientInited` 调用。"""
     global _CLIENT
+    from .ui import register_screens
+
+    register_screens()
     if _CLIENT is not None:
         _CLIENT.stop()
     _CLIENT = ClientBootstrap()

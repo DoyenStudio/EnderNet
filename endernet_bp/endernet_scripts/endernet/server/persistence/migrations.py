@@ -10,7 +10,6 @@
    玩家用新版本存过档之后回退到旧版本，旧版本不得把看不懂的存档
    当成「没有库存」并覆盖掉——那会直接销毁玩家的物品。
 """
-from __future__ import absolute_import, division, print_function
 
 #: 本构建能写出的最高版本。写入时使用它。
 CURRENT_SCHEMA_VERSION = 1

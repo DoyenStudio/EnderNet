@@ -20,7 +20,6 @@
 如果没有配套的端口种类，构建期就会报错，避免出现「规则说能连、
 端口表却无从下手」的半张表。
 """
-from __future__ import absolute_import, division, print_function
 
 from ...common.definitions import (
     CATEGORY_ASSEMBLY,

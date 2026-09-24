@@ -10,7 +10,6 @@
 所以本模块导入时不需要 `mod.server.*`；离线测试传 `bind_engine=False`
 并自己注入假 world 即可驱动整条链路。
 """
-from __future__ import absolute_import, division, print_function
 
 from ..common.definitions import DefinitionSet
 from ..common.identity import ChunkKey

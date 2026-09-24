@@ -10,7 +10,6 @@
 
 只依赖标准库（zlib + struct 手写 PNG），因此不需要 PIL。
 """
-from __future__ import absolute_import, division, print_function
 
 import argparse
 import os

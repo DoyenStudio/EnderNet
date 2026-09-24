@@ -10,13 +10,26 @@ addon.zip
 pack_addon.py
 run_pack.cmd
 test*
+# `test*` 命中的不只是 `tests/`：它是按基名匹配的，`endernet_tests/test_*.py`
+# 与 `testsupport.py` 全部落在这条规则里，于是整份测试套件一直不在版本库内，
+# 而 `python endernet_tests/run_tests.py` 正是本项目的离线门禁。
+# 这里显式放回该目录下的 .py（新增测试文件不会再被静默忽略）。
+!endernet_tests/*.py
 dev*
-# dev* 是按目录名匹配的，会连带命中名为 devices 的目录。
-# 下面两处是交付物（01 的设备注册表与方块贴图），显式放回。
+# dev* 是按目录名匹配的，会连带命中名为 devices 的目录，
+# 以及 device_title_background 这个基名。下面三处是交付物，显式放回：
+# 01 的设备注册表、01 的方块贴图、UI 的标题底板（被 4 个界面 JSON 引用）。
 !endernet_bp/endernet_scripts/endernet/server/devices/
 !endernet_rp/textures/endernet/devices/
+!endernet_rp/textures/ui/endernet/device_title_background.*
 TODO
 AGENTS.md
 CLAUDE.md
 
 *.cmd
+
+# 不允许编译 .pyc：__pycache__ 落在行为包内会被一起打进 addon，
+# 且 py3 编译出的字节码对 py2.7 运行时没有意义。跑 python 时用 -B
+# 或设 PYTHONDONTWRITEBYTECODE=1（见 CLAUDE.md「其他」与 .claude/settings.json）。
+__pycache__/
+*.pyc

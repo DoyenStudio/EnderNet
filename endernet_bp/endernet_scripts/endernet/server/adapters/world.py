@@ -19,9 +19,8 @@
    `netease:block_entity` 的**方块实体（见交付说明未验证项 4）。
 2. 区块在被卸载后重新加载时会再次发事件，从而重新挂载设备。
 """
-from __future__ import absolute_import, division, print_function
 
-from ...common.identity import ChunkKey, NodeKey
+from ...common.identity import ChunkKey, NodeKey  # noqa: F401 (NodeKey 仅用于 # type: 注释)
 
 
 class ToolDeltaWorldAdapter(object):

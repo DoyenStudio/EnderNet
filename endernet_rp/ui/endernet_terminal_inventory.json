@@ -1,0 +1,130 @@
+{
+    "namespace": "endernet_terminal_inventory",
+    "backpack_slot": {
+        "type": "button",
+        "size": [
+            18,
+            18
+        ],
+        "layer": 2,
+        "$pressed_button_name": "#EnderNetTerminal.backpack_click",
+        "button_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "to_button_id": "$pressed_button_name",
+                "mapping_type": "pressed"
+            }
+        ],
+        "bindings": [
+            {
+                "binding_type": "collection_details",
+                "binding_collection_name": "endernet_terminal_backpack"
+            }
+        ],
+        "controls": [
+            {
+                "visual@endernet_container_common.custom_slot": {}
+            }
+        ]
+    },
+    "hotbar_slot": {
+        "type": "button",
+        "size": [
+            18,
+            18
+        ],
+        "layer": 2,
+        "$pressed_button_name": "#EnderNetTerminal.hotbar_click",
+        "button_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "to_button_id": "$pressed_button_name",
+                "mapping_type": "pressed"
+            }
+        ],
+        "bindings": [
+            {
+                "binding_type": "collection_details",
+                "binding_collection_name": "endernet_terminal_hotbar"
+            }
+        ],
+        "controls": [
+            {
+                "visual@endernet_container_common.custom_slot": {}
+            }
+        ]
+    },
+    "inventory": {
+        "type": "panel",
+        "size": [
+            162,
+            101
+        ],
+        "layer": 10,
+        "anchor_from": "bottom_middle",
+        "anchor_to": "bottom_middle",
+        "controls": [
+            {
+                "label": {
+                    "type": "label",
+                    "text": "container.inventory",
+                    "color": [
+                        0.31,
+                        0.31,
+                        0.31
+                    ],
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "backpack": {
+                    "type": "grid",
+                    "size": [
+                        162,
+                        54
+                    ],
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0,
+                        13
+                    ],
+                    "collection_name": "endernet_terminal_backpack",
+                    "grid_dimensions": [
+                        9,
+                        3
+                    ],
+                    "grid_item_template": "endernet_terminal_inventory.backpack_slot",
+                    "maximum_grid_items": 27
+                }
+            },
+            {
+                "hotbar": {
+                    "type": "grid",
+                    "size": [
+                        162,
+                        18
+                    ],
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0,
+                        73
+                    ],
+                    "collection_name": "endernet_terminal_hotbar",
+                    "grid_dimensions": [
+                        9,
+                        1
+                    ],
+                    "grid_item_template": "endernet_terminal_inventory.hotbar_slot",
+                    "maximum_grid_items": 9
+                }
+            }
+        ]
+    }
+}

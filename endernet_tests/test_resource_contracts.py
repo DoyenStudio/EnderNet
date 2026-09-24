@@ -1,0 +1,271 @@
+# coding=utf-8
+"""资源身份、引擎转换、同步与存档恢复之间的回归。"""
+import copy
+import unittest
+
+import testsupport  # noqa: F401
+from endernet.common.resource_key import ResourceKey, canonical_tree, tree_text
+from endernet.common.item_codec import item_key, item_key_from_dict, item_dict_from_key, item_from_key
+from endernet.common.protocol import StorageChanged
+from endernet.common.resource_sync import ResourceDescriptions, ResourceResyncRequired
+from endernet.server.adapters.containers import ContainerEntry
+from endernet.server.persistence.resources import RestoredResourceEntry, UnavailableResourceError
+from endernet.common import settings
+
+
+def wire(value):
+    # Simulate ownership separation, not a JSON codec or the actual ExtraData backend.
+    return copy.deepcopy(value)
+
+
+class ResourceContractTests(unittest.TestCase):
+    def test_debug_off_preserves_conversion_and_sync(self):
+        from unittest.mock import patch
+        with patch.object(settings, "DEBUG", False):
+            raw = {"nested": [u"中文", 3]}
+            key = ResourceKey.item("test:item", user_data=raw, enchant_data=[(9, 5)])
+            raw["nested"].append(4)
+            self.assertEqual(item_key_from_dict(wire(item_dict_from_key(key))), key)
+            sender = ResourceDescriptions("net", "epoch")
+            receiver = ResourceDescriptions("net", "epoch")
+            event = StorageChanged("net", key, 50, 5, 1)
+            decoded = StorageChanged.from_dict(wire(event.to_dict(sender)), receiver)
+            self.assertEqual(decoded.resource_key, key)
+            entry = RestoredResourceEntry(wire(ContainerEntry(key, 50).to_dict()), lambda key: True)
+            self.assertEqual(entry.require_key(), key)
+            self.assertEqual(entry.count, 50)
+
+    def test_debug_off_still_rejects_invalid_external_data(self):
+        from unittest.mock import patch
+        key = ResourceKey.item("test:item")
+        with patch.object(settings, "DEBUG", False):
+            for field, value in (("aux", 1.5), ("schema_version", 99), ("identity", [])):
+                data = key.to_dict()
+                data[field] = value
+                with self.assertRaises((TypeError, ValueError)):
+                    ResourceKey.from_dict(data)
+            data = item_dict_from_key(key)
+            data["count"] = True
+            with self.assertRaises(TypeError):
+                item_key_from_dict(data)
+            receiver = ResourceDescriptions("net", "epoch")
+            with self.assertRaises(ResourceResyncRequired):
+                receiver.resolve("old-epoch", 1)
+
+    def test_input_and_exports_cannot_mutate_key(self):
+        for make in (ResourceKey.item, ResourceKey.fluid):
+            raw = {"nested": [1, {"text": u"中文😀"}]}
+            key = make("test:resource", user_data=raw)
+            original = key.to_dict()
+            inventory = {key: 5}
+            raw["nested"].append(2)
+            key.raw_identity["user_data"]["nested"].append(3)
+            key.to_dict()["identity"]["user_data"]["nested"].append(4)
+            self.assertEqual(key.to_dict(), original)
+            self.assertEqual(inventory[ResourceKey.from_dict(wire(original))], 5)
+            copied = copy.deepcopy(key)
+            self.assertEqual(copied, key)
+            self.assertIsNot(copied, key)
+            copied._raw["user_data"]["nested"].append(5)
+            self.assertEqual(key.to_dict(), original)
+
+    def test_enchantment_source_is_detached(self):
+        enchants = [[9, 5]]
+        key = ResourceKey.item("test:sword", enchant_data=enchants)
+        enchants[0][1] = 1
+        self.assertEqual(key, ResourceKey.item("test:sword", enchant_data=[(9, 5)]))
+        self.assertEqual(key, ResourceKey.from_dict(wire(key.to_dict())))
+
+    def test_payload_roundtrip_preserves_types_and_empty_values(self):
+        for raw in (None, {}, {"v": [True, 1, 1.0, -0.0, 0.3, 2 ** 65, u"中文😀"]}):
+            key = ResourceKey.item("test:item", user_data=raw, enchant_data=[])
+            restored = ResourceKey.from_dict(wire(key.to_dict()))
+            self.assertEqual(key, restored)
+            self.assertEqual(key.canonical(), restored.canonical())
+            self.assertEqual(key.to_dict(), restored.to_dict())
+
+    def test_metadata_is_preserved_without_json_coercion(self):
+        raw = {1: (2, {"value": [3]}), "1": "text key"}
+        key = ResourceKey.item("test:item", user_data=raw)
+        restored = ResourceKey.from_dict(wire(key.to_dict()))
+        self.assertEqual(restored, key)
+        self.assertEqual(restored.raw_identity["user_data"], raw)
+        reversed_raw = dict(reversed(list(raw.items())))
+        self.assertEqual(ResourceKey.item("test:item", user_data=reversed_raw), key)
+        nested = "x" * 262145
+        for unused in range(40):
+            nested = [nested]
+        large = ResourceKey.item("test:item", user_data={"nested": nested})
+        self.assertEqual(ResourceKey.from_dict(large.to_dict()), large)
+
+    def test_strict_schema_and_legacy_loading(self):
+        key = ResourceKey.item("test:item")
+        legacy = key.to_dict()
+        del legacy["schema_version"]
+        self.assertEqual(ResourceKey.from_dict(legacy), key)
+        for changes in ({"aux": 1.5}, {"aux": True}, {"aux": -1}, {"identity": []},
+                        {"identity": None}, {"identity": {"future_field": 1}},
+                        {"schema_version": 2}, {"schema_version": True}, {"future_field": 1}):
+            payload = key.to_dict()
+            payload.update(changes)
+            with self.assertRaises((TypeError, ValueError)):
+                ResourceKey.from_dict(payload)
+        fluid = ResourceKey.fluid("test:fluid").to_dict()
+        fluid["aux"] = 1
+        with self.assertRaises(ValueError):
+            ResourceKey.from_dict(fluid)
+
+    def test_fixed_fingerprints(self):
+        self.assertEqual(tree_text(canonical_tree(u"中文😀")), u"(1:s10:中文😀)")
+        self.assertEqual(tree_text(canonical_tree(0.3)), "(1:f19:0.29999999999999999)")
+        self.assertEqual(tree_text(canonical_tree({"b": 2, "a": 1})),
+                         "(1:d22:(8:(1:s1:a)8:(1:i1:1))22:(8:(1:s1:b)8:(1:i1:2)))")
+        node = canonical_tree({u"\U0001f600": 1, u"\ue000": 2})
+        self.assertEqual(node[1][0][1], u"\ue000")
+
+
+class ItemCodecTests(unittest.TestCase):
+    def test_real_tooldelta_class_without_engine_bootstrap(self):
+        import importlib.util
+        import os
+        import sys
+        import types
+        from unittest.mock import patch
+        path = os.path.join(testsupport.SCRIPTS_ROOT, "tooldelta", "define", "item.py")
+        internal = types.ModuleType("resource_codec_test.internal")
+        internal.InServerEnv = lambda: False
+        spec = importlib.util.spec_from_file_location("resource_codec_test.define.item", path)
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {internal.__name__: internal}):
+            spec.loader.exec_module(module)
+        key = ResourceKey.item("test:item", aux=2, enchant_data=[],
+                               mod_enchant_data=[("test:enchant", 3)], durability=None,
+                               extra_id="unique", custom_tips=u"中文", user_data={"v": [1]})
+        basic = module.BasicItemInfo()
+        basic.maxStackSize = 16
+        module.itemBasicInfoPool[(key.name, key.aux)] = basic
+        item = item_from_key(key, 12, module.Item)
+        self.assertEqual(item_key(item), key)
+        self.assertEqual(item_key_from_dict(wire(item.marshal())), key)
+        item.userData["v"].append(2)
+        self.assertNotEqual(item_key(item), key)
+        with self.assertRaises(ValueError):
+            item_from_key(key, 17, module.Item)
+
+    def test_counts_empty_and_unknown_metadata(self):
+        key = ResourceKey.item("test:item")
+        for count in (1, 64, 2 ** 30):
+            self.assertEqual(item_key_from_dict(item_dict_from_key(key, count)), key)
+        data = item_dict_from_key(key)
+        data["count"] = 0
+        self.assertIsNone(item_key_from_dict(data))
+        for count in (True, 1.1, -1):
+            data["count"] = count
+            with self.assertRaises((TypeError, ValueError)):
+                item_key_from_dict(data)
+        data["count"] = 1
+        data["futureIdentity"] = 1
+        with self.assertRaises(ValueError):
+            item_key_from_dict(data)
+        with self.assertRaises(TypeError):
+            item_dict_from_key(ResourceKey.fluid("test:water"))
+
+
+class DescriptionTests(unittest.TestCase):
+    def setUp(self):
+        self.sender = ResourceDescriptions("net", "session-A")
+        self.receiver = ResourceDescriptions("net", "session-A")
+        self.key = ResourceKey.item("test:item", user_data={"v": [1]})
+
+    def test_new_description_then_quantity_only_and_click(self):
+        first = StorageChanged("net", self.key, 2 ** 30, 3, 1)
+        payload = wire(first.to_dict(self.sender))
+        self.assertIn("description", payload["resource_ref"])
+        restored = StorageChanged.from_dict(payload, self.receiver)
+        self.assertEqual(restored.resource_key, self.key)
+        self.assertEqual(restored.stored, 2 ** 30)
+        second = wire(StorageChanged("net", self.key, 7, 0, 2).to_dict(self.sender))
+        self.assertNotIn("description", second["resource_ref"])
+        self.assertEqual(StorageChanged.from_dict(second, self.receiver).stored, 7)
+        ref = second["resource_ref"]
+        self.assertEqual(self.sender.resolve(ref["epoch"], ref["serial"]), self.key)
+        self.assertEqual(StorageChanged.from_dict(wire(first.to_dict())).resource_key, self.key)
+
+    def test_missing_description_requires_resync(self):
+        event = StorageChanged("net", self.key, 10, 0, 1)
+        event.to_dict(self.sender)
+        with self.assertRaises(ResourceResyncRequired):
+            StorageChanged.from_dict(wire(event.to_dict(self.sender)), self.receiver)
+        payload = event.to_dict(self.sender, include_description=True)
+        self.assertEqual(StorageChanged.from_dict(wire(payload), self.receiver).resource_key, self.key)
+
+    def test_old_epoch_rebinding_and_wrong_network_are_rejected(self):
+        payload = StorageChanged("net", self.key, 10, 0, 1).to_dict(self.sender)
+        with self.assertRaises(ResourceResyncRequired):
+            StorageChanged.from_dict(payload, ResourceDescriptions("net", "session-B"))
+        with self.assertRaises(ValueError):
+            StorageChanged.from_dict(payload, ResourceDescriptions("other-net", "session-A"))
+        StorageChanged.from_dict(payload, self.receiver)
+        payload["resource_ref"]["description"] = ResourceKey.item("test:other").to_dict()
+        with self.assertRaises(ResourceResyncRequired):
+            StorageChanged.from_dict(payload, self.receiver)
+        self.assertEqual(self.receiver.resolve("session-A", 1), self.key)
+
+    def test_invalid_counts_do_not_register_description(self):
+        payload = StorageChanged("net", self.key, 10, 0, 1).to_dict(self.sender)
+        payload["reserved"] = 11
+        with self.assertRaises(ValueError):
+            StorageChanged.from_dict(payload, self.receiver)
+        with self.assertRaises(ResourceResyncRequired):
+            self.receiver.resolve("session-A", 1)
+
+    def test_bounded_mapping_does_not_reuse_serials(self):
+        table = ResourceDescriptions("net", "session", max_entries=1)
+        table.encode(self.key)
+        with self.assertRaises(ResourceResyncRequired):
+            table.encode(ResourceKey.item("test:other"))
+        self.assertEqual(table.resolve("session", 1), self.key)
+
+
+class RecoveryTests(unittest.TestCase):
+    def test_missing_resource_is_preserved_and_can_recover(self):
+        key = ResourceKey.item("missing:item", user_data={"v": [1]})
+        original = wire(ContainerEntry(key, 2 ** 30).to_dict())
+        entry = RestoredResourceEntry(original, lambda key: False)
+        self.assertFalse(entry.available)
+        with self.assertRaises(UnavailableResourceError):
+            entry.require_key()
+        with self.assertRaises(UnavailableResourceError):
+            unused = entry.count
+        with self.assertRaises(TypeError):
+            ContainerEntry(entry, 1)
+        original["count"] = 0
+        entry.to_dict()["resource_key"]["identity"]["user_data"]["v"].append(2)
+        recovered = entry.retry(lambda key: True)
+        self.assertEqual(recovered.require_key(), key)
+        self.assertEqual(recovered.count, 2 ** 30)
+        self.assertEqual(wire(recovered.to_dict()), entry.to_dict())
+
+    def test_unknown_version_and_malformed_entries_stay_opaque(self):
+        key = ResourceKey.item("test:item").to_dict()
+        key["schema_version"] = 99
+        key["future"] = [1, {"x": True}]
+        for payload in ({"resource_key": key, "count": 42},
+                        {"resource_key": {}, "count": -1},
+                        {"resource_key": key, "count": "unknown", "future": 1}):
+            entry = RestoredResourceEntry(wire(payload), lambda key: True)
+            self.assertFalse(entry.available)
+            self.assertEqual(wire(entry.to_dict()), payload)
+            self.assertTrue(entry.error)
+
+    def test_registry_failure_preserves_record(self):
+        payload = ContainerEntry(ResourceKey.fluid("test:fluid"), 25).to_dict()
+        def unavailable(key):
+            raise IOError("Registry offline")
+        entry = RestoredResourceEntry(payload, unavailable)
+        self.assertFalse(entry.available)
+        self.assertEqual(entry.to_dict(), payload)
+
+
+if __name__ == "__main__":
+    unittest.main()

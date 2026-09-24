@@ -12,7 +12,6 @@
 刻意**不在这里**调用任何引擎接口：选型依赖真实 SDK 能力验证（12-02 未完成），
 `ExtraDataRepository` 之类不得在未验证的情况下接线。
 """
-from __future__ import absolute_import, division, print_function
 
 from .migrations import (
     CURRENT_SCHEMA_VERSION,

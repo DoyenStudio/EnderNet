@@ -12,24 +12,26 @@
    自定义数据、`extraId`、`customTips` 全部参与比较；只拿物品 ID 作键会把
    附魔剑和普通剑合并成同一条库存记录。
 3. **空值差异保留。** `None`（字段不存在）与 `[]`/`{}`（字段存在但为空）
-   是不同身份，因为 `Item.marshal()` 只在非 None 时写出该字段，
-   还原出来的物品并不相同。
+   暂按不同身份处理。引擎默认值归一化必须经实测后在转换边界统一处理。
 
 单位尺度（架构规划 6.2）：以 `1/50 单位物` 为整数记账尺度。
 1 物品 = 50 微单位物，1 mB 流体 = 1 微单位物，介质容量按 `单位物 × 50` 记录。
 这样 25 mB 不会被截断为 0，也不会引入浮点累计误差。
 """
-from __future__ import absolute_import, division, print_function
 
-from fractions import Fraction
+from copy import deepcopy
+
+from . import settings
 
 try:  # pragma: no cover - 仅在 Python 2 下成立
-    _TEXT_TYPES = (str, unicode)  # noqa: F821
+    _TEXT_TYPES = (str, unicode)
+    _UNICODE = unicode
 except NameError:  # pragma: no cover - 仅在 Python 3 下成立
     _TEXT_TYPES = (str,)
+    _UNICODE = str
 
 try:  # pragma: no cover - 仅在 Python 2 下成立
-    _INT_TYPES = (int, long)  # noqa: F821
+    _INT_TYPES = (int, long)
 except NameError:  # pragma: no cover - 仅在 Python 3 下成立
     _INT_TYPES = (int,)
 
@@ -38,6 +40,8 @@ except NameError:  # pragma: no cover - 仅在 Python 3 下成立
 
 KIND_ITEM = "item"
 KIND_FLUID = "fluid"
+RESOURCE_SCHEMA_VERSION = 1
+
 
 #: 1 单位物 = 50 微单位物
 MICRO_UNITS_PER_UNIT = 50
@@ -78,13 +82,6 @@ def capacity_micro_units(units):
     return units * MICRO_UNITS_PER_UNIT
 
 
-def micro_units_to_units(micro_units):
-    # type: (int) -> Fraction
-    """微单位物换回「单位物」，用 Fraction 保证精确、不丢余数。"""
-    _require_count(micro_units, "微单位物")
-    return Fraction(micro_units, MICRO_UNITS_PER_UNIT)
-
-
 def _require_count(value, label):
     # type: (object, str) -> None
     if isinstance(value, bool) or not isinstance(value, _INT_TYPES):
@@ -119,18 +116,19 @@ def canonical_tree(value):
     if isinstance(value, float):
         return ("f", _float_text(value))
     if isinstance(value, _TEXT_TYPES):
-        return ("s", value)
+        return ("s", value if isinstance(value, _UNICODE) else value.decode("utf-8"))
     if isinstance(value, (list, tuple)):
         return ("l",) + tuple(canonical_tree(v) for v in value)
     if isinstance(value, dict):
         pairs = []
         for key in value:
             pairs.append((canonical_tree(key), canonical_tree(value[key])))
-        pairs.sort()
+        # UTF-8 order is identical on Python 2 narrow/wide and Python 3 Unicode.
+        pairs.sort(key=lambda pair: (
+            pair[0][0],
+            (pair[0][1] if pair[0][0] == "s" else tree_text(pair[0])).encode("utf-8"),
+        ))
         return ("d",) + tuple(pairs)
-    if isinstance(value, (set, frozenset)):
-        items = sorted(canonical_tree(v) for v in value)
-        return ("e",) + tuple(items)
     raise TypeError("自定义数据中出现无法规范化的类型: %r" % (type(value),))
 
 
@@ -144,8 +142,8 @@ def tree_text(node):
     parts = []
     for part in node:
         encoded = tree_text(part) if isinstance(part, tuple) else part
-        parts.append("%d:%s" % (len(encoded), encoded))
-    return "(" + "".join(parts) + ")"
+        parts.append(u"%d:%s" % (len(encoded.encode("utf-8")), encoded))
+    return u"(" + u"".join(parts) + u")"
 
 
 def _optional(node):
@@ -154,29 +152,23 @@ def _optional(node):
     return ("none", "") if node is None else ("some", node)
 
 
-def _enchant_tree(pairs):
-    # type: (list) -> tuple
+def _enchant_tree(pairs, mod=False, validate=False):
     """附魔是集合语义：顺序不影响身份，排序后比较。"""
+    if validate and not isinstance(pairs, (list, tuple)):
+        raise TypeError("Enchantments must be a sequence of pairs")
     out = []
     for pair in pairs:
-        pair = tuple(pair)
-        if len(pair) != 2:
-            raise ValueError("附魔条目应为 (id, level)，得到 %r" % (pair,))
+        if validate:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                raise ValueError("附魔条目应为 (id, level)，得到 %r" % (pair,))
+            if mod:
+                if not isinstance(pair[0], _TEXT_TYPES) or not pair[0]:
+                    raise ValueError("Mod enchantment ID must be nonempty text")
+            else:
+                _require_count(pair[0], "enchantment ID")
+            _require_count(pair[1], "enchantment level")
         out.append((canonical_tree(pair[0]), canonical_tree(pair[1])))
-    out.sort()
-    return tuple(out)
-
-
-def _mod_enchant_tree(pairs):
-    # type: (list) -> tuple
-    """模组附魔是 (名称, 等级) 的集合语义。"""
-    out = []
-    for pair in pairs:
-        pair = tuple(pair)
-        if len(pair) != 2:
-            raise ValueError("模组附魔条目应为 (name, level)，得到 %r" % (pair,))
-        out.append((canonical_tree(pair[0]), canonical_tree(pair[1])))
-    out.sort()
+    out.sort(key=lambda pair: (pair[0][1].encode("utf-8"), pair[1][1]))
     return tuple(out)
 
 
@@ -187,15 +179,15 @@ def _item_identity_tree(
     extra_id,
     user_data,
     durability,
+    validate=False,
 ):
-    # type: (object, object, object, object, object, object) -> tuple
     """六个字段固定顺序，各自区分 None 与空值。"""
     return (
-        ("enchant_data", _optional(None if enchant_data is None else _enchant_tree(enchant_data))),
+        ("enchant_data", _optional(None if enchant_data is None else _enchant_tree(enchant_data, validate=validate))),
         (
             "mod_enchant_data",
             _optional(
-                None if mod_enchant_data is None else _mod_enchant_tree(mod_enchant_data)
+                None if mod_enchant_data is None else _enchant_tree(mod_enchant_data, mod=True, validate=validate)
             ),
         ),
         ("custom_tips", _optional(None if custom_tips is None else canonical_tree(custom_tips))),
@@ -205,18 +197,6 @@ def _item_identity_tree(
     )
 
 
-def _plain(value):
-    # type: (object) -> object
-    """把元组转成列表，便于写出 JSON / NBT 友好的结构。"""
-    if isinstance(value, tuple):
-        return [_plain(v) for v in value]
-    if isinstance(value, list):
-        return [_plain(v) for v in value]
-    if isinstance(value, dict):
-        return dict((k, _plain(v)) for k, v in value.items())
-    return value
-
-
 # -- 资源键 ----------------------------------------------------------------
 
 
@@ -224,22 +204,54 @@ class ResourceKey(object):
     """一种资源（物品或流体）的身份。不含数量。
 
     请用 `ResourceKey.item(...)` / `ResourceKey.fluid(...)` 构造，
-    不要直接调用 `__init__`。
+    不要直接调用 `__init__`。作为字典键使用期间，调用方不得修改身份字段。
+    构造及导出时复制元数据；不通过属性拦截强制冻结对象。
     """
 
     __slots__ = ("_kind", "_name", "_aux", "_identity", "_raw")
 
-    def __init__(self, kind, name, aux=0, identity=None, raw_identity=None):
-        # type: (str, str, int, tuple, dict) -> None
-        if kind not in (KIND_ITEM, KIND_FLUID):
-            raise ValueError("未知资源种类: %r" % (kind,))
-        if not isinstance(name, _TEXT_TYPES) or not name:
-            raise ValueError("资源名称必须是非空字符串，得到 %r" % (name,))
+    def __init__(self, kind, name, aux, identity, raw_identity):
         self._kind = kind
         self._name = name
-        self._aux = int(aux)
+        self._aux = aux
         self._identity = identity
         self._raw = raw_identity
+
+    @classmethod
+    def _create(cls, kind, name, aux, raw, validate=False):
+        # 内部工厂只在 DEBUG 时检查；外部解码显式要求校验。
+        validate = validate or settings.DEBUG
+        if validate:
+            if kind not in (KIND_ITEM, KIND_FLUID):
+                raise ValueError("未知资源种类: %r" % (kind,))
+            if not isinstance(name, _TEXT_TYPES) or not name:
+                raise ValueError("资源名称必须是非空字符串，得到 %r" % (name,))
+            _require_count(aux, "aux")
+            if kind == KIND_FLUID and aux != 0:
+                raise ValueError("Fluid aux must be zero")
+            if not isinstance(raw, dict):
+                raise TypeError("Resource identity must be an object")
+        raw = deepcopy(raw)
+        fields = ITEM_IDENTITY_FIELDS if kind == KIND_ITEM else ("user_data",)
+        if validate and set(raw) - set(fields):
+            raise ValueError("Unknown resource identity fields")
+        raw = dict((field, raw.get(field)) for field in fields)
+        if validate and raw.get("user_data") is not None and not isinstance(raw["user_data"], dict):
+            raise TypeError("user_data must be an object or None")
+        if kind == KIND_ITEM:
+            if validate:
+                for field in ("custom_tips", "extra_id"):
+                    if raw[field] is not None and not isinstance(raw[field], _TEXT_TYPES):
+                        raise TypeError("%s must be text or None" % field)
+                if raw["durability"] is not None:
+                    _require_count(raw["durability"], "durability")
+            derived = _item_identity_tree(validate=validate, **raw)
+        else:
+            derived = (("user_data", _optional(
+                None if raw["user_data"] is None else canonical_tree(raw["user_data"])
+            )),)
+        name = name if isinstance(name, _UNICODE) else name.decode("utf-8")
+        return cls(kind, name, aux, derived, raw)
 
     # -- 构造 ----------------------------------------------------------
 
@@ -257,14 +269,6 @@ class ResourceKey(object):
     ):
         # type: (str, int, object, object, object, object, object, object) -> ResourceKey
         """构造物品键。参数与 `tooldelta.define.item.Item` 的字段对应。"""
-        identity = _item_identity_tree(
-            enchant_data,
-            mod_enchant_data,
-            custom_tips,
-            extra_id,
-            user_data,
-            durability,
-        )
         raw = {
             "enchant_data": enchant_data,
             "mod_enchant_data": mod_enchant_data,
@@ -273,16 +277,13 @@ class ResourceKey(object):
             "user_data": user_data,
             "durability": durability,
         }
-        return cls(KIND_ITEM, name, aux, identity, raw)
+        return cls._create(KIND_ITEM, name, aux, raw)
 
     @classmethod
     def fluid(cls, name, user_data=None):
         # type: (str, object) -> ResourceKey
         """构造流体键。流体没有附加值；自定义数据仍参与身份。"""
-        identity = (
-            ("user_data", _optional(None if user_data is None else canonical_tree(user_data))),
-        )
-        return cls(KIND_FLUID, name, 0, identity, {"user_data": user_data})
+        return cls._create(KIND_FLUID, name, 0, {"user_data": user_data})
 
     # -- 查询 ----------------------------------------------------------
 
@@ -305,8 +306,8 @@ class ResourceKey(object):
 
     @property
     def raw_identity(self):
-        """构造时的原始字段字典，用于无损还原。"""
-        return dict(self._raw or {})
+        """构造时元数据的独立副本，用于无损还原。"""
+        return deepcopy(self._raw)
 
     def is_item(self):
         return self._kind == KIND_ITEM
@@ -339,12 +340,13 @@ class ResourceKey(object):
         return hash(self._identity_tuple())
 
     def __repr__(self):
-        return "ResourceKey(%s)" % (self.canonical(),)
+        text = u"ResourceKey(%s)" % (self.canonical(),)
+        return text if _UNICODE is str else text.encode("utf-8")
 
     def canonical(self):
         # type: () -> str
         """稳定文本指纹，跨 py2/py3 一致，可用于存档与去重。"""
-        return "%s|%s|%d|%s" % (
+        return u"%s|%s|%d|%s" % (
             self._kind,
             self._name,
             self._aux,
@@ -357,19 +359,12 @@ class ResourceKey(object):
         # type: () -> dict
         """无损写出。`from_dict` 应当还原出相等的键。"""
         return {
+            "schema_version": RESOURCE_SCHEMA_VERSION,
             "kind": self._kind,
             "name": self._name,
             "aux": self._aux,
-            "identity": dict(
-                (field, _plain((self._raw or {}).get(field)))
-                for field in self._raw_fields()
-            ),
+            "identity": self.raw_identity,
         }
-
-    def _raw_fields(self):
-        if self._kind == KIND_FLUID:
-            return ("user_data",)
-        return ITEM_IDENTITY_FIELDS
 
     @classmethod
     def from_dict(cls, data):
@@ -377,29 +372,16 @@ class ResourceKey(object):
         """从 `to_dict()` 的输出还原。"""
         if not isinstance(data, dict):
             raise TypeError("资源键反序列化需要 dict，得到 %r" % (type(data),))
+        if set(data) - set(("schema_version", "kind", "name", "aux", "identity")):
+            raise ValueError("Unknown resource key fields")
+        version = data.get("schema_version", 1)  # 兼容首版无版本结构。
+        _require_count(version, "resource schema version")
+        if version != RESOURCE_SCHEMA_VERSION:
+            raise ValueError("Unsupported resource schema version: %s" % version)
         kind = data.get("kind")
         name = data.get("name")
         aux = data.get("aux", 0)
-        identity = data.get("identity") or {}
-        if kind == KIND_FLUID:
-            return cls.fluid(name, user_data=identity.get("user_data"))
-        if kind == KIND_ITEM:
-            return cls.item(
-                name,
-                aux=aux,
-                enchant_data=_pairs(identity.get("enchant_data")),
-                mod_enchant_data=_pairs(identity.get("mod_enchant_data")),
-                custom_tips=identity.get("custom_tips"),
-                extra_id=identity.get("extra_id"),
-                user_data=identity.get("user_data"),
-                durability=identity.get("durability"),
-            )
-        raise ValueError("未知资源种类: %r" % (kind,))
-
-
-def _pairs(value):
-    # type: (object) -> object
-    """把 [[a,b],...] 还原成 [(a,b),...]，其余原样返回。"""
-    if value is None:
-        return None
-    return [tuple(pair) for pair in value]
+        identity = data.get("identity", {})
+        if not isinstance(identity, dict):
+            raise TypeError("Resource identity must be an object")
+        return cls._create(kind, name, aux, identity, validate=True)

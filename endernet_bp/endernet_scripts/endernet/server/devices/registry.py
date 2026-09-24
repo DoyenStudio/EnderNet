@@ -13,9 +13,13 @@
 4. **卸载不是拆除。** 区块卸载只把记录标记为未加载并卸下运行时能力，
    保留记录与存档；不得执行掉落或删除记录。
 """
-from __future__ import absolute_import, division, print_function
 
-from ...common.identity import ChunkKey, DeviceRef, GenerationAllocator, NodeKey
+from ...common.identity import (  # noqa: F401 (ChunkKey/NodeKey 仅用于 # type: 注释)
+    ChunkKey,
+    DeviceRef,
+    GenerationAllocator,
+    NodeKey,
+)
 
 
 class DeviceRecord(object):
@@ -87,17 +91,49 @@ class DeviceRecord(object):
         )
 
 
+class RegisterKind(object):
+    """一次注册到底发生了什么。
+
+    必须区分这四种，否则下游无法判断该发布哪种生命周期变化——
+    早先 `register()` 在重复注册时**静默**把记录标回已加载，
+    随后的 `mark_loaded()` 就检测不到变化、不发 `LOADED`，
+    于是区块重载恢复了注册表却没通知拓扑。
+    """
+
+    #: 该位置原本没有记录，新建实例与新代次
+    CREATED = "created"
+    #: 已存在同方块的记录，且本来就是已加载——纯重复通知，什么都不用做
+    DUPLICATE = "duplicate"
+    #: 已存在同方块的记录，但之前是未加载——区块重新加载，代次不变
+    RELOADED = "reloaded"
+    #: 同位置换成了别的方块——旧实例终结，新实例新代次
+    REPLACED = "replaced"
+
+
 class RegisterOutcome(object):
-    """注册结果。`created=False` 表示这是一次重复事件，不应重复派发工作。"""
+    """注册结果。"""
 
-    __slots__ = ("record", "created", "replaced")
+    __slots__ = ("record", "kind", "replaced")
 
-    def __init__(self, record, created, replaced=None):
-        # type: (DeviceRecord, bool, DeviceRecord) -> None
+    def __init__(self, record, kind, replaced=None):
+        # type: (DeviceRecord, str, DeviceRecord) -> None
         self.record = record
-        self.created = created
+        self.kind = kind
         #: 被同位置新方块顶替掉的旧记录（若有）
         self.replaced = replaced
+
+    @property
+    def created(self):
+        """是否产生了**新的实例**。重复与重新加载都不是。"""
+        return self.kind in (RegisterKind.CREATED, RegisterKind.REPLACED)
+
+    def is_reload(self):
+        # type: () -> bool
+        return self.kind == RegisterKind.RELOADED
+
+    def is_duplicate(self):
+        # type: () -> bool
+        return self.kind == RegisterKind.DUPLICATE
 
     def __bool__(self):
         return self.created
@@ -105,7 +141,7 @@ class RegisterOutcome(object):
     __nonzero__ = __bool__
 
     def __repr__(self):
-        return "RegisterOutcome(%r, created=%s)" % (self.record, self.created)
+        return "RegisterOutcome(%r, %s)" % (self.record, self.kind)
 
 
 class DeviceRegistry(object):
@@ -122,6 +158,7 @@ class DeviceRegistry(object):
         self._unloaded = set()
         self.duplicate_events = 0
         self.replacements = 0
+        self.reloads = 0
 
     # -- 注册 / 注销 ---------------------------------------------------
 
@@ -132,20 +169,26 @@ class DeviceRegistry(object):
 
         existing = self._by_node.get(node_key)
         if existing is not None and existing.device_id == device_id:
-            # 同一位置同一方块的重复事件（放置事件叠加恢复补查等）。
             self.duplicate_events += 1
-            # 重新加载：把记录标回已加载，但不分配新代次——
-            # 方块实例没变，旧任务仍然有效。
             if not existing.loaded:
+                # 区块重新加载：把记录标回已加载，但不分配新代次——
+                # 方块实例没变，旧任务仍然有效。
+                # 必须与「纯重复」区分开：只返回一个 created=False 的话，
+                # 下游会把重新加载当成重复吞掉，拓扑就收不到 LOADED。
                 existing.loaded = True
                 self._unloaded.discard(node_key)
-            return RegisterOutcome(existing, False)
+                self.reloads += 1
+                return RegisterOutcome(existing, RegisterKind.RELOADED)
+            # 同一位置同一方块的重复通知（放置事件叠加复查等）。
+            return RegisterOutcome(existing, RegisterKind.DUPLICATE)
 
         replaced = None
+        kind = RegisterKind.CREATED
         if existing is not None:
             # 同位置换了别的方块：旧实例就此终结。
             replaced = self._drop(node_key)
             self.replacements += 1
+            kind = RegisterKind.REPLACED
 
         generation = self.allocator.allocate(node_key)
         record = DeviceRecord(
@@ -157,7 +200,7 @@ class DeviceRegistry(object):
         )
         self._by_node[node_key] = record
         self._by_chunk.setdefault(node_key.chunk_key(), set()).add(node_key)
-        return RegisterOutcome(record, True, replaced)
+        return RegisterOutcome(record, kind, replaced)
 
     def unregister(self, node_key):
         # type: (NodeKey) -> DeviceRecord
@@ -314,4 +357,5 @@ class DeviceRegistry(object):
             "unloaded": len(self._unloaded),
             "duplicate_events": self.duplicate_events,
             "replacements": self.replacements,
+            "reloads": self.reloads,
         }

@@ -31,10 +31,12 @@
 「临时网络编号及汇总索引可以重建」一致。负载域与处理器群的编号
 则由成员位置直接推导，因此是确定且可复现的。
 """
-from __future__ import absolute_import, division, print_function
 
 from ...common.definitions import CATEGORY_BASEBAND, CATEGORY_CONTROLLER
-from ...common.identity import FACING_NAMES, NodeKey
+from ...common.identity import (  # noqa: F401 (NodeKey 仅用于 # type: 注释)
+    FACING_NAMES,
+    NodeKey,
+)
 from ...common.protocol import BlockReason, Reason, TopologyChanged
 from ..runtime.lifecycle import ChangeKind
 from .node import NetworkNode, PortRuleSet, opposite_face
@@ -992,9 +994,14 @@ class TopologyService(object):
             # 否则「删掉桥接基带后分量拆开」永远不会被发现。
             old_id = self._membership.get(seed)
             if old_id is None:
-                # 从来没有归属过，也没有邻居：没有可重建的东西。
+                # 位置上没有节点、当前也没有归属：没有可重建的东西。
+                #
+                # **不要顺手把它从 `_touched` 里删掉。** 同一个位置也可能刚刚
+                # 作为原分量的成员被扫过（邻接的重建先跑完，成员桶里还留着它），
+                # 那样删掉就把这条 `DETACHED` 迁移通知吞了——而 03 靠它卸载
+                # 已拆除设备的服务。真的从来没归属过的位置不会因此多出通知：
+                # `_diff_membership` 要求「上一份快照里它属于某个分量」才发。
                 self._pending_keys.discard(seed)
-                self._touched.discard(seed)
                 return False
             leftovers = [
                 key

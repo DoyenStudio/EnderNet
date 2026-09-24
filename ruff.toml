@@ -1,0 +1,49 @@
+# Ruff 配置
+#
+# 本仓库的**业务代码目标运行时是网易 ModSDK 的 Python 2.7**，不是 Python 3。
+# 离线测试跑在 3.11 上（见 endernet_tests/py2check.py），但源码本身必须
+# 同时是合法且语义正确的 py2.7。
+#
+# Ruff 默认按 Python 3 推断，其中一批建议**照做就会把模组改坏或改错**，
+# 因此在这里逐条关掉并写明原因。Ruff 已不支持 target-version = "py27"
+# （最低 py37），所以只能 ignore，不能靠 target-version 一劳永逸。
+#
+# 这里**只关掉 py3/py2 差异导致的误报**，其余规则保持开启——
+# 未使用的导入、未使用的变量之类是真问题，应当在代码里修，而不是在这里屏蔽。
+
+# `tooldelta` 是 vendored 的上游子模块，不归本仓库维护；
+# 它的代码风格由上游决定，在这里报错只会淹没我们自己代码的问题。
+extend-exclude = ["endernet_bp/endernet_scripts/tooldelta"]
+
+lint.ignore = [
+    # `# coding=utf-8` 在 py2 下是**必需**的：源码含大量中文注释，
+    # 没有这一行 py2 会按 ASCII 解析并直接 SyntaxError。
+    # Ruff 认为 py3 默认就是 UTF-8 所以多余——对 py3 成立，对本仓库不成立。
+    # 这条是 auto-fixable 的：误点「全部修复」会静默删掉它。
+    "UP009",
+
+    # `class X(object)` 在 py2 下是**必需**的：不写就是旧式类，
+    # 与 `super()`、`property`、`__slots__` 的配合行为都不同。
+    # 同样是 auto-fixable，误修会让类的行为悄悄变化。
+    "UP004",
+
+    # py2 里 `IOError` 与 `OSError` 是**两个不同的异常**；
+    # 只有 py3 才把 IOError 并成 OSError 的别名。
+    # 按 Ruff 的建议替换会改变异常捕获范围。
+    "UP024",
+
+    # `open()` → `Path.open()` 是 py3 的 pathlib 写法，与本仓库无关。
+    "UP020",
+
+    # 本仓库统一用 `%` 格式化（与 tooldelta 一致，py2.7 下最直接）。
+    # `.format()` 在 py2.7 也能用，但换成它只是风格迁移，没有收益。
+    "UP031",
+
+    # `%`→f-string 是 **py3.6+ 语法**，py2 下根本无法解析。
+    # 这条如果被自动修复，模组会直接加载失败。
+    "UP032",
+
+    # `__slots__` 的排列按字段语义分组（如 identity 按 kind/name/aux/identity/raw），
+    # 不按字母序。改序会打乱阅读顺序，收益为零。
+    "RUF023",
+]

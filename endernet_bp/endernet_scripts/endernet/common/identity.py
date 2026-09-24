@@ -11,10 +11,9 @@
 架构规划 5.1 把这一层记为 `NodeKey = (dimension, x, y, z)`：
 `NodeKey` 定位世界位置，`DeviceRef` 再附加实例代次。
 """
-from __future__ import absolute_import, division, print_function
 
 try:  # pragma: no cover - 仅在 Python 2 下成立
-    _INT_TYPES = (int, long)  # noqa: F821
+    _INT_TYPES = (int, long)
 except NameError:  # pragma: no cover - 仅在 Python 3 下成立
     _INT_TYPES = (int,)
 

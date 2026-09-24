@@ -21,7 +21,6 @@
    不得声称成功——否则恢复流程会以为已经落袋。
 3. **不确定不重放。** `UNCERTAIN` 是给恢复流程的输入，不是重试许可。
 """
-from __future__ import absolute_import, division, print_function
 
 from ...common.protocol import (
     ContainerCapabilities,
@@ -29,7 +28,8 @@ from ...common.protocol import (
     TransferReceipt,
     TransferStatus,
 )
-from ...common.resource_key import ResourceKey
+from ...common.resource_key import ResourceKey, _require_count
+from ...common import settings
 
 
 class ContainerEntry(object):
@@ -39,10 +39,10 @@ class ContainerEntry(object):
 
     def __init__(self, resource_key, count):
         # type: (ResourceKey, int) -> None
-        if not isinstance(resource_key, ResourceKey):
-            raise TypeError("entries 需要 ResourceKey，得到 %r" % (type(resource_key),))
-        if count < 0:
-            raise ValueError("数量不能为负: %r" % (count,))
+        if settings.DEBUG:
+            if not isinstance(resource_key, ResourceKey):
+                raise TypeError("entries 需要 ResourceKey，得到 %r" % (type(resource_key),))
+            _require_count(count, "container count")
         self.resource_key = resource_key
         self.count = count
 

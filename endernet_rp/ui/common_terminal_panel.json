@@ -1,0 +1,219 @@
+{
+    "content": {
+        "type": "panel",
+        "size": [
+            180,
+            220.0
+        ],
+        "controls": [
+            {
+                "bg@common.dialog_background_opaque": {
+                    "layer": 0,
+                    "texture": "textures/ui/endernet/background_panel_opaque"
+                }
+            },
+            {
+                "close@endernet_ui_common.close_btn": {
+                    "$pressed_button_name": "#EnderNetTerminal.close",
+                    "anchor_from": "top_right",
+                    "anchor_to": "top_right",
+                    "bindings": [],
+                    "button_mappings": [
+                        {
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed",
+                            "to_button_id": "$pressed_button_name"
+                        }
+                    ],
+                    "layer": 30,
+                    "offset": [
+                        -4,
+                        4
+                    ]
+                }
+            },
+            {
+                "title": {
+                    "type": "image",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "size": [
+                        74.0,
+                        16.0
+                    ],
+                    "layer": 1,
+                    "texture": "textures/ui/endernet/device_title_background",
+                    "controls": [
+                        {
+                            "title_text": {
+                                "type": "label",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    3.0,
+                                    3.0
+                                ],
+                                "color": [
+                                    0.3058823529411765,
+                                    0.2549019607843137,
+                                    0.3137254901960784
+                                ],
+                                "font_scale_factor": 1.2,
+                                "font_type": "default",
+                                "text": "tile.endernet:common_terminal_panel.name",
+                                "text_alignment": "center"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "stat_bar@endernet_ui_common.device_stat_bar": {
+                    "offset": [
+                        84,
+                        1
+                    ]
+                }
+            },
+            {
+                "terminal_items_scroll@common.scrolling_panel": {
+                    "$background_nine_slice_buttom": 0,
+                    "$background_nine_slice_left": 0,
+                    "$background_nine_slice_right": 0,
+                    "$background_nine_slice_top": 0,
+                    "$background_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$box_nine_slice_buttom": 0,
+                    "$box_nine_slice_left": 0,
+                    "$box_nine_slice_right": 0,
+                    "$box_nine_slice_top": 0,
+                    "$box_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$is_background_nine_slice": false,
+                    "$is_box_nine_slice": false,
+                    "$is_track_nine_slice": false,
+                    "$scroll_background_image_control": "netease_editor_template_namespace.scroll_background_image",
+                    "$scroll_background_texture": "textures/ui/endernet/background_bottom",
+                    "$scroll_box_mouse_image_control": "netease_editor_template_namespace.scroll_box_image",
+                    "$scroll_box_texture": "textures/ui/newTouchScrollBox",
+                    "$scroll_box_touch_image_control": "netease_editor_template_namespace.scroll_box_image",
+                    "$scroll_track_image_control": "netease_editor_template_namespace.scroll_track_image",
+                    "$scroll_track_texture": "textures/ui/ScrollRail",
+                    "$scrolling_content": "endernet_ui_common.custom_item_slots_grid",
+                    "$show_background": true,
+                    "$track_nine_slice_buttom": 0,
+                    "$track_nine_slice_left": 0,
+                    "$track_nine_slice_right": 0,
+                    "$track_nine_slice_top": 0,
+                    "$track_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "layer": 9,
+                    "offset": [
+                        0,
+                        32
+                    ],
+                    "size": [
+                        162,
+                        80
+                    ]
+                }
+            },
+            {
+                "inventory@endernet_terminal_inventory.inventory": {
+                    "offset": [
+                        0,
+                        2
+                    ]
+                }
+            },
+            {
+                "interaction_hint": {
+                    "type": "label",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0,
+                        40
+                    ],
+                    "size": [
+                        156,
+                        40
+                    ],
+                    "layer": 10,
+                    "color": [
+                        0.31,
+                        0.31,
+                        0.31
+                    ],
+                    "text": "模拟物品栏\n先点来源，再点目标\n再点来源取消"
+                }
+            },
+            {
+                "unavaliable_mask": {
+                    "type": "input_panel",
+                    "anchor_from": "bottom_middle",
+                    "anchor_to": "bottom_middle",
+                    "size": [
+                        "100%+0px",
+                        "100%+-20px"
+                    ],
+                    "layer": 20,
+                    "controls": [
+                        {
+                            "image": {
+                                "type": "image",
+                                "size": [
+                                    "100%+0px",
+                                    "100%+0px"
+                                ],
+                                "alpha": 0.5,
+                                "clip_direction": "left",
+                                "clip_ratio": 0.0,
+                                "color": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                ],
+                                "texture": "textures/ui/white_background",
+                                "tiled": true
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "main": {
+        "type": "screen",
+        "absorbs_input": true,
+        "button_mappings": [
+            {
+                "to_button_id": "#EnderNetTerminal.close",
+                "from_button_id": "button.menu_cancel",
+                "mapping_type": "pressed"
+            }
+        ],
+        "is_showing_menu": true,
+        "render_game_behind": true,
+        "controls": [
+            {
+                "terminal@common_terminal_panel_ui.content": {}
+            }
+        ]
+    },
+    "namespace": "common_terminal_panel_ui"
+}

@@ -15,7 +15,6 @@
 
 规则编号含义见 `plans/tasks/00. 开发流程与任务总览.md` 的决策台账。
 """
-from __future__ import absolute_import, division, print_function
 
 
 # -- 未配置哨兵 ------------------------------------------------------------

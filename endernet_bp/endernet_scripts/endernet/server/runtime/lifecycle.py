@@ -17,10 +17,9 @@
 4. **迟到的事件不得误伤新设备。** 移除事件按 (位置, 方块种类) 匹配，
    位置已被别的方块占用时该事件无效。
 """
-from __future__ import absolute_import, division, print_function
 
 from ...common.identity import NodeKey
-from .events import EventKind, NormalizedEvent
+from .events import EventKind, NormalizedEvent  # noqa: F401 (NormalizedEvent 仅用于 # type: 注释)
 
 
 class ChangeKind(object):
@@ -101,16 +100,39 @@ class DeviceLifecycle(object):
         self.stats = LifecycleStats()
         #: 已补查过的区块，避免重复扫描（重复扫描不得重复挂载）
         self._backfilled = set()
+        #: 设备变化的唯一发布出口。拓扑等下游只认这一个口子。
+        self._change_sink = None
+        self.published = 0
+
+    # -- 变化发布 ------------------------------------------------------
+
+    def set_change_sink(self, sink):
+        # type: (object) -> None
+        """设置变化消费者。接收**一批**变化（`list`），通常是 bootstrap 的 `_emit`。
+
+        **所有**设备状态变更都必须经过这里，包括启动补查与手动重扫。
+        早先补查把变化清单直接丢掉，于是补查出来的设备只进了注册表、
+        没进拓扑——注册表里有 2 台设备，拓扑里对应分量却是 None。
+        """
+        self._change_sink = sink
+
+    def _publish(self, changes):
+        # type: (list) -> list
+        """发布一批变化。返回同一批，便于调用方继续使用。"""
+        if changes and self._change_sink is not None:
+            self._change_sink(changes)
+        self.published += len(changes)
+        return changes
 
     # -- 事件入口 ------------------------------------------------------
 
     def handle(self, event):
         # type: (NormalizedEvent) -> list
-        """处理一条事件，返回设备变化清单。"""
+        """处理一条事件，发布并返回设备变化清单。"""
         handler = _HANDLERS.get(event.kind)
         if handler is None:
             return []
-        return handler(self, event)
+        return self._publish(handler(self, event))
 
     # -- 各类事件 ------------------------------------------------------
 
@@ -133,6 +155,45 @@ class DeviceLifecycle(object):
         except Exception:
             return None
 
+    def _changes_from_outcome(self, outcome, node_key, device_id, source):
+        # type: (object, NodeKey, str, str) -> list
+        """把注册结果翻译成生命周期变化。
+
+        **放置与补查共用这一个出口**，两条路径因此不可能对同一件事
+        给出不同的结论。注册结果必须区分新增/替换/重新加载/纯重复：
+        只看 `created` 布尔值的话，「重新加载」会被当成重复而丢掉，
+        拓扑就永远收不到 `LOADED`。
+        """
+        if outcome.is_reload():
+            self.stats.loaded += 1
+            return [
+                LifecycleChange(
+                    ChangeKind.LOADED, node_key, device_id, outcome.record.ref, source
+                )
+            ]
+        if outcome.is_duplicate():
+            self.stats.duplicate_place += 1
+            return []
+
+        changes = []
+        if outcome.replaced is not None:
+            changes.append(
+                LifecycleChange(
+                    ChangeKind.REMOVED,
+                    node_key,
+                    outcome.replaced.device_id,
+                    outcome.replaced.ref,
+                    "replaced",
+                )
+            )
+        self.stats.placed += 1
+        changes.append(
+            LifecycleChange(
+                ChangeKind.ADDED, node_key, device_id, outcome.record.ref, source
+            )
+        )
+        return changes
+
     def _on_place(self, event):
         node_key = event.data.get("node_key")
         device_id = event.data.get("device_id")
@@ -148,29 +209,11 @@ class DeviceLifecycle(object):
             facing=self._resolve_facing(node_key, event.data.get("facing")),
             tick=event.tick,
         )
-        if not outcome.created:
-            self.stats.duplicate_place += 1
-            return []
-
-        self.stats.placed += 1
-        changes = [
-            LifecycleChange(
-                ChangeKind.ADDED, node_key, device_id, outcome.record.ref,
-                event.data.get("source", ""),
-            )
-        ]
-        if outcome.replaced is not None:
-            changes.insert(
-                0,
-                LifecycleChange(
-                    ChangeKind.REMOVED,
-                    node_key,
-                    outcome.replaced.device_id,
-                    outcome.replaced.ref,
-                    "replaced",
-                ),
-            )
-        changes.extend(self._neighbor_changes(node_key))
+        changes = self._changes_from_outcome(
+            outcome, node_key, device_id, event.data.get("source", "")
+        )
+        if changes:
+            changes.extend(self._neighbor_changes(node_key))
         return changes
 
     def _on_remove(self, event):
@@ -231,15 +274,20 @@ class DeviceLifecycle(object):
                 )
         return out
 
-    def _on_chunk_loaded(self, event):
-        chunk_key = event.data.get("chunk_key")
-        if chunk_key is None:
-            return []
+    def restore_chunk(self, chunk_key, block_entities=()):
+        # type: (ChunkKey, list) -> list
+        """恢复一个区块内的设备。
+
+        **两条发现路径（区块加载事件、启动补查/手动重扫）共用这一个实现**，
+        因此不可能对同一件事给出不同结论。
+
+        修复「重载不通知拓扑」的关键**不是**这里的顺序，而是注册结果能区分
+        `RELOADED` 与 `DUPLICATE`：只要区分了，两条路径任一条都能发出 LOADED。
+        顺序仍按「先已知、后补查」写，因为这样语义更直白，且当引擎给出的
+        `blockEntities` 列表不完整时，已知设备一定会被 `mark_loaded` 这条
+        独立路径兜住（该列表的完整性是尚未验证的风险点）。
+        """
         changes = []
-        # 先按事件里给出的方块实体补查一遍
-        for entry in event.data.get("block_entities") or ():
-            changes.extend(self._backfill_entry(chunk_key, entry))
-        # 再处理该区块中已记录设备的重新加载
         for record in self.registry.records_in_chunk(chunk_key):
             if self.registry.mark_loaded(record.node_key):
                 self.stats.loaded += 1
@@ -248,6 +296,15 @@ class DeviceLifecycle(object):
                         ChangeKind.LOADED, record.node_key, record.device_id, record.ref
                     )
                 )
+        for entry in block_entities or ():
+            changes.extend(self._backfill_entry(chunk_key, entry))
+        return changes
+
+    def _on_chunk_loaded(self, event):
+        chunk_key = event.data.get("chunk_key")
+        if chunk_key is None:
+            return []
+        changes = self.restore_chunk(chunk_key, event.data.get("block_entities"))
         self._backfilled.add(chunk_key.as_key())
         return changes
 
@@ -285,10 +342,10 @@ class DeviceLifecycle(object):
         outcome = self.registry.register(
             node_key, device_id, facing=self._resolve_facing(node_key)
         )
-        if not outcome.created:
-            return []
-        self.stats.placed += 1
-        return [LifecycleChange(ChangeKind.ADDED, node_key, device_id, outcome.record.ref, "backfill")]
+        changes = self._changes_from_outcome(outcome, node_key, device_id, "backfill")
+        if changes:
+            changes.extend(self._neighbor_changes(node_key))
+        return changes
 
     @staticmethod
     def _node_key_of(chunk_key, entry):
@@ -340,10 +397,11 @@ class DeviceLifecycle(object):
         for chunk_key in chunk_keys:
             if skip_done and chunk_key.as_key() in self._backfilled:
                 continue
-            for entry in self._entries_in_chunk(chunk_key):
-                self._backfill_entry(chunk_key, entry)
-            for record in self.registry.records_in_chunk(chunk_key):
-                self.registry.mark_loaded(record.node_key)
+            # 与区块加载事件走同一条恢复路径，并且**经同一个出口发布**——
+            # 否则补查出来的设备只进注册表、进不了拓扑。
+            self._publish(
+                self.restore_chunk(chunk_key, self._entries_in_chunk(chunk_key))
+            )
             self._backfilled.add(chunk_key.as_key())
             self.stats.backfilled_chunks += 1
             # 让出控制权，由调度器决定何时继续

@@ -21,7 +21,6 @@
 使「同帧多个事件描述同一件事」只产生一条工作，
 这同时是 01 验收里「放置一次、重复事件、重复恢复都只注册一次」的第一道闸门。
 """
-from __future__ import absolute_import, division, print_function
 
 from ...common.identity import ChunkKey, NodeKey
 
@@ -133,12 +132,31 @@ class NormalizedEvent(object):
 
     def coalesce_key(self):
         # type: () -> object
-        """同帧合并的键。不可合并的种类返回 None（永不合并）。"""
+        """合并键。不可合并的种类返回 None（永不合并）。
+
+        键里必须带上足以区分**不同操作**的字段。只按位置合并会把
+        「同位置换成另一种方块」误当成重复通知——那是一次替换，
+        丢了就等于方块换了却没被记录。
+        """
         if self.kind not in _COALESCIBLE:
             return None
         node_key = self.data.get("node_key")
         if node_key is None:
             return None
+
+        if self.kind in (EventKind.PLACE, EventKind.REMOVE, EventKind.TRY_DESTROY):
+            return (self.kind, node_key.as_key(), self.data.get("device_id"))
+
+        if self.kind == EventKind.NEIGHBOR_CHANGED:
+            neighbor_key = self.data.get("neighbor_key")
+            return (
+                self.kind,
+                node_key.as_key(),
+                neighbor_key.as_key() if neighbor_key is not None else None,
+                self.data.get("to_device_id"),
+            )
+
+        # BLOCK_ENTITY_TICK 之类只是「该醒醒了」，同位置重复无信息量。
         return (self.kind, node_key.as_key())
 
     def to_dict(self):
@@ -163,18 +181,24 @@ class NormalizedEvent(object):
 
 
 class EventQueue(object):
-    """有界事件队列，按位置合并同类事件。
+    """有界事件队列，**只合并紧邻的重复通知**。
 
-    合并策略：同一帧内、同一种类、同一位置只保留**最后一条**。
-    对放置而言后到者携带更新后的信息；对移除而言只要知道「没了」就够。
+    合并规则：仅当新事件与队列**最后一条**的事件种类和位置都相同才合并，
+    否则一律入队。这样既去掉「一次放置被两条引擎事件通知两遍」的冗余，
+    又绝不改变生命周期阶段的先后顺序。
+
+    为什么不能按「类型+位置」全局合并：`放置 A → 拆除 A → 放置 A`
+    是「方块被拆掉又放回」，最终必须存在。全局合并会把两次放置压成
+    拆除之前的一次，于是处理顺序变成 `放置 → 拆除`，设备凭空消失——
+    方块明明在地上，系统却认为它不存在。
+
+    同理，被别的位置隔开的重复通知也不合并：那同样是在重排顺序。
     """
 
     def __init__(self, max_pending=4096):
         # type: (int) -> None
         self.max_pending = int(max_pending)
         self._pending = []
-        #: `coalesce_key -> NormalizedEvent`，指向 `_pending` 中的当前代表
-        self._index = {}
         self._sequence = 0
         self.pushed = 0
         self.coalesced = 0
@@ -188,13 +212,11 @@ class EventQueue(object):
         self.pushed += 1
 
         key = event.coalesce_key()
-        if key is not None:
-            existing = self._index.get(key)
-            if existing is not None:
-                # 用新事件替换旧代表，位置不变，保持先来后到的处理顺序。
-                index = self._pending.index(existing)
-                self._pending[index] = event
-                self._index[key] = event
+        if key is not None and self._pending:
+            last = self._pending[-1]
+            if last.coalesce_key() == key:
+                # 背靠背的同一阶段重复通知：保留最后一条（信息更新）。
+                self._pending[-1] = event
                 self.coalesced += 1
                 return True
 
@@ -203,8 +225,6 @@ class EventQueue(object):
             return False
 
         self._pending.append(event)
-        if key is not None:
-            self._index[key] = event
         return True
 
     def extend(self, events):
@@ -225,24 +245,16 @@ class EventQueue(object):
         if limit is None or limit >= len(self._pending):
             batch = self._pending
             self._pending = []
-            self._index = {}
             return batch
 
         batch = self._pending[:limit]
         self._pending = self._pending[limit:]
-        # 重建索引，指向仍然留在队列里的代表
-        self._index = {}
-        for event in self._pending:
-            key = event.coalesce_key()
-            if key is not None:
-                self._index[key] = event
         return batch
 
     def clear(self):
         # type: () -> int
         count = len(self._pending)
         self._pending = []
-        self._index = {}
         return count
 
     def __len__(self):

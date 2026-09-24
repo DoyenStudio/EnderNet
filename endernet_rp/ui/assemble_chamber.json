@@ -1,0 +1,130 @@
+{
+    "namespace": "assemble_chamber_ui",
+    "content": {
+        "type": "panel",
+        "layer": 1,
+        "controls": [
+            {
+                "flying_item_renderer@common.flying_item_renderer": {
+                    "layer": 11,
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "container_gamepad_helpers@common.container_gamepad_helpers": {
+                    "layer": 3
+                }
+            },
+            {
+                "selected_item_details_factory@common.selected_item_details_factory": {
+                    "layer": 4,
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "item_lock_notification_factory@common.item_lock_notification_factory": {
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "root_panel@common.root_panel": {
+                    "controls": [
+                        {
+                            "bg@common.dialog_background_opaque": {
+                                "controls": [
+                                    {
+                                        "close@common.close_button": {
+                                            "size": [
+                                                18,
+                                                18
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "main": {
+                                            "type": "panel",
+                                            "controls": [
+                                                {
+                                                    "title": {
+                                                        "type": "image",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "size": [
+                                                            74.0,
+                                                            16.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "texture": "textures/ui/endernet/background_panel_2_flat",
+                                                        "controls": [
+                                                            {
+                                                                "title_text": {
+                                                                    "type": "label",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        3.0,
+                                                                        3.0
+                                                                    ],
+                                                                    "color": [
+                                                                        0.3058823529411765,
+                                                                        0.2549019607843137,
+                                                                        0.3137254901960784
+                                                                    ],
+                                                                    "font_scale_factor": 1.2,
+                                                                    "font_type": "default",
+                                                                    "text": "tile.endernet:assemble_chamber.name",
+                                                                    "text_alignment": "center"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "stat_bar@endernet_ui_common.device_stat_bar": {
+                                                        "offset": [
+                                                            84,
+                                                            1
+                                                        ]
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "inventory@endernet_container_common.inventory": {
+                                            "anchor_from": "bottom_middle",
+                                            "anchor_to": "bottom_middle",
+                                            "offset": [
+                                                0,
+                                                -4
+                                            ]
+                                        }
+                                    }
+                                ],
+                                "layer": 0,
+                                "texture": "textures/ui/endernet/background_panel_opaque"
+                            }
+                        }
+                    ],
+                    "layer": 0,
+                    "size": [
+                        174,
+                        200
+                    ]
+                }
+            }
+        ]
+    },
+    "main@common.inventory_screen_common": {
+        "$screen_content": "assemble_chamber_ui.content"
+    }
+}

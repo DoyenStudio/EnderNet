@@ -1,0 +1,322 @@
+{
+    "content": {
+        "type": "panel",
+        "layer": 1,
+        "controls": [
+            {
+                "flying_item_renderer@common.flying_item_renderer": {
+                    "layer": 11,
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "container_gamepad_helpers@common.container_gamepad_helpers": {
+                    "layer": 3
+                }
+            },
+            {
+                "selected_item_details_factory@common.selected_item_details_factory": {
+                    "layer": 4,
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "item_lock_notification_factory@common.item_lock_notification_factory": {
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "root_panel@common.root_panel": {
+                    "controls": [
+                        {
+                            "bg@common.dialog_background_opaque": {
+                                "controls": [
+                                    {
+                                        "inventory_selected_icon_button@common.inventory_selected_icon_button": {}
+                                    },
+                                    {
+                                        "gamepad_cursor_button@common.gamepad_cursor_button": {
+                                            "visible": true
+                                        }
+                                    },
+                                    {
+                                        "close@common.close_button": {
+                                            "size": [
+                                                18,
+                                                18
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "main": {
+                                            "type": "panel",
+                                            "controls": [
+                                                {
+                                                    "title": {
+                                                        "type": "image",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "size": [
+                                                            74.0,
+                                                            16.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "texture": "textures/ui/endernet/device_title_background",
+                                                        "controls": [
+                                                            {
+                                                                "title_text": {
+                                                                    "type": "label",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        3.0,
+                                                                        3.0
+                                                                    ],
+                                                                    "color": [
+                                                                        0.3058823529411765,
+                                                                        0.2549019607843137,
+                                                                        0.3137254901960784
+                                                                    ],
+                                                                    "font_scale_factor": 1.2,
+                                                                    "font_type": "default",
+                                                                    "text": "tile.endernet:bus_item_io.name",
+                                                                    "text_alignment": "center"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "stat_bar@endernet_ui_common.device_stat_bar": {
+                                                        "offset": [
+                                                            84,
+                                                            1
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "config_tip_text": {
+                                                        "type": "label",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            6.0,
+                                                            24.0
+                                                        ],
+                                                        "color": [
+                                                            0.2588235294117647,
+                                                            0.2588235294117647,
+                                                            0.2588235294117647
+                                                        ],
+                                                        "font_scale_factor": 1.2,
+                                                        "font_type": "default",
+                                                        "text": "配置"
+                                                    }
+                                                },
+                                                {
+                                                    "items": {
+                                                        "type": "panel",
+                                                        "offset": [
+                                                            0.0,
+                                                            -24.0
+                                                        ],
+                                                        "size": [
+                                                            0.0,
+                                                            0.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "grid": {
+                                                                    "type": "grid",
+                                                                    "offset": [
+                                                                        0.0,
+                                                                        -18.0
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "collection_name": "test_grid",
+                                                                    "grid_dimensions": [
+                                                                        9,
+                                                                        1
+                                                                    ],
+                                                                    "grid_item_template": "bus_item_io_ui.item_section"
+                                                                }
+                                                            },
+                                                            {
+                                                                "container_items@endernet_container_common.container_grid_items": {
+                                                                    "anchor_from": "center",
+                                                                    "anchor_to": "center",
+                                                                    "grid_dimensions": [
+                                                                        9,
+                                                                        1
+                                                                    ],
+                                                                    "offset": [
+                                                                        0,
+                                                                        0
+                                                                    ],
+                                                                    "size": [
+                                                                        "default",
+                                                                        "100.0%c"
+                                                                    ]
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "inventory@endernet_container_common.inventory": {
+                                            "anchor_from": "bottom_middle",
+                                            "anchor_to": "bottom_middle",
+                                            "offset": [
+                                                0,
+                                                -4
+                                            ]
+                                        }
+                                    }
+                                ],
+                                "layer": 0,
+                                "texture": "textures/ui/endernet/background_panel_opaque"
+                            }
+                        }
+                    ],
+                    "layer": 0,
+                    "size": [
+                        174,
+                        200
+                    ]
+                }
+            }
+        ]
+    },
+    "item_section": {
+        "type": "panel",
+        "size": [
+            18.0,
+            18.0
+        ],
+        "controls": [
+            {
+                "section_bg": {
+                    "type": "image",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "size": [
+                        18.0,
+                        18.0
+                    ],
+                    "layer": 1,
+                    "clip_direction": "left",
+                    "clip_ratio": 0.0,
+                    "texture": "textures/ui/endernet/container_item_slot_background",
+                    "controls": [
+                        {
+                            "arrow_img": {
+                                "type": "image",
+                                "anchor_from": "bottom_middle",
+                                "anchor_to": "bottom_middle",
+                                "size": [
+                                    12.0,
+                                    12.0
+                                ],
+                                "layer": 1,
+                                "clip_direction": "left",
+                                "clip_ratio": 0.0,
+                                "texture": "textures/ui/endernet/arrow_down"
+                            }
+                        },
+                        {
+                            "item_renderer": {
+                                "type": "custom",
+                                "renderer": "inventory_item_renderer",
+                                "size": [
+                                    16.0,
+                                    16.0
+                                ],
+                                "layer": 1,
+                                "visible": false,
+                                "property_bag": {
+                                    "#item_id_aux": 131072
+                                }
+                            }
+                        },
+                        {
+                            "btn@common.button": {
+                                "type": "button",
+                                "$control_alpha": 1.0,
+                                "$default_texture": "",
+                                "$hover_texture": "",
+                                "$is_new_nine_slice": false,
+                                "$label_color": [
+                                    1,
+                                    1,
+                                    1
+                                ],
+                                "$label_font_scale_factor": 1.0,
+                                "$label_font_size": "large",
+                                "$label_layer": 3,
+                                "$label_offset": [
+                                    0,
+                                    0
+                                ],
+                                "$label_text": "Button",
+                                "$nine_slice_buttom": 0,
+                                "$nine_slice_left": 0,
+                                "$nine_slice_right": 0,
+                                "$nine_slice_top": 0,
+                                "$nineslice_size": [
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                "$pressed_texture": "",
+                                "$texture_layer": 2,
+                                "layer": 2,
+                                "button_mappings": [],
+                                "default_control": "default",
+                                "hover_control": "hover",
+                                "is_handle_button_move_event": true,
+                                "pressed_control": "pressed",
+                                "bindings": [
+                                    {
+                                        "binding_type": "collection_details",
+                                        "binding_collection_name": "",
+                                        "binding_condition": "always_when_visible"
+                                    }
+                                ],
+                                "controls": [
+                                    {
+                                        "default@netease_editor_template_namespace.default": {}
+                                    },
+                                    {
+                                        "hover@netease_editor_template_namespace.hover": {}
+                                    },
+                                    {
+                                        "pressed@netease_editor_template_namespace.pressed": {}
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "main@common.inventory_screen_common": {
+        "$screen_content": "bus_item_io_ui.content"
+    },
+    "namespace": "bus_item_io_ui"
+}

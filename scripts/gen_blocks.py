@@ -11,7 +11,6 @@
 资源产出，不是运行时玩法数值——把两者混在一起会让 `definitions.py`
 背上大量与本模组规则无关的美术参数。
 """
-from __future__ import absolute_import, division, print_function
 
 import argparse
 import io
