@@ -463,7 +463,8 @@ class ServiceFactory(object):
         只看身份曾经够用（04 之前默认表里全是替身，谁换了谁就是正式实现），
         但 04 落地后 SCHEDULER 的**默认构造器本身就是正式实现**——它仍然
         「是默认的那一个」，却显然不再是替身，于是被误报成「待任务 04 实现」。
-        第二个条件就是为了把它排除掉。
+        第二个条件就是为了把它排除掉。05 的 STORAGE 同理，因此它也从
+        `default_pending_tasks()` 移出去了。
 
         **不构造实例**：构造器只被承诺可以接受一个运行时（`replace()` 只查
         callable），要求它必须能用 `None` 构造会给 05/09 的实现加一条没写进
@@ -517,12 +518,14 @@ def default_pending_tasks():
     # type: () -> dict
     """`service_id -> 尚未实现该服务的任务编号`。**只列替身槽位。**
 
-    SCHEDULER 不在表里：它的调度核心已在任务 04 落地。能源仍在，
-    因为耗能结算与 EN 计量是 04 的另一半，尚未开始。
+    SCHEDULER 不在表里：调度核心已在任务 04 落地。STORAGE 也不在表里：
+    它的脚本领域层已在任务 05 落地（挂载、汇总索引、预留、受控读写）。
+    **存储仍然不能用**——但拦住它的是 ENERGY（网络级准入的
+    `NETWORK_CRITICAL_SERVICES`），不是「存储没写」。
+    能源仍在，因为耗能结算与 EN 计量是 04 的另一半，尚未开始。
     """
     return {
         ServiceId.ENERGY: "04",
-        ServiceId.STORAGE: "05",
         ServiceId.FACTORY: "09",
     }
 
@@ -532,23 +535,31 @@ def default_builders():
     """`service_id -> callable(runtime) -> NetworkService` 的默认装配。
 
     返回的是**构造器**而不是实例：同一份装配表要能为多个运行时各造一套。
-    SCHEDULER 是正式实现，其余三个槽位仍是替身。
+    SCHEDULER 与 STORAGE 是正式实现，能源与工厂仍是替身。
 
-    **导入写在函数体里是有意的。** 本模块是契约层，`ticking.py` 是实现层，
-    后者在模块级 import 本模块；若在这里也模块级 import 回去就成环了。
-    而 `default_builders()` 只在构造工厂/注册表时被调用，不在导入期，
-    因此函数内导入不引入环——**不要把它提到模块顶部**。
+    **裸构造的 `StorageService(None)` 是合法的**：`default_stand_ins()` 会用
+    `None` 构造每个槽位，此时它 `is_ready()` 为假、业务给 `SERVICE_NOT_READY`
+    ——那是「装了但还没接上驱动器」，不是「这个功能没写」。
+    真正带有驱动器的实例由启动层用 `_storage_builder()` 注入。
+
+    **导入写在函数体里是有意的。** 本模块是契约层，`ticking.py` 与
+    `storage/service.py` 是实现层，它们在模块级 import 本模块；若在这里也
+    模块级 import 回去就成环了。而 `default_builders()` 只在构造工厂/注册表时
+    被调用，不在导入期，因此函数内导入不引入环——**不要把它提到模块顶部**。
     """
+    from ..storage.service import StorageService
     from .ticking import SchedulerService
 
     pending = default_pending_tasks()
     notes = {
         ServiceId.ENERGY: "EN 供用能与能源预留",
-        ServiceId.STORAGE: "介质、库存、预留与限速",
         ServiceId.FACTORY: "样板、规划、订单与执行",
     }
-    out = {ServiceId.SCHEDULER: SchedulerService}
-    for service_id in sorted(ServiceId.ALL - frozenset([ServiceId.SCHEDULER])):
+    out = {
+        ServiceId.SCHEDULER: SchedulerService,
+        ServiceId.STORAGE: StorageService,
+    }
+    for service_id in sorted(ServiceId.ALL - frozenset(out)):
         out[service_id] = _stand_in_builder(
             service_id, pending[service_id], notes[service_id]
         )

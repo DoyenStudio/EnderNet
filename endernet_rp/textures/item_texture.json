@@ -1,0 +1,12 @@
+{
+    "resource_pack_name": "vanilla",
+    "texture_name": "atlas.items",
+    "texture_data": {
+        "endernet:singleside_tape": {
+            "textures": "textures/items/endernet_singleside_tape"
+        },
+        "endernet:softdisk_1k": {
+            "textures": "textures/items/endernet_softdisk_1k"
+        }
+    }
+}

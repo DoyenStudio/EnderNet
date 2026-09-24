@@ -43,6 +43,7 @@ from endernet.common.definitions import (  # noqa: E402
     CATEGORY_PROCESSOR_CONNECTOR,
     CATEGORY_STORAGE,
     CATEGORY_TERMINAL,
+    STORAGE_DRIVER_SLOT_COUNT,
     DefinitionSet,
 )
 
@@ -86,6 +87,20 @@ TICKING = {
     "endernet:assemble_chamber": True,
     "endernet:parallel_processor": True,
     "endernet:energy_input_interface": True,
+}
+
+#: 声明 `netease:block_container` 的方块：`device_id -> screen_name`。
+#:
+#: 声明了容器组件就必须同时把 `description.base_block` 设为 `netease_container`，
+#: 否则引擎不会按自定义容器处理它（见 build_block_json）。
+#:
+#: **槽数不在这里写**，取自 `definitions.STORAGE_DRIVER_SLOT_COUNT`：
+#: 领域层的 `DriverPolicy` 读同一份，两处各写一个数字迟早会分叉成
+#: 「界面上 10 格、领域层只认 8 格」。
+#:
+#: 屏幕名形如 `namespace.screenName`，指向资源包里已存在的 `main` 屏幕。
+CONTAINERS = {
+    "endernet:storage_driver": "storage_driver_ui.main",
 }
 
 #: 需要朝向状态的设备（放置方向决定端口朝向）。
@@ -156,6 +171,17 @@ def short_name(device_id):
     return device_id.split(":", 1)[1]
 
 
+def slot_count():
+    # type: () -> int
+    """存储驱动器槽数。
+
+    与领域层的 `DriverPolicy` 读**同一份**定义表取值（`STORAGE_DRIVER_SLOT_COUNT`，
+    R10 未定案的测试替身）。方块的 `container_size` 必须等于它，否则界面上能放
+    10 格、领域层只认 8 格。
+    """
+    return int(STORAGE_DRIVER_SLOT_COUNT.value)
+
+
 def block_file_name(device_id):
     # type: (str) -> str
     """方块 JSON 的文件名：`endernet:foo_bar` -> `endernet_foo_bar.json`。
@@ -205,6 +231,15 @@ def build_block_json(device_id, definition):
     # 设备拆除将完全无感。（运行时另有 AddBlocksToBlockRemoveListener 兜底。）
     components["netease:listen_block_remove"] = {"value": True}
 
+    # 自定义容器。引擎原生驱动背包界面与槽位物品，因此方块自身的
+    # 方块实体数据里会出现 `Items` —— 那才是驱动器 10 个槽位的真实存放处。
+    if device_id in CONTAINERS:
+        components["netease:block_container"] = {
+            "custom_description": definition.label,
+            "screen_name": CONTAINERS[device_id],
+            "container_size": int(slot_count()),
+        }
+
     if device_id in TIPS:
         components["netease:custom_tips"] = {"value": "\n§7" + TIPS[device_id]}
 
@@ -212,6 +247,9 @@ def build_block_json(device_id, definition):
         "category": CREATIVE_CATEGORY,
         "identifier": device_id,
     }
+    if device_id in CONTAINERS:
+        # 写在 description 而不是 components 里——这是引擎认的字段位置。
+        description["base_block"] = "netease_container"
     if DIRECTIONAL.get(device_id):
         description["traits"] = {
             "minecraft:placement_direction": {

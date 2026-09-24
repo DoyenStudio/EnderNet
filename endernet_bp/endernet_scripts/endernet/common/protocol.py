@@ -141,6 +141,25 @@ class Reason(object):
     INSUFFICIENT_STOCK = "insufficient_stock"
     RATE_LIMITED = "rate_limited"
 
+    # 介质与驱动器（05）
+    #: 目标物品不是已登记的介质型号（R10 决定最终接受范围）。
+    #: 与 `UNSUPPORTED` 分开：这里说的是**这个物品不对**，不是这个功能没做。
+    NOT_A_MEDIUM = "not_a_medium"
+    #: 同一介质被要求挂到第二处。同一介质只有一份权威状态，不重复计入库存。
+    MEDIUM_DUPLICATE_MOUNT = "duplicate_medium_mount"
+    #: 该介质并不挂在当前驱动器上。与「物品不是介质」是两回事：
+    #: 前者是挂载状态不对，后者是型号不对。
+    MEDIUM_NOT_MOUNTED = "medium_not_mounted"
+    #: 介质记录无法恢复（未知 schema、缺型号、损坏）。内容原样保留但禁止交易——
+    #: **不得当作空盘覆盖**，也不得复制成两个新 ID。
+    MEDIUM_UNRECOVERED = "medium_unrecovered"
+    #: 驱动器已被拆除，介质失去归属。本轮不自行决定掉落或保管方式。
+    MEDIUM_ORPHANED = "medium_orphaned"
+    #: 目标槽位已被占用。
+    SLOT_OCCUPIED = "slot_occupied"
+    #: 驱动器所在区块未加载。**不等于它被拆掉了**（与 `MASTER_UNLOADED` 同一条纪律）。
+    DRIVER_UNLOADED = "driver_unloaded"
+
     # 外部容器（13）
     CONTAINER_REFUSED = "container_refused"
     CONTAINER_PARTIAL = "container_partial"

@@ -696,11 +696,10 @@ class TestRuntimeWiring(unittest.TestCase):
         self.assertEqual(
             sorted(report["assembly"]["stand_ins"]),
             [
-                # 调度核心已在任务 04 落地，不再列在这里；
+                # 调度核心（04）与存储领域层（05）都已落地，不再列在这里；
                 # 能源的耗能结算与 EN 计量属 04 的另一半，仍未开始。
                 "替身服务 energy（待任务 04 实现）",
                 "替身服务 factory（待任务 09 实现）",
-                "替身服务 storage（待任务 05 实现）",
             ],
         )
         self.assertGreaterEqual(len(report["assembly"]["unresolved"]), 1)

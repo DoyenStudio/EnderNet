@@ -22,6 +22,11 @@
             "netease:listen_block_remove": {
                 "value": true
             },
+            "netease:block_container": {
+                "custom_description": "存储驱动器",
+                "screen_name": "storage_driver_ui.main",
+                "container_size": 10
+            },
             "netease:custom_tips": {
                 "value": "\n§7放入存储介质，为网络提供仓储容量。"
             }
@@ -29,6 +34,7 @@
         "description": {
             "category": "endernet",
             "identifier": "endernet:storage_driver",
+            "base_block": "netease_container",
             "traits": {
                 "minecraft:placement_direction": {
                     "enabled_states": [

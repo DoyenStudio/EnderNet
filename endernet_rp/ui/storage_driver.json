@@ -111,6 +111,7 @@
                                                             5,
                                                             2
                                                         ],
+                                                        "maximum_grid_items": 10,
                                                         "offset": [
                                                             0,
                                                             -40

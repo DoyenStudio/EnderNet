@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 1,
+            "netease:customtips": {
+                "value": "\n§7容量：32 类型 1728 单位物\n§7读 16 单位物/s，写 16 单位物/s"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:softdisk_1k"
+        }
+    }
+}

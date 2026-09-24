@@ -393,6 +393,23 @@ PER_DISK_ENERGY = Value(1, note="存储驱动器：每块硬盘 1 EN/t（blocks.
 PER_MEMORY_ENERGY = Value(8, note="内存槽：每根内存条 8 EN/t（blocks.md）")
 
 
+# -- 存储驱动器配置 --------------------------------------------------------
+
+#: 存储驱动器槽数。**这一份同时是两处的取值来源**：
+#: `server/devices/storage_driver.py` 的 `DriverPolicy`，以及方块的
+#: `netease:block_container.container_size`（由 `scripts/gen_blocks.py` 读出）。
+#: 写在一处是刻意的：两边各写一个 10 迟早会分叉成「界面 10 格、领域层认 8 格」，
+#: 而那种错误在离线测试里看不出来。
+#:
+#: 槽数本身是 R10 未定案的玩法（UI 格数不代表已定规则），因此这里是标注过的测试替身。
+STORAGE_DRIVER_SLOT_COUNT = Value(
+    10,
+    unresolved="R10",
+    is_test_value=True,
+    note="驱动器槽数；也是方块容器格数（gen_blocks.py 从同一条读出）",
+)
+
+
 # -- 介质表（items.md）-----------------------------------------------------
 
 MEDIUMS = (
@@ -405,6 +422,21 @@ MEDIUMS = (
     MediumSpec("endernet:harddisk_4k", "4K硬盘", 64, 2 ** 16, 32, 24),
     # items.md 中标识即为 harddisk_16（不是 harddisk_16k），保持原样不改拼写。
     MediumSpec("endernet:harddisk_16", "16K硬盘", 64, 2 ** 18, 48, 32),
+)
+
+#: **已注册为游戏物品**的介质型号。
+#:
+#: 与 `MEDIUMS` 分开是有意的：`MEDIUMS` 是规格表（介质有哪些、多大容量），
+#: 这一份是**内容注册的分阶段清单**——哪些型号已经真的做成了游戏物品
+#: （`endernet_bp/netease_items_beh/` 里有条目、资源包里有贴图、语言文件里有名字）。
+#:
+#: R10 的型号表尚未列全（items.md 里省略号代表的型号不算已定），因此
+#: 这里先创建**容量并列最小的两个**，其余型号目前只有规格、不能作为物品获得。
+#: 领域层不读这一份：驱动器接受哪些型号由 `DriverPolicy.accepted_models` 决定，
+#: 两者是不同的规则。
+ITEM_MEDIUMS = (
+    "endernet:singleside_tape",
+    "endernet:softdisk_1k",
 )
 
 
@@ -632,15 +664,35 @@ DEVICES = (
 class DefinitionSet(object):
     """设备与介质的运行时索引，外加未定案数值的守卫。"""
 
-    def __init__(self, devices=None, mediums=None, config=None):
-        # type: (tuple, tuple, dict) -> None
+    #: 非设备、非介质的配置项。`iter_values()` 会把它们与设备数值一起报出来，
+    #: 因此未定案的配置同样躲不过 `assert_no_silent_unresolved()`——
+    #: 不必在别处再维护一份未定项清单。
+    DEFAULT_CONFIG = {
+        "storage_driver.slot_count": STORAGE_DRIVER_SLOT_COUNT,
+    }
+
+    def __init__(self, devices=None, mediums=None, config=None, item_mediums=None):
+        # type: (tuple, tuple, dict, tuple) -> None
         self.devices = {}
         self.mediums = {}
-        self.config = dict(config or {})
+        self.item_mediums = tuple(
+            ITEM_MEDIUMS if item_mediums is None else item_mediums
+        )
+        self.config = dict(self.DEFAULT_CONFIG)
+        self.config.update(config or {})
         for definition in devices if devices is not None else DEVICES:
             self._add_unique(self.devices, definition.id, definition, "设备")
         for spec in mediums if mediums is not None else MEDIUMS:
             self._add_unique(self.mediums, spec.id, spec, "介质")
+        # 只在用默认介质表时校验：测试常传自制的 mediums 子集来构造夹具，
+        # 那时「物品注册表里的型号必须存在」这条约束并不适用（它约束的是
+        # 交付出去的这份真实定义表）。
+        if mediums is None:
+            for medium_id in self.item_mediums:
+                if medium_id not in self.mediums:
+                    raise ValueError(
+                        "已注册为物品的介质型号不在介质表中: %s" % (medium_id,)
+                    )
 
     @staticmethod
     def _add_unique(table, key, item, label):
@@ -661,12 +713,45 @@ class DefinitionSet(object):
         # type: (str) -> bool
         return device_id in self.devices
 
+    def has_medium(self, medium_id):
+        # type: (str) -> bool
+        return medium_id in self.mediums
+
     def get_medium(self, medium_id):
         # type: (str) -> MediumSpec
         try:
             return self.mediums[medium_id]
         except KeyError:
             raise KeyError("未注册的介质标识: %s" % (medium_id,))
+
+    def get_item_medium(self, medium_id):
+        # type: (str) -> MediumSpec
+        """取**已注册为游戏物品**的介质规格。
+
+        与 `get_medium` 分开：规格存在不等于玩家能拿到它（见 `ITEM_MEDIUMS`）。
+        """
+        if medium_id not in self.item_mediums:
+            raise KeyError("介质 %s 尚未注册为游戏物品" % (medium_id,))
+        return self.get_medium(medium_id)
+
+    def item_medium_specs(self):
+        # type: () -> list
+        """已注册为物品的介质规格，顺序与 `item_mediums` 一致。"""
+        return [self.get_medium(medium_id) for medium_id in self.item_mediums]
+
+    def config_value(self, key, default=None):
+        # type: (str, object) -> object
+        """取配置项的**裸值**（`Value` 解包）。缺失返回 `default`。
+
+        未解包的话调用方会拿到 `Value` 对象，`int()` 时才炸——那时已经离
+        出错的地方很远了。
+        """
+        item = self.config.get(key)
+        if item is None:
+            return default
+        if isinstance(item, Value):
+            return item.value
+        return item
 
     def category_of(self, device_id):
         # type: (str) -> str

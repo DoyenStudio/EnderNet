@@ -28,14 +28,22 @@ from .adapters.world import ToolDeltaWorldAdapter
 from .application import ApplicationService
 from .devices.catalog import DeviceCatalog
 from .devices.registry import DeviceRegistry
+from .devices.storage_driver import DriverPolicy, StorageDriverStore
 from .network.admission import AdmissionService
 from .network.runtime import RuntimeManager
-from .network.services import AssemblyProfile, ServiceId, ServiceFactory
+from .network.services import (
+    AssemblyProfile,
+    ServiceFactory,
+    ServiceId,
+    ServiceRegistry,
+)
 from .network.ticking import SchedulerService
 from .network.topology import TopologyService
 from .runtime.events import EventQueue
 from .runtime.lifecycle import DeviceLifecycle
 from .runtime.scheduler import LogicalClock, SchedulerPolicy
+from .storage.medium import MediumPolicy
+from .storage.service import StorageService
 
 
 def _scheduler_builder(policy):
@@ -51,6 +59,47 @@ def _scheduler_builder(policy):
         return SchedulerService(runtime, policy=policy)
 
     return build
+
+
+def _storage_builder(drivers, medium_policy):
+    # type: (object, object) -> object
+    """把**驱动器状态集合**绑进存储服务的构造器。
+
+    服务槽位是逐运行时各造一份的，而驱动器与介质是**跨网络共享**的
+    （架构 §3：驱动器状态不能依赖某个网络实例存活）。因此注入的不是
+    「每个网络一份的状态」，而是同一个集合——两个网络同时挂同一块盘时
+    由服务侧的重复挂载检测拦住。
+    """
+    def build(runtime):
+        # type: (object) -> StorageService
+        return StorageService(runtime, drivers=drivers, policy=medium_policy)
+
+    return build
+
+
+class _PolicyBundle(object):
+    """把几份未定案策略合成一份，交给 `assert_profile_ok` 一起检查。
+
+    与 `BandwidthPolicy.unresolved_report()` 同形（列表元素是带 `field`/
+    `rule`/`value` 的字典），因此不用改装配层的检查代码。
+    少合一份的代价是正式验收时漏报一条未定规则——那正是全局约束 7 要防的。
+    """
+
+    __slots__ = ("_policies",)
+
+    def __init__(self, policies):
+        # type: (tuple) -> None
+        self._policies = tuple(item for item in policies if item is not None)
+
+    def unresolved_report(self):
+        # type: () -> list
+        out = []
+        for policy in self._policies:
+            report = getattr(policy, "unresolved_report", None)
+            if report is None:
+                continue
+            out.extend(report())
+        return out
 
 
 class ServerBootstrap(object):
@@ -78,8 +127,10 @@ class ServerBootstrap(object):
         session_check=None,
         clock=None,
         scheduler_policy=None,
+        driver_policy=None,
+        medium_policy=None,
     ):
-        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object) -> None
+        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
         #: 逻辑时钟（04-01）。**它是业务时间的唯一依据**，由 `drive_once()`
         #: 每帧推进一步，经 `context["tick"]` 下传给各服务。注入自有实例即可
@@ -118,15 +169,40 @@ class ServerBootstrap(object):
         self.scheduler_policy = (
             scheduler_policy if scheduler_policy is not None else SchedulerPolicy()
         )
+        #: 驱动器策略（R10）与介质策略（R07/R08）。同样**全进程各一份**：
+        #: `unresolved_report()` 报出来的必须就是真正生效的那份数值，
+        #: 各存一份的代价是诊断与实际行为对不上（全局约束 7）。
+        self.driver_policy = (
+            driver_policy if driver_policy is not None else DriverPolicy()
+        )
+        self.medium_policy = (
+            medium_policy if medium_policy is not None else MediumPolicy()
+        )
+        #: 驱动器状态集合与介质权威表。**由启动层持有并注入网络服务**
+        #: （架构 §3）：驱动器与介质的权威状态不能只活在某个网络的存储服务里，
+        #: 网络断开、主控移除、运行时重建都不等于设备和库存消失。
+        #: 它在 `admission` 之后构造，因为槽位变化要能立刻通知负载重算。
+        self.drivers = StorageDriverStore(
+            self.definitions,
+            self.registry,
+            policy=self.driver_policy,
+            medium_policy=self.medium_policy,
+            on_load_changed=self._note_driver_load_changed,
+        )
         #: 网络服务装配表。`ServiceFactory` 为**每个运行时**各造一套实例，
         #: 因此两个网络绝不共享库存或订单状态（03 验收 #4）。
         if service_factories is not None:
             self.service_factories = service_factories
         else:
-            # 默认装配表 + 把上面那份策略绑进调度槽位。只覆盖这一个槽位，
+            # 默认装配表 + 把上面那两份策略绑进调度与存储槽位。只覆盖这两个，
             # 其余槽位仍是默认替身（`ServiceFactory` 从默认表起步）。
             self.service_factories = ServiceFactory(
-                {ServiceId.SCHEDULER: _scheduler_builder(self.scheduler_policy)}
+                {
+                    ServiceId.SCHEDULER: _scheduler_builder(self.scheduler_policy),
+                    ServiceId.STORAGE: _storage_builder(
+                        self.drivers, self.medium_policy
+                    ),
+                }
             )
         # 运行时管理器**必须在 `AdmissionService` 之后构造**：两者都订阅
         # 拓扑发布，准入先订阅才能保证每次发布时带宽判定已按新版本刷新过，
@@ -270,6 +346,9 @@ class ServerBootstrap(object):
         # 停机时把未处理的唤醒信号也丢掉：它们是「这一帧该醒醒了」，
         # 留着会在下次启动的第一帧集中投递一批早已过期的信号。
         self.event_binder.clear_wakes()
+        # 驱动器与介质只标为未加载：**不写仓库、不清内容**。介质的内容是
+        # 玩家资产，停机不是「把它们丢了」的时机（写盘由任务 12 决定）。
+        self.drivers.mark_all_unloaded()
         self._backfill_generator = None
         self._backfill_finished = False
         self.started = False
@@ -385,6 +464,15 @@ class ServerBootstrap(object):
         self._backfill_finished = False
         self.lifecycle.forget_backfill()
 
+    def _note_driver_load_changed(self, node_key):
+        # type: (object) -> int
+        """插拔介质后立刻重算该设备所在负载域的名额（05 要求）。
+
+        **必须早于后续交易**：否则刚插上的一块盘还按旧准入放行，
+        而旧准入不知道这台设备的需求变了。
+        """
+        return self.admission.note_device_load_changed(node_key)
+
     def _emit(self, changes):
         # type: (list) -> None
         for change in changes:
@@ -392,6 +480,9 @@ class ServerBootstrap(object):
             # 拓扑是设备变化的固定消费者：它只标脏，真正的重建在 `tick()` 里
             # 有限步完成，因此这里不会拖慢事件消费。
             self.topology.on_lifecycle_change(change)
+            # 驱动器状态也从**同一批变化**推导，不另开观察者通道——
+            # 两条路径分叉就会出「拓扑知道设备没了、驱动器还以为在」。
+            self.drivers.observe(change)
         if self.change_sink is not None:
             for change in changes:
                 self.change_sink(change)
@@ -442,15 +533,38 @@ class ServerBootstrap(object):
             "runtimes": self.runtimes.diagnostics(),
             "application": self.application.diagnostics(),
             "scheduler": self.scheduler_diagnostics(),
+            "storage": self.storage_diagnostics(),
             "world": self.world.diagnostics(),
             "scope_note": (
-                "已装配任务 01 的设备层、任务 02 的拓扑/负载层、任务 03 的主控/运行时，"
-                "以及任务 04 的调度核心（逻辑时钟、到期队列、跨网轮转与唤醒）；"
-                "装配档位 %s，存储、工厂与能源服务仍是替身（任务 04 的另一半/05/09），"
-                "因此**网络业务命令会被拒绝并给出 service_absent**——这是尚未实现的"
-                "诚实结果，不是故障。" % (self.assembly_profile,)
+                "已装配任务 01 的设备层、任务 02 的拓扑/负载层、任务 03 的主控/运行时、"
+                "任务 04 的调度核心（逻辑时钟、到期队列、跨网轮转与唤醒），"
+                "以及任务 05 的存储领域层（介质、驱动器挂卸、汇总索引、预留、受控读写）；"
+                "装配档位 %s。存储的**真实物品交接、存档后端与界面同步尚未接入**"
+                "（任务 06/12/11），能源与工厂仍是替身（任务 04 的另一半/09），"
+                "因此**网络业务命令仍会被拒绝并给出 service_absent**——"
+                "拦住它们的是能源那一项网络级准入，不是存储没写。"
+                "这是尚未实现的诚实结果，不是故障。" % (self.assembly_profile,)
             ),
         }
+
+    def storage_diagnostics(self):
+        # type: () -> dict
+        """存储领域层的诊断（05）。
+
+        分两块：驱动器与介质（启动层持有）与未定规则。两者都放在这里，
+        是因为 `debug_query("assembly")` 与状态栏需要的正是这两个问题的答案：
+        「设备上现在是什么状况」与「哪些规则还没定案」。
+        """
+        report = self.drivers.diagnostics()
+        report["unresolved"] = (
+            self.driver_policy.unresolved_report() + self.medium_policy.unresolved_report()
+        )
+        report["scope_note"] = (
+            "介质挂载、汇总索引、预留与受控读写已实现并通过离线断言；"
+            "真实玩家装卸（06）、存档后端（12）与界面同步（11）未接入，"
+            "因此这些能力目前只有领域层的证据，没有游戏内的证据。"
+        )
+        return report
 
     def scheduler_diagnostics(self):
         # type: () -> dict
@@ -490,8 +604,42 @@ class ServerBootstrap(object):
                 "替身服务 %s（待任务 %s 实现）" % (service_id, pending[service_id])
                 for service_id in sorted(pending)
             ],
-            "unresolved": self.admission.policy.unresolved_report(),
+            # 三份策略一起报：只报带宽那一份会让 R07/R08/R10 在正式验收时漏网。
+            "unresolved": self.policy_bundle().unresolved_report(),
+            "storage_unresolved": (
+                self.driver_policy.unresolved_report()
+                + self.medium_policy.unresolved_report()
+            ),
         }
+
+    def policy_bundle(self):
+        # type: () -> _PolicyBundle
+        """全部未定案策略的合成视图（供诊断与正式验收一起检查）。"""
+        return _PolicyBundle(
+            [self.admission.policy, self.driver_policy, self.medium_policy]
+        )
+
+    def assert_assembly_ok(self):
+        # type: () -> list
+        """正式验收用的装配期检查。**不会被自动调用**（与 03 同一条理由：
+        抛错会让正式档整个起不来，而运行期拦截给出的「待确认」更有用）。
+
+        把三份策略一起交出去，否则 `PRODUCTION` 档会放行带未定案数值的存储，
+        而「漏报」正是全局约束 7 最怕的形态。
+
+        替身清单取自**实际装配**：有网络时用它的注册表，还没有网络时退回到
+        一份裸注册表（它构造的就是默认装配表，与工厂的默认部分同源）。
+        """
+        policy = self.policy_bundle()
+        registries = [runtime.services for runtime in self.runtimes.runtimes()]
+        if not registries:
+            registries = [ServiceRegistry()]
+        problems = []
+        for registry in registries:
+            for item in registry.assert_profile_ok(self.assembly_profile, policy):
+                if item not in problems:
+                    problems.append(item)
+        return problems
 
     def submit_command(self, command):
         # type: (object) -> object

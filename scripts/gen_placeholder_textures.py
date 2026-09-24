@@ -24,10 +24,15 @@ from gen_blocks import (  # noqa: E402
     short_name,
     texture_key,
 )
+from gen_items import item_texture_name  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS_ROOT = os.path.join(REPO, "endernet_bp", "endernet_scripts")
 OUT_DIR = os.path.join(REPO, "endernet_rp", "textures", "endernet", "devices")
+#: 介质物品的贴图**必须**单独一个目录。放进 devices/ 会立刻撞上
+#: `test_assets.TestResourcePackMapping.test_no_unreferenced_device_textures`——
+#: 那条测试拿地形图集的引用去比对该目录下的每张图。
+ITEM_OUT_DIR = os.path.join(REPO, "endernet_rp", "textures", "items")
 
 if SCRIPTS_ROOT not in sys.path:
     sys.path.insert(0, SCRIPTS_ROOT)
@@ -177,6 +182,20 @@ FALLBACK_GLYPH = (
     "........",
 )
 
+#: 介质物品的占位配色与图形。介质不是设备分类，因此不复用 PALETTE——
+#: 免得将来给某个分类调色时把物品贴图一起改掉。
+ITEM_PALETTE = ("#8B6A3F", "#4A3820", "#E0C79C")
+ITEM_GLYPH = (
+    "########",
+    "#......#",
+    "#.####.#",
+    "#.####.#",
+    "#......#",
+    "#.####.#",
+    "#......#",
+    "########",
+)
+
 
 def parse_color(text):
     text = text.lstrip("#")
@@ -225,13 +244,16 @@ def write_png(path, pixels):
         handle.write(blob)
 
 
-def build_pixels(category, index_in_category):
-    """16x16 占位图：底色 + 深色边框 + 分类图形 + 序号圆点。"""
-    base_hex, border_hex, glyph_hex = PALETTE.get(category, FALLBACK_PALETTE)
+def render_pixels(palette, pattern, pips):
+    """16x16 占位图：底色 + 深色边框 + 图形 + 序号圆点。
+
+    设备方块与介质物品走的是同一个渲染器，只有配色、图形和圆点数不同。
+    """
+    base_hex, border_hex, glyph_hex = palette
     base = parse_color(base_hex)
     border = parse_color(border_hex)
     glyph = parse_color(glyph_hex)
-    # 顶部一条略亮的横带，让同类方块在物品栏里更容易区分
+    # 顶部一条略亮的横带，让同类贴图在物品栏里更容易区分
     band = blend(base, glyph, 0.25)
 
     rows = []
@@ -246,21 +268,33 @@ def build_pixels(category, index_in_category):
                 row.append(base)
         rows.append(row)
 
-    pattern = GLYPHS.get(category, FALLBACK_GLYPH)
     for gy, line in enumerate(pattern):
         for gx, mark in enumerate(line):
             if mark == "#":
                 rows[4 + gy][4 + gx] = glyph
 
-    # 右下角的序号圆点：同分类内第几个（0-4 个点）
-    pips = min(index_in_category, 4)
-    for index in range(pips):
+    # 右下角的序号圆点：同组内第几个（0-4 个点）
+    for index in range(min(pips, 4)):
         px = SIZE - 3 - index * 2
         py = SIZE - 3
         if 0 < px < SIZE - 1:
             rows[py][px] = glyph
 
     return rows
+
+
+def build_pixels(category, index_in_category):
+    """设备方块的占位图。"""
+    return render_pixels(
+        PALETTE.get(category, FALLBACK_PALETTE),
+        GLYPHS.get(category, FALLBACK_GLYPH),
+        index_in_category,
+    )
+
+
+def build_item_pixels(index_in_items):
+    """介质物品的占位图。"""
+    return render_pixels(ITEM_PALETTE, ITEM_GLYPH, index_in_items)
 
 
 def main(argv=None):
@@ -289,7 +323,21 @@ def main(argv=None):
             write_png(path, build_pixels(category, index))
             written.append(name)
 
-    print("已生成 %d 张占位贴图，跳过 %d 张已存在的" % (len(written), len(skipped)))
+    # 介质物品：文件名与图集键都由 gen_items.py 的命名规则决定，这里保持一致
+    # （`item_texture_name(medium_id)`），否则图集指向的路径会落空。
+    item_written = []
+    item_skipped = []
+    for index, medium_id in enumerate(definitions.item_mediums):
+        name = item_texture_name(medium_id)
+        path = os.path.join(ITEM_OUT_DIR, name + ".png")
+        if os.path.isfile(path) and not args.force:
+            item_skipped.append(name)
+            continue
+        write_png(path, build_item_pixels(index))
+        item_written.append(name)
+
+    print("已生成 %d 张占位贴图（设备方块），跳过 %d 张已存在的" % (len(written), len(skipped)))
+    print("已生成 %d 张占位贴图（介质物品），跳过 %d 张已存在的" % (len(item_written), len(item_skipped)))
     print("这些是**占位图，不是成品美术**；用同名真实贴图覆盖即可，无需改动 JSON。")
     return 0
 

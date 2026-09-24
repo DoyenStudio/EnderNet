@@ -47,9 +47,12 @@ from endernet.server.network.services import (
     route_of,
 )
 
-#: 仍是替身的槽位。调度核心已在任务 04 落地，能源（04 的另一半）、
-#: 存储（05）与工厂（09）尚未开始。
-STAND_IN_SLOTS = (ServiceId.ENERGY, ServiceId.FACTORY, ServiceId.STORAGE)
+#: 仍是替身的槽位。调度核心已在任务 04 落地、存储领域层已在任务 05 落地，
+#: 能源（04 的另一半）与工厂（09）尚未开始。
+#:
+#: **存储不再是替身，不等于存储能用**：拦住它的是能源那一项网络级准入
+#: （`NETWORK_CRITICAL_SERVICES`），见 `test_bootstrap` 的准入断言。
+STAND_IN_SLOTS = (ServiceId.ENERGY, ServiceId.FACTORY)
 
 
 class EchoService(NetworkService):
@@ -138,7 +141,7 @@ class TestServiceRegistry(unittest.TestCase):
     def test_empty_registry_gets_the_default_services(self):
         """不给服务即装默认集合——这是开发档最常用的形态。
 
-        默认集合里 SCHEDULER 已是正式实现（任务 04 的调度核心），
+        默认集合里 SCHEDULER（任务 04）与 STORAGE（任务 05）已是正式实现，
         因此断言的是「哪些槽位还是替身」，不是「一共几个」。
         """
         registry = ServiceRegistry()
@@ -291,6 +294,10 @@ class TestServiceFactory(unittest.TestCase):
             "调度器已是正式实现（任务 04）",
         )
         self.assertTrue(registry.get(ServiceId.SCHEDULER).is_ready())
+        self.assertFalse(
+            registry.get(ServiceId.STORAGE).is_stand_in,
+            "存储领域层已落地（任务 05）",
+        )
         for service_id in STAND_IN_SLOTS:
             self.assertTrue(registry.get(service_id).is_stand_in)
         # 没有替身混进别的槽位。
@@ -326,18 +333,17 @@ class TestServiceFactory(unittest.TestCase):
     def test_replace_after_construction(self):
         factory = ServiceFactory()
         factory.replace(ServiceId.FACTORY, lambda runtime: EchoService(ServiceId.FACTORY))
-        self.assertEqual(
-            factory.stand_in_slots(), (ServiceId.ENERGY, ServiceId.STORAGE)
-        )
+        self.assertEqual(factory.stand_in_slots(), (ServiceId.ENERGY,))
 
     def test_pending_tasks_match_the_documented_tasks(self):
         """替身槽位对应的任务编号是可查的，界面才能说清「等哪个任务」。"""
         pending = ServiceFactory().pending_tasks()
-        self.assertEqual(pending[ServiceId.STORAGE], "05")
         self.assertEqual(pending[ServiceId.FACTORY], "09")
         self.assertEqual(pending[ServiceId.ENERGY], "04")
-        # 调度核心已落地，这个槽位不该再被报成「等某个任务」。
+        # 调度核心（04）与存储领域层（05）都已落地，
+        # 这两个槽位不该再被报成「等某个任务」——**存储也不再是替身**。
         self.assertNotIn(ServiceId.SCHEDULER, pending)
+        self.assertNotIn(ServiceId.STORAGE, pending)
 
     def test_stand_in_slots_is_judged_by_instance_not_by_identity(self):
         """默认构造器**本身**是正式实现时，身份判断就不成立了。
@@ -345,11 +351,13 @@ class TestServiceFactory(unittest.TestCase):
         这是 04 带出来的一处真实退化：`stand_in_slots()` 原先比的是
         「构造器还是默认表里那一个」，而 SCHEDULER 的默认构造器现在是
         `SchedulerService`——它仍然「是默认的那一个」，却显然不是替身。
+        05 的 STORAGE 走的正是同一条路。
         """
         factory = ServiceFactory()
         self.assertNotIn(ServiceId.SCHEDULER, factory.stand_in_slots())
+        self.assertNotIn(ServiceId.STORAGE, factory.stand_in_slots())
         # 反向：替身槽位仍然被认出来，别把判据改成了「什么都不算替身」。
-        self.assertIn(ServiceId.STORAGE, factory.stand_in_slots())
+        self.assertIn(ServiceId.ENERGY, factory.stand_in_slots())
 
     def test_no_pending_tasks_after_full_override(self):
         builders = dict(
@@ -363,10 +371,9 @@ class TestServiceFactory(unittest.TestCase):
     def test_default_builders_cover_every_slot(self):
         """默认表与会话槽位表必须同步，否则新增槽位会漏装。"""
         self.assertEqual(sorted(default_builders()), sorted(ServiceId.ALL))
-        # 待办表只列替身槽位：调度核心已落地，不再列在这里。
-        self.assertEqual(
-            sorted(default_pending_tasks()), sorted(STAND_IN_SLOTS)
-        )
+        # 待办表只列替身槽位：调度核心（04）与存储领域层（05）已落地，
+        # 都不再列在这里。
+        self.assertEqual(sorted(default_pending_tasks()), sorted(STAND_IN_SLOTS))
 
     def test_the_default_tables_are_one_table(self):
         """**只有一张默认表。** 此前 `default_stand_ins()` 与
