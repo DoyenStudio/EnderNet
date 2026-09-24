@@ -1,10 +1,21 @@
 # coding=utf-8
 """服务端装配与启动/销毁。
 
-对应任务 01-01、01-06 的入口与分帧补查部分。
+对应任务 01-01、01-06 的入口与分帧补查部分，03 起接入主控与网络运行时。
 
-**本批次的范围。** 装配 01 的设备层与 02 的拓扑/负载层。主控、存储、工厂、
-能源服务属于 03 及以后，本文件不提前把它们挂上去，也不假装网络已经可以工作。
+**本批次的范围。** 装配 01 的设备层、02 的拓扑/负载层、03 的主控与运行时。
+网络服务里存储、工厂、能源、调度仍是**替身**（任务 04/05/09），因此
+**网络业务命令一律会被拒绝**并给出 `service_absent`——这是诚实的结果，
+不是故障。所以默认装配档是 `AssemblyProfile.DEV`。
+
+`PRODUCTION` 档**不是靠启动失败来保护的**，而是靠主控准入链：它的第 10 条
+（装配档位）在策略仍有未定规则时把业务命令一律拒掉并给出
+`assembly_unresolved`，第 12 条（所需服务）再拒掉替身服务。带未定编号的
+数值因此**一次都不会**流进库存或订单，读起来是「待确认」——这正是
+`01-交付说明.md` §5.7-2 要的形态（那里明确要的是运行期的「待确认」，
+而不是让正式档起不来）。更严格的装配期检查是
+`ServiceRegistry.assert_profile_ok()`，它**只在被显式调用时**才报错，
+留给任务 14 的发布验收用。
 
 **可以脱离游戏构造。** 适配器把引擎调用放在方法体内部而不是模块顶层，
 所以本模块导入时不需要 `mod.server.*`；离线测试传 `bind_engine=False`
@@ -12,14 +23,16 @@
 """
 
 from ..common.definitions import DefinitionSet
-from ..common.identity import ChunkKey
 from .adapters.events import ServerEventBinder
 from .adapters.world import ToolDeltaWorldAdapter
+from .application import ApplicationService
 from .devices.catalog import DeviceCatalog
 from .devices.registry import DeviceRegistry
 from .network.admission import AdmissionService
+from .network.runtime import RuntimeManager
+from .network.services import AssemblyProfile, ServiceFactory
 from .network.topology import TopologyService
-from .runtime.events import EventKind, EventQueue
+from .runtime.events import EventQueue
 from .runtime.lifecycle import DeviceLifecycle
 
 
@@ -39,8 +52,15 @@ class ServerBootstrap(object):
         rebuild_steps_per_tick=64,
         change_sink=None,
         max_tick_errors=8,
+        event_api=None,
+        assembly_profile=AssemblyProfile.DEV,
+        service_factories=None,
+        dedup_policy=None,
+        repository=None,
+        runtime_budget=64,
+        session_check=None,
     ):
-        # type: (DefinitionSet, object, int, int, int, object, int) -> None
+        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
         self.world = world if world is not None else ToolDeltaWorldAdapter()
         self.drain_limit = int(drain_limit)
@@ -61,9 +81,46 @@ class ServerBootstrap(object):
             self.definitions, self.registry, self.catalog
         )
         self.admission = AdmissionService(self.definitions, self.registry, self.topology)
-        self.event_binder = ServerEventBinder(
-            self.queue, self.world, self.registry, self.definitions
+        #: 每帧给运行时的服务推进预算。与图重建预算分开计：两者消耗的
+        #: 是同一帧的时间，但一个是节点展开、一个是业务工作，不能混在一起。
+        self.runtime_budget = int(runtime_budget)
+        self.assembly_profile = AssemblyProfile.validate(assembly_profile)
+        self.repository = repository
+        #: 网络服务装配表。`ServiceFactory` 为**每个运行时**各造一套实例，
+        #: 因此两个网络绝不共享库存或订单状态（03 验收 #4）。
+        self.service_factories = (
+            service_factories if service_factories is not None else ServiceFactory()
         )
+        # 运行时管理器**必须在 `AdmissionService` 之后构造**：两者都订阅
+        # 拓扑发布，准入先订阅才能保证每次发布时带宽判定已按新版本刷新过，
+        # 而运行时在同一帧内读到的就是刷新后的结论。
+        self.runtimes = RuntimeManager(
+            self.definitions,
+            self.registry,
+            self.catalog,
+            self.topology,
+            self.admission,
+            profile=self.assembly_profile,
+            factories=self.service_factories,
+            ledger_policy=dedup_policy,
+            session_check=session_check,
+            repository=repository,
+        )
+        self.application = ApplicationService(
+            self.runtimes,
+            self.topology,
+            self.admission,
+            registry=self.registry,
+            profile=self.assembly_profile,
+        )
+        #: 引擎事件 API。注入替身即可在无引擎环境跑通真实的 `bind()` 路径，
+        #: 从而验证注册与注销，而不用进游戏试。
+        self.event_binder = ServerEventBinder(
+            self.queue, self.world, self.registry, self.definitions, event_api=event_api
+        )
+        # 生命周期把变化发布到这里，这是**唯一**出口：
+        # 事件处理与启动补查/手动重扫都走它，不会有一条路径绕过去。
+        self.lifecycle.set_change_sink(self._emit)
 
         self.started = False
         self.tick_count = 0
@@ -115,12 +172,17 @@ class ServerBootstrap(object):
         任务 01 只负责「入队 → 消费 → 产生设备变化」这一段。
         把 tick 变成有预算、可轮转、可休眠的调度属于任务 04：
         届时由调度器调用 `tick()`，这里改成不注册即可，领域代码不受影响。
-        """
-        from ...tooldelta.events import OnScriptTickServer, serverapi
 
-        @serverapi.ListenEvent(OnScriptTickServer)
+        注册走 `event_binder.register()`，因此 `stop()` 时会和其他监听器
+        一起被注销。早先这个回调**完全没被注销**——同进程内 stop 再 start
+        会让每帧推进两次。
+        """
+        api = self.event_binder.require_api()
+
         def _drive(_event):
             self.drive_once()
+
+        self.event_binder.register(api.OnScriptTickServer, _drive)
 
     def drive_once(self):
         # type: () -> None
@@ -172,6 +234,10 @@ class ServerBootstrap(object):
         drained, changes = self._drain_events()
         # 事件消费完再重建：同帧的多次变化只算一次重建（02-02）。
         rebuild = self.topology.advance(self.rebuild_steps_per_tick)
+        # 重建之后才推进运行时：发布 → 运行时同步（含主控绑定与服务挂载）
+        # → 服务推进。顺序不能倒——先在旧图上推进服务，等于让它们按已经
+        # 不成立的归属动手。
+        service_steps = self.runtimes.tick(self.runtime_budget)
 
         return {
             "tick": self.tick_count,
@@ -185,6 +251,9 @@ class ServerBootstrap(object):
             "topology_steps": rebuild.steps,
             "components_rebuilt": rebuild.components_rebuilt,
             "topology_version": self.topology.version,
+            #: 本帧服务推进消耗的工作量（03）。当前服务都是替身，恒为 0。
+            "service_steps": service_steps,
+            "runtimes": len(self.runtimes.runtimes()),
             "queue": self.queue.stats(),
         }
 
@@ -193,8 +262,8 @@ class ServerBootstrap(object):
         batch = self.queue.drain(limit=self.drain_limit)
         changes = []
         for event in batch:
+            # `handle()` 内部已经经统一出口发布，这里不能再发一次。
             changes.extend(self.lifecycle.handle(event))
-        self._emit(changes)
         return len(batch), changes
 
     def _advance_backfill(self):
@@ -288,12 +357,46 @@ class ServerBootstrap(object):
             "changes": dict(self._change_counts),
             "topology": self.topology.diagnostics(),
             "admission": self.admission.diagnostics(),
+            "assembly": self.assembly_diagnostics(),
+            "runtimes": self.runtimes.diagnostics(),
+            "application": self.application.diagnostics(),
             "world": self.world.diagnostics(),
             "scope_note": (
-                "已装配任务 01 的设备层与任务 02 的拓扑/负载层；"
-                "主控、存储、工厂与能源服务尚未接入。"
+                "已装配任务 01 的设备层、任务 02 的拓扑/负载层与任务 03 的主控/运行时；"
+                "装配档位 %s，存储、工厂、能源与调度服务仍是替身（任务 04/05/09），"
+                "因此**网络业务命令会被拒绝并给出 service_absent**——这是尚未实现的"
+                "诚实结果，不是故障。" % (self.assembly_profile,)
             ),
         }
+
+    def assembly_diagnostics(self):
+        # type: () -> dict
+        """装配档位、替身清单与未定规则报告。
+
+        未定规则单独列出来，而不是折进「警告」里：R02/R03/R13 这些规则
+        一旦定案，下游（尤其 05 的容量与 09 的槽位）要按新值重算，
+        因此它们需要能被一条命令查出来。
+        """
+        pending = self.service_factories.pending_tasks()
+        return {
+            "profile": self.assembly_profile,
+            "slots": list(self.service_factories.ids()),
+            "stand_ins": [
+                "替身服务 %s（待任务 %s 实现）" % (service_id, pending[service_id])
+                for service_id in sorted(pending)
+            ],
+            "unresolved": self.admission.policy.unresolved_report(),
+        }
+
+    def submit_command(self, command):
+        # type: (object) -> object
+        """业务命令入口。**永不抛异常**——这是引擎事件路径要调的那一个。
+
+        领域层按纪律不吞异常（缺陷要在自己的层次炸出来），但这一层接着的
+        是每帧数十次的引擎回调，抛回去会刷屏并让后续帧全废。因此异常在
+        `ApplicationService.submit` 里被转成 `rejected INTERNAL`。
+        """
+        return self.application.submit(command)
 
 
 #: 进程内的服务端单例
@@ -307,11 +410,22 @@ def get_server():
 
 def start_server():
     # type: () -> ServerBootstrap
-    """由 `modMain.OnServerInited` 调用。"""
+    """由 `modMain.OnServerInited` 调用。
+
+    **显式使用 DEV 档，并把理由写在这里。** 04/05/09 尚未落地，网络服务
+    全是替身；换成 `PRODUCTION` 档不会让它们开始工作，而是让每一条业务
+    命令都被拒（`assembly_unresolved` + `service_absent`），并且把
+    诊断里的「哪些数值还没定案」当成正常结论报出来。游戏内现在只能用
+    DEV 档，而 DEV 档的代价同样是**业务命令一律被拒**——两种档位都不假装
+    能用，区别只在说法。这一点在 `diagnostics()` 的 `scope_note` 里也写着。
+
+    写成显式参数而不是依赖默认值：默认值将来若被改成别的档位，
+    这里不会跟着悄悄改变游戏内的行为。
+    """
     global _SERVER
     if _SERVER is not None:
         _SERVER.stop()
-    _SERVER = ServerBootstrap()
+    _SERVER = ServerBootstrap(assembly_profile=AssemblyProfile.DEV)
     _SERVER.start()
     return _SERVER
 
