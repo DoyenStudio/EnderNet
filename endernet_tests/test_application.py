@@ -17,6 +17,7 @@
 服务有没有被调用根本不是路由的证据。
 """
 
+import json
 import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
@@ -669,6 +670,91 @@ class TestPatternDebugQuery(PatternFixture):
         self.assertEqual(state.entries, {})
         self.assertEqual(state.stats["installs"], 0)
         self.assertEqual(state.stats["uninstalls"], 0)
+
+
+class TestPlanDebugQuery(PatternFixture):
+    """`debug_query("plan")`：用**真库存与真样板索引**跑一次只读规划（08）。
+
+    这条入口存在的理由写在 `DEBUG_OPS` 里：09 未实现之前规划没有别的调用方，
+    而它是只读的，因此可以安全地做成一条查询。这里验的是「它读的是真的东西」
+    与「它什么都没改」。
+    """
+
+    def setUp(self):
+        ApplicationFixture.setUp(self)
+        self.drive(NormalizedEvent.place(TEMPLATE_POS, TEMPLATE_IO))
+        self.ref = self.ref_of(TEMPLATE_POS)
+        self.iron_block = ResourceKey.item("minecraft:iron_block")
+
+    def query(self, **kwargs):
+        return self.application.debug_query("plan", **kwargs).payload
+
+    def test_a_missing_target_is_an_error_payload(self):
+        """白名单里的每一项都会被空参调一次，因此这里必须答得出来而不是崩。"""
+        self.assertIn("error", self.query())
+
+    def test_a_wrong_target_type_is_an_error_payload(self):
+        payload = self.query(target="minecraft:iron_block")
+        self.assertIn("error", payload)
+
+    def test_a_bad_amount_is_an_error_payload(self):
+        for amount in (0, -3, "3", True):
+            self.assertIn("error", self.query(target=self.iron_block, amount=amount))
+
+    def test_an_unknown_network_is_an_error_payload(self):
+        payload = self.query(target=self.iron_block, component_id="nope")
+        self.assertIn("error", payload)
+
+    def test_a_target_without_any_pattern_is_no_recipe(self):
+        """没有样板时给出的是一份**合法但做不出来**的计划，而不是一个错误。
+
+        「没有配方」是一条业务结论（玩家该去装样板），不是查询失败。
+        """
+        payload = self.query(target=self.iron_block, amount=1)
+        self.assertEqual(payload["summary"]["status"], "no_recipe")
+        self.assertEqual(payload["summary"]["missing"], ["minecraft:iron_block"])
+        self.assertIn("minecraft:iron_block", json.dumps(payload["plan"], ensure_ascii=False))
+
+    def test_the_query_reads_the_real_pattern_index(self):
+        self.assertTrue(self.application.patterns.install(self.ref, 0, PATTERN)[0])
+        payload = self.query(target=self.iron_block, amount=1)
+        plan = payload["plan"]
+        # 目标找得到样板了，缺的是它的原料（那个产物没有样板）。
+        self.assertEqual(payload["summary"]["status"], "missing_materials")
+        self.assertEqual(payload["summary"]["steps"], 1)
+        step = plan["steps"][0]
+        self.assertEqual(step["batches"], 1)
+        self.assertEqual([(row["key"], row["total"]) for row in step["inputs"]],
+                         [("minecraft:iron_ingot", 1)])
+        # 候选三元组来自真实的样板索引（07 交给 08 的那份）。
+        self.assertEqual(step["provider"]["slot"], 0)
+        self.assertEqual(payload["patterns"]["outputs"], 1)
+
+    def test_the_estimates_are_not_a_reservation(self):
+        self.assertTrue(self.application.patterns.install(self.ref, 0, PATTERN)[0])
+        payload = self.query(target=self.iron_block, amount=1)
+        self.assertFalse(payload["summary"]["estimates"]["authoritative"])
+        self.assertIn("估计值", payload["notice"])
+
+    def test_the_query_is_read_only(self):
+        """**规划不得改动任何状态。** 反复跑它，库存与样板槽一字不动。"""
+        self.assertTrue(self.application.patterns.install(self.ref, 0, PATTERN)[0])
+        state = self.application.patterns.get_by_ref(self.ref)
+        before = dict(state.stats)
+        for _ in range(3):
+            self.query(target=self.iron_block, amount=4)
+        self.assertEqual(state.stats, before)
+        self.assertEqual(len(state.entries), 1)
+
+    def test_the_query_answers_without_a_master(self):
+        """全局约束 9：没有主控、网络不能工作时诊断照样可读。
+
+        规划根本不经过网络——它读的是库存索引与样板索引，两样都在服务端本地。
+        """
+        self.drive(NormalizedEvent.remove(self.A_CTRL, TINY))
+        self.assertTrue(self.application.patterns.install(self.ref, 0, PATTERN)[0])
+        payload = self.query(target=self.iron_block, amount=1)
+        self.assertIn("summary", payload)
 
 
 class TestResultSummary(unittest.TestCase):

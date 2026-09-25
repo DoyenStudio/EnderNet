@@ -25,6 +25,7 @@ from endernet.common.protocol import (
 from endernet.server.adapters.containers import FakeContainer
 from endernet.server.bootstrap import ServerBootstrap
 from endernet.server.crafting import patterns
+from endernet.server.crafting.planner import PlanPolicy, TargetSemantics
 from endernet.server.crafting.store import PATTERN_SETTLE_FRAMES
 from endernet.server.network.controller import RunState
 from endernet.server.network.services import AssemblyProfile
@@ -1568,6 +1569,74 @@ class TestPatternWiring(unittest.TestCase):
         report = self.server.pattern_diagnostics()
         self.assertIn("09", report["scope_note"])
         self.assertIn("07-03", report["scope_note"])
+
+
+class TestPlannerWiring(unittest.TestCase):
+    """装配层：规划器确实挂上了、也确实进了未定规则清单（08）。"""
+
+    def setUp(self):
+        self.server = ServerBootstrap(world=FakeWorld())
+
+    def test_the_planner_is_assembled(self):
+        self.assertIsNotNone(self.server.planner)
+        self.assertIn("plan", self.server.diagnostics())
+
+    def test_the_plan_policy_is_in_the_assembly_check(self):
+        """R11/R04/08-04 必须在 `policy_bundle()` 里，否则正式验收时漏网。
+
+        这八条与 R09 那三条**各放各的**：合成一个字段名会让「哪条规则在拦我」
+        查不出来（一个是「这份配方要备哪些料」，一个是「要几个批次」）。
+        """
+        fields = [
+            item["field"] for item in self.server.policy_bundle().unresolved_report()
+        ]
+        for expected in (
+            "plan.target_semantics",
+            "plan.candidate_order",
+            "plan.alternative_recipes",
+            "plan.max_depth",
+            "plan.max_steps",
+            "plan.max_candidates",
+            "plan.max_batches_per_step",
+            "plan.memory_units_per_step",
+        ):
+            self.assertIn(expected, fields)
+
+    def test_the_planner_shares_the_assembly_policies(self):
+        """门面里绑的必须就是**全进程那一份**策略对象，否则诊断报的数值
+        与真正生效的对不上（与 `SchedulerPolicy`/`EnergyPolicy` 同一条纪律）。"""
+        self.assertIs(self.server.planner.policy, self.server.plan_policy)
+        self.assertIs(self.server.planner.pattern_policy, self.server.pattern_policy)
+
+    def test_an_injected_policy_is_the_one_that_runs(self):
+        policy = PlanPolicy(target_semantics=TargetSemantics.PRODUCE)
+        server = ServerBootstrap(world=FakeWorld(), plan_policy=policy)
+        self.assertIs(server.planner.policy, policy)
+        self.assertEqual(server.plan_diagnostics()["policy"]["target_semantics"],
+                         TargetSemantics.PRODUCE)
+
+    def test_assert_assembly_ok_refuses_the_unresolved_plan_rules(self):
+        """正式档的装配检查必须把规划侧的未定项报出来——它**不会被自动调用**，
+        因此这里显式调一次，证明它确实拦得住。"""
+        problems = self.server.assert_assembly_ok()
+        self.assertTrue(
+            any("plan.target_semantics" in item for item in problems), problems
+        )
+        self.assertTrue(
+            any("plan.memory_units_per_step" in item for item in problems), problems
+        )
+
+    def test_diagnostics_say_what_is_not_done(self):
+        report = self.server.plan_diagnostics()
+        self.assertIn("09", report["scope_note"])
+        self.assertIn("只读", report["scope_note"])
+        # 逐次计划的内容属于订单，不在启动层留缓存（那是第二份真相）。
+        self.assertNotIn("steps", report)
+
+    def test_the_planner_reports_its_policy(self):
+        report = self.server.plan_diagnostics()
+        self.assertEqual(len(report["unresolved"]), 8)
+        self.assertIn("pattern_policy", report)
 
 
 if __name__ == "__main__":

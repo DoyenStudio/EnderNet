@@ -216,6 +216,37 @@ class Reason(object):
     #: 那是「是样板但内容坏了」，这是「压根不是样板」。
     PATTERN_NOT_A_TEMPLATE = "pattern_not_a_template"
 
+    # 合成规划（08）
+    #
+    # **这一族刻意分成多个码，不合并成「没有配方」**（08 文档原文：无解、缺料与
+    # 预算超限分别报告）。四种情形对玩家意味着完全不同的下一步动作：
+    # 「去装一块样板」「去把离线的那台接口接回来」「去补基础原料」「再点一次
+    # 让它接着算」，糊成一个码就等于把「我该做什么」这条信息丢掉。
+    #: 样板索引里**根本没有**产出这个资源的样板。玩家要做的是准备一块样板。
+    PLAN_NO_RECIPE = "plan_no_recipe"
+    #: 有样板，但所有候选提供者现在都不能用（离线、容器读不到、被拆）。
+    #: **与 `PLAN_NO_RECIPE` 分开**：这里玩家要做的是让那台设备回到线，不是去找样板。
+    PLAN_NO_PROVIDER = "plan_no_available_provider"
+    #: 配方找到了，但基础原料不够。这是**部分计划**（能算的部分照算），
+    #: 与「压根做不出来」是两回事。
+    PLAN_MISSING_MATERIALS = "plan_missing_materials"
+    #: 当前搜索路径上出现循环依赖（A→B→A）。首版不支持循环生产
+    #: （08 文档「待定与交接」），因此明确拒绝并给出环路，而不是丢给上限截断。
+    PLAN_CYCLE = "plan_cycle"
+    #: 深度、步骤数或候选窗口触顶。**与 `PLAN_NO_RECIPE` 分开**：
+    #: 那说的是「真的没有」，这条说的是「这次没往下看」，两者都不该被读成对方的结论。
+    PLAN_LIMIT_REACHED = "plan_limit_reached"
+    #: 本帧的推进预算用完了，任务仍可继续。**它不是失败**——
+    #: 与调度器把未做完的任务留到下一帧同一语义。
+    PLAN_BUDGET_EXHAUSTED = "plan_budget_exhausted"
+    #: 任务被调用方取消。计划结果作废，但**任何真实库存都没被动过**。
+    PLAN_CANCELLED = "plan_cancelled"
+    #: 计划依据的那几个键的库存已经不够了（提交前复核）。
+    #: **按计划实际声明过的键逐个比量**，因此无关的库存变动不会让计划作废。
+    PLAN_STOCK_CHANGED = "plan_stock_changed"
+    #: 计划依据的拓扑版本变了（拆线、合并、主控换人）——归属可能已经不同。
+    PLAN_TOPOLOGY_CHANGED = "plan_topology_changed"
+
     # 外部容器（13）
     CONTAINER_REFUSED = "container_refused"
     CONTAINER_PARTIAL = "container_partial"

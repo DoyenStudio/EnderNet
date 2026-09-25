@@ -72,6 +72,14 @@ DEBUG_OPS = frozenset(
         #: 哪些格式过旧、哪个产物有哪几台候选。同上，只为「坏掉时也能查」
         #: 而存在——样板索引根本不经过网络，没有主控时它照样是准的。
         "pattern",
+        #: 用**真库存与真样板索引**跑一次合成规划（08），返回批次、缺料清单
+        #: 与候选三元组。存在的理由有两个：
+        #: 1. 09（订单与执行）尚未实现，那之前规划没有别的调用方，而仓库纪律
+        #:    明写「只有类文件、没有装配与调用路径的实现不算完整交付」；
+        #: 2. 规划是**只读计算**（不扣库存、不预留、不占槽位），因此它可以
+        #:    安全地做成一条查询——这也是它敢放在只读白名单里的唯一理由。
+        #:    订单的提交与派发属 09，不在这里。
+        "plan",
     ]
 )
 
@@ -89,8 +97,9 @@ class ApplicationService(object):
         policy=None,
         ports=None,
         patterns=None,
+        planner=None,
     ):
-        # type: (object, object, object, object, str, object, object, object) -> None
+        # type: (object, object, object, object, str, object, object, object, object) -> None
         self.runtimes = runtimes
         self.topology = topology
         self.admission = admission
@@ -105,6 +114,11 @@ class ApplicationService(object):
         #: **样板槽的写入没有走这里**：编辑入口是领域层 API，调用方是任务 11
         #: 的样板终端；在门面上开一个写入口就是全局约束 2 说的那种旁路。
         self.patterns = patterns
+        #: 合成规划门面（08）。只为 `debug_query("plan")`。
+        #: **它连写库存的接口都没有**：规划是只读计算（08 文档的边界），
+        #: 因此这里不存在「调试入口变成旁路」的可能——不是靠自律，
+        #: 而是因为那个能力根本没被实现出来。
+        self.planner = planner
         self.stats = {
             "submitted": 0,
             "routed": 0,
@@ -350,6 +364,8 @@ class ApplicationService(object):
             return self._run_port_query(kwargs)
         if op == "pattern":
             return self._run_pattern_query(kwargs)
+        if op == "plan":
+            return self._run_plan_query(kwargs)
         # 白名单与非白名单之间没有第三条路：走到这里说明 DEBUG_OPS 加了
         # 一项却没在 `_run_query` 里实现，那是个缺陷，不该静默返回空。
         raise NotImplementedError("调试操作 %r 已在白名单中但未实现" % (op,))
@@ -426,6 +442,105 @@ class ApplicationService(object):
                 ),
             }
         return self.patterns.view()
+
+    def _run_plan_query(self, kwargs):
+        # type: (dict) -> dict
+        """跑一次**只读**合成规划（08）。
+
+        参数：
+
+        - `target`：要算的资源键（`ResourceKey`，必填）。缺了回错误载荷——
+          `debug_query` 会对每个白名单操作空参调一次，因此这里必须答得出来。
+        - `amount`：目标数量（正整数，缺省 1）。
+        - `component_id`：用哪个网络的库存做规划。给了就在该网络的存储服务上
+          采一份库存快照；没给就是**空库存**（规划照跑，只是「什么都要现做」）。
+        - `topology_version`：可选，覆盖快照里记的拓扑版本（诊断用）。
+
+        **它不改任何状态。** 不扣库存、不预留、不占槽位、不建订单——规划器本来
+        就没有这些能力。返回的「槽位/内存估计」明确标着 `authoritative: False`：
+        08-06 要求估算值不得被读成「资源已预留」。
+
+        没有主控、网络没电、设备离线时它照样能答，而且答的正是最有用的那部分：
+        「按现在网络里真实有的东西与真实装着的样板，这个目标要几批、缺什么」。
+        """
+        if self.planner is None:
+            return {"error": "本装配没有接入合成规划器"}
+        target = kwargs.get("target")
+        if target is None:
+            return {"error": "缺少 target（资源键）"}
+        if not hasattr(target, "canonical"):
+            return {"error": "target 必须是资源键（ResourceKey）", "target": str(target)}
+        amount = kwargs.get("amount", 1)
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
+            return {"error": "amount 必须是正整数", "amount": amount}
+
+        component_id = kwargs.get("component_id")
+        runtime = self.runtimes.runtime(component_id) if component_id else None
+        if component_id and runtime is None:
+            return {"error": "没有这个网络", "component_id": component_id}
+        inventory, inventory_note = self._plan_inventory(runtime)
+        topology_version = kwargs.get("topology_version", self.topology.version)
+        patterns = self.planner.capture_patterns(self.patterns, topology_version)
+        plan = self.planner.solve(target, amount, inventory, patterns)
+        if plan is None:
+            return {
+                "error": "这次规划没有算完（超出工作量上限或已被取消）",
+                "target": target.name,
+                "amount": amount,
+            }
+        return {
+            "target": target.name,
+            "amount": amount,
+            "component_id": component_id,
+            "summary": plan.summary(),
+            "plan": plan.to_dict(),
+            "inventory": {
+                "keys": len(inventory),
+                "version": inventory.version,
+                "note": inventory_note,
+            },
+            "patterns": {
+                "outputs": len(patterns),
+                "candidates": patterns.candidate_count(),
+            },
+            "policy": self.planner.policy.describe(),
+            "notice": (
+                "这是只读预览：计划的槽位与内存是**估计值**（不是已预留），"
+                "订单的提交、预留与派发属任务 09，本入口一个都不做。"
+            ),
+        }
+
+    def _plan_inventory(self, runtime):
+        # type: (object) -> tuple
+        """取规划要用的库存快照。返回 `(快照, 说明)`。
+
+        走存储服务的**公开只读入口** `keys()`/`query()`（`InventorySnapshot.capture`
+        里），不伸手读它的内部表——与 `debug_query("port")` 那一条同一条纪律。
+        拿不到存储服务时给一份空快照并把原因写在说明里：**空库存不等于没有库存**，
+        读的人要能分辨「这个网络什么都没有」与「我根本没读到」。
+        """
+        if runtime is None:
+            return (
+                self.planner.capture_inventory(None, self.topology.version),
+                "未指定网络，按空库存规划（只算配方与依赖，不考虑现有库存）",
+            )
+        service = runtime.services.get(ServiceId.STORAGE)
+        if service is None:
+            return (
+                self.planner.capture_inventory(None, self.topology.version),
+                "该网络没有装配存储服务，按空库存规划",
+            )
+        capture = getattr(service, "keys", None)
+        query = getattr(service, "query", None)
+        if not callable(capture) or not callable(query):
+            return (
+                self.planner.capture_inventory(None, self.topology.version),
+                "该网络的存储服务没有提供只读库存查询，按空库存规划",
+            )
+        return (
+            self.planner.capture_inventory(service, self.topology.version),
+            "按该网络当前真实库存（可用量 = 库存 - 他人预留）规划",
+        )
 
     # -- 推进与诊断 ----------------------------------------------------
 

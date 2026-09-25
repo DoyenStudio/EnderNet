@@ -39,6 +39,7 @@ from .adapters.world import ToolDeltaWorldAdapter
 from .application import ApplicationService
 from .devices.catalog import DeviceCatalog
 from .crafting.patterns import PatternPolicy
+from .crafting.planner import PlanPolicy, Planner
 from .crafting.store import PatternStore
 from .devices.io import PortPolicy, PortStore
 from .devices.registry import DeviceRegistry
@@ -175,6 +176,7 @@ class ServerBootstrap(object):
         port_policy=None,
         transfer_policy=None,
         pattern_policy=None,
+        plan_policy=None,
         container_primitives=None,
         container_provider=None,
         inventory_provider=None,
@@ -241,6 +243,14 @@ class ServerBootstrap(object):
         self.pattern_policy = (
             pattern_policy if pattern_policy is not None else PatternPolicy()
         )
+        #: 规划策略（R11/R04/08-04）。同样**全进程一份**。
+        #: **它与样板策略是两份**：样板策略回答「这份配方里哪些输入要备料」
+        #: （R09），规划策略回答「要几个批次、缺什么、按哪个口径算目标量」
+        #: （R11/R04）。规划器同时持有两者，但它们的未定项各自报各自的，
+        #: 合在一起会让「哪条规则在拦我」查不出来。
+        self.plan_policy = (
+            plan_policy if plan_policy is not None else PlanPolicy()
+        )
         #: 容器与背包的引擎原语。**构造是安全的、调用必须在游戏里**——
         #: `EngineItemPrimitives` 把引擎 import 放在方法体内，因此离线也能
         #: 构造整条链路，只是真的去读一个箱子时会失败（那正是它该失败的时候）。
@@ -303,6 +313,15 @@ class ServerBootstrap(object):
             policy=self.pattern_policy,
             containers=self.containers,
         )
+        #: 合成规划（08）。**它不是一个网络服务槽位**：规划是只读计算，
+        #: 没有节点、没有生命周期、也不需要主控签发的许可。真正的调用方是
+        #: 任务的 09（订单与执行），它会拿到同一个对象；在那之前，
+        #: `debug_query("plan")` 是它唯一的调用路径——**只读**，不写任何状态。
+        self.planner = Planner(
+            self.definitions,
+            policy=self.plan_policy,
+            pattern_policy=self.pattern_policy,
+        )
         #: 网络服务装配表。`ServiceFactory` 为**每个运行时**各造一套实例，
         #: 因此两个网络绝不共享库存或订单状态（03 验收 #4）。
         if service_factories is not None:
@@ -350,6 +369,9 @@ class ServerBootstrap(object):
             # 业务命令照样只能走主控——门面这一侧没有任何写入入口。
             ports=self.ports,
             patterns=self.patterns,
+            # 规划只读入口（08）。**它连写入的能力都没有**：规划器没有改库存
+            # 的接口，因此「调试入口变成旁路」这件事在这里是结构性的不可能。
+            planner=self.planner,
         )
         #: 引擎事件 API。注入替身即可在无引擎环境跑通真实的 `bind()` 路径，
         #: 从而验证注册与注销，而不用进游戏试。
@@ -684,6 +706,7 @@ class ServerBootstrap(object):
             "storage": self.storage_diagnostics(),
             "io": self.io_diagnostics(),
             "pattern": self.pattern_diagnostics(),
+            "plan": self.plan_diagnostics(),
             "energy": self.energy_diagnostics(),
             "world": self.world.diagnostics(),
             "scope_note": (
@@ -693,8 +716,10 @@ class ServerBootstrap(object):
                 "任务 05 的存储领域层（介质、驱动器挂卸、汇总索引、预留、受控读写），"
                 "任务 06 的转移与接口层（端点预检与受控提交、有界中转缓冲、"
                 "四类接口设备、真实的容器/背包引擎适配），"
-                "以及任务 07 的样板层（配方结构与编解码、9 格读写、"
-                "产物到提供者的索引、样板槽拒收）；"
+                "任务 07 的样板层（配方结构与编解码、9 格读写、"
+                "产物到提供者的索引、样板槽拒收），"
+                "以及任务 08 的合成规划（批次与余量、库存优先、多级依赖与共享"
+                "子需求、环检测与有界失败、可分帧推进与提交前复核凭据）；"
                 "装配档位 %s。**接口接触真实引擎的那一段（箱子、背包、其他模组的"
                 "物流）没有在游戏内实测过**，流体路径则整条未接入（13-03）。"
                 "存档后端与界面同步尚未接入（任务 12/11），工厂仍是替身（任务 09），"
@@ -795,6 +820,18 @@ class ServerBootstrap(object):
         }
         return view
 
+    def plan_diagnostics(self):
+        # type: () -> dict
+        """规划层诊断（08）。
+
+        只有策略与合计：**逐次计划的内容属于订单**（09），不该在启动层留一份
+        缓存——那会变成第二份真相。想看一次真实的规划走
+        `debug_query("plan", target=..., amount=...)`。
+        """
+        report = self.planner.diagnostics()
+        report["pattern_policy"] = self.pattern_policy.describe()
+        return report
+
     def energy_diagnostics(self):
         # type: () -> dict
         """能源诊断（04-04）。
@@ -888,6 +925,11 @@ class ServerBootstrap(object):
                 # 适用范围）。少放一份的代价是正式验收时那三条漏网，
                 # 而它们正是全局约束 7 最怕的形态。
                 self.pattern_policy,
+                # 08 的规划策略带的是 R11（目标量是生产量还是保有量）、
+                # R04（内存估算口径）与 08-04（配方优先级、替代配方范围、
+                # 四个搜索上限）。**它与样板策略是两份，都要在**：
+                # 前者说的是「这份配方要备哪些料」，后者说的是「要几个批次」。
+                self.plan_policy,
             ]
         )
 
