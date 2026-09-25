@@ -202,9 +202,15 @@ def power_blocker(services, node_key):
     # type: (object, object) -> object
     """能源阻塞原因；没有则为 None。
 
-    任务 04 落地前能源是替身，因此这里给出的是 `SERVICE_ABSENT`——
-    这是**诚实的结果**，不是「没电」。把它说成断电会让人去查供电，
-    而真正的问题是那项服务根本还没写。
+    两种 `SERVICE_ABSENT` 都保留着，但各有各的适用面：**服务未装配**是
+    结构性问题；**服务是替身**只可能出现在调用方自己塞了替身的装配里
+    （默认表里能源已经是正式实现）。把它们说成断电会让人去查供电，
+    而真正的问题是那项服务根本拿不到。
+
+    三态落在这里：`False` 才是「确认没电」（`BROWNOUT`），`None` 是
+    「还没法确认」（`ENERGY_UNAVAILABLE`）——**待确认不等于有电**，
+    与带宽的三态同一条纪律。区分这两者是有意的：把「算不出需求」说成
+    「没电」会让人去修供电，而真正要做的是把定义表或输入补齐。
     """
     if services is None:
         return BlockReason(Reason.SERVICE_ABSENT, "网络服务未装配")

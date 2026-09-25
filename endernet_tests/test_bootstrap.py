@@ -12,6 +12,7 @@ import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import DefinitionSet
 from endernet.common.identity import ChunkKey, NodeKey
+from endernet.common.resource_key import ResourceKey
 from endernet.common.protocol import (
     CommandKind,
     CommandSource,
@@ -21,13 +22,18 @@ from endernet.common.protocol import (
     STATUS_OK,
     STATUS_REJECTED,
 )
+from endernet.server.adapters.containers import FakeContainer
 from endernet.server.bootstrap import ServerBootstrap
+from endernet.server.crafting import patterns
+from endernet.server.crafting.store import PATTERN_SETTLE_FRAMES
 from endernet.server.network.controller import RunState
 from endernet.server.network.services import AssemblyProfile
 from endernet.server.runtime.events import EventKind, NormalizedEvent
 from endernet.server.runtime.lifecycle import ChangeKind
 
 BB8 = "endernet:network_baseband_8"
+TEMPLATE_IO = "endernet:bus_template_io"
+PASSIVE_IO = "endernet:bus_item_io"
 DRIVER = "endernet:storage_driver"
 
 
@@ -475,7 +481,7 @@ class TestFullScenario(unittest.TestCase):
         self.drive(NormalizedEvent.place(key(0), BB8))
         report = self.server.diagnostics()
         self.assertTrue(report["started"])
-        self.assertEqual(report["definitions"]["devices"], 22)
+        self.assertEqual(report["definitions"]["devices"], 23)
         self.assertEqual(report["registry"]["devices"], 1)
         self.assertIn("scope_note", report)
 
@@ -637,13 +643,22 @@ class TestRuntimeWiring(unittest.TestCase):
         self.build_network()
         runtime = self.runtime()
         self.assertTrue(runtime.is_open())
-        self.assertEqual(runtime.state(), RunState.SERVICE_ABSENT)
+        # 现在拦住它的是**能源判定**：默认口径下算不出需求（基带耗能未列、
+        # 工作态没接线），因此是「待确认」而不是「没电」也不是「服务没写」。
+        self.assertEqual(runtime.state(), RunState.NO_POWER)
 
-    def test_business_commands_are_refused_by_the_stand_ins(self):
+    def test_business_commands_are_refused_by_the_energy_verdict(self):
+        """拦下业务的不再是替身服务，而是当地那台网络的能源判定。
+
+        默认装配档下能源是**正式实现**，所以拒绝理由从
+        「服务尚未实现」变成了「能源判定尚未确认」——同样是诚实的结果，
+        但读的人该去查的是供能与定义表，不是「04 还没写」。
+        """
         self.build_network()
         result = self.server.submit_command(self.command(request_id="r1"))
         self.assertEqual(result.status, STATUS_BLOCKED, result.to_dict())
-        self.assertIn(Reason.SERVICE_ABSENT, result.reason_codes())
+        self.assertIn(Reason.ENERGY_UNAVAILABLE, result.reason_codes())
+        self.assertNotIn(Reason.SERVICE_ABSENT, result.reason_codes())
 
     def test_status_is_answered_while_business_is_refused(self):
         self.build_network()
@@ -651,17 +666,25 @@ class TestRuntimeWiring(unittest.TestCase):
             self.command(request_id="s1", kind=CommandKind.STATUS)
         )
         self.assertEqual(result.status, STATUS_OK, result.to_dict())
-        self.assertEqual(result.payload["run_state"], RunState.SERVICE_ABSENT)
-        self.assertIn("service_absent", [r["code"] for r in result.payload["blockers"]])
+        self.assertEqual(result.payload["run_state"], RunState.NO_POWER)
+        self.assertIn(
+            "energy_unavailable", [r["code"] for r in result.payload["blockers"]]
+        )
 
     def test_device_status_is_readable_and_honest(self):
-        """状态栏说的是「服务尚未实现」，不是「没电」也不是「离线故障」。"""
+        """状态栏说的是「能源判定尚未确认」，不是「没电」也不是「离线故障」。
+
+        `assertNotIn(BROWNOUT)` 这一句是本节的重点：**「还没法确认」与
+        「确认没电」是两句不同的话**，而默认口径必须是前者——把它说成断电
+        会让人去修供电，真正该做的是把定义表与运行期输入补齐。
+        """
         self.build_network()
         ref = self.server.registry.get(key(0, 65)).ref
         status = self.server.application.device_status(ref)
         self.assertFalse(status.is_online)
-        self.assertIn(Reason.SERVICE_ABSENT, status.reason_codes())
+        self.assertIn(Reason.ENERGY_UNAVAILABLE, status.reason_codes())
         self.assertNotIn(Reason.BROWNOUT, status.reason_codes())
+        self.assertNotIn(Reason.SERVICE_ABSENT, status.reason_codes())
 
     def test_removing_the_controller_leaves_the_runtime_without_a_master(self):
         """拆掉控制器不销毁运行时：库存与订单的归属不能被一次拆除清掉。"""
@@ -696,21 +719,29 @@ class TestRuntimeWiring(unittest.TestCase):
         self.assertEqual(
             sorted(report["assembly"]["stand_ins"]),
             [
-                # 调度核心（04）与存储领域层（05）都已落地，不再列在这里；
-                # 能源的耗能结算与 EN 计量属 04 的另一半，仍未开始。
-                "替身服务 energy（待任务 04 实现）",
+                # 调度核心（04）、存储领域层（05）与能源的固定结算（04）
+                # 都已落地，不再列在这里。**只剩工厂**。
                 "替身服务 factory（待任务 09 实现）",
             ],
         )
         self.assertGreaterEqual(len(report["assembly"]["unresolved"]), 1)
         self.assertEqual(report["runtimes"]["count"], 1)
         self.assertIn("submitted", report["application"])
+        # 能源那一节读的是**判定**，不是「有没有写」。
+        self.assertIn("energy", report)
+        self.assertEqual(report["energy"]["networks"], 1)
+        self.assertEqual(report["energy"]["pending"], 1)
 
     def test_scope_note_says_the_network_cannot_be_used_yet(self):
-        """诊断里必须写明「业务会被拒」，否则 DEV 档看起来像网络能用了。"""
+        """诊断里必须写明「业务会被拒」，否则 DEV 档看起来像网络能用了。
+
+        而且要说清**为什么**：拒绝理由现在是能源/带宽的「待确认」，
+        不是「服务没写」——这两句会把人引向完全不同的排查方向。
+        """
         note = self.server.diagnostics()["scope_note"]
         self.assertIn(AssemblyProfile.DEV, note)
-        self.assertIn("service_absent", note)
+        self.assertIn("energy_unavailable", note)
+        self.assertIn("不是「没电」", note)
 
     def test_unknown_commands_never_reach_a_service(self):
         """未知类型不兜底推断：猜一个服务出来就等于让设备绕过准入。"""
@@ -1211,6 +1242,332 @@ class TestClientLifecycle(unittest.TestCase):
         report = client.diagnostics()
         self.assertNotIn("inventory", report)
         self.assertNotIn("orders", report)
+
+
+class _ContainerProvider(object):
+    """位置 -> 假容器（07 的夹具）。与 06 的同类夹具同形。"""
+
+    def __init__(self, slots=9):
+        self.slots = slots
+        self.by_position = {}
+
+    def container_at(self, node_key):
+        position = node_key.as_key()
+        if position not in self.by_position:
+            self.by_position[position] = FakeContainer(
+                slots=self.slots, max_stack=1
+            )
+        return self.by_position[position]
+
+    def diagnostics(self):
+        # `io_diagnostics()` 会伸手要它，与本仓库其他提供者替身保持同形。
+        return {"fake": True, "cached": len(self.by_position)}
+
+
+class _PutEvent(object):
+    """`PlayerTryPutCustomContainerItemServerEvent` 的替身。
+
+    **`cancel()` 的存在与写法对齐 tooldelta**：那边是往原始事件字典里
+    写 `cancel = True`。这里只要能被调用并记下来即可。
+    """
+
+    def __init__(self, item_name, x, y, z, playerId="player-1"):
+        self.item = SimplePayload(newItemName=item_name)
+        self.playerId = playerId
+        self.x, self.y, self.z = x, y, z
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class TestPatternContainerEvents(unittest.TestCase):
+    """容器事件 -> 样板索引（07）。
+
+    这一组让离线测试覆盖到**适配器里的样板接线**：哪些事件当脏标记、
+    哪些插槽要被拒收。它守的是三件只在真机上才看得见的事：
+
+    1. 玩家手工拖进去的样板能被发现（容器没有「放了什么」的通知顺序）；
+    2. 样板槽拒收普通原料与不适用的样板类型；
+    3. **被动接口绝不被误伤**——那是 06 的 9 格存取位。
+    """
+
+    def setUp(self):
+        self.world = FakeWorld()
+        self.api = FakeEventApi()
+        self.containers = _ContainerProvider()
+        self.server = ServerBootstrap(
+            world=self.world,
+            event_api=self.api,
+            container_provider=self.containers,
+            # 引擎的 `GetPlayerDimensionId` 在离线环境不存在。**注入替身**
+            # 而不是让那条路径整个走不通——插槽拒收正挂在它上面。
+            player_dimension=lambda player_id: 0,
+        )
+        self.server.start(bind_engine=True)
+
+    # -- 辅助 ----------------------------------------------------------
+
+    def place(self, device_id, x, y=64, z=0):
+        self.api.dispatch(
+            self.api.event("ServerPlaceBlockEntityEvent"),
+            SimplePayload(dimension=0, posX=x, posY=y, posZ=z, blockName=device_id),
+        )
+        self.server.tick()
+        record = self.server.registry.get(key(x, y, z))
+        self.assertIsNotNone(record, device_id)
+        return record.ref
+
+    def container_for(self, x, y=64, z=0):
+        return self.containers.container_at(key(x, y, z))
+
+    def settle(self):
+        """推进足够帧数让样板层重读（它是去抖的，不会立刻读）。"""
+        self.server.clock.advance(PATTERN_SETTLE_FRAMES + 1)
+        self.server.tick()
+
+    def factory_pattern(self, count=1):
+        return patterns.PatternDefinition(
+            patterns.MODE_FACTORY,
+            [patterns.PatternStack(ResourceKey.item("minecraft:iron_ingot"), count)],
+            [patterns.PatternStack(ResourceKey.item("minecraft:iron_block"), 1)],
+        )
+
+    # -- 脏标记 -> 重读 ------------------------------------------------
+
+    def test_container_change_is_discovered_after_settling(self):
+        ref = self.place(TEMPLATE_IO, 7)
+        container = self.container_for(7)
+        container.write_slot(2, self.server.patterns.template_item(self.factory_pattern()))
+        self.api.dispatch(
+            self.api.event("ContainerItemChangedServerEvent"),
+            SimplePayload(dimensionId=0, pos=(7, 64, 0), slot=2),
+        )
+        state = self.server.patterns.get_by_ref(ref)
+        self.assertEqual(state.entries, {}, "收到变更的同一帧不该立刻读到（内容还没落定）")
+        self.settle()
+        self.assertEqual(sorted(state.entries), [2])
+
+    def test_container_change_without_a_position_is_ignored(self):
+        self.place(TEMPLATE_IO, 7)
+        # 引擎在某些容器类型上会把 `pos` 给成 None（ModAPI 备注如此）。
+        self.api.dispatch(
+            self.api.event("ContainerItemChangedServerEvent"),
+            SimplePayload(dimensionId=0, pos=None, slot=0),
+        )
+        self.assertEqual(self.server.diagnostics()["tick_errors"]["count"], 0)
+
+    def test_player_remove_marks_dirty(self):
+        ref = self.place(TEMPLATE_IO, 7)
+        state = self.server.patterns.get_by_ref(ref)
+        self.api.dispatch(
+            self.api.event("PlayerTryRemoveCustomContainerItemServerEvent"),
+            SimplePayload(playerId="p", x=7, y=64, z=0),
+        )
+        self.assertGreater(state.dirty_tick, -1)
+
+    def test_hopper_events_mark_dirty(self):
+        ref = self.place(TEMPLATE_IO, 7)
+        state = self.server.patterns.get_by_ref(ref)
+        for name in (
+            "ItemPushInCustomContainerServerEvent",
+            "ItemPullOutCustomContainerServerEvent",
+        ):
+            state.dirty_tick = -1
+            self.api.dispatch(
+                self.api.event(name),
+                SimplePayload(dimension=0, x=7, y=64, z=0),
+            )
+            self.assertGreater(state.dirty_tick, -1, name)
+
+    def test_events_for_unknown_positions_are_harmless(self):
+        self.place(TEMPLATE_IO, 7)
+        self.api.dispatch(
+            self.api.event("ContainerItemChangedServerEvent"),
+            SimplePayload(dimensionId=0, pos=(999, 64, 0), slot=0),
+        )
+        self.assertEqual(self.server.diagnostics()["tick_errors"]["count"], 0)
+
+    def test_a_missing_player_dimension_is_not_fatal(self):
+        """拿不到玩家维度时放弃这一次，**不猜一个维度**。"""
+        server = ServerBootstrap(
+            world=self.world,
+            event_api=self.api,
+            container_provider=self.containers,
+            player_dimension=lambda player_id: (_ for _ in ()).throw(ValueError("no")),
+        )
+        server.start(bind_engine=True)
+        server.event_binder._on_custom_put(
+            _PutEvent("minecraft:stone", 7, 64, 0)
+        )
+        self.assertEqual(server.diagnostics()["tick_errors"]["count"], 0)
+
+    # -- 插槽拒收 ------------------------------------------------------
+
+    def test_a_plain_item_is_rejected_from_the_pattern_slots(self):
+        """14 验收：「样板槽拒收普通原料」。"""
+        self.place(TEMPLATE_IO, 7)
+        event = _PutEvent("minecraft:stone", 7, 64, 0)
+        self.api.dispatch(self.api.event("PlayerTryPutCustomContainerItemServerEvent"), event)
+        self.assertTrue(event.cancelled)
+
+    def test_a_crafting_template_is_rejected_from_the_factory_slots(self):
+        """「拒收不适用的样板类型」（07-02/04/05 的规格补充）。"""
+        self.place(TEMPLATE_IO, 7)
+        event = _PutEvent("endernet:crafting_template", 7, 64, 0)
+        self.api.dispatch(self.api.event("PlayerTryPutCustomContainerItemServerEvent"), event)
+        self.assertTrue(event.cancelled)
+
+    def test_a_factory_template_is_accepted(self):
+        ref = self.place(TEMPLATE_IO, 7)
+        event = _PutEvent("endernet:factorical_template", 7, 64, 0)
+        self.api.dispatch(self.api.event("PlayerTryPutCustomContainerItemServerEvent"), event)
+        self.assertFalse(event.cancelled)
+        self.assertGreater(self.server.patterns.get_by_ref(ref).dirty_tick, -1)
+
+    def test_the_passive_interface_is_never_touched(self):
+        """**被动接口的 9 格是 06 的存取位，样板层一律放行。**
+
+        误伤的后果很重：玩家往总线物品接口里放石头会被无声地挡回去，
+        而那条通路（外界 -> 缓冲 -> 网络）正是 06 的全部意义。
+        """
+        self.place(PASSIVE_IO, 8)
+        for name in ("minecraft:stone", "endernet:crafting_template"):
+            event = _PutEvent(name, 8, 64, 0)
+            self.api.dispatch(
+                self.api.event("PlayerTryPutCustomContainerItemServerEvent"), event
+            )
+            self.assertFalse(event.cancelled, name)
+
+    def test_a_hopper_cannot_bypass_the_rejection(self):
+        """**漏斗是第二条放入路径，拒收规则必须同样生效。**
+
+        少了它，一台对着样板接口的漏斗能把任意物品塞进那 9 格——而
+        `blocks.md` 明写它们「专用于存放工厂样板」，14 的验收表要求
+        「样板槽拒收普通原料」。这与玩家拖入是同一个规则，两条路径共用
+        `_veto_or_mark` 一份实现。
+        """
+        self.place(TEMPLATE_IO, 7)
+        event = _PutEvent("minecraft:stone", 7, 64, 0)
+        event.dimension = 0
+        self.api.dispatch(
+            self.api.event("ItemPushInCustomContainerServerEvent"), event
+        )
+        self.assertTrue(event.cancelled)
+        self.assertEqual(
+            self.server.pattern_diagnostics()["container_events"][
+                "pattern_slot_rejected"
+            ],
+            1,
+        )
+
+    def test_a_hopper_may_feed_a_pattern_template_in(self):
+        """反过来：工厂样板**可以**用漏斗送进来（那是合法内容）。"""
+        ref = self.place(TEMPLATE_IO, 7)
+        event = _PutEvent("endernet:factorical_template", 7, 64, 0)
+        event.dimension = 0
+        self.api.dispatch(
+            self.api.event("ItemPushInCustomContainerServerEvent"), event
+        )
+        self.assertFalse(event.cancelled)
+        self.assertGreater(self.server.patterns.get_by_ref(ref).dirty_tick, -1)
+
+    def test_the_passive_interface_is_not_touched_by_the_hopper_path(self):
+        """被动接口的 9 格正是给外部物流用的，漏斗往里塞东西是它的设计用途。"""
+        self.place(PASSIVE_IO, 8)
+        event = _PutEvent("minecraft:stone", 8, 64, 0)
+        event.dimension = 0
+        self.api.dispatch(
+            self.api.event("ItemPushInCustomContainerServerEvent"), event
+        )
+        self.assertFalse(event.cancelled)
+
+    def test_a_hopper_event_without_an_item_still_marks_dirty(self):
+        """读不出物品名时**照旧标脏**：容器确实变了，那与能否读出名字无关。
+        漏掉这一支的后果是「某些改法不进索引」。"""
+        ref = self.place(TEMPLATE_IO, 7)
+        self.api.dispatch(
+            self.api.event("ItemPushInCustomContainerServerEvent"),
+            SimplePayload(dimension=0, x=7, y=64, z=0),
+        )
+        self.assertGreater(self.server.patterns.get_by_ref(ref).dirty_tick, -1)
+        self.assertEqual(self.server.diagnostics()["tick_errors"]["count"], 0)
+
+    def test_a_rejected_put_does_not_mark_dirty(self):
+        """被挡回去的东西没有落进容器，不需要重读。"""
+        ref = self.place(TEMPLATE_IO, 7)
+        state = self.server.patterns.get_by_ref(ref)
+        before = state.dirty_tick
+        self.api.dispatch(
+            self.api.event("PlayerTryPutCustomContainerItemServerEvent"),
+            _PutEvent("minecraft:stone", 7, 64, 0),
+        )
+        self.assertEqual(state.dirty_tick, before)
+
+    def test_rejections_are_counted_for_diagnostics(self):
+        self.place(TEMPLATE_IO, 7)
+        self.api.dispatch(
+            self.api.event("PlayerTryPutCustomContainerItemServerEvent"),
+            _PutEvent("minecraft:stone", 7, 64, 0),
+        )
+        report = self.server.pattern_diagnostics()
+        self.assertEqual(report["container_events"]["pattern_slot_rejected"], 1)
+        self.assertEqual(report["container_events"]["custom_container_put"], 1)
+
+    def test_container_events_are_counted(self):
+        """计数是「这条事件在真机上到底派发没有」的离线可读证据。"""
+        self.place(TEMPLATE_IO, 7)
+        self.api.dispatch(
+            self.api.event("ContainerItemChangedServerEvent"),
+            SimplePayload(dimensionId=0, pos=(7, 64, 0), slot=0),
+        )
+        self.assertEqual(
+            self.server.pattern_diagnostics()["container_events"]["container_changed"],
+            1,
+        )
+
+
+class TestPatternWiring(unittest.TestCase):
+    """装配层：样板层确实挂上了、也确实被销毁与推进。"""
+
+    def setUp(self):
+        # 用假世界而不是默认的 `ToolDeltaWorldAdapter`：默认那个在需要时
+        # 会去 import 引擎，而这些用例一个引擎接口都不该碰。
+        self.server = ServerBootstrap(world=FakeWorld())
+
+    def test_patterns_are_assembled(self):
+        self.assertIsNotNone(self.server.patterns)
+        self.assertIn("pattern", self.server.diagnostics())
+
+    def test_the_pattern_policy_is_in_the_assembly_check(self):
+        """R09 的三个字段必须进 `policy_bundle()`，否则正式验收时漏网。"""
+        fields = [
+            item["field"] for item in self.server.policy_bundle().unresolved_report()
+        ]
+        self.assertIn("pattern.unlimited_fuel", fields)
+        self.assertIn("pattern.return_rule", fields)
+        self.assertIn("pattern.kind_scope", fields)
+
+    def test_stop_marks_patterns_unloaded(self):
+        """停机**不清样板**：它们是方块容器里的实物物品，不是内存状态。"""
+        outcome = self.server.registry.register(key(7), TEMPLATE_IO)
+        ref = outcome.record.ref
+        state = self.server.patterns.ensure(ref, TEMPLATE_IO)
+        self.assertTrue(state.loaded)
+        self.server.start(bind_engine=False)
+        self.server.stop()
+        self.assertFalse(state.loaded)
+        self.assertIsNotNone(self.server.patterns.get_by_ref(ref))
+
+    def test_tick_reports_pattern_reads(self):
+        self.server.start(bind_engine=False)
+        report = self.server.tick()
+        self.assertIn("pattern_reads", report)
+
+    def test_diagnostics_say_what_is_not_done(self):
+        report = self.server.pattern_diagnostics()
+        self.assertIn("09", report["scope_note"])
+        self.assertIn("07-03", report["scope_note"])
 
 
 if __name__ == "__main__":

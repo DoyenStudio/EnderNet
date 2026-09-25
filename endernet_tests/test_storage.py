@@ -15,6 +15,7 @@
 """
 
 import io
+import json
 import os
 import unittest
 
@@ -1013,6 +1014,130 @@ class TestPolicies(Fixture):
         self.assertEqual(offenders, [], "assert_settled() 不应出现在业务代码里")
 
 
+class TestMediumCapacityDisplay(unittest.TestCase):
+    """介质物品详情要显示的两个数（`plans/items.md` / `medium_lore.md`）。
+
+    这一层**只算与渲染**：写回时机、在既有 Lore 里认领自己那两行、身份规则
+    （介质实例用持久稳定 ID、仅排除这两行动态容量行）都属 12-02，
+    这里不碰。诊断里现在就能查到同一份数值。
+
+    **判据一律用独立求和**（`Medium.recompute_usage`），不把被测的
+    `type_count` 再算一遍——那只会一起错。
+    """
+
+    def setUp(self):
+        self.definitions = DefinitionSet()
+        self.policy = MediumPolicy(
+            frames_per_second=1, bucket_seconds=10 ** 6
+        )
+        self.now = 0
+        self.medium = Medium.create("medium:1", TAPE, self.definitions, self.policy)
+
+    def store(self, key, count):
+        """存进去。额度桶给得足够大，这里考的是容量不是限速。"""
+        plan = self.medium.plan(key, count, DIRECTION_WRITE, FAR_TICK)
+        self.assertEqual(plan.accepted, count, plan.reason)
+        self.medium.commit(plan, FAR_TICK)
+
+    def independent(self):
+        # type: () -> tuple
+        """`(used_micro, type_count)` 的独立全量求和。"""
+        return self.medium.recompute_usage()
+
+    def test_an_empty_tape_matches_the_spec_example(self):
+        """`items.md` 逐字给了这个例子：空的小型单面磁带显示
+        `剩余种类数：12`、`剩余总数量：1728 单位物`。"""
+        self.assertEqual(
+            self.medium.capacity_lines(),
+            ("剩余种类数：12", "剩余总数量：1728 单位物"),
+        )
+
+    def test_remaining_types_follows_the_independent_sum(self):
+        self.store(STONE, 1)
+        self.store(DIRT, 1)
+        used_micro, used_types = self.independent()
+        self.assertEqual(self.medium.remaining_types(),
+                         self.medium.max_types() - used_types)
+        self.assertEqual(self.medium.remaining_capacity_micro(),
+                         self.medium.capacity_micro() - used_micro)
+
+    def test_storing_consumes_both_counts(self):
+        self.store(STONE, 1)
+        self.assertEqual(self.medium.remaining_types(), 11)
+        self.assertEqual(self.medium.remaining_capacity_units(), 1727)
+
+    def test_the_same_type_again_does_not_consume_a_type_slot(self):
+        """同种物品再存一次只吃容量，不吃种类数。"""
+        self.store(STONE, 1)
+        self.store(STONE, 3)
+        self.assertEqual(self.medium.remaining_types(), 11)
+        self.assertEqual(self.medium.remaining_capacity_units(), 1724)
+
+    def test_a_full_type_list_still_accepts_existing_types(self):
+        """**剩余种类数为 0 不等于写不进去。**
+
+        把类型配额用满之后，已存在的种类仍可继续追加数量。
+        把它显示成「已满」会误导玩家——所以这里把这条钉住。
+        """
+        for index in range(self.medium.max_types()):
+            self.store(ResourceKey.item("minecraft:filler_%d" % (index,)), 1)
+        self.assertEqual(self.medium.remaining_types(), 0)
+        before = self.medium.remaining_capacity_units()
+        self.store(ResourceKey.item("minecraft:filler_0"), 1)
+        self.assertEqual(self.medium.remaining_capacity_units(), before - 1)
+        self.assertEqual(self.medium.remaining_types(), 0)
+
+    def test_reserving_does_not_change_either_number(self):
+        """**预留仍占容量**，预留/释放本身不改这两个数——预留不是取出。
+
+        这一条由 `Medium` 的层负责：预留台账在存储服务那边，
+        介质只看实际条目。因此这里存进去之后两个数就该稳定。
+        """
+        self.store(STONE, 5)
+        lines = self.medium.capacity_lines()
+        view = self.medium.capacity_view()
+        # 再读一次：读取本身绝不能有副作用。
+        self.assertEqual(self.medium.capacity_lines(), lines)
+        self.assertEqual(self.medium.capacity_view(), view)
+
+    def test_a_fluid_remnant_never_rounds_up(self):
+        """**不向上取整夸大容量。**
+
+        1 mB = 1 微单位物，因此含流体时剩余量往往不是 50 的整数倍。
+        换算成「单位物」时**向下取整**：向上取整会让一块只剩 3 mB 的盘
+        显示成「还剩 1 单位物」，而那一单位物根本放不进去。
+        权威刻度是微单位，展示格式由 R07 / 12-02 定。
+        """
+        self.store(WATER, 3)
+        remaining_micro = self.medium.remaining_capacity_micro()
+        self.assertEqual(remaining_micro % 50, 47, "3 mB 吃掉 3 个微单位")
+        self.assertEqual(
+            self.medium.remaining_capacity_units(), remaining_micro // 50
+        )
+        self.assertLess(self.medium.remaining_capacity_units() * 50,
+                        remaining_micro + 50)
+        self.assertIn("剩余总数量：%d 单位物" % (remaining_micro // 50,),
+                      self.medium.capacity_lines())
+
+    def test_the_view_is_plain_data(self):
+        """诊断、界面与将来的物品 Lore 共用这一份——它必须能直接序列化。"""
+        self.store(STONE, 2)
+        view = self.medium.capacity_view()
+        self.assertEqual(sorted(view["lines"]), sorted(self.medium.capacity_lines()))
+        text = json.dumps(view, ensure_ascii=False, sort_keys=True)
+        self.assertIn("remaining_types", text)
+
+    def test_it_reports_the_medium_not_the_network(self):
+        """**用介质自身的权威数据，不用整个网络的汇总值。**
+
+        汇总里含别人的盘，拿它算会显示出一个凭空多出来的容量。
+        这里把同一块盘的内容改掉，读数跟着变；而本用例从不碰任何服务。
+        """
+        before = self.medium.remaining_capacity_units()
+        self.store(STONE, 10)
+        self.assertEqual(self.medium.remaining_capacity_units(), before - 10)
+
+
 class TestAssembly(unittest.TestCase):
     """接进启动层之后的行为（不碰引擎）。"""
 
@@ -1035,36 +1160,66 @@ class TestAssembly(unittest.TestCase):
         report = self.server.diagnostics()
         self.assertEqual(
             sorted(report["assembly"]["stand_ins"]),
-            [
-                "替身服务 energy（待任务 04 实现）",
-                "替身服务 factory（待任务 09 实现）",
-            ],
+            ["替身服务 factory（待任务 09 实现）"],
         )
         self.assertEqual(
             report["assembly"]["slots"], ["energy", "factory", "scheduler", "storage"]
         )
 
-    def test_business_commands_are_still_refused_by_energy(self):
-        """**存储不再是替身，不等于存储能用**：拦住它的是能源。"""
+    def storage_command(self, request_id="r1"):
+        # type: (str) -> DeviceCommand
+        ref = self.server.registry.get(key(0, 65)).ref
+        return DeviceCommand(
+            request_id,
+            CommandKind.STORAGE,
+            CommandSource("p1", ref, 0),
+            payload={"action": "snapshot"},
+            device_ref=ref,
+        )
+
+    def test_business_commands_are_still_refused_without_a_power_source(self):
+        """**存储与能源都是正式实现了，仍不等于能用**：这台网络没有供电源。
+
+        库默认口径下判定是「待确认」而不是「没电」——因为基带的耗能
+        blocks.md 未列（R10），严格说我们**算不出**这个网络要多少电。
+        「装了东西但没接电源」这件事只有在 DEV 口径下才敢断言成没电。
+        """
         self.build_network()
         runtimes = self.server.runtimes.runtimes()
         self.assertEqual(len(runtimes), 1)
         service = runtimes[0].services.get("storage")
         self.assertFalse(service.is_stand_in)
         self.assertTrue(service.is_ready(), "启动层必须把驱动器集合注入进去")
-        self.assertEqual(runtimes[0].state(), RunState.SERVICE_ABSENT)
+        self.assertEqual(runtimes[0].state(), RunState.NO_POWER)
 
-        ref = self.server.registry.get(key(0, 65)).ref
-        command = DeviceCommand(
-            "r1",
-            CommandKind.STORAGE,
-            CommandSource("p1", ref, 0),
-            payload={"action": "snapshot"},
-            device_ref=ref,
-        )
-        result = self.server.submit_command(command)
+        result = self.server.submit_command(self.storage_command())
         self.assertEqual(result.status, STATUS_BLOCKED)
-        self.assertIn(Reason.SERVICE_ABSENT, result.reason_codes())
+        self.assertIn(Reason.ENERGY_UNAVAILABLE, result.reason_codes())
+
+    def test_a_creative_energy_source_makes_the_network_runnable(self):
+        """**创造能量源是现在在用的能量源。** 放上它，这台网络就真的能开工。
+
+        这一条是本次增量的目标本身：能源落地之前，「存储能用」只能靠注入
+        记录型替身来假装；现在它由一块真实方块（`endernet:creative_energy_source`）
+        加 DEV 档的能源口径兑现，走的是与游戏内完全相同的装配路径。
+        """
+        from endernet.server.bootstrap import ServerBootstrap
+        from endernet.server.network.energy import EnergyPolicy
+
+        self.server = ServerBootstrap(energy_policy=EnergyPolicy.dev_stand_in())
+        self.server.start(bind_engine=False)
+        self.build_network()
+        # (2,64,0) 与基带 (1,64,0) 相邻，因此它会成为这个分量的一员。
+        self.server.push(
+            NormalizedEvent.place(key(2), "endernet:creative_energy_source")
+        )
+        self.server.tick()
+
+        runtimes = self.server.runtimes.runtimes()
+        self.assertEqual(len(runtimes), 1)
+        self.assertEqual(runtimes[0].state(), RunState.RUNNABLE)
+        result = self.server.submit_command(self.storage_command("r-powered"))
+        self.assertEqual(result.status, STATUS_OK, result.to_dict())
 
     def test_storage_diagnostics_are_reported(self):
         report = self.server.diagnostics()["storage"]

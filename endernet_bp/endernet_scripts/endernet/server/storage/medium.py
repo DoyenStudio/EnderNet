@@ -521,6 +521,88 @@ class Medium(object):
         # type: (ResourceKey) -> bool
         return key.is_item() or self.policy.counts_fluid_as_type
 
+    # -- 剩余量（介质物品详情的唯一数据来源）---------------------------
+    #
+    # 2026-09-25 的新要求：介质物品要在 `userData["display"]["Lore"]` 里显示
+    # **这块盘自己的**剩余种类数与剩余总数量（`plans/items.md` 与
+    # `technical_notes/medium_lore.md`）。
+    #
+    # 三个纪律写在方法里，因为它们各自都有对应的失败形态：
+    #
+    # 1. **用介质自身的权威数据，不用整个网络的汇总值**。汇总里含别人的盘，
+    #    拿它算会显示出一个凭空多出来的容量。
+    # 2. **预留仍占容量**，预留/释放本身不改这两个数——预留不是取出。
+    # 3. **不向上取整夸大容量**：单位物用整除（向下），不足一单位物的零头
+    #    不四舍五入成 1，也不把 mB 当物品个数。
+
+    def used_types(self):
+        # type: () -> int
+        """当前实际占用的资源种类数。
+
+        **直接用维护中的 `type_count`，不在这里另数一遍。** 那个字段由
+        `_put` / `_remove` 增量维护，并且 `assert_consistent()` 会拿
+        `recompute_usage()` 这个**独立全量求和**去核对它。这里若自己遍历
+        `entries` 再数一次，就会出现第三条路径：`type_count` 真漂移时
+        本方法照样给出「正确」的答案，反而把 `assert_consistent()` 该报的
+        缺陷盖住了。
+        """
+        return self.type_count
+
+    def remaining_types(self):
+        # type: () -> int
+        """还能再容纳多少种**新**资源。
+
+        为 0 只表示「不能再加新种类」，**不代表写不进去**——
+        已存在的种类仍可继续追加数量（`_plan_insert` 判的是两者）。
+        把它显示成「已满」会误导玩家。
+        """
+        return max(0, self.max_types() - self.used_types())
+
+    def remaining_capacity_micro(self):
+        # type: () -> int
+        """剩余容量，以 1/50 单位物的整数微单位计。**这是权威刻度。**"""
+        return self.free_micro()
+
+    def remaining_capacity_units(self):
+        # type: () -> int
+        """剩余容量换算成「单位物」，**向下取整**。
+
+        向下是刻意的：向上取整会让一块只剩 3 mB 的盘显示成「还剩 1 单位物」，
+        而那一单位物根本放不进去——展示不能夸大可用容量。
+        真有不足一单位物的零头时，权威值在 `remaining_capacity_micro()` 里，
+        展示格式由 R07 与 12-02 定。
+        """
+        return self.remaining_capacity_micro() // MICRO_UNITS_PER_UNIT
+
+    def capacity_lines(self):
+        # type: () -> tuple
+        """介质物品详情里那两行的**渲染结果**（格式取自 `plans/items.md`）。
+
+        **只负责渲染，不负责写回、也不负责在既有 Lore 里认领自己那两行。**
+        写回时机（存取提交后标记过期、有人查看时合并刷新、拔出/交接时用最新
+        权威内容生成）与「容量行如何可靠识别、旧数据如何迁移」属 12-02；
+        身份规则（介质实例用持久稳定 ID、仅排除这两行动态容量行）也在那里定。
+        本方法现在服务于诊断：`medium_view()` 报的就是物品将来会显示的那两个数。
+        """
+        return (
+            "剩余种类数：%d" % (self.remaining_types(),),
+            "剩余总数量：%d 单位物" % (self.remaining_capacity_units(),),
+        )
+
+    def capacity_view(self):
+        # type: () -> dict
+        """剩余量的**纯数据**视图（诊断、界面与物品 Lore 共用一份来源）。"""
+        return {
+            "max_types": self.max_types(),
+            "used_types": self.used_types(),
+            "remaining_types": self.remaining_types(),
+            "capacity_micro": self.capacity_micro(),
+            "used_micro": self.used_micro,
+            "remaining_micro": self.remaining_capacity_micro(),
+            "remaining_units": self.remaining_capacity_units(),
+            "lines": list(self.capacity_lines()),
+        }
+
     # -- 视图（不泄露内部字典）------------------------------------------
 
     def count_of(self, key):
@@ -550,6 +632,9 @@ class Medium(object):
             "types": self.type_count,
             "max_types": self.max_types(),
             "entries": len(self.entries),
+            # 介质物品详情要显示的两个数（`plans/items.md`）。挂在挂载视图上
+            # 是为了**只有一处算法**：诊断、界面与将来的物品 Lore 读同一份。
+            "capacity": self.capacity_view(),
             "revision": self.revision,
             "recovery": self.recovery,
             "tradeable": self.is_tradeable(),

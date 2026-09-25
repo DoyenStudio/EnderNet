@@ -43,7 +43,9 @@ from endernet.common.definitions import (  # noqa: E402
     CATEGORY_PROCESSOR_CONNECTOR,
     CATEGORY_STORAGE,
     CATEGORY_TERMINAL,
+    PASSIVE_PORT_SLOT_COUNT,
     STORAGE_DRIVER_SLOT_COUNT,
+    TEMPLATE_PATTERN_SLOT_COUNT,
     DefinitionSet,
 )
 
@@ -74,6 +76,10 @@ EXISTING_TEXTURE_FILES = {
 #: 需要逐 tick 的设备（`netease:block_entity.tick = true`）。
 #: 依据是该设备是否要被动推进：控制器排程、总线搬运、装配仓加工、处理器工作态、
 #: 能源接入口持续取电。基带与驱动器靠事件驱动，不需要逐 tick。
+#:
+#: **创造能量源不在表里**：它是静态电源，供能速率来自定义表、由能源服务在成员
+#: 变化时读取，没有任何需要每帧推进的状态。给它开 tick 只会让引擎每帧白派发一次
+#: 方块实体 tick（并吃掉唤醒预算）。
 TICKING = {
     "endernet:dos_network_endpoint": True,
     "endernet:tiny_network_endpoint": True,
@@ -89,18 +95,33 @@ TICKING = {
     "endernet:energy_input_interface": True,
 }
 
-#: 声明 `netease:block_container` 的方块：`device_id -> screen_name`。
+#: 声明 `netease:block_container` 的方块：`device_id -> (screen_name, 槽数来源)`。
 #:
 #: 声明了容器组件就必须同时把 `description.base_block` 设为 `netease_container`，
 #: 否则引擎不会按自定义容器处理它（见 build_block_json）。
 #:
-#: **槽数不在这里写**，取自 `definitions.STORAGE_DRIVER_SLOT_COUNT`：
-#: 领域层的 `DriverPolicy` 读同一份，两处各写一个数字迟早会分叉成
-#: 「界面上 10 格、领域层只认 8 格」。
+#: **槽数不在这里写**，取自 `endernet.common.definitions` 里那条 Value：
+#: 领域层读同一份，两处各写一个数字迟早会分叉成「界面上 10 格、
+#: 领域层只认 8 格」。三条接口槽数已经定案，驱动器槽数仍是 R10 的测试替身。
 #:
 #: 屏幕名形如 `namespace.screenName`，指向资源包里已存在的 `main` 屏幕。
+#:
+#: **为什么只有这三台。**
+#: - `storage_driver`：介质要能放进去（05）。
+#: - `bus_item_io`：它的 9 格是**存取共用的真实库存**，外部物流要能直接
+#:   存取（06-04）。没有容器组件，方块实体数据里就没有 `Items`，
+#:   别的模组/漏斗没有地方放东西，那条通路只能停留在契约上。
+#: - `bus_template_io`：它的 9 格**专用于工厂样板**（06-07 之后的规格），
+#:   容器由任务 07 使用；**任务 06 的原料缓冲不再挂在这个容器上**。
+#: - **流体总线不在内**：它的缓冲是 mB 流体，而真实流体适配属 13-03、
+#:   尚未实现。给它挂一个**物品**容器会得到一个「看起来能用、实际存错东西」
+#:   的方块，比没有更糟。
+#: - **存货口/取货口不在内**：blocks.md 说它们「自动从/向朝向的容器」
+#:   搬运，动的是**邻居**，不是自身缓冲。
 CONTAINERS = {
-    "endernet:storage_driver": "storage_driver_ui.main",
+    "endernet:storage_driver": ("storage_driver_ui.main", STORAGE_DRIVER_SLOT_COUNT),
+    "endernet:bus_item_io": ("bus_item_io_ui.main", PASSIVE_PORT_SLOT_COUNT),
+    "endernet:bus_template_io": ("bus_template_io_ui.main", TEMPLATE_PATTERN_SLOT_COUNT),
 }
 
 #: 需要朝向状态的设备（放置方向决定端口朝向）。
@@ -164,6 +185,7 @@ TIPS = {
     "endernet:memory_slot": "插入内存条，为网络提供配方运行内存。",
     "endernet:assemble_chamber": "为网络提供自动合成能力。",
     "endernet:energy_input_interface": "将蔚蓝科技的 RF 转换为本模组的 EN。",
+    "endernet:creative_energy_source": "为网络提供 2147483647 EN/t 的能源功率。不占带宽。",
 }
 
 
@@ -171,15 +193,16 @@ def short_name(device_id):
     return device_id.split(":", 1)[1]
 
 
-def slot_count():
-    # type: () -> int
-    """存储驱动器槽数。
+def container_size_of(device_id):
+    # type: (str) -> int
+    """该方块的容器格数。
 
-    与领域层的 `DriverPolicy` 读**同一份**定义表取值（`STORAGE_DRIVER_SLOT_COUNT`，
-    R10 未定案的测试替身）。方块的 `container_size` 必须等于它，否则界面上能放
-    10 格、领域层只认 8 格。
+    与领域层读**同一份**定义表取值。三条接口槽数都是**已定案**的
+    （`blocks.md` 逐条写明），驱动器槽数则仍是 R10 的测试替身。
+    方块的 `container_size` 必须等于它，否则界面上能放 10 格、
+    领域层只认 8 格——而那种分叉在离线测试里看不出来。
     """
-    return int(STORAGE_DRIVER_SLOT_COUNT.value)
+    return int(CONTAINERS[device_id][1].value)
 
 
 def block_file_name(device_id):
@@ -236,8 +259,8 @@ def build_block_json(device_id, definition):
     if device_id in CONTAINERS:
         components["netease:block_container"] = {
             "custom_description": definition.label,
-            "screen_name": CONTAINERS[device_id],
-            "container_size": int(slot_count()),
+            "screen_name": CONTAINERS[device_id][0],
+            "container_size": container_size_of(device_id),
         }
 
     if device_id in TIPS:

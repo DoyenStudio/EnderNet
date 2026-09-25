@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:crafting_template"
+        },
+        "description": {
+            "identifier": "endernet:crafting_template"
+        }
+    }
+}

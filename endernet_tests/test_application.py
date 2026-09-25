@@ -22,6 +22,13 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.identity import ChunkKey, NodeKey
+from endernet.common.resource_key import ResourceKey
+from endernet.server.adapters.containers import FakeContainer
+from endernet.server.crafting.patterns import (
+    MODE_FACTORY,
+    PatternDefinition,
+    PatternStack,
+)
 from endernet.common.protocol import (
     BlockReason,
     CommandKind,
@@ -48,6 +55,17 @@ from endernet.server.runtime.events import NormalizedEvent
 BB8 = "endernet:network_baseband_8"
 TINY = "endernet:tiny_network_endpoint"
 DRIVER = "endernet:storage_driver"
+BUS = "endernet:bus_item_io"
+TEMPLATE_IO = "endernet:bus_template_io"
+#: 样板接口的位置（夹具的网络之外，避免与既有设备挤在一起）。
+TEMPLATE_POS = NodeKey(0, 40, 64, 1)
+
+#: 一条最小的工厂样板（07）。只用于「索引里有没有它」这类路由断言。
+PATTERN = PatternDefinition(
+    MODE_FACTORY,
+    [PatternStack(ResourceKey.item("minecraft:iron_ingot"), 1)],
+    [PatternStack(ResourceKey.item("minecraft:iron_block"), 1)],
+)
 
 STATUS = "ok"
 BLOCKED = "blocked"
@@ -127,9 +145,16 @@ class ApplicationFixture(unittest.TestCase):
         """默认 None = 用 04/05/09 的替身。子类覆盖它来换双件。"""
         return None
 
+    def container_provider(self):
+        # type: () -> object
+        """默认 None = 用真实引擎提供者（离线时它读不到任何容器）。"""
+        return None
+
     def setUp(self):
         self.server = ServerBootstrap(
-            world=FakeWorld(), service_factories=self.service_factories()
+            world=FakeWorld(),
+            service_factories=self.service_factories(),
+            container_provider=self.container_provider(),
         )
         self.server.start(bind_engine=False)
         self.drive(
@@ -232,7 +257,7 @@ class TestRouting(RoutedFixture):
 
 
 class TestRoutingWithoutServices(ApplicationFixture):
-    """替身装配下的路由：结论一样，只是理由不同。"""
+    """默认装配（能源取保守口径）下的路由：结论一样，只是理由不同。"""
 
     def test_unknown_kind_never_reaches_a_runtime(self):
         result = self.application.submit(self.command(kind="teleport"))
@@ -247,14 +272,17 @@ class TestRoutingWithoutServices(ApplicationFixture):
         self.assertEqual(result.status, REJECTED, result.to_dict())
         self.assertIn(Reason.BAD_PARAMETER, result.reason_codes())
 
-    def test_business_is_refused_while_the_services_are_stand_ins(self):
-        """DEV 档下命令确实进得了主控，但会被服务这一层如实拒绝。
+    def test_business_is_refused_while_the_energy_verdict_is_unconfirmed(self):
+        """DEV 档下命令确实进得了主控，但会被能源判定如实拦下。
 
-        这正是游戏内当前的样子：`service_absent`，不是故障也不是没路由。
+        理由不是「服务没写」而是「算不出这个网络要多少电」——库默认口径下
+        基带耗能未列（R10）、工作态没接线，所以严格说无话可说。
+        这正是游戏**之外**的样子；游戏内 `start_server()` 换成 DEV 口径
+        （`EnergyPolicy.dev_stand_in()`），从而给出有电/没电的真结论。
         """
         result = self.submit(request_id="r1")
         self.assertEqual(result.status, BLOCKED, result.to_dict())
-        self.assertIn(Reason.SERVICE_ABSENT, result.reason_codes())
+        self.assertIn(Reason.ENERGY_UNAVAILABLE, result.reason_codes())
         self.assertEqual(self.application.stats["routed"], 1)
 
 
@@ -397,18 +425,20 @@ class TestReadOnlyFacade(RoutedFixture):
 
 
 class TestAssemblyView(ApplicationFixture):
-    def test_devices_are_offline_while_the_services_are_stand_ins(self):
-        """DEV 档 + 替身：设备**必须**报离线，理由是「服务尚未实现」。
+    def test_devices_are_offline_while_the_energy_verdict_is_unconfirmed(self):
+        """判定不成立时设备**必须**报离线，理由是「能源判定尚未确认」。
 
-        这条钉住的是「不要让替身看起来像能用」——若哪天替身被换个实现
-        悄悄返回 True，设备会集体变成在线，而库存其实根本没人管。
+        这条钉住的是「**算不出来**不等于**有电**」：库默认口径下这台网络的
+        需求算不出，于是判定是 `None`；若哪天有实现把 `None` 当成可以放行，
+        设备会集体变成在线，而库存其实根本没人管。
         """
         for position in (self.A_DEV, self.B_DEV):
             status = self.application.device_status(self.ref_of(position))
             self.assertFalse(status.is_online)
-            self.assertIn(Reason.SERVICE_ABSENT, status.reason_codes())
+            self.assertIn(Reason.ENERGY_UNAVAILABLE, status.reason_codes())
+            self.assertNotIn(Reason.BROWNOUT, status.reason_codes())
 
-    def test_no_network_is_runnable_while_the_services_are_stand_ins(self):
+    def test_no_network_is_runnable_while_the_energy_verdict_is_unconfirmed(self):
         snapshot = self.application.status_snapshot()
         self.assertEqual(snapshot["count"], 2)
         self.assertEqual(snapshot["runnable"], [])
@@ -501,6 +531,145 @@ class TestDebugQuery(RoutedFixture):
         self.application.debug_query("snapshot")
         self.assertEqual(self.application.stats["queries"], 1)
 
+    def test_port_query_lists_every_port(self):
+        """接口的只读诊断：全局约束 9 要求设备离线时仍可查看原因。"""
+        bus = key(15, 65, 1)
+        self.drive(NormalizedEvent.place(bus, BUS))
+        payload = self.application.debug_query("port").payload
+        self.assertEqual(len(payload["ports"]), 1)
+        entry = payload["ports"][0]
+        self.assertEqual(entry["role"], "passive")
+        self.assertEqual(payload["diagnostics"]["ports"], 1)
+
+    def test_port_query_by_node_key_reports_the_blocker(self):
+        """**没有主控也要答得出来**——业务命令在这一刻是拿不到答案的。"""
+        bus = key(15, 65, 1)
+        self.drive(NormalizedEvent.place(bus, BUS))
+        payload = self.application.debug_query("port", node_key=bus).payload
+        self.assertEqual(payload["port"]["role"], "passive")
+        # 被动总线的过滤为空 → 未配置；这条结论是一台离线设备最需要看到的。
+        self.assertIsNotNone(payload["blocker"])
+        self.assertEqual(payload["blocker"]["code"], Reason.PORT_UNCONFIGURED)
+
+    def test_port_query_on_an_empty_position_is_an_error_payload(self):
+        payload = self.application.debug_query("port", node_key=key(99, 99, 99)).payload
+        self.assertIn("error", payload)
+
+    def test_port_query_without_a_store_says_so(self):
+        """没有接入接口状态集合时给出一条能读的说明，而不是空字典。"""
+        bare = ApplicationService(
+            self.application.runtimes, self.application.topology,
+            self.application.admission,
+        )
+        self.assertIn("error", bare.debug_query("port").payload)
+
+    # -- 样板（07）-----------------------------------------------------
+
+    def test_pattern_query_lists_every_provider(self):
+        """样板索引根本不经过网络，因此**没有主控时它照样是准的**。"""
+        self.drive(NormalizedEvent.place(TEMPLATE_POS, TEMPLATE_IO))
+        payload = self.application.debug_query("pattern").payload
+        self.assertEqual(len(payload["providers"]), 1)
+        self.assertEqual(payload["providers"][0]["device_id"], TEMPLATE_IO)
+        self.assertEqual(payload["diagnostics"]["providers"], 1)
+
+    def test_pattern_query_on_an_empty_position_is_an_error_payload(self):
+        payload = self.application.debug_query(
+            "pattern", node_key=key(99, 99, 99)
+        ).payload
+        self.assertIn("error", payload)
+
+    def test_pattern_query_without_a_store_says_so(self):
+        bare = ApplicationService(
+            self.application.runtimes, self.application.topology,
+            self.application.admission,
+        )
+        self.assertIn("error", bare.debug_query("pattern").payload)
+
+
+class FakeContainerProvider(object):
+    """位置 -> 假容器。**每个位置一个独立容器**，避免用例互相污染。"""
+
+    def __init__(self, slots=9):
+        self.slots = slots
+        self.by_position = {}
+
+    def container_at(self, node_key):
+        position = node_key.as_key()
+        if position not in self.by_position:
+            self.by_position[position] = FakeContainer(
+                slots=self.slots, max_stack=1
+            )
+        return self.by_position[position]
+
+    def diagnostics(self):
+        return {"fake": True, "cached": len(self.by_position)}
+
+
+class PatternFixture(ApplicationFixture):
+    """带假容器的夹具：样板层需要读得到那 9 格才能给出真结论。"""
+
+    def container_provider(self):
+        return FakeContainerProvider()
+
+
+class TestPatternDebugQuery(PatternFixture):
+    """`debug_query("pattern")` 的三条只读路径（07-07 的服务端半边）。
+
+    与 `port` 同形：**没有主控、网络不能工作时照样能答**（全局约束 9）。
+    样板索引根本不经过网络，因此它在这一刻反而是最准的信息。
+    """
+
+    def setUp(self):
+        ApplicationFixture.setUp(self)
+        self.drive(NormalizedEvent.place(TEMPLATE_POS, TEMPLATE_IO))
+        self.ref = self.ref_of(TEMPLATE_POS)
+
+    def test_by_position_reports_the_slots(self):
+        payload = self.application.debug_query(
+            "pattern", node_key=TEMPLATE_POS
+        ).payload
+        self.assertIn("provider", payload)
+        self.assertIn("editable", payload)
+        # 槽数由**容器**回答，与定义表那条已定案的 9 是同一个数。
+        self.assertEqual(payload["editable"]["slot_count"], 9)
+        self.assertEqual(payload["editable"]["unreadable"], "")
+
+    def test_by_ref_reports_the_same_provider(self):
+        payload = self.application.debug_query("pattern", ref=self.ref).payload
+        self.assertEqual(payload["provider"]["node_key"], TEMPLATE_POS.as_key())
+
+    def test_by_output_lists_candidates(self):
+        self.assertTrue(self.application.patterns.install(self.ref, 0, PATTERN)[0])
+        payload = self.application.debug_query(
+            "pattern", output=ResourceKey.item("minecraft:iron_block")
+        ).payload
+        self.assertEqual(len(payload["candidates"]), 1)
+        self.assertTrue(payload["candidates"][0]["available"])
+        self.assertEqual(payload["candidates"][0]["slot"], 0)
+
+    def test_a_rejected_pattern_shows_up_in_the_view(self):
+        """槽里塞了不该放的东西时，界面要能说出是哪一格、为什么。"""
+        from endernet.common.item_codec import item_dict_from_key
+
+        container = self.application.patterns.container_at(TEMPLATE_POS)
+        container.write_slot(2, item_dict_from_key(ResourceKey.item("minecraft:stone"), 1))
+        self.application.patterns.refresh(self.ref, force=True)
+        payload = self.application.debug_query("pattern", ref=self.ref).payload
+        self.assertEqual(
+            [row["slot"] for row in payload["editable"]["invalid_slots"]], [2]
+        )
+
+    def test_the_pattern_query_is_read_only(self):
+        """**门面上没有写入口。** 样板槽的写入是领域层 API，调用方是任务 11；
+        在调试入口开一个写口就是全局约束 2 说的那种旁路。"""
+        state = self.application.patterns.get_by_ref(self.ref)
+        for op in sorted(DEBUG_OPS):
+            self.application.debug_query(op, node_key=TEMPLATE_POS, ref=self.ref)
+        self.assertEqual(state.entries, {})
+        self.assertEqual(state.stats["installs"], 0)
+        self.assertEqual(state.stats["uninstalls"], 0)
+
 
 class TestResultSummary(unittest.TestCase):
     def test_applied_result_shows_its_payload(self):
@@ -535,10 +704,12 @@ class TestApplicationWiring(unittest.TestCase):
 
     def test_diagnostics_expose_the_new_sections(self):
         report = ServerBootstrap(world=FakeWorld()).diagnostics()
-        for section in ("assembly", "runtimes", "application"):
+        for section in ("assembly", "runtimes", "application", "energy"):
             self.assertIn(section, report)
         self.assertIn(AssemblyProfile.DEV, report["scope_note"])
-        self.assertIn("service_absent", report["scope_note"])
+        # 拒绝理由现在是能源/带宽的「待确认」。写成 `service_absent` 会让人
+        # 去查装配表，而该查的是供能与定义表。
+        self.assertIn("energy_unavailable", report["scope_note"])
 
     def test_application_service_can_be_built_standalone(self):
         """单独构造（测试与将来的工具链用），不依赖 bootstrap 的其余部分。"""

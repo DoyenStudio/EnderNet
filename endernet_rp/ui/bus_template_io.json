@@ -95,6 +95,41 @@
                                                             1
                                                         ]
                                                     }
+                                                },
+                                                {
+                                                    "items": {
+                                                        "type": "panel",
+                                                        "offset": [
+                                                            0.0,
+                                                            -24.0
+                                                        ],
+                                                        "size": [
+                                                            0.0,
+                                                            0.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "container_items@endernet_container_common.container_grid_items": {
+                                                                    "anchor_from": "center",
+                                                                    "anchor_to": "center",
+                                                                    "grid_dimensions": [
+                                                                        9,
+                                                                        1
+                                                                    ],
+                                                                    "maximum_grid_items": 9,
+                                                                    "offset": [
+                                                                        0,
+                                                                        0
+                                                                    ],
+                                                                    "size": [
+                                                                        "default",
+                                                                        "100.0%c"
+                                                                    ]
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
                                                 }
                                             ]
                                         }

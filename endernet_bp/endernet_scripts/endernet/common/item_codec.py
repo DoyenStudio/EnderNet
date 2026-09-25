@@ -28,6 +28,83 @@ def _check_fields(data):
         raise ValueError("Unsupported item fields: %r" % (sorted(set(data) - _ENGINE_FIELDS),))
 
 
+#: 引擎在 `userData` 里给标量加的类型标签。**实测值**（2026-09-25，游戏内）。
+ENGINE_TAG_BYTE = 1
+ENGINE_TAG_INT = 3
+ENGINE_TAG_FLOAT = 5
+ENGINE_TAG_TEXT = 8
+
+#: Byte 这一个标签**兼表布尔与 None**，靠值区分。
+ENGINE_BYTE_NONE = 2
+
+
+def unbox_engine_value(value):
+    """把引擎 `userData` 里带类型标签的值解回普通值。**递归。**
+
+    2026-09-25 游戏内实测：往方块容器写 `userData` 时给的是普通值，
+    读回来**每个标量都被包成** `{"__type__": T, "__value__": V}`：
+
+    | T | 含义 | 值 |
+    | --- | --- | --- |
+    | 1 | Byte，**布尔与 None 共用这一个标签** | 0=False，1=True，2=None |
+    | 3 | Int | 普通整数 |
+    | 5 | Float | 浮点 |
+    | 8 | String | 文本 |
+
+    空列表与空字典**不加标签**，原样回来。
+
+    **判别要求 `__type__` 是普通整数。** 一份内容恰好长成
+    `{"__type__": 3, "__value__": 7}` 的 `userData`（别的模组的数据）
+    被引擎包过之后是 `{"__type__": {"__type__": 3, ...}, "__value__": {...}}`
+    ——外层字典的 `__type__` 是字典而不是整数，因此不会被误当标签解掉。
+
+    认不出的标签**原样返回**：那说明引擎换了表示法，把整棵树交回给调用方
+    去报「读不出来」，好过在这里猜一个值。
+    """
+    if isinstance(value, dict):
+        if set(value) == set(("__type__", "__value__")):
+            tag = value["__type__"]
+            if isinstance(tag, int) and not isinstance(tag, bool):
+                return _unbox_scalar(tag, value["__value__"])
+        return dict((key, unbox_engine_value(item)) for key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return [unbox_engine_value(item) for item in value]
+    return value
+
+
+def _unbox_scalar(tag, raw):
+    # type: (int, object) -> object
+    if tag == ENGINE_TAG_BYTE:
+        if raw == ENGINE_BYTE_NONE:
+            return None
+        return bool(raw)
+    if tag == ENGINE_TAG_INT:
+        return int(raw)
+    if tag == ENGINE_TAG_FLOAT:
+        return float(raw)
+    if tag == ENGINE_TAG_TEXT:
+        return raw
+    # 认不出的标签：把原样交回去，让上层报「读不出来」。
+    return {"__type__": tag, "__value__": raw}
+
+
+def is_empty_item(data):
+    """空槽判定：`None`、缺 `count`、数量 ≤ 0、或就是空气。
+
+    **放在这里而不是各层自己写**：这条判定同时被引擎适配器
+    （`adapters/containers_engine.py` 的读槽路径）与领域层（`crafting/store.py`
+    读样板槽）需要，而两处各写一份的代价是「某一处忘了判空气」——
+    那种错的表现是空槽被当成一件叫 `minecraft:air` 的物品读出来，
+    然后在下游某个无关的地方炸掉。`item_key_from_dict` 是严格的、
+    遇到空槽会抛错，所以判空必须在它之前，且只有一个定义。
+    """
+    if not data:
+        return True
+    if data.get("count", 0) <= 0:
+        return True
+    return data.get("newItemName") == "minecraft:air"
+
+
 def item_key_from_dict(data):
     """从引擎字段字典提取身份；空槽返回 None，数量不参与身份。"""
     _check_fields(data)

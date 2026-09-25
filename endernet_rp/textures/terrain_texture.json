@@ -31,6 +31,9 @@
         "endernet:crafting_terminal_panel": {
             "textures": "textures/endernet/devices/crafting_terminal_panel"
         },
+        "endernet:creative_energy_source": {
+            "textures": "textures/endernet/devices/creative_energy_source"
+        },
         "endernet:dos_network_endpoint": {
             "textures": "textures/endernet/devices/dos_network_endpoint"
         },

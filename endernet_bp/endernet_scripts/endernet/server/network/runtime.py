@@ -1077,6 +1077,56 @@ class RuntimeManager(object):
                 report["queued_worst"] = queued
         return report
 
+    def energy_view(self):
+        # type: () -> dict
+        """汇总各网络的能源判定（04-04），供诊断与任务 14 的验收读取。
+
+        只统计**正式实现**的服务，理由与 `scheduler_view()` 同：替身槽位根本
+        没有判定可言，把它算进来会让「没电」既可能是真没电、也可能是还没写。
+
+        **被替身口径忽略掉的需求在这里汇总并逐个列出设备标识。** 这件事不能
+        只报一个数字：DEV 档为了让网络跑起来会选择「忽略算不出的需求」，
+        而读的人必须能看见到底忽略了哪几台设备——否则「有电」这个结论看起来
+        比它实际的证据强。
+        """
+        report = {
+            "networks": 0,
+            "powered": 0,
+            "brownout": 0,
+            "pending": 0,
+            #: 没有可汇总指标的**非替身**服务数。与 0 分开的理由同
+            #: `scheduler_view()`：缺项不等于 0。
+            "unreported": 0,
+            "ignored_demand": {},
+        }
+        for component_id in sorted(self._runtimes):
+            service = self._runtimes[component_id].services.get(ServiceId.ENERGY)
+            if service is None or service.is_stand_in:
+                continue
+            # 走**契约方法**而不是戳实现字段：`diagnostics()` 是
+            # `NetworkService` 的一部分，`_ok` 不是。
+            detail = service.diagnostics()
+            if "power_ok" not in detail:
+                report["unreported"] += 1
+                continue
+            report["networks"] += 1
+            verdict = detail["power_ok"]
+            if verdict is True:
+                report["powered"] += 1
+            elif verdict is False:
+                report["brownout"] += 1
+            else:
+                report["pending"] += 1
+            ignored = detail.get("ignored_demand") or {}
+            for gap in sorted(ignored):
+                for device_id in ignored[gap] or ():
+                    bucket = report["ignored_demand"].setdefault(gap, set())
+                    bucket.add(device_id)
+        report["ignored_demand"] = dict(
+            (gap, sorted(ids)) for gap, ids in report["ignored_demand"].items()
+        )
+        return report
+
     # -- 诊断 ----------------------------------------------------------
 
     def status_view(self, component_id=None):

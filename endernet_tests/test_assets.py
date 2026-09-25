@@ -9,6 +9,7 @@
 import io
 import json
 import os
+import sys
 import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
@@ -46,14 +47,14 @@ def block_file_name(device_id):
     return device_id.replace(":", "_") + ".json"
 
 
-def item_file_name(medium_id):
+def item_file_name(item_id):
     """与 scripts/gen_items.py 保持一致。"""
-    return medium_id.replace(":", "_") + ".json"
+    return item_id.replace(":", "_") + ".json"
 
 
-def item_texture_name(medium_id):
+def item_texture_name(item_id):
     """与 scripts/gen_items.py 保持一致：`endernet_<短名>`。"""
-    return "endernet_" + medium_id.split(":", 1)[1]
+    return "endernet_" + item_id.split(":", 1)[1]
 
 
 class AssetFixture(unittest.TestCase):
@@ -66,7 +67,11 @@ class AssetFixture(unittest.TestCase):
         cls.block_ids = sorted(cls.definitions.devices)
         cls.item_texture = read_json(RP_ITEM_TEXTURE)
         cls.item_texture_data = cls.item_texture.get("texture_data", {})
-        cls.item_ids = list(cls.definitions.item_mediums)
+        # **两类物品一起查**（介质 + 样板）。分成两份清单的代价是新增一类
+        # 时总有一处漏掉，而漏掉的表现是「游戏里有这件物品、但没人检查它的
+        # 贴图与语言」——一个只在真机上才看得见的空洞。
+        cls.item_ids = list(cls.definitions.item_keys())
+        cls.item_specs = cls.definitions.item_specs()
 
     def block_json_path(self, device_id):
         return os.path.join(BP_BLOCKS, block_file_name(device_id))
@@ -253,18 +258,48 @@ class TestCreativeTab(AssetFixture):
             )
 
 
-class TestStorageDriverContainer(AssetFixture):
-    """驱动器是一个 10 格的原生容器：组件、槽数与屏幕名三者必须对得上。
+def declared_containers():
+    """`gen_blocks.CONTAINERS` 的读数。
+
+    **不另抄一份清单。** 生成器里那张表是唯一的声明处，测试从它派生——
+    两边各写一份的话，新增一个容器方块时测试会照样通过，而它本来要防的
+    正是「声明与产物对不上」。
+    """
+    scripts_dir = os.path.join(REPO, "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import gen_blocks
+
+    return gen_blocks.CONTAINERS
+
+
+class TestBlockContainers(AssetFixture):
+    """声明了 `netease:block_container` 的方块：组件、槽数与屏幕名三者必须对得上。
 
     这里只验证「资源声明正确」，**不验证它在游戏里真的能打开**——那件事
     只能在真机上定论，属交付说明的未验证项。
     """
 
-    def components(self, device_id=DRIVER):
+    def components(self, device_id):
         return self.read_block_json(device_id)["minecraft:block"]["components"]
 
-    def test_storage_driver_declares_a_container(self):
-        self.assertIn("netease:block_container", self.components())
+    def container_of(self, device_id):
+        return self.components(device_id)["netease:block_container"]
+
+    def test_container_set_matches_the_generator(self):
+        """**容器方块的集合必须恰好是生成器声明的那几个。**
+
+        两个方向都要查：产物多了一个（懒得改生成器、手改了 JSON）会让一台
+        设备莫名其妙变成可开箱的方块；少了一个则是容器压进方块却没生效，
+        表现为「外部物流放进去的东西不见了」。
+        """
+        declared = set(declared_containers())
+        present = set(
+            device_id
+            for device_id in self.block_ids
+            if "netease:block_container" in self.components(device_id)
+        )
+        self.assertEqual(present, declared)
 
     def test_container_size_matches_the_domain_definition(self):
         """界面格数、领域层槽数、方块容器格数必须是同一个数。
@@ -272,13 +307,45 @@ class TestStorageDriverContainer(AssetFixture):
         分成三份的话会出现「界面上能放 10 格、领域层只认 8 格」，
         而那种错误在离线测试里不会有任何征兆。
         """
-        container = self.components()["netease:block_container"]
-        self.assertEqual(container["container_size"], STORAGE_DRIVER_SLOT_COUNT.value)
+        for device_id, (_, size_value) in sorted(declared_containers().items()):
+            self.assertEqual(
+                self.container_of(device_id)["container_size"],
+                size_value.value,
+                device_id,
+            )
 
     def test_container_requires_the_netease_container_base_block(self):
         """声明了容器组件却不设 base_block，引擎不会按自定义容器处理它。"""
-        description = self.read_block_json(DRIVER)["minecraft:block"]["description"]
-        self.assertEqual(description.get("base_block"), "netease_container")
+        for device_id in sorted(declared_containers()):
+            description = self.read_block_json(device_id)["minecraft:block"]["description"]
+            self.assertEqual(description.get("base_block"), "netease_container", device_id)
+
+    def test_the_storage_driver_is_still_a_container(self):
+        """**独立于生成器的断言。** 其余几条都从 `gen_blocks.CONTAINERS`
+        派生期望值，因此把驱动器那一项从生成器里删掉之后它们照样全绿——
+        而驱动器必须是容器（05 的介质槽位就存在那个方块容器里）。
+        这里把这条**钉死在测试里**，不让它跟着生成器一起漂走。
+        """
+        self.assertIn("netease:block_container", self.components(DRIVER))
+        self.assertEqual(
+            self.container_of(DRIVER)["container_size"],
+            STORAGE_DRIVER_SLOT_COUNT.value,
+        )
+
+    def test_every_declared_container_is_a_known_device(self):
+        for device_id in sorted(declared_containers()):
+            self.assertIn(device_id, self.definitions.devices)
+
+    def test_non_container_blocks_have_neither_component_nor_base_block(self):
+        """没声明容器的设备不该顺手获得容器组件——那会让它们变成可开箱的方块。"""
+        for device_id in self.block_ids:
+            if device_id in declared_containers():
+                continue
+            self.assertNotIn(
+                "netease:block_container", self.components(device_id), device_id
+            )
+            description = self.read_block_json(device_id)["minecraft:block"]["description"]
+            self.assertNotIn("base_block", description, device_id)
 
     def test_screen_name_resolves_to_a_real_screen(self):
         """`screen_name` 形如 `namespace.screenName`，两边都得真的存在。
@@ -289,48 +356,47 @@ class TestStorageDriverContainer(AssetFixture):
         `storage_driver_ui`（原版同样如此，`NeteaseContainerUI.json` 的命名空间是
         `netease_container`）。因此按 `_ui_defs.json` 登记的清单逐个找命名空间。
         """
-        screen_name = self.components()["netease:block_container"]["screen_name"]
-        namespace, _, screen = screen_name.partition(".")
-        self.assertTrue(
-            namespace and screen, "screen_name 应形如 namespace.screen：%r" % screen_name
-        )
-
         registry = read_json(os.path.join(RP_UI, "_ui_defs.json"))
-        found = None
+        screens = {}
         for relative in registry["ui_defs"]:
             path = os.path.join(RP_ROOT, relative.replace("/", os.sep))
             payload = read_json(path)
-            if payload.get("namespace") == namespace:
-                found = (path, payload)
-                break
-        self.assertIsNotNone(found, "没有命名空间为 %s 的界面文件" % namespace)
-        path, payload = found
-        # 屏幕可以在定义处写 `main@common.inventory_screen_common` 继承一个原型，
-        # 而外部引用只写 `namespace.main`。因此前缀匹配才是正确的判定。
-        names = set(payload)
-        self.assertTrue(
-            screen in names or any(name.startswith(screen + "@") for name in names),
-            "%s 里没有名为 %s 的屏幕（现有：%s）"
-            % (path, screen, ", ".join(sorted(n for n in names if not n.startswith("_"))[:8])),
-        )
+            namespace = payload.get("namespace")
+            if namespace:
+                screens[namespace] = (path, payload)
 
-    def test_only_the_storage_driver_is_a_container(self):
-        """别的设备不该顺手获得容器组件——那会让它们变成可开箱的方块。"""
-        others = [d for d in self.block_ids if d != DRIVER]
-        for device_id in others:
-            components = self.components(device_id)
-            self.assertNotIn("netease:block_container", components, device_id)
-            description = self.read_block_json(device_id)["minecraft:block"]["description"]
-            self.assertNotIn("base_block", description, device_id)
+        for device_id, (screen_name, _) in sorted(declared_containers().items()):
+            namespace, _, screen = screen_name.partition(".")
+            self.assertTrue(
+                namespace and screen,
+                "%s 的 screen_name 应形如 namespace.screen：%r" % (device_id, screen_name),
+            )
+            found = screens.get(namespace)
+            self.assertIsNotNone(
+                found, "没有命名空间为 %s 的界面文件（%s）" % (namespace, device_id)
+            )
+            path, payload = found
+            # 屏幕可以在定义处写 `main@common.inventory_screen_common` 继承原型，
+            # 而外部引用只写 `namespace.main`。因此前缀匹配才是正确的判定。
+            names = set(payload)
+            self.assertTrue(
+                screen in names or any(name.startswith(screen + "@") for name in names),
+                "%s 里没有名为 %s 的屏幕（现有：%s）"
+                % (
+                    path,
+                    screen,
+                    ", ".join(sorted(n for n in names if not n.startswith("_"))[:8]),
+                ),
+            )
 
 
 class TestItemResources(AssetFixture):
-    """介质物品的行为包定义、资源包定义、图集与贴图文件必须四者齐全。"""
+    """物品（介质与样板）的行为包定义、资源包定义、图集与贴图必须四者齐全。"""
 
-    def test_every_item_medium_has_behavior_and_resource_json(self):
+    def test_every_item_has_behavior_and_resource_json(self):
         missing = []
-        for medium_id in self.item_ids:
-            name = item_file_name(medium_id)
+        for item_id in self.item_ids:
+            name = item_file_name(item_id)
             for directory in (BP_ITEMS, RP_ITEMS):
                 if not os.path.isfile(os.path.join(directory, name)):
                     missing.append(os.path.join(directory, name))
@@ -343,35 +409,48 @@ class TestItemResources(AssetFixture):
             self.assertEqual(present - known, set(), "%s 存在定义表之外的物品 JSON" % directory)
 
     def test_item_identifiers_match_file_names(self):
-        for medium_id in self.item_ids:
+        for item_id in self.item_ids:
             for directory in (BP_ITEMS, RP_ITEMS):
-                payload = read_json(os.path.join(directory, item_file_name(medium_id)))
+                payload = read_json(os.path.join(directory, item_file_name(item_id)))
                 identifier = payload["minecraft:item"]["description"]["identifier"]
-                self.assertEqual(identifier, medium_id)
+                self.assertEqual(identifier, item_id)
 
-    def test_medium_items_do_not_stack(self):
-        """介质要携带自己的身份与内容，一叠 64 个会共享同一份数据。
+    def test_items_do_not_stack(self):
+        """**堆叠上限必须是 1，两类物品各自的理由都成立。**
 
-        堆叠上限必须保持 1；改成别的值会让「拔出的是哪一块盘」无从确定。
+        - 介质要携带自己的身份与内容，一叠 64 个会共享同一份物品数据，
+          拔出其中一个就无法确定它是哪一块盘。
+        - 样板把配方编码在自己的 `userData` 里，一叠 64 块只会剩下其中
+          一块的配方，而玩家看到的是一叠——**这一条比介质那条更硬**：
+          样板没有世界侧的记录可以兜底。
         """
-        for medium_id in self.item_ids:
-            payload = read_json(os.path.join(BP_ITEMS, item_file_name(medium_id)))
+        for item_id in self.item_ids:
+            payload = read_json(os.path.join(BP_ITEMS, item_file_name(item_id)))
             self.assertEqual(
-                payload["minecraft:item"]["components"]["minecraft:max_stack_size"], 1
+                payload["minecraft:item"]["components"]["minecraft:max_stack_size"],
+                1,
+                item_id,
             )
+
+    def test_items_carry_a_tip(self):
+        """物品说明里要有内容：样板是塞在容器里的实物，玩家只能靠悬停分辨。"""
+        for item_id in self.item_ids:
+            payload = read_json(os.path.join(BP_ITEMS, item_file_name(item_id)))
+            tip = payload["minecraft:item"]["components"]["netease:customtips"]["value"]
+            self.assertTrue(tip.strip(), item_id)
 
     def test_resource_json_has_no_category(self):
         """资源侧不写 category，与行为侧的分工不同。"""
-        for medium_id in self.item_ids:
-            payload = read_json(os.path.join(RP_ITEMS, item_file_name(medium_id)))
+        for item_id in self.item_ids:
+            payload = read_json(os.path.join(RP_ITEMS, item_file_name(item_id)))
             self.assertNotIn("category", payload["minecraft:item"]["description"])
 
     def test_item_icon_points_at_a_registered_atlas_key(self):
-        for medium_id in self.item_ids:
-            payload = read_json(os.path.join(RP_ITEMS, item_file_name(medium_id)))
+        for item_id in self.item_ids:
+            payload = read_json(os.path.join(RP_ITEMS, item_file_name(item_id)))
             icon = payload["minecraft:item"]["components"]["minecraft:icon"]
-            self.assertIn(icon, self.item_texture_data, medium_id)
-            self.assertEqual(icon, medium_id)
+            self.assertIn(icon, self.item_texture_data, item_id)
+            self.assertEqual(icon, item_id)
 
     def test_atlas_has_no_orphan_entries(self):
         known = set(self.item_ids)
@@ -398,14 +477,14 @@ class TestItemResources(AssetFixture):
             REPO, "endernet_bp", "netease_tab", "endernet_category_config.json"
         )
         names = set(category["name"] for category in read_json(tab_path)["category"])
-        for medium_id in self.item_ids:
-            payload = read_json(os.path.join(BP_ITEMS, item_file_name(medium_id)))
+        for item_id in self.item_ids:
+            payload = read_json(os.path.join(BP_ITEMS, item_file_name(item_id)))
             category = payload["minecraft:item"]["description"]["category"]
-            self.assertIn(category, names, "%s 的分类 %s 不在创造栏配置里" % (medium_id, category))
+            self.assertIn(category, names, "%s 的分类 %s 不在创造栏配置里" % (item_id, category))
 
 
 class TestItemLocalisation(AssetFixture):
-    """介质物品在游戏里要有中文名。"""
+    """物品在游戏里要有中文名。"""
 
     @classmethod
     def setUpClass(cls):
@@ -420,17 +499,17 @@ class TestItemLocalisation(AssetFixture):
                 key, _, value = line.partition("=")
                 cls.lang[key.strip()] = value.strip()
 
-    def test_every_item_medium_has_a_display_name(self):
+    def test_every_item_has_a_display_name(self):
         missing = [
-            medium_id
-            for medium_id in self.item_ids
-            if ("item.%s.name" % medium_id) not in self.lang
+            item_id
+            for item_id in self.item_ids
+            if ("item.%s.name" % item_id) not in self.lang
         ]
         self.assertEqual(missing, [], "缺少中文名：%r" % (missing,))
 
     def test_display_name_matches_the_definition_label(self):
         """语言文件里的名字要与定义表的 label 一致，不另起一套叫法。"""
-        for spec in self.definitions.item_medium_specs():
+        for spec in self.item_specs:
             self.assertEqual(self.lang["item.%s.name" % spec.id], spec.label, spec.id)
 
     def test_no_orphan_item_lang_entries(self):
@@ -440,7 +519,7 @@ class TestItemLocalisation(AssetFixture):
             for key in self.lang
             if key.startswith("item.endernet:") and key not in known
         )
-        self.assertEqual(orphans, set(), "存在已删除介质物品的语言条目")
+        self.assertEqual(orphans, set(), "存在已删除物品的语言条目")
 
 
 if __name__ == "__main__":

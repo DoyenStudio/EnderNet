@@ -20,6 +20,39 @@ from ...common.identity import ChunkKey, NodeKey
 from ..runtime.events import EventKind, NormalizedEvent, WakeSet
 
 
+def engine_player_dimension(player_id):
+    # type: (str) -> int
+    """玩家维度的**引擎实现**。
+
+    导入留在函数体内：`tooldelta.api.server` 在模块级依赖
+    `mod.server.extraServerApi`，顶层导入会让整条离线链路失效。
+
+    **它可以被注入替换**（`ServerEventBinder(player_dimension=...)`），
+    理由与 `event_api` 完全一样：自定义容器的两条玩家事件不带维度，
+    而「插槽拒收」这条业务规则正挂在那条路径上——不注入的话，
+    这条规则**在离线测试里根本走不到**，只能进游戏试。
+    """
+    from ....tooldelta.api.server import GetPlayerDimensionId
+
+    return int(GetPlayerDimensionId(player_id))
+
+
+def _item_name(item):
+    # type: (object) -> str
+    """容器事件里那件物品的标识；读不出返回空串。
+
+    **只读名字，不碰 `userData`。** 事件里的 `itemDict` 带不带 `userData`
+    取决于是否调过引擎的 `GetUserDataInEvent`（tooldelta 的
+    `ListenWithUserData()` 就是干这个的），那是一条额外的不确定项；
+    而插槽拒收只需要知道**是不是本模组的样板、是哪一种**——
+    这两件事物品标识就答得了（物品类型就是配方模式）。
+    内容是否合法在重读路径上判，那条路走 `GetContainerItem(..., True)`，
+    已经在真机上验过它带 `userData`。
+    """
+    name = getattr(item, "newItemName", None)
+    return name if name else ""
+
+
 class ToolDeltaEventApi(object):
     """tooldelta 事件 API 的薄封装。
 
@@ -87,6 +120,39 @@ class ToolDeltaEventApi(object):
         # `test_assets.py` 正断言这一点。
         self.ServerBlockEntityTickEvent = events_module.ServerBlockEntityTickEvent
 
+        # --- 容器变更（任务 07 的样板槽发现）---------------------------
+        #
+        # 本模组的方块容器是 `netease:block_container`（`base_block` 为
+        # `netease_container`）。**玩家往里面放东西没有任何事件队列能告诉我们
+        # 「放了什么」的顺序**，因此下面这几条只当**脏标记**用，实际状态由
+        # `PatternStore` 重读那 9 格得出。
+        #
+        # 覆盖范围是**查出来的，不是猜的**：同框架（tooldelta）的另一份可用
+        # 实现 `skybluetech/server/machinery/basic/register.py` 对自定义容器
+        # 同时用了 `ContainerItemChangedServerEvent`（带 `@Delay(0)` 推到下一帧）
+        # 与 `PlayerTryPut/RemoveCustomContainerItem*`、`ItemPush/PullOutCustom
+        # Container*` —— 说明这四条对 `netease_container` 都会派发。
+        # 本项目的做法比 `@Delay(0)` 更保守：标脏后由 `PatternStore.advance()`
+        # 静默若干帧再读，因此不需要引入 `Delay`。
+        #
+        # 四条各自的覆盖范围不同，缺一条就会有「某些改法不生效」：
+        # 玩家放入 / 玩家取出 / 漏斗漏入 / 漏斗漏出。
+        self.PlayerTryPutCustomContainerItemServerEvent = (
+            events_module.PlayerTryPutCustomContainerItemServerEvent
+        )
+        self.PlayerTryRemoveCustomContainerItemServerEvent = (
+            events_module.PlayerTryRemoveCustomContainerItemServerEvent
+        )
+        self.ContainerItemChangedServerEvent = (
+            events_module.ContainerItemChangedServerEvent
+        )
+        self.ItemPushInCustomContainerServerEvent = (
+            events_module.ItemPushInCustomContainerServerEvent
+        )
+        self.ItemPullOutCustomContainerServerEvent = (
+            events_module.ItemPullOutCustomContainerServerEvent
+        )
+
     # 下面两个方法刻意**不写 `# type:` 注释**：它们的返回值是引擎的装饰器，
     # 而 `tooldelta` 的类型信息在本仓库无法解析。写成 `-> object` 会让
     # `@binder.listen(...)` 被判成「object 不可调用」，整片报错；
@@ -116,12 +182,38 @@ class ServerEventBinder(object):
     会留下旧回调，而重新 bind 创建的是新闭包，靠函数对象去重也拦不住。
     """
 
-    def __init__(self, queue, world, registry, definitions, clock=None, event_api=None):
+    def __init__(
+        self,
+        queue,
+        world,
+        registry,
+        definitions,
+        clock=None,
+        event_api=None,
+        patterns=None,
+        player_dimension=None,
+    ):
         self.queue = queue
         self.world = world
         self.registry = registry
         self.definitions = definitions
         self.clock = clock
+        #: 容器变更的接收方（样板层）。**鸭子类型，只要求两个方法**：
+        #:
+        #: - `mark_dirty(node_key)` —— 这个位置的容器变了，稍后重读；
+        #: - `accepts_put(device_id, item_name)` —— 这件东西该不该放进去。
+        #:
+        #: 做成鸭子类型而不是直接依赖 `PatternStore`：适配器是引擎边界，
+        #: 它不该知道什么是样板。判定规则留在领域层，这里只负责把
+        #: 引擎给的位置与物品名翻译过去。**可以为 None**（不接样板层的装配）。
+        self.patterns = patterns
+        #: 玩家维度解析。默认是引擎实现；注入替身即可在离线测试里走通
+        #: 「自定义容器事件没有维度」那条路径——而插槽拒收正挂在它上面。
+        self.player_dimension = (
+            player_dimension
+            if player_dimension is not None
+            else engine_player_dimension
+        )
         #: 引擎事件 API。None 表示首次 bind 时惰性构造真实实现。
         self.event_api = event_api
         self._bound = False
@@ -245,6 +337,58 @@ class ServerEventBinder(object):
             self._on_block_entity_tick(event.dimension, event.posX, event.posY,
                                        event.posZ, event.blockName)
 
+        # --- 容器变更（07）--------------------------------------------
+        # 四条都只做一件事：**把位置标脏**。顺序不定、一条动作可能派发多条，
+        # 因此这里一条都不拿来推断状态（见 `ToolDeltaEventApi.__init__` 的说明）。
+
+        @self.listen(api.ContainerItemChangedServerEvent)
+        def on_container_changed(event):
+            self._count("container_changed")
+            self._mark_container_dirty(event.dimensionId, event.pos)
+
+        @self.listen(api.PlayerTryPutCustomContainerItemServerEvent)
+        def on_custom_put(event):
+            self._count("custom_container_put")
+            self._on_custom_put(event)
+
+        @self.listen(api.PlayerTryRemoveCustomContainerItemServerEvent)
+        def on_custom_remove(event):
+            # **取出永远不拦。** 拒收只针对「不该进来的东西」；
+            # 连拿都拿不出来会让玩家对着一块卡住的方块无计可施。
+            self._count("custom_container_remove")
+            self._mark_container_dirty(
+                self._player_dimension(event.playerId),
+                (event.x, event.y, event.z),
+            )
+
+        @self.listen(api.ItemPushInCustomContainerServerEvent)
+        def on_hopper_in(event):
+            # **漏斗是第二条放入路径，拒收规则必须同样生效。**
+            # 少了这一条，一台对着样板接口的漏斗能把任意物品塞进那 9 格
+            # ——`blocks.md` 明写它们「专用于存放工厂样板」，而
+            # 14 的验收表要求「样板槽拒收普通原料」。
+            # 被动接口不受影响：`accepts_put` 对非提供者一律放行，
+            # 而那正是 06「外部物流往本地缓冲里塞东西」的通道。
+            self._count("custom_container_push_in")
+            if self.patterns is None:
+                return
+            # `getattr` 而不是直接取：引擎回调里抛异常会一路回到引擎，
+            # 而这里离 bootstrap 的兜底很远。字段缺失时按「读不出物品名」
+            # 处理（`_item_name` 返回空串，于是只标脏、不拦）。
+            self._veto_or_mark(
+                NodeKey(event.dimension, event.x, event.y, event.z),
+                getattr(event, "item", None),
+                event,
+            )
+
+        @self.listen(api.ItemPullOutCustomContainerServerEvent)
+        def on_hopper_out(event):
+            # 漏出同样是「取出」，只标脏、不拦。
+            self._count("custom_container_pull_out")
+            self._mark_container_dirty(
+                event.dimension, (event.x, event.y, event.z)
+            )
+
         self._bound = True
 
     def unbind(self):
@@ -355,6 +499,91 @@ class ServerEventBinder(object):
         # 推进，与这里无关。
         self._count(kind)
         self.queue.push(NormalizedEvent(kind, tick=self._tick()))
+
+    # -- 容器变更（07）------------------------------------------------
+    #
+    # 这一组只做两件事：**把位置标脏**，以及**把不该在这里的东西挡回去**。
+    # 一条都不拿来推断状态——ModAPI 明说容器内移动、合堆、分堆会「分多次
+    # 事件触发并且顺序不定」，且放入事件只在**目标槽位为空**时触发。
+    # 真正发生了什么，由 `PatternStore` 重读那 9 格回答。
+
+    def _player_dimension(self, player_id):
+        # type: (str) -> object
+        """玩家所在的维度。**自定义容器的两条玩家事件不带维度**，只能这么推。
+
+        可靠的理由：方块容器只能在同一个维度里交互到，因此「玩家刚才在哪个
+        维度」就是他刚才操作的那台容器所在的维度。拿不到（玩家已离线、
+        接口异常）返回 `None`，调用方据此**放弃这一次标脏**——
+        不猜一个维度：猜错会去读另一个维度同坐标的方块，而那可能是别人的设备。
+
+        导入留在方法体内：`tooldelta.api.server` 在模块级依赖
+        `mod.server.extraServerApi`，顶层导入会让整条离线链路失效。
+        """
+        if not player_id:
+            return None
+        try:
+            return int(self.player_dimension(player_id))
+        except Exception:
+            # 引擎接口在离线替身里通常不存在。**不记 tick_error**：
+            # 这是「这条信息这次拿不到」，不是缺陷。拿不到就放弃这一次
+            # 标脏/拒收，**不猜一个维度**。
+            return None
+
+    def _mark_container_dirty(self, dimension, position):
+        # type: (object, object) -> bool
+        """把一个容器位置标脏。维度或坐标拿不到就什么都不做。"""
+        if self.patterns is None or dimension is None or position is None:
+            return False
+        try:
+            x, y, z = position
+        except (TypeError, ValueError):
+            return False
+        return bool(self.patterns.mark_dirty(NodeKey(dimension, x, y, z)))
+
+    def _on_custom_put(self, event):
+        # type: (object) -> None
+        """玩家往自定义容器里放东西。
+
+        自定义容器的两条玩家事件**都不带维度**，只能从交互的玩家推出来；
+        推不出来就放弃这一次（不猜一个维度，见 `_player_dimension`）。
+        """
+        if self.patterns is None:
+            return
+        dimension = self._player_dimension(event.playerId)
+        if dimension is None:
+            return
+        self._veto_or_mark(
+            NodeKey(dimension, event.x, event.y, event.z),
+            getattr(event, "item", None),
+            event,
+        )
+
+    def _veto_or_mark(self, node_key, item, event):
+        # type: (object, object, object) -> bool
+        """按领域规则决定「拒收」还是「放行并标脏」。返回是否拒收。
+
+        **两条放入路径（玩家拖入、漏斗漏入）共用这一份。** 分开写的代价是
+        加一条新规则（比如将来 R09 定案后放宽适用范围）时只改了其中一处，
+        而另一处照旧放行——症状是「手动放不进去、用漏斗能放进去」，
+        玩家会以为那是漏洞，而它确实是。
+
+        判定在领域层（`PatternStore.accepts_put`），这里只做翻译：
+        拒收走 `event.cancel()`，放行则标脏等重读。
+        """
+        record = self.registry.get(node_key)
+        if record is None:
+            return False
+        item_name = _item_name(item)
+        # **读不出物品名时仍然标脏。** 事件本身已经说明「这个容器变了」，
+        # 而那与能否读出物品名无关；判不了该不该拦只是不拦而已。
+        # 漏掉这一支的后果是「某些改法不进索引」，而它只在物品字典
+        # 形状意外时才出现——最难复现的那一类。
+        if item_name and not self.patterns.accepts_put(record.device_id, item_name):
+            event.cancel()
+            self._count("pattern_slot_rejected")
+            return True
+        self.patterns.mark_dirty(node_key)
+        return False
 
     def _on_block_entity_tick(self, dimension, x, y, z, block_name):
         """方块实体 tick → 唤醒信号，**不入 `EventQueue`**（理由见 `WakeSet`）。

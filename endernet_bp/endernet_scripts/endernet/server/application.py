@@ -60,6 +60,18 @@ DEBUG_OPS = frozenset(
         "assembly",
         #: 调度指标（04-07）：时钟、轮转、唤醒与队列合计。
         "scheduler",
+        #: 能源判定与策略（04-04）：各网络有电没电，以及替身口径忽略了什么。
+        "energy",
+        #: 接口设备的状态（06）：角色、朝向、配置、缓冲与待核对标记。
+        #: **这一条存在的理由**是全局约束 9 与 03 验收末条：设备离线、网络
+        #: 不能工作时仍要能查看诊断。接口的业务命令（`port_status` 等）走
+        #: `CommandKind.STORAGE`，必须过主控准入，因此在没有主控的网络上是
+        #: 拿不到答案的——那正是这里另开一条只读路径的原因。
+        "port",
+        #: 样板提供者的状态与产物索引（07）：9 格里有什么、哪些解不出来、
+        #: 哪些格式过旧、哪个产物有哪几台候选。同上，只为「坏掉时也能查」
+        #: 而存在——样板索引根本不经过网络，没有主控时它照样是准的。
+        "pattern",
     ]
 )
 
@@ -75,14 +87,24 @@ class ApplicationService(object):
         registry=None,
         profile=None,
         policy=None,
+        ports=None,
+        patterns=None,
     ):
-        # type: (object, object, object, object, str, object) -> None
+        # type: (object, object, object, object, str, object, object, object) -> None
         self.runtimes = runtimes
         self.topology = topology
         self.admission = admission
         self.registry = registry
         self.profile = profile if profile is not None else runtimes.profile
         self.policy = policy if policy is not None else admission.policy
+        #: 接口状态集合（06）。**只为只读诊断而接**：`debug_query("port")`
+        #: 要在没有主控、网络不能工作时照样能答（全局约束 9）。
+        #: 业务命令仍然只能走主控，绝不从这里绕过去。
+        self.ports = ports
+        #: 样板提供者状态与产物索引（07）。同上，只为 `debug_query("pattern")`。
+        #: **样板槽的写入没有走这里**：编辑入口是领域层 API，调用方是任务 11
+        #: 的样板终端；在门面上开一个写入口就是全局约束 2 说的那种旁路。
+        self.patterns = patterns
         self.stats = {
             "submitted": 0,
             "routed": 0,
@@ -310,9 +332,100 @@ class ApplicationService(object):
             if service is None:
                 return {"error": "该网络没有装配调度服务"}
             return service.diagnostics()
+        if op == "energy":
+            # 与 `scheduler` 同形，且**同样只走契约方法 `diagnostics()`**：
+            # 伸手要能源服务专有的字段，会让任何自定义能源实现（测试双件）
+            # 把这个只读入口直接打崩。
+            component_id = kwargs.get("component_id")
+            if component_id is None:
+                return self.runtimes.energy_view()
+            runtime = self.runtimes.runtime(component_id)
+            if runtime is None:
+                return {"error": "没有这个网络", "component_id": component_id}
+            service = runtime.services.get(ServiceId.ENERGY)
+            if service is None:
+                return {"error": "该网络没有装配能源服务"}
+            return service.diagnostics()
+        if op == "port":
+            return self._run_port_query(kwargs)
+        if op == "pattern":
+            return self._run_pattern_query(kwargs)
         # 白名单与非白名单之间没有第三条路：走到这里说明 DEBUG_OPS 加了
         # 一项却没在 `_run_query` 里实现，那是个缺陷，不该静默返回空。
         raise NotImplementedError("调试操作 %r 已在白名单中但未实现" % (op,))
+
+    def _run_port_query(self, kwargs):
+        # type: (dict) -> dict
+        """接口状态的**只读**视图。没有主控、网络不能工作时照样能答。
+
+        `node_key` 给位置、`ref` 给实例（带代次），都没有时列全部。
+        **这不是业务入口**：它只读 `PortStore`，一条命令都不会发出去，
+        因此在网络坏掉时它给出的恰恰是最有用的那部分信息——
+        「这台接口为什么不动」。
+        """
+        if self.ports is None:
+            return {"error": "本装配没有接入接口状态集合"}
+        node_key = kwargs.get("node_key")
+        ref = kwargs.get("ref")
+        if ref is not None:
+            state = self.ports.get_by_ref(ref)
+            if state is None:
+                return {"error": "该代次的接口实例不存在", "ref": str(ref)}
+            return {"port": state.to_dict(), "blocker": _blocker_dict(state)}
+        if node_key is not None:
+            state = self.ports.get(node_key)
+            if state is None:
+                return {"error": "该位置上没有接口实例", "node_key": str(node_key)}
+            return {"port": state.to_dict(), "blocker": _blocker_dict(state)}
+        return {
+            "ports": [state.to_dict() for state in self.ports.states()],
+            "diagnostics": self.ports.diagnostics(),
+        }
+
+    def _run_pattern_query(self, kwargs):
+        # type: (dict) -> dict
+        """样板层的**只读**视图（07）。
+
+        `ref` 给实例（带代次）、`node_key` 给位置、`output` 给产物，都没有时
+        列全部。与 `port` 同形：**这不是业务入口**，一条命令都不会发出去，
+        也不改任何样板——想改要调领域层的 `install` / `uninstall`，
+        而那三个入口的调用方是任务 11 的样板终端。
+
+        没有主控时它给出的恰恰是最有用的那部分信息：这台设备的 9 格里
+        到底有什么。样板索引根本不经过网络，因此它在断电、断网、主控
+        被移除时**照样是准的**。
+        """
+        if self.patterns is None:
+            return {"error": "本装配没有接入样板提供者状态集合"}
+        ref = kwargs.get("ref")
+        node_key = kwargs.get("node_key")
+        output = kwargs.get("output")
+        # **参数类型先判。** 传进来一个字符串（`node_key="0,7,64,0"`）时，
+        # 下面 `node_key.as_key()` 会抛 `AttributeError`，而 `debug_query`
+        # 没有兜底——调用方拿到的是一次崩溃而不是一条诊断。
+        # 只读入口最该在「什么都坏掉」时能用，因此这里必须答得出来。
+        if ref is not None and not hasattr(ref, "node_key"):
+            return {"error": "ref 必须是设备实例引用（DeviceRef）", "ref": str(ref)}
+        if node_key is not None and not hasattr(node_key, "as_key"):
+            return {"error": "node_key 必须是位置（NodeKey）", "node_key": str(node_key)}
+        if output is not None and not hasattr(output, "name"):
+            return {"error": "output 必须是资源键（ResourceKey）", "output": str(output)}
+        if ref is not None or node_key is not None:
+            return self.patterns.view(node_key=node_key, ref=ref)
+        if output is not None:
+            # **视图的拼装在 `crafting/execution.py` 里，不在这里。**
+            # 那份形状是 07-07 交给 08 的契约（「只读配方索引与可用提供者」），
+            # 归属在样板层；在门面里再抄一份的话，两处迟早对不上，
+            # 而症状是「08 拿到的字段与 07 文档写的不一样」。
+            from .crafting.execution import candidate_view
+
+            return {
+                "output": output.name,
+                "candidates": candidate_view(
+                    self.patterns.candidates(output, include_unavailable=True)
+                ),
+            }
+        return self.patterns.view()
 
     # -- 推进与诊断 ----------------------------------------------------
 
@@ -348,6 +461,19 @@ def summarize_result(result):
         return "%s: %s" % (result.status, result.payload)
     codes = [reason_code(reason) for reason in result.reasons]
     return "%s: %s" % (result.status, ", ".join(codes) or "无原因")
+
+
+def _blocker_dict(state):
+    # type: (object) -> object
+    """接口为什么不工作。措辞与界面共用一份（`devices/io.py::port_blocker`）。
+
+    延迟导入：`application.py` 是命令门面，为了一个诊断字段把它和
+    `devices/io.py` 绑死在导入期不划算。
+    """
+    from .devices.io import port_blocker
+
+    blocker = port_blocker(state)
+    return blocker.to_dict() if blocker is not None else None
 
 
 #: `CommandKind.STATUS` 与 `CommandKind.RECOVERY` 是仅有的两种只读命令，

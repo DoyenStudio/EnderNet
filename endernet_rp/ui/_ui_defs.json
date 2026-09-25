@@ -10,6 +10,7 @@
         "ui/bus_template_io.json",
         "ui/common_terminal_panel.json",
         "ui/crafting_terminal_panel.json",
+        "ui/creative_energy_source.json",
         "ui/dos_network_endpoint.json",
         "ui/endernet_container_common.json",
         "ui/endernet_terminal_inventory.json",

@@ -50,6 +50,20 @@ def relative_path(path):
     return os.path.relpath(path, ENDERNET_ROOT).replace(os.sep, "/")
 
 
+def required_level_for(relative):
+    """从该文件回到 `endernet_scripts` 需要几级相对导入。
+
+    脚本目录被引擎当作包挂载，因此完整模块名是
+    `endernet_scripts.endernet.<子包...>.<模块>`。
+    文件在 `endernet/` 下的目录层数每多一层，点号就要多一个。
+    """
+    directory = os.path.dirname(relative)
+    if not directory:
+        return 2  # endernet 包根下的模块
+    # 目录层数 + 1（回到 endernet）+ 1（回到 endernet_scripts）
+    return len(directory.split("/")) + 2
+
+
 def is_engine_module(module_name):
     if not module_name:
         return False
@@ -57,8 +71,12 @@ def is_engine_module(module_name):
     return root in ENGINE_MODULES
 
 
-def find_engine_imports(path):
-    """返回该文件中所有引擎导入的 (行号, 模块名)。"""
+def find_engine_imports(path, relative=None):
+    """返回该文件中所有引擎导入的 (行号, 模块名)。
+
+    `relative` 可显式给出（相对 `endernet/` 的路径），供守卫自身的正例
+    用临时文件测试——那时文件不在仓库树里，`relative_path` 推不出来。
+    """
     # 必须显式指定 UTF-8：Windows 上 open() 默认用 GBK，源码里的中文注释会炸。
     with io.open(path, "r", encoding="utf-8") as handle:
         source = handle.read()
@@ -67,6 +85,9 @@ def find_engine_imports(path):
     except SyntaxError:
         return []
 
+    if relative is None:
+        relative = relative_path(path)
+    required = required_level_for(relative)
     found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -74,11 +95,21 @@ def find_engine_imports(path):
                 if is_engine_module(alias.name):
                     found.append((node.lineno, alias.name))
         elif isinstance(node, ast.ImportFrom):
-            # 相对导入（level > 0）不可能是外部引擎模块
-            if node.level:
+            if not node.level:
+                if is_engine_module(node.module):
+                    found.append((node.lineno, node.module or ""))
                 continue
-            if is_engine_module(node.module):
-                found.append((node.lineno, node.module or ""))
+            # **相对导入也可能是引擎导入。**
+            #
+            # `tooldelta` 就在行为包里，所以领域层里写
+            # `from ....tooldelta.api.server.player import GetPlayerDimensionId`
+            # 是**能跑通**的——它既不触发「绝对导入」那条，层级也对。
+            # 但它的效果与绝对导入完全一样：领域层从此依赖引擎，
+            # 整个离线测试的前提没了。因此这里按层级解析：
+            # 相对层数正好回到 `endernet_scripts` 时，模块名就是顶层名。
+            if required and node.level == required:
+                if is_engine_module(node.module):
+                    found.append((node.lineno, "%s%s" % ("." * node.level, node.module)))
     return found
 
 
@@ -164,6 +195,51 @@ class TestGuardItselfWorks(unittest.TestCase):
         self.assertFalse(is_engine_module("tooldelta_extra"))
         self.assertTrue(is_engine_module("mod.server"))
         self.assertTrue(is_engine_module("tooldelta"))
+
+    def _scan(self, source, relative):
+        """把一段源码写进临时文件再扫，返回被扫出的引擎导入。"""
+        import tempfile
+
+        handle, path = tempfile.mkstemp(suffix=".py")
+        try:
+            with io.open(path, "w", encoding="utf-8") as stream:
+                stream.write(source)
+            return find_engine_imports(path, relative=relative)
+        finally:
+            os.close(handle)
+            os.remove(path)
+
+    def test_detects_a_relative_tooldelta_import_in_a_domain_module(self):
+        """**相对导入也可能是引擎导入。**
+
+        `tooldelta` 就在行为包里，所以领域层里写
+        `from ....tooldelta.api.server.player import GetPlayerDimensionId`
+        是**真能跑通**的：层级正确、也不会触发「绝对导入」那条。
+        但它的效果与绝对导入完全一样——领域层从此依赖引擎，
+        而「离线测试能存在」这个前提正是靠这条不变量成立的。
+        守卫漏掉它的话，这个前提可以被悄悄破坏而测试照旧全绿。
+        """
+        found = self._scan(
+            "from ....tooldelta.api.server.player import GetPlayerDimensionId\n",
+            "server/crafting/store.py",
+        )
+        self.assertTrue(found, "两层的领域模块里相对导入 tooldelta 必须被拦下")
+
+    def test_a_relative_import_at_the_wrong_level_is_not_a_tooldelta_import(self):
+        """层级不对时它指的是包内别的模块（真机上会 `ImportError`），
+        那是 `TestToolDeltaMustBeImportedRelatively` 那条规则的事，不是引擎依赖。"""
+        found = self._scan(
+            "from ..tooldelta import events\n", "server/crafting/store.py"
+        )
+        self.assertEqual(found, [])
+
+    def test_detects_a_relative_mod_import(self):
+        """`mod` 是引擎顶层包，包内不存在同名模块——任何形态都该被拦。"""
+        found = self._scan(
+            "from mod.server.extraServerApi import GetLevelId\n",
+            "server/crafting/store.py",
+        )
+        self.assertTrue(found)
 
 
 class TestToolDeltaMustBeImportedRelatively(unittest.TestCase):

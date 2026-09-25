@@ -11,25 +11,33 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import (
+    BandwidthSpec,
     CAP_ITEM_PORT,
+    CAP_PATTERN_PROVIDER,
     CAP_STORAGE_PROVIDER,
     CAP_TERMINAL_ENDPOINT,
     CATEGORY_BASEBAND,
     CATEGORY_BUS,
     CATEGORY_CONTROLLER,
+    CATEGORY_ENERGY_INPUT,
     CATEGORY_PROCESSOR,
     CATEGORY_PROCESSOR_CONNECTOR,
     CATEGORY_STORAGE,
     CATEGORY_TERMINAL,
     DEVICES,
     DefinitionSet,
+    DeviceDefinition,
     EnergySpec,
     MEDIUMS,
+    PATTERN_MODES,
+    PATTERN_TEMPLATES,
     PER_DISK_ENERGY,
     PER_MEMORY_ENERGY,
     UNCONFIGURED,
     Value,
     ConnectionRules,
+    TemplateSpec,
+    devices_for_mode,
 )
 
 #: blocks.md 中「网络控制器」分组下的全部方块
@@ -38,7 +46,7 @@ DOCUMENTED_CONTROLLERS = {
     "endernet:tiny_network_endpoint",
 }
 
-#: blocks.md 列出的全部 22 个方块
+#: blocks.md 列出的全部 23 个方块
 DOCUMENTED_BLOCKS = {
     "endernet:dos_network_endpoint",
     "endernet:tiny_network_endpoint",
@@ -62,6 +70,7 @@ DOCUMENTED_BLOCKS = {
     "endernet:memory_slot",
     "endernet:assemble_chamber",
     "endernet:energy_input_interface",
+    "endernet:creative_energy_source",
 }
 
 
@@ -115,7 +124,7 @@ class TestValueDiscipline(unittest.TestCase):
 
 
 class TestDeviceCoverage(unittest.TestCase):
-    """22 个方块逐项对应，不多不少。"""
+    """23 个方块逐项对应，不多不少。"""
 
     def setUp(self):
         self.defs = DefinitionSet()
@@ -202,6 +211,14 @@ class TestBandwidthNumbers(unittest.TestCase):
     def test_energy_input_does_not_use_bandwidth(self):
         self.assertEqual(self.demand("endernet:energy_input_interface"), 0)
 
+    def test_creative_energy_source_does_not_use_bandwidth(self):
+        """blocks.md：不占用带宽。0 是**已定案**的 0，不是缺项。"""
+        self.assertEqual(self.demand("endernet:creative_energy_source"), 0)
+        self.assertTrue(
+            self.defs.get("endernet:creative_energy_source").bandwidth.base_quarters
+            is not UNCONFIGURED
+        )
+
     def test_storage_driver_bandwidth_is_disk_count_quarters(self):
         """(硬盘个数/4)u 精确等于「每盘 1 个四分之一 u」，无需取整。"""
         self.assertEqual(self.demand("endernet:storage_driver", disks=0), 0)
@@ -287,6 +304,106 @@ class TestEnergyNumbers(unittest.TestCase):
         """「不占带宽」不等于耗能为零，blocks.md 未列即缺项。"""
         self.assertIs(self.energy("endernet:energy_input_interface"), UNCONFIGURED)
 
+    def test_creative_energy_source_energy_unconfigured(self):
+        """blocks.md 只写了它**提供**多少，没写它**消耗**多少——那是缺项。"""
+        self.assertIs(self.energy("endernet:creative_energy_source"), UNCONFIGURED)
+
+
+class TestSupplyNumbers(unittest.TestCase):
+    """供能数值逐条对应 blocks.md。
+
+    **供能与耗能分开测**：`TestEnergyNumbers` 管「花多少」，这里管「给多少」。
+    合成一个字段的话，「能耗未知」与「供能未知」就分不开了。
+    """
+
+    def setUp(self):
+        self.defs = DefinitionSet()
+
+    def test_creative_source_supplies_the_documented_rate(self):
+        """blocks.md：为网络提供 2147483647 EN/t。这是定案值，不是替身。"""
+        definition = self.defs.get("endernet:creative_energy_source")
+        self.assertTrue(definition.supplies())
+        self.assertEqual(definition.supply_rate(), 2147483647)
+        self.assertTrue(definition.supply.is_settled())
+
+    def test_energy_input_interface_supplies_but_rate_is_undecided(self):
+        """它供能，但 RF→EN 的折算比例属 R08——**不能省略成「不供能」**。
+
+        写成 `None` 会被读成「它不供能」，于是只接了能源接入口的网络会报
+        「确认没电」，而正确答案是「供能速率未定」。两者对用户是两句完全不同
+        的话，因此这里必须留着一个**带标记**的未定值。
+        """
+        definition = self.defs.get("endernet:energy_input_interface")
+        self.assertTrue(definition.supplies())
+        self.assertIs(definition.supply_rate(), UNCONFIGURED)
+        self.assertEqual(definition.supply.unresolved, "R08")
+        self.assertTrue(definition.supply.is_test_value)
+        self.assertFalse(definition.supply.is_settled())
+
+    def test_ordinary_devices_do_not_supply(self):
+        """不供能是**结构性事实**，不是缺项：`supplies()` 假、`supply_rate()` None。"""
+        for device_id in (
+            "endernet:network_baseband_8",
+            "endernet:storage_driver",
+            "endernet:common_terminal_panel",
+            "endernet:dos_network_endpoint",
+        ):
+            definition = self.defs.get(device_id)
+            self.assertFalse(definition.supplies(), device_id)
+            self.assertIsNone(definition.supply_rate(), device_id)
+
+    def test_supply_is_registered_in_iter_values(self):
+        """**新字段必须真的进 `iter_values()`**，否则守卫覆盖不到它。
+
+        这条是防「加了字段忘了登记」：那样一个「带未定标签却不是测试值」的
+        供能速率会**恰好**落在 `assert_no_silent_unresolved()` 的范围之外，
+        而那正是这个守卫存在的唯一理由。
+        """
+        paths = dict(self.defs.iter_values())
+        self.assertIn("endernet:creative_energy_source.supply", paths)
+        self.assertIn("endernet:energy_input_interface.supply", paths)
+        self.assertEqual(
+            paths["endernet:creative_energy_source.supply"].value, 2147483647
+        )
+
+    def test_devices_without_supply_emit_no_supply_path(self):
+        """不供能的设备不产出路径，否则 21 台设备的「不供能」会被报成缺项。"""
+        paths = [path for path, _ in self.defs.iter_values()]
+        self.assertNotIn("endernet:network_baseband_8.supply", paths)
+        self.assertNotIn("endernet:storage_driver.supply", paths)
+        self.assertEqual(
+            sorted(path for path in paths if path.endswith(".supply")),
+            [
+                "endernet:creative_energy_source.supply",
+                "endernet:energy_input_interface.supply",
+            ],
+        )
+
+    def test_silent_supply_resolution_is_caught(self):
+        """供能速率若被悄悄定案（带标记却不是测试值），装配期守卫必须报错。"""
+        silent = DeviceDefinition(
+            "endernet:test_supplier",
+            "测试电源",
+            CATEGORY_ENERGY_INPUT,
+            bandwidth=BandwidthSpec(0),
+            supply=Value(64, unresolved="R08", is_test_value=False),
+        )
+        defs = DefinitionSet(devices=(silent,), mediums=())
+        with self.assertRaises(AssertionError):
+            defs.assert_no_silent_unresolved()
+
+    def test_tagged_supply_stand_in_passes_the_guard(self):
+        """带标记的**测试替身**合法：它没有把未定规则定案。"""
+        tagged = DeviceDefinition(
+            "endernet:test_supplier",
+            "测试电源",
+            CATEGORY_ENERGY_INPUT,
+            bandwidth=BandwidthSpec(0),
+            supply=Value(UNCONFIGURED, unresolved="R08", is_test_value=True),
+        )
+        defs = DefinitionSet(devices=(tagged,), mediums=())
+        defs.assert_no_silent_unresolved()
+
 
 class TestMediums(unittest.TestCase):
     """介质规格逐项对应 items.md。"""
@@ -323,6 +440,108 @@ class TestMediums(unittest.TestCase):
     def test_unknown_medium_rejected_loudly(self):
         with self.assertRaises(KeyError):
             DefinitionSet().get_medium("endernet:floppy_from_nowhere")
+
+
+class TestPatternTemplates(unittest.TestCase):
+    """两类样板逐项对应 items.md 的「样板」一节（任务 07-01/07-02）。"""
+
+    #: items.md 给出的标识与中文名。**不擅自补全 items.md 之外的型号。**
+    EXPECTED = {
+        "endernet:crafting_template": ("合成样板", "crafting"),
+        "endernet:factorical_template": ("工厂样板", "factory"),
+    }
+
+    def test_all_documented_templates_present(self):
+        self.assertEqual(set(t.id for t in PATTERN_TEMPLATES), set(self.EXPECTED))
+
+    def test_each_spec_matches_document(self):
+        defs = DefinitionSet()
+        for template_id, (label, mode) in self.EXPECTED.items():
+            spec = defs.get_template(template_id)
+            self.assertEqual(spec.label, label, template_id)
+            self.assertEqual(spec.mode, mode, template_id)
+            self.assertTrue(spec.usage, template_id)
+
+    def test_the_documented_spelling_is_kept(self):
+        """items.md 的标识就是 factorical_template（不是 factory_）。"""
+        defs = DefinitionSet()
+        self.assertIn("endernet:factorical_template", defs.templates)
+        self.assertNotIn("endernet:factory_template", defs.templates)
+
+    def test_both_templates_are_registered_as_items(self):
+        defs = DefinitionSet()
+        self.assertEqual(
+            sorted(defs.item_keys()),
+            [
+                "endernet:crafting_template",
+                "endernet:factorical_template",
+                "endernet:singleside_tape",
+                "endernet:softdisk_1k",
+            ],
+        )
+        self.assertEqual(len(defs.item_specs()), 4)
+
+    def test_unknown_template_rejected_loudly(self):
+        with self.assertRaises(KeyError):
+            DefinitionSet().get_template("endernet:ghost_template")
+
+    def test_a_template_without_an_item_is_rejected(self):
+        with self.assertRaises(KeyError):
+            DefinitionSet().get_item_template("endernet:ghost_template")
+
+    def test_mode_must_be_known(self):
+        with self.assertRaises(ValueError):
+            TemplateSpec("endernet:x", "x", "smelting", "")
+
+    def test_item_id_is_found_by_mode(self):
+        """写样板物品时按模式反查标识，因此「模式与物品类型不符」这条路径
+        根本不存在——两者查的是同一个映射。"""
+        defs = DefinitionSet()
+        self.assertEqual(
+            defs.item_id_for_template_mode("crafting"), "endernet:crafting_template"
+        )
+        self.assertEqual(
+            defs.item_id_for_template_mode("factory"), "endernet:factorical_template"
+        )
+        self.assertEqual(defs.item_id_for_template_mode("smelting"), "")
+
+    def test_template_mode_of_only_answers_for_templates(self):
+        defs = DefinitionSet()
+        self.assertEqual(
+            defs.template_mode_of("endernet:crafting_template"), "crafting"
+        )
+        self.assertEqual(defs.template_mode_of("endernet:singleside_tape"), "")
+        self.assertEqual(defs.template_mode_of("minecraft:stone"), "")
+
+    def test_the_mode_mapping_points_at_real_devices(self):
+        """`PATTERN_DEVICES` 里的每台设备都必须在设备表里，且**都声明了**
+        `pattern_provider` 能力——否则「样板放进了收它的设备」之后没人会去读。"""
+        defs = DefinitionSet()
+        for mode in PATTERN_MODES:
+            allowed = devices_for_mode(mode)
+            self.assertTrue(allowed, mode)
+            for device_id in allowed:
+                self.assertTrue(defs.has(device_id), device_id)
+                self.assertTrue(
+                    defs.get(device_id).has_capability(CAP_PATTERN_PROVIDER),
+                    device_id,
+                )
+
+    def test_every_pattern_provider_is_somewhere_in_the_mapping(self):
+        """反过来也要成立：没有哪个提供者是谁都不收样板的。"""
+        defs = DefinitionSet()
+        mapped = set()
+        for mode in PATTERN_MODES:
+            mapped |= set(devices_for_mode(mode))
+        providers = set(
+            device_id
+            for device_id in defs.devices
+            if defs.get(device_id).has_capability(CAP_PATTERN_PROVIDER)
+        )
+        self.assertEqual(providers, mapped)
+
+    def test_unknown_mode_has_no_devices(self):
+        self.assertEqual(devices_for_mode("smelting"), frozenset())
 
 
 class TestConnectionRules(unittest.TestCase):

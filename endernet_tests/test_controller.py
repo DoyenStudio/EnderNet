@@ -15,8 +15,10 @@
 - 只读状态在无主控、主控卸载、设备已拆除时同样可读；控制器本身不适用
   设备状态栏。
 
-**这里的服务是记录型测试双件**：只数调用次数、不假装有库存。04/05/09 的
-真实替身（业务一律拒绝）在 `test_services.py` 与 `test_bootstrap.py` 里验。
+**这里的服务是记录型测试双件**：只数调用次数、不假装有库存。09 的真实替身
+（业务一律拒绝）在 `test_services.py` 与 `test_bootstrap.py` 里验，能源的真实
+判定在 `test_energy.py` 里验——**本文件一律不等真装配的能源结论**，因为准入
+链要测的是「拿到某个结论之后怎么走」，而不是结论本身怎么来的。
 """
 
 import unittest
@@ -52,6 +54,7 @@ from endernet.server.network.services import (
     NetworkService,
     ServiceFactory,
     ServiceId,
+    StandInService,
 )
 from endernet.server.runtime.events import NormalizedEvent
 
@@ -708,20 +711,43 @@ class TestRunState(ControllerFixture):
         )
 
     def test_default_assembly_makes_the_network_unavailable(self):
-        """默认装配（服务全是替身）下网络不可用——这是诚实的结果。"""
+        """默认装配下网络不可用——这是诚实的结果，但**理由变了**。
+
+        能源已是正式实现，因此拦住它的不再是「服务尚未实现」，而是库默认
+        口径给出的「能源判定尚未确认」：基带耗能未列（R10）、工作态与装置
+        数量还没接线，严格说算不出这台网络要多少电。游戏内由
+        `start_server()` 显式换成 DEV 口径，理由写在那个函数里。
+        """
         runtime = self.plain_server().runtimes.runtimes()[0]
-        self.assertEqual(runtime.state(), RunState.SERVICE_ABSENT)
-        self.assertIn(Reason.SERVICE_ABSENT, [r.code for r in runtime.blockers()])
+        self.assertEqual(runtime.state(), RunState.NO_POWER)
+        self.assertIn(Reason.ENERGY_UNAVAILABLE, [r.code for r in runtime.blockers()])
 
     def test_multiple_blockers_coexist(self):
-        """一个网络可以同时「缺服务」又缺能源，界面要能一起说清楚。
+        """一个网络可以同时「某个服务还没有」又「能源待确认」。
 
         **不截断成第一条**：原因清单是可定位的清单，界面不该从状态字符串
         反推原因（03-07）。
+
+        两件事本来就可能同时发生，而且要把人引向完全不同的排查方向
+        （去看装配表 vs 去看供能与定义表），因此必须能并列出现。
         """
-        blockers = self.plain_server().runtimes.runtimes()[0].master.blockers()
+        server = self.layout(
+            ServiceFactory(
+                {
+                    ServiceId.SCHEDULER: lambda runtime: StandInService(
+                        ServiceId.SCHEDULER, "04"
+                    ),
+                    ServiceId.ENERGY: lambda runtime: RecordingEnergy(
+                        ServiceId.ENERGY, None
+                    ),
+                }
+            )
+        )
+        blockers = server.runtimes.runtimes()[0].master.blockers()
+        codes = [reason.code for reason in blockers]
         self.assertGreaterEqual(len(blockers), 2)
-        self.assertIn(Reason.SERVICE_ABSENT, [r.code for r in blockers])
+        self.assertIn(Reason.SERVICE_ABSENT, codes)
+        self.assertIn(Reason.ENERGY_UNAVAILABLE, codes)
 
     def test_energy_pending_does_not_grant(self):
         """未确认不等于有电。"""
@@ -752,7 +778,10 @@ class TestRunState(ControllerFixture):
 
     def plain_server(self):
         # type: () -> ServerBootstrap
-        """全替身的默认装配（`builders` 为空即保留全部默认替身）。"""
+        """原样默认装配：能源是正式实现、库默认（保守）口径，工厂仍是替身。
+
+        **不是「全替身的默认装配」**——那句话在能源落地之后就不成立了。
+        """
         return self.layout(ServiceFactory())
 
     def recording_server(self, power):
@@ -1082,8 +1111,12 @@ class TestDeviceStatus(ControllerFixture):
         self.assertFalse(status.is_online)
         self.assertIn(Reason.DEVICE_GONE, status.reason_codes())
 
-    def test_no_longer_online_when_the_service_is_a_stand_in(self):
-        """全网缺服务时设备状态栏显示离线，而不是「看起来正常」。"""
+    def test_no_longer_online_when_the_energy_verdict_is_unconfirmed(self):
+        """能源判定不成立时设备状态栏显示离线，而不是「看起来正常」。
+
+        注意理由：不是「服务没写」，而是「判定尚未确认」（见
+        `test_default_assembly_makes_the_network_unavailable`）。
+        """
         plain = ServerBootstrap(world=FakeWorld())
         plain.start(bind_engine=False)
         for event in (
@@ -1096,7 +1129,7 @@ class TestDeviceStatus(ControllerFixture):
         plain.tick()
         status = plain.application.device_status(plain.registry.get(key(15, 64, 1)).ref)
         self.assertFalse(status.is_online)
-        self.assertIn(Reason.SERVICE_ABSENT, status.reason_codes())
+        self.assertIn(Reason.ENERGY_UNAVAILABLE, status.reason_codes())
 
     def test_status_without_any_runtime_still_answers(self):
         """`compose_device_status` 是模块级函数，正是为了这一条：

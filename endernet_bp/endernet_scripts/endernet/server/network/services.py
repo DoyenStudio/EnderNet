@@ -11,10 +11,11 @@
    「每个独立网络拥有独立服务状态」是结构性的，不靠自觉。
 2. **依赖关系要显式，成环或缺依赖在装配期就报错**，而不是等到某个
    只在特定玩法下才走到的分支里 `AttributeError`。
-3. **替身与正式实现必须在装配期就能区分。** 能源（04 的另一半）、
-   存储（05）与工厂（09）尚未实现，开发档允许替身占位；正式档必须拒绝
-   替身，也要拒绝「未定规则用替身值悄悄定案」（全局约束 7，
-   01 交付说明第八节的第二项契约）。
+3. **替身与正式实现必须在装配期就能区分。** 工厂（09）尚未实现，开发档允许
+   替身占位；正式档必须拒绝替身，也要拒绝「未定规则用替身值悄悄定案」
+   （全局约束 7，01 交付说明第八节的第二项契约）。**落地了不等于定案**：
+   能源（04）已从替身换成正式实现，但它的两条策略字段仍是未定规则的替身口径，
+   因此「已实现」与「可交付」在这张表上依然是两件事。
 
 **服务只能通过主控签发的许可取用。** 取服务要走
 `NetworkRuntime.service(service_id, grant)`，那里会校验许可；本模块的
@@ -115,7 +116,8 @@ class NetworkService(object):
         # type: (object) -> object
         """本设备当前是否有可用能源（04）。True / False / None（待确认）。
 
-        只有能源服务会覆盖它。默认 None 表示「没人能回答」——**未确认
+        只有能源服务覆盖它（`network/energy.py`），而且答的是**网络级**
+        判定——能源按网络计。默认 None 表示「没人能回答」——**未确认
         不等于有电**，主控不会据此放行。
         """
         return None
@@ -164,7 +166,8 @@ class NetworkService(object):
         单独一个入口而不是复用 `add_node`：域变了不等于设备换了，
         服务可能要迁移的是「这个节点占用了哪个域的多少槽位/容量」，
         而那与节点本身的注册是两件事。返回是否真的处理了。
-        默认不处理——只有关心域的（04 的能源、05 的存储）才覆盖。
+        **目前没有服务覆盖它**：存储的额度按介质记账、能源的负载跟随折算
+        口径又未定，两者都恒返回 `False`，理由写在各自的实现里。
         """
         return False
 
@@ -193,7 +196,7 @@ class NetworkService(object):
 
 
 class StandInService(NetworkService):
-    """尚未实现的服务槽位（04/05/09）。
+    """尚未实现的服务槽位（当前只有 09 的工厂）。
 
     **它不假装能用。** 登记节点时什么都不挂载，业务调用一律返回
     `SERVICE_ABSENT`，只有状态查询是有意义的。这样下游拿到的是
@@ -520,12 +523,16 @@ def default_pending_tasks():
 
     SCHEDULER 不在表里：调度核心已在任务 04 落地。STORAGE 也不在表里：
     它的脚本领域层已在任务 05 落地（挂载、汇总索引、预留、受控读写）。
-    **存储仍然不能用**——但拦住它的是 ENERGY（网络级准入的
-    `NETWORK_CRITICAL_SERVICES`），不是「存储没写」。
-    能源仍在，因为耗能结算与 EN 计量是 04 的另一半，尚未开始。
+    ENERGY 不在表里：能源服务的固定耗能结算与供能判定已落地（`network/energy.py`）。
+    **这不代表能源已经完整**——RF 计量（04-05）、断电暂停（04-06）与设备级
+    能源状态通知（04-08）仍未实现，它们写在那个模块的 `scope_note` 里；
+    而 DEV 档为了让网络真的能跑，给能源选了替身口径（`EnergyPolicy.dev_stand_in()`），
+    正式档照样拒绝。
+
+    **只有 FACTORY 还是「根本没写」**，因此业务命令被替身拦下的那条老路
+    现在只剩工厂一条；存储与转移命令拦在能源、带宽或工厂上，各有各的说法。
     """
     return {
-        ServiceId.ENERGY: "04",
         ServiceId.FACTORY: "09",
     }
 
@@ -535,29 +542,31 @@ def default_builders():
     """`service_id -> callable(runtime) -> NetworkService` 的默认装配。
 
     返回的是**构造器**而不是实例：同一份装配表要能为多个运行时各造一套。
-    SCHEDULER 与 STORAGE 是正式实现，能源与工厂仍是替身。
+    SCHEDULER / STORAGE / ENERGY 是正式实现，工厂仍是替身。
 
-    **裸构造的 `StorageService(None)` 是合法的**：`default_stand_ins()` 会用
-    `None` 构造每个槽位，此时它 `is_ready()` 为假、业务给 `SERVICE_NOT_READY`
-    ——那是「装了但还没接上驱动器」，不是「这个功能没写」。
-    真正带有驱动器的实例由启动层用 `_storage_builder()` 注入。
+    **这三个槽位的 `(None)` 裸构造都是合法的**：`default_stand_ins()` 会用
+    `None` 构造每个槽位，此时它们的 `is_ready()` 为假、业务给
+    `SERVICE_NOT_READY`——那是「装了但还没接上运行时/驱动器」，不是
+    「这个功能没写」。真正带有驱动器与策略的实例由启动层用
+    `_storage_builder()` / `_energy_builder()` 注入。
 
-    **导入写在函数体里是有意的。** 本模块是契约层，`ticking.py` 与
-    `storage/service.py` 是实现层，它们在模块级 import 本模块；若在这里也
+    **导入写在函数体里是有意的。** 本模块是契约层，`ticking.py`、`energy.py`
+    与 `storage/service.py` 是实现层，它们在模块级 import 本模块；若在这里也
     模块级 import 回去就成环了。而 `default_builders()` 只在构造工厂/注册表时
     被调用，不在导入期，因此函数内导入不引入环——**不要把它提到模块顶部**。
     """
     from ..storage.service import StorageService
+    from .energy import EnergyService
     from .ticking import SchedulerService
 
     pending = default_pending_tasks()
     notes = {
-        ServiceId.ENERGY: "EN 供用能与能源预留",
         ServiceId.FACTORY: "样板、规划、订单与执行",
     }
     out = {
         ServiceId.SCHEDULER: SchedulerService,
         ServiceId.STORAGE: StorageService,
+        ServiceId.ENERGY: EnergyService,
     }
     for service_id in sorted(ServiceId.ALL - frozenset(out)):
         out[service_id] = _stand_in_builder(

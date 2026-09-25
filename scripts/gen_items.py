@@ -1,12 +1,15 @@
 # coding=utf-8
-"""由介质定义表生成存储介质物品 JSON 与物品图集。
+"""由定义表生成物品 JSON 与物品图集（存储介质 + 两类样板）。
 
     python scripts/gen_items.py          # 生成
     python scripts/gen_items.py --check  # 只检查是否与当前文件一致（CI 用）
 
 单一事实来源是 `endernet_bp/endernet_scripts/endernet/common/definitions.py`：
-**哪些介质已经做成了游戏物品**由 `ITEM_MEDIUMS` 决定，容量、类型数、读写速度
-由各自的 `MediumSpec` 读出，因此游戏内提示里的数字不可能与领域层的规格分叉。
+
+- **哪些物品已经做出来了**由 `ITEM_MEDIUMS` / `ITEM_TEMPLATES` 决定；
+- 介质的容量、类型数、读写速度从各自的 `MediumSpec` 读出，
+  因此游戏内提示里的数字不可能与领域层的规格分叉；
+- 样板的用途说明从 `TemplateSpec.usage` 读出（items.md 的原文）。
 
 产物三份：
 
@@ -43,40 +46,47 @@ if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
 from _console import use_utf8_stdout  # noqa: E402
 from gen_blocks import CREATIVE_CATEGORY, plural_dumps, short_name  # noqa: E402
 
-from endernet.common.definitions import DefinitionSet  # noqa: E402
+from endernet.common.definitions import (  # noqa: E402
+    DefinitionSet,
+    devices_for_mode,
+)
 
 #: NetEase 物品 JSON 的格式版本。与 SkyblueTech 的可用物品保持一致。
 ITEM_FORMAT_VERSION = "1.10"
 
-#: 介质的堆叠上限。
+#: 物品的堆叠上限。**两类物品都必须是 1，理由各自成立。**
 #:
-#: **必须是 1。** 介质要携带自己的身份与内容；允许堆叠的话，一叠 64 个会共享
-#: 同一份物品数据，拔出其中一个就无法确定它到底是哪一块盘。SkyblueTech 的
-#: 两类样板同样取 1。
-MEDIUM_MAX_STACK_SIZE = 1
+#: - 介质要携带自己的身份与内容；允许堆叠的话，一叠 64 个会共享同一份物品
+#:   数据，拔出其中一个就无法确定它到底是哪一块盘。
+#: - 样板把配方**编码在自己的 `userData` 里**（任务 07），因此一叠 64 块
+#:   只会剩下其中一块的配方——而玩家看到的是一叠。这一条比介质那条更硬：
+#:   介质至少还能靠世界侧的记录兜底，样板没有别的地方可查。
+#:
+#: SkyblueTech 的两类同类物品同样取 1。
+ITEM_MAX_STACK_SIZE = 1
 
 
-def item_file_name(medium_id):
+def item_file_name(item_id):
     # type: (str) -> str
     """物品 JSON 的文件名：与方块同一套命名（命名空间作前缀，冒号换下划线）。"""
-    return medium_id.replace(":", "_") + ".json"
+    return item_id.replace(":", "_") + ".json"
 
 
-def item_texture_name(medium_id):
+def item_texture_name(item_id):
     # type: (str) -> str
     """贴图文件名（不含扩展名）。`gen_placeholder_textures.py` 也读它。"""
-    return "endernet_" + short_name(medium_id)
+    return "endernet_" + short_name(item_id)
 
 
-def item_icon_key(medium_id):
+def item_icon_key(item_id):
     # type: (str) -> str
     """图集里的贴图键。物品标识本身就是键，与原版图集惯例一致。"""
-    return medium_id
+    return item_id
 
 
 def medium_tip(spec):
     # type: (object) -> str
-    """物品说明。数字全部来自定义表，不在这里另写一份。"""
+    """介质说明。数字全部来自定义表，不在这里另写一份。"""
     return "\n§7容量：%d 类型 %d 单位物\n§7读 %d 单位物/s，写 %d 单位物/s" % (
         spec.max_types,
         spec.capacity_units,
@@ -85,14 +95,31 @@ def medium_tip(spec):
     )
 
 
-def build_behavior_json(spec):
-    """行为包物品定义。"""
+def template_tip(spec, definitions):
+    # type: (object, object) -> str
+    """样板说明。用途与设备名**全部取自定义表**，不在这里另写一份。
+
+    「放进哪台设备」由 `PATTERN_DEVICES` 反查，设备名取定义表的 `label`。
+    写死「装配仓」「总线样板接口」的话，那两句话就有三个副本，
+    而玩家最容易搞错的恰恰是这一点（两块样板的名字很像）。
+    """
+    names = [
+        definitions.get(device_id).label
+        for device_id in sorted(devices_for_mode(spec.mode))
+        if definitions.has(device_id)
+    ]
+    where = "、".join(names) if names else "（尚未指定设备）"
+    return "\n§7%s\n§7放入%s使用。" % (spec.usage, where)
+
+
+def build_behavior_json(spec, tip):
+    """行为包物品定义。`tip` 由调用方按物品类型给出。"""
     return {
         "format_version": ITEM_FORMAT_VERSION,
         "minecraft:item": {
             "components": {
-                "minecraft:max_stack_size": MEDIUM_MAX_STACK_SIZE,
-                "netease:customtips": {"value": medium_tip(spec)},
+                "minecraft:max_stack_size": ITEM_MAX_STACK_SIZE,
+                "netease:customtips": {"value": tip},
             },
             "description": {
                 "category": CREATIVE_CATEGORY,
@@ -114,9 +141,9 @@ def build_resource_json(spec):
 
 
 def build_item_texture(existing, definitions):
-    """物品图集。保留已有条目，只补本模组的介质。"""
+    """物品图集。保留已有条目，只补本模组自己的物品（介质与样板）。"""
     texture_data = dict(existing.get("texture_data", {}))
-    for spec in definitions.item_medium_specs():
+    for spec in definitions.item_specs():
         texture_data[item_icon_key(spec.id)] = {
             "textures": "textures/items/" + item_texture_name(spec.id)
         }
@@ -150,17 +177,29 @@ def write_json(path, payload, check_only):
 
 
 def missing_textures(definitions):
-    """列出还没有贴图文件的介质物品。"""
+    """列出还没有贴图文件的物品。"""
     out = []
-    for spec in definitions.item_medium_specs():
+    for spec in definitions.item_specs():
         path = os.path.join(ITEM_TEXTURE_DIR, item_texture_name(spec.id) + ".png")
         if not os.path.isfile(path):
             out.append((spec.id, path))
     return out
 
 
+def item_tips(definitions):
+    # type: (object) -> list
+    """`(规格, 提示文本)` 清单。**两种物品的提示规则不同，但只有这一处分派**：
+    介质给容量与读写速度，样板给用途与「放进哪台设备」。"""
+    out = []
+    for spec in definitions.item_medium_specs():
+        out.append((spec, medium_tip(spec)))
+    for spec in definitions.item_template_specs():
+        out.append((spec, template_tip(spec, definitions)))
+    return out
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="生成 EnderNet 介质物品 JSON 与物品图集")
+    parser = argparse.ArgumentParser(description="生成 EnderNet 物品 JSON 与物品图集")
     parser.add_argument("--check", action="store_true", help="只检查是否需要重新生成")
     use_utf8_stdout()
     args = parser.parse_args(argv)
@@ -168,11 +207,11 @@ def main(argv=None):
     definitions = DefinitionSet()
     changed = []
 
-    for spec in definitions.item_medium_specs():
+    for spec, tip in item_tips(definitions):
         name = item_file_name(spec.id)
         behavior = os.path.join(BP_ITEMS, name)
         resource = os.path.join(RP_ITEMS, name)
-        if write_json(behavior, build_behavior_json(spec), args.check):
+        if write_json(behavior, build_behavior_json(spec, tip), args.check):
             changed.append(os.path.relpath(behavior, REPO))
         if write_json(resource, build_resource_json(spec), args.check):
             changed.append(os.path.relpath(resource, REPO))
@@ -182,6 +221,7 @@ def main(argv=None):
         changed.append(os.path.relpath(RP_ITEM_TEXTURE, REPO))
 
     missing = missing_textures(definitions)
+    total = len(definitions.item_mediums) + len(definitions.item_templates)
 
     if args.check:
         if changed:
@@ -189,17 +229,23 @@ def main(argv=None):
             for path in changed:
                 print("  " + path)
             return 1
-        print("介质物品 JSON 与物品图集已是最新（%d 个介质物品）" % len(definitions.item_mediums))
+        if missing:
+            # **`--check` 也要看贴图在不在。** 少了这一段，删掉一张贴图之后
+            # `--check` 照旧报「已是最新」并返回 0，而图集里那条指向一个
+            # 不存在的文件——CI 与交付说明里的那条命令于是都不拦这件事。
+            print("以下物品缺贴图文件（共 %d 个）：" % len(missing))
+            for item_id, path in missing:
+                print("  %-40s -> %s" % (item_id, os.path.relpath(path, REPO)))
+            print("请先运行 python scripts/gen_placeholder_textures.py")
+            return 1
+        print("物品 JSON 与物品图集已是最新（%d 个物品）" % total)
         return 0
 
-    print(
-        "已生成 %d 个介质物品，更新 %d 个文件"
-        % (len(definitions.item_mediums), len(changed))
-    )
+    print("已生成 %d 个物品，更新 %d 个文件" % (total, len(changed)))
     if missing:
-        print("仍缺贴图的介质物品（%d 个）：" % len(missing))
-        for medium_id, path in missing:
-            print("  %-40s -> %s" % (medium_id, os.path.relpath(path, REPO)))
+        print("仍缺贴图的物品（%d 个）：" % len(missing))
+        for item_id, path in missing:
+            print("  %-40s -> %s" % (item_id, os.path.relpath(path, REPO)))
     return 0
 
 

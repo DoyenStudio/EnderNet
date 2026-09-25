@@ -39,6 +39,10 @@
         "textures": "endernet:crafting_terminal_panel",
         "sound": "stone"
     },
+    "endernet:creative_energy_source": {
+        "textures": "endernet:creative_energy_source",
+        "sound": "stone"
+    },
     "endernet:dos_network_endpoint": {
         "textures": "endernet:dos_network_endpoint",
         "sound": "stone"

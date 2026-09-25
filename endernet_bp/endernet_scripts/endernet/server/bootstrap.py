@@ -3,10 +3,15 @@
 
 对应任务 01-01、01-06 的入口与分帧补查部分，03 起接入主控与网络运行时。
 
-**本批次的范围。** 装配 01 的设备层、02 的拓扑/负载层、03 的主控与运行时。
-网络服务里存储、工厂、能源、调度仍是**替身**（任务 04/05/09），因此
-**网络业务命令一律会被拒绝**并给出 `service_absent`——这是诚实的结果，
-不是故障。所以默认装配档是 `AssemblyProfile.DEV`。
+**本批次的范围。** 装配 01 的设备层、02 的拓扑/负载层、03 的主控与运行时、
+04 的调度核心与能源服务、05 的存储领域层、06 的转移与接口层、
+07 的样板层。网络服务里**只剩工厂是替身**
+（任务 09），因此**涉及工厂的业务命令仍会被拒绝**并给出 `service_absent`
+——这是诚实的结果，不是故障。所以默认装配档是 `AssemblyProfile.DEV`。
+
+**「已实现」不等于「已定案」。** 能源是正式实现，但它的两条策略字段仍是
+未定规则的替身口径，而库默认取的是保守的那一侧；游戏内由 `start_server()`
+显式选用替身口径，理由写在那个函数里。
 
 `PRODUCTION` 档**不是靠启动失败来保护的**，而是靠主控准入链：它的第 10 条
 （装配档位）在策略仍有未定规则时把业务命令一律拒掉并给出
@@ -23,13 +28,23 @@
 """
 
 from ..common.definitions import DefinitionSet
+from .adapters.containers_engine import (
+    EngineContainerProvider,
+    EngineInventoryProvider,
+    EngineItemPrimitives,
+    build_stack_limit,
+)
 from .adapters.events import ServerEventBinder
 from .adapters.world import ToolDeltaWorldAdapter
 from .application import ApplicationService
 from .devices.catalog import DeviceCatalog
+from .crafting.patterns import PatternPolicy
+from .crafting.store import PatternStore
+from .devices.io import PortPolicy, PortStore
 from .devices.registry import DeviceRegistry
 from .devices.storage_driver import DriverPolicy, StorageDriverStore
 from .network.admission import AdmissionService
+from .network.energy import EnergyPolicy, EnergyService
 from .network.runtime import RuntimeManager
 from .network.services import (
     AssemblyProfile,
@@ -44,6 +59,7 @@ from .runtime.lifecycle import DeviceLifecycle
 from .runtime.scheduler import LogicalClock, SchedulerPolicy
 from .storage.medium import MediumPolicy
 from .storage.service import StorageService
+from .storage.transfer import TransferPolicy
 
 
 def _scheduler_builder(policy):
@@ -61,18 +77,44 @@ def _scheduler_builder(policy):
     return build
 
 
-def _storage_builder(drivers, medium_policy):
-    # type: (object, object) -> object
-    """把**驱动器状态集合**绑进存储服务的构造器。
+def _energy_builder(policy):
+    # type: (object) -> object
+    """把能源策略绑进能源服务的构造器（供 `ServiceFactory` 使用）。
 
-    服务槽位是逐运行时各造一份的，而驱动器与介质是**跨网络共享**的
-    （架构 §3：驱动器状态不能依赖某个网络实例存活）。因此注入的不是
+    与 `_scheduler_builder` 同形，走显式工厂而不是闭包 lambda：这里绑的是
+    **全进程唯一**的那份策略对象，而 `unresolved_report()` 报出来的必须就是
+    真正生效的那份数值——各存一份的代价是诊断与实际行为对不上。
+    """
+    def build(runtime):
+        # type: (object) -> EnergyService
+        return EnergyService(runtime, policy=policy)
+
+    return build
+
+
+def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories):
+    # type: (object, object, object, object, object) -> object
+    """把**驱动器状态集合**与**接口状态集合**绑进存储服务的构造器。
+
+    服务槽位是逐运行时各造一份的，而驱动器、介质与接口是**跨网络共享**的
+    （架构 §3：这些状态不能依赖某个网络实例存活）。因此注入的不是
     「每个网络一份的状态」，而是同一个集合——两个网络同时挂同一块盘时
     由服务侧的重复挂载检测拦住。
+
+    转移策略与背包提供者也是全局各一份：策略里的未定案数值必须与实际
+    生效的是同一份（否则 `unresolved_report()` 报的数字与真正用的对不上），
+    而背包是玩家级资源，与网络归属无关。
     """
     def build(runtime):
         # type: (object) -> StorageService
-        return StorageService(runtime, drivers=drivers, policy=medium_policy)
+        return StorageService(
+            runtime,
+            drivers=drivers,
+            policy=medium_policy,
+            ports=ports,
+            transfer_policy=transfer_policy,
+            inventories=inventories,
+        )
 
     return build
 
@@ -129,8 +171,16 @@ class ServerBootstrap(object):
         scheduler_policy=None,
         driver_policy=None,
         medium_policy=None,
+        energy_policy=None,
+        port_policy=None,
+        transfer_policy=None,
+        pattern_policy=None,
+        container_primitives=None,
+        container_provider=None,
+        inventory_provider=None,
+        player_dimension=None,
     ):
-        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object) -> None
+        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
         #: 逻辑时钟（04-01）。**它是业务时间的唯一依据**，由 `drive_once()`
         #: 每帧推进一步，经 `context["tick"]` 下传给各服务。注入自有实例即可
@@ -178,6 +228,49 @@ class ServerBootstrap(object):
         self.medium_policy = (
             medium_policy if medium_policy is not None else MediumPolicy()
         )
+        #: 接口策略（R05/R04）与转移策略（R04/R05/R12）。同样**全进程各一份**：
+        #: `unresolved_report()` 报出来的必须就是真正生效的那份数值。
+        #: R05 是 06、09、12 共同的上游（输出缓冲容量、取消与拆除处置），
+        #: 因此它们进 `policy_bundle()`，正式验收时不会漏网。
+        self.port_policy = port_policy if port_policy is not None else PortPolicy()
+        self.transfer_policy = (
+            transfer_policy if transfer_policy is not None else TransferPolicy()
+        )
+        #: 样板策略（R09）。同样**全进程一份**：`unresolved_report()` 报出来的
+        #: 必须就是真正生效的那份数值。
+        self.pattern_policy = (
+            pattern_policy if pattern_policy is not None else PatternPolicy()
+        )
+        #: 容器与背包的引擎原语。**构造是安全的、调用必须在游戏里**——
+        #: `EngineItemPrimitives` 把引擎 import 放在方法体内，因此离线也能
+        #: 构造整条链路，只是真的去读一个箱子时会失败（那正是它该失败的时候）。
+        primitives = (
+            container_primitives
+            if container_primitives is not None
+            else EngineItemPrimitives()
+        )
+        stack_limit = build_stack_limit(primitives)
+        #: `位置 -> 容器` 与 `玩家 -> 背包` 两个提供者。注入替身即可离线驱动
+        #: 存货口/取货口的完整路径，不必进游戏。
+        self.containers = (
+            container_provider
+            if container_provider is not None
+            else EngineContainerProvider(primitives, stack_limit)
+        )
+        self.inventories = (
+            inventory_provider
+            if inventory_provider is not None
+            else EngineInventoryProvider(primitives, stack_limit)
+        )
+        #: 能源策略（04 的供需判定口径）。同样**全进程一份**。
+        #: **库默认是保守的那一侧**：任何算不出的需求都让判定停在
+        #: 「待确认」，因此默认装配下真实网络永远是 `ENERGY_UNAVAILABLE`。
+        #: 游戏内 DEV 档要的是「能看出没电、能跑起来」，由 `start_server()`
+        #: 显式改用 `EnergyPolicy.dev_stand_in()`——替身口径只出现在那一个
+        #: 写了理由的地方，而不是默认值里。
+        self.energy_policy = (
+            energy_policy if energy_policy is not None else EnergyPolicy()
+        )
         #: 驱动器状态集合与介质权威表。**由启动层持有并注入网络服务**
         #: （架构 §3）：驱动器与介质的权威状态不能只活在某个网络的存储服务里，
         #: 网络断开、主控移除、运行时重建都不等于设备和库存消失。
@@ -188,6 +281,27 @@ class ServerBootstrap(object):
             policy=self.driver_policy,
             medium_policy=self.medium_policy,
             on_load_changed=self._note_driver_load_changed,
+        )
+        #: 接口状态集合（06）。与 `drivers` 同一地位：接口缓冲里的东西不能
+        #: 因为网络断开、主控被移除或运行时重建而消失（06 验收明写
+        #: 「外部物流已送入缓冲的资源仍保留」）。
+        #: 它同样在 `admission` 之后构造，但**不**通知负载重算——接口的带宽
+        #: 与能耗是定义表里的固定值，不随缓冲内容变化。
+        self.ports = PortStore(
+            self.definitions,
+            self.registry,
+            policy=self.port_policy,
+            containers=self.containers,
+        )
+        #: 样板提供者状态与产物索引（07）。与 `drivers` / `ports` 同一地位：
+        #: 样板装在方块容器里，它不能因为网络断开、主控被移除或运行时重建
+        #: 而消失。**索引是派生的**——它每次从容器重读，因此不存档、
+        #: 也不需要迁移（12 的「派生样板索引在恢复后重建」）。
+        self.patterns = PatternStore(
+            self.definitions,
+            self.registry,
+            policy=self.pattern_policy,
+            containers=self.containers,
         )
         #: 网络服务装配表。`ServiceFactory` 为**每个运行时**各造一套实例，
         #: 因此两个网络绝不共享库存或订单状态（03 验收 #4）。
@@ -200,8 +314,13 @@ class ServerBootstrap(object):
                 {
                     ServiceId.SCHEDULER: _scheduler_builder(self.scheduler_policy),
                     ServiceId.STORAGE: _storage_builder(
-                        self.drivers, self.medium_policy
+                        self.drivers,
+                        self.medium_policy,
+                        self.ports,
+                        self.transfer_policy,
+                        self.inventories,
                     ),
+                    ServiceId.ENERGY: _energy_builder(self.energy_policy),
                 }
             )
         # 运行时管理器**必须在 `AdmissionService` 之后构造**：两者都订阅
@@ -226,9 +345,18 @@ class ServerBootstrap(object):
             self.admission,
             registry=self.registry,
             profile=self.assembly_profile,
+            # 接口状态与样板状态只用于 `debug_query("port"/"pattern")`
+            # 这两条只读诊断路径（全局约束 9：设备离线时仍可查看诊断）。
+            # 业务命令照样只能走主控——门面这一侧没有任何写入入口。
+            ports=self.ports,
+            patterns=self.patterns,
         )
         #: 引擎事件 API。注入替身即可在无引擎环境跑通真实的 `bind()` 路径，
         #: 从而验证注册与注销，而不用进游戏试。
+        #:
+        #: `patterns` 作为容器变更的接收方传进去（鸭子类型，见适配器的说明）。
+        #: **样板状态必须早于这里构造**：绑定期间就会注册容器监听器，
+        #: 而它们一触发就要找得到接收方。
         self.event_binder = ServerEventBinder(
             self.queue,
             self.world,
@@ -236,6 +364,10 @@ class ServerBootstrap(object):
             self.definitions,
             clock=self.clock,
             event_api=event_api,
+            patterns=self.patterns,
+            # 玩家维度解析同样可注入：自定义容器的玩家事件不带维度，
+            # 而插槽拒收挂在那条路径上——不注入的话它只能进游戏试。
+            player_dimension=player_dimension,
         )
         # 生命周期把变化发布到这里，这是**唯一**出口：
         # 事件处理与启动补查/手动重扫都走它，不会有一条路径绕过去。
@@ -348,7 +480,10 @@ class ServerBootstrap(object):
         self.event_binder.clear_wakes()
         # 驱动器与介质只标为未加载：**不写仓库、不清内容**。介质的内容是
         # 玩家资产，停机不是「把它们丢了」的时机（写盘由任务 12 决定）。
+        # 接口同理：缓冲里的东西是**外部物流送进来的**，停机更不能丢。
         self.drivers.mark_all_unloaded()
+        self.ports.mark_all_unloaded()
+        self.patterns.mark_all_unloaded()
         self._backfill_generator = None
         self._backfill_finished = False
         self.started = False
@@ -379,6 +514,12 @@ class ServerBootstrap(object):
         # → 服务推进。顺序不能倒——先在旧图上推进服务，等于让它们按已经
         # 不成立的归属动手。
         service_steps = self.runtimes.tick(self.runtime_budget, self._tick_context())
+        # 样板槽的重读放在最后：它读的是方块容器，与网络服务不相干。
+        # **注意容器事件不走这里的队列**：它们是引擎监听器，由适配器在
+        # 引擎派发时直接 `mark_dirty`，因此到达时刻与这一帧的推进无关。
+        # `advance` 只负责「够了静默期就重读」，放在帧尾是为了让它成为
+        # 本帧最后一个动作——语义上「本帧的账都算完了，再去看看容器」。
+        pattern_reads = self.patterns.advance(self.clock.current_tick())
 
         return {
             "tick": self.tick_count,
@@ -397,6 +538,9 @@ class ServerBootstrap(object):
             "service_steps": service_steps,
             #: 本帧送达的唤醒信号数（04-02）。未命中不报错，见 `deliver_wakes`。
             "wakes": delivered,
+            #: 本帧重读了几台样板提供者（07）。恒为 0 是正常的——
+            #: 只有收到容器变更且过了静默期才会读。
+            "pattern_reads": pattern_reads,
             "runtimes": len(self.runtimes.runtimes()),
             "queue": self.queue.stats(),
         }
@@ -480,9 +624,13 @@ class ServerBootstrap(object):
             # 拓扑是设备变化的固定消费者：它只标脏，真正的重建在 `tick()` 里
             # 有限步完成，因此这里不会拖慢事件消费。
             self.topology.on_lifecycle_change(change)
-            # 驱动器状态也从**同一批变化**推导，不另开观察者通道——
-            # 两条路径分叉就会出「拓扑知道设备没了、驱动器还以为在」。
+            # 驱动器状态与接口状态也从**同一批变化**推导，不另开观察者通道——
+            # 两条路径分叉就会出「拓扑知道设备没了、驱动器/接口还以为在」。
             self.drivers.observe(change)
+            self.ports.observe(change)
+            # 样板提供者状态也从**同一批变化**推导（07）。它按能力判定
+            # 谁是提供者，因此非提供者的变化在这里是空操作。
+            self.patterns.observe(change)
         if self.change_sink is not None:
             for change in changes:
                 self.change_sink(change)
@@ -534,15 +682,30 @@ class ServerBootstrap(object):
             "application": self.application.diagnostics(),
             "scheduler": self.scheduler_diagnostics(),
             "storage": self.storage_diagnostics(),
+            "io": self.io_diagnostics(),
+            "pattern": self.pattern_diagnostics(),
+            "energy": self.energy_diagnostics(),
             "world": self.world.diagnostics(),
             "scope_note": (
                 "已装配任务 01 的设备层、任务 02 的拓扑/负载层、任务 03 的主控/运行时、"
-                "任务 04 的调度核心（逻辑时钟、到期队列、跨网轮转与唤醒），"
-                "以及任务 05 的存储领域层（介质、驱动器挂卸、汇总索引、预留、受控读写）；"
-                "装配档位 %s。存储的**真实物品交接、存档后端与界面同步尚未接入**"
-                "（任务 06/12/11），能源与工厂仍是替身（任务 04 的另一半/09），"
-                "因此**网络业务命令仍会被拒绝并给出 service_absent**——"
-                "拦住它们的是能源那一项网络级准入，不是存储没写。"
+                "任务 04 的调度核心（逻辑时钟、到期队列、跨网轮转与唤醒）与能源服务"
+                "（固定耗能结算、供能判定）、"
+                "任务 05 的存储领域层（介质、驱动器挂卸、汇总索引、预留、受控读写），"
+                "任务 06 的转移与接口层（端点预检与受控提交、有界中转缓冲、"
+                "四类接口设备、真实的容器/背包引擎适配），"
+                "以及任务 07 的样板层（配方结构与编解码、9 格读写、"
+                "产物到提供者的索引、样板槽拒收）；"
+                "装配档位 %s。**接口接触真实引擎的那一段（箱子、背包、其他模组的"
+                "物流）没有在游戏内实测过**，流体路径则整条未接入（13-03）。"
+                "存档后端与界面同步尚未接入（任务 12/11），工厂仍是替身（任务 09），"
+                "能源则**只做完了固定部分**（04-05/06/08 未实现）。"
+                "**样板只做完了「读」的那半边**：执行侧（投料与回流）依赖 09，"
+                "预设配方适配（07-03）与编辑界面（11）都未开始，因此样板目前"
+                "只能看不能用——`debug_query(\"pattern\")` 查得到 9 格里有什么。"
+                "因此网络能不能开工，取决于当地那台网络的能源判定与带宽判定："
+                "判定为「待确认」时业务命令被拒并给出"
+                "energy_unavailable / bandwidth_unknown——**那是「算不出来」，"
+                "不是「没电」**，详情见 energy 那一节。"
                 "这是尚未实现的诚实结果，不是故障。" % (self.assembly_profile,)
             ),
         }
@@ -561,10 +724,96 @@ class ServerBootstrap(object):
         )
         report["scope_note"] = (
             "介质挂载、汇总索引、预留与受控读写已实现并通过离线断言；"
-            "真实玩家装卸（06）、存档后端（12）与界面同步（11）未接入，"
-            "因此这些能力目前只有领域层的证据，没有游戏内的证据。"
+            "存档后端（12）与界面同步（11）未接入，因此这些能力目前只有"
+            "领域层的证据，没有游戏内的证据。"
+            "**06 的转移协调器已经可用，但介质装卸还没有改走它**："
+            "`mount` 仍按 05 的路径（`create_medium(model_id)` + `provider.mount`），"
+            "因为「介质物品如何携带身份」是 12-02 尚未做出的决定——"
+            "在没有那个决定之前把装卸接到转移层，等于悄悄定案。"
+            "接口侧的状态见 diagnostics()[\"io\"]。"
         )
         return report
+
+    def io_diagnostics(self):
+        # type: () -> dict
+        """接口层诊断（06）。
+
+        分三块：接口状态与其策略（启动层持有）、容器与背包提供者，
+        以及各网络接口驱动的合计（逐接口明细在 `debug_query("port")` 里，
+        这里不再抄一份——抄一份的代价是两处迟早对不上）。
+        """
+        report = self.ports.diagnostics()
+        report["containers"] = self.containers.diagnostics()
+        report["inventories"] = self.inventories.diagnostics()
+        report["transfer_policy"] = self.transfer_policy.describe()
+        report["transfer_unresolved"] = self.transfer_policy.unresolved_report()
+        # **不伸手读服务私有字段。** 与 `debug_query` 那条只读入口同一条纪律：
+        # 戳一个实现的内部名字，会让任何自定义存储服务（离线替身、将来把
+        # 接口驱动拆出去的服务）把整块诊断打崩——而诊断正是「网络坏掉时
+        # 最该能答」的那条路径（全局约束 9）。
+        # 因此走公开访问器，并把「没建起来」与「没有接口」分开报。
+        runners = []
+        for runtime in self.runtimes.runtimes():
+            service = runtime.services.get(ServiceId.STORAGE)
+            if service is None:
+                continue
+            accessor = getattr(service, "ports_runner_view", None)
+            if accessor is None:
+                continue
+            view = accessor()
+            view["component_id"] = runtime.component_id
+            runners.append(view)
+        report["runners"] = runners
+        report["scope_note"] = (
+            "端点的预检与受控提交、有界中转缓冲、四类接口设备与待核对语义"
+            "已实现并通过离线断言；**接触真实引擎的那一段（箱子读写、玩家背包、"
+            "外部模组物流）没有游戏内实测**，因此它目前只有领域层的证据。"
+            "流体接口整条未接入（13-03），会明确回 no_adapter。"
+            "样板口的成批投料入口已备好（`port_stage`），但**没有调用方**"
+            "——工厂（09）尚未实现。"
+        )
+        return report
+
+    def pattern_diagnostics(self):
+        # type: () -> dict
+        """样板层诊断（07）。
+
+        逐台明细在 `debug_query("pattern")` 里，这里只给合计与策略——
+        抄一份逐台明细的代价是两处迟早对不上。
+        """
+        view = self.patterns.diagnostics()
+        view["container_events"] = {
+            key: self.event_binder.counts.get(key, 0)
+            for key in (
+                "container_changed",
+                "custom_container_put",
+                "custom_container_remove",
+                "custom_container_push_in",
+                "custom_container_pull_out",
+                "pattern_slot_rejected",
+            )
+        }
+        return view
+
+    def energy_diagnostics(self):
+        # type: () -> dict
+        """能源诊断（04-04）。
+
+        分两块：各网络的判定（运行时侧）与策略（启动层持有）。判定的**逐设备
+        明细**在 `diagnostics()["runtimes"][分量]["services"]` 里，这里不再抄
+        一份——抄一份的代价是两处迟早对不上。
+        """
+        view = self.runtimes.energy_view()
+        view["policy"] = self.energy_policy.describe()
+        view["unresolved"] = self.energy_policy.unresolved_report()
+        view["scope_note"] = (
+            "固定耗能结算与供能判定已实现；RF 计量（04-05/13-02）、断电暂停"
+            "（04-06）与设备级能源状态通知（04-08）未实现。装置数量与工作态"
+            "还没有来源、基带等设备的耗能在 blocks.md 里未列（R10），因此库默认"
+            "口径下真实网络一律报「待确认」；DEV 档用替身口径把算不出的需求"
+            "忽略掉（见 ignored_demand），那是「能跑起来」而不是「已定案」。"
+        )
+        return view
 
     def scheduler_diagnostics(self):
         # type: () -> dict
@@ -583,8 +832,9 @@ class ServerBootstrap(object):
             "wakes": self.event_binder.wakes.stats(),
             "totals": self.runtimes.scheduler_view(),
             "scope_note": (
-                "调度核心已落地；能源服务仍是替身，因此设备状态里的能源判定"
-                "一律是「尚未实现」而不是「没电」。"
+                "调度核心已落地。能源判定不在本节，看 diagnostics()[\"energy\"]："
+                "能源已是正式实现，因此设备状态里的能源判定是**真结论**"
+                "（有电/没电/待确认），不再是「服务尚未实现」。"
             ),
         }
 
@@ -604,7 +854,7 @@ class ServerBootstrap(object):
                 "替身服务 %s（待任务 %s 实现）" % (service_id, pending[service_id])
                 for service_id in sorted(pending)
             ],
-            # 三份策略一起报：只报带宽那一份会让 R07/R08/R10 在正式验收时漏网。
+            # 四份策略一起报：只报带宽那一份会让 R07/R08/R10 在正式验收时漏网。
             "unresolved": self.policy_bundle().unresolved_report(),
             "storage_unresolved": (
                 self.driver_policy.unresolved_report()
@@ -614,9 +864,31 @@ class ServerBootstrap(object):
 
     def policy_bundle(self):
         # type: () -> _PolicyBundle
-        """全部未定案策略的合成视图（供诊断与正式验收一起检查）。"""
+        """全部未定案策略的合成视图（供诊断与正式验收一起检查）。
+
+        **`scheduler_policy` 刻意不在里面**：`ServiceRegistry.assert_profile_ok`
+        的签名只接一个策略对象，而调度策略的未定项是 04 交付说明明确交接给
+        任务 14 的一件事（要么额外传，要么把签名扩成 `policies=(...)`）。
+        本增量没有偷改那个签名，也没有把调度策略混进来冒充「已经检查过」。
+
+        **06 的两份策略在里面**：`port_policy` 与 `transfer_policy` 带的是
+        R05（输出缓冲容量、取消与拆除处置）与 R12（光标持有物）。
+        少放一份的代价是正式验收时那两条规则漏网，而它们正是全局约束 7
+        最怕的形态。
+        """
         return _PolicyBundle(
-            [self.admission.policy, self.driver_policy, self.medium_policy]
+            [
+                self.admission.policy,
+                self.driver_policy,
+                self.medium_policy,
+                self.energy_policy,
+                self.port_policy,
+                self.transfer_policy,
+                # 07 的样板策略带的是 R09（无限燃料、返还物规则、两类样板
+                # 适用范围）。少放一份的代价是正式验收时那三条漏网，
+                # 而它们正是全局约束 7 最怕的形态。
+                self.pattern_policy,
+            ]
         )
 
     def assert_assembly_ok(self):
@@ -624,8 +896,10 @@ class ServerBootstrap(object):
         """正式验收用的装配期检查。**不会被自动调用**（与 03 同一条理由：
         抛错会让正式档整个起不来，而运行期拦截给出的「待确认」更有用）。
 
-        把三份策略一起交出去，否则 `PRODUCTION` 档会放行带未定案数值的存储，
-        而「漏报」正是全局约束 7 最怕的形态。
+        把四份策略一起交出去，否则 `PRODUCTION` 档会放行带未定案数值的存储
+        或能源，而「漏报」正是全局约束 7 最怕的形态。**替身服务**这一项同理：
+        能源虽然是正式实现，但它仍是替身口径（`dev_stand_in()`）时会被策略
+        那一路拦下，而不是靠「不是替身所以放行」。
 
         替身清单取自**实际装配**：有网络时用它的注册表，还没有网络时退回到
         一份裸注册表（它构造的就是默认装配表，与工厂的默认部分同源）。
@@ -665,20 +939,36 @@ def start_server():
     # type: () -> ServerBootstrap
     """由 `modMain.OnServerInited` 调用。
 
-    **显式使用 DEV 档，并把理由写在这里。** 04/05/09 尚未落地，网络服务
-    全是替身；换成 `PRODUCTION` 档不会让它们开始工作，而是让每一条业务
-    命令都被拒（`assembly_unresolved` + `service_absent`），并且把
-    诊断里的「哪些数值还没定案」当成正常结论报出来。游戏内现在只能用
-    DEV 档，而 DEV 档的代价同样是**业务命令一律被拒**——两种档位都不假装
-    能用，区别只在说法。这一点在 `diagnostics()` 的 `scope_note` 里也写着。
+    **两件事都在这里显式写出来，理由也写在这里。**
 
-    写成显式参数而不是依赖默认值：默认值将来若被改成别的档位，
-    这里不会跟着悄悄改变游戏内的行为。
+    1. **DEV 档。** 工厂（09）还是替身，PRODUCTION 档不会让它开始工作，
+       只会让每一条业务命令都被拒（`assembly_unresolved` + `service_absent`），
+       并且把诊断里的「哪些数值还没定案」当成正常结论报出来。游戏内现在
+       只能用 DEV 档，而 DEV 档的代价是**涉及工厂的命令被拒**——两种档位都
+       不假装能用，区别只在说法。这一点 `diagnostics()` 的 `scope_note` 里也写着。
+
+    2. **能源取替身口径（`EnergyPolicy.dev_stand_in()`）。** 库默认口径下，
+       基带的耗能（blocks.md 未列，R10）与 `per_unit` 的装置数量都算不出来，
+       于是**任何**真实网络的能源判定都会停在「待确认」——放了创造能量源也
+       一样。游戏内要的是「放上电源就能开工、拆掉就显示没电」，因此这里显式
+       选择替身口径：有供能设备就算有电，一台都没有就报没电。
+
+       **这不是「悄悄定案」。** 被忽略的需求逐个列在
+       `diagnostics()["energy"]["ignored_demand"]` 里，三个策略字段照旧进
+       `unresolved_report()`，`assert_assembly_ok()` 与 PRODUCTION 档照旧拒绝。
+       等 R10 补齐、05/08/09 把装置数量与工作态接过来之后，这里改回默认口径
+       即可——那时判定会自己变准，不需要动能源服务的代码。
+
+    写成显式参数而不是依赖默认值：默认值将来若被改动，这里不会跟着悄悄
+    改变游戏内的行为。
     """
     global _SERVER
     if _SERVER is not None:
         _SERVER.stop()
-    _SERVER = ServerBootstrap(assembly_profile=AssemblyProfile.DEV)
+    _SERVER = ServerBootstrap(
+        assembly_profile=AssemblyProfile.DEV,
+        energy_policy=EnergyPolicy.dev_stand_in(),
+    )
     _SERVER.start()
     return _SERVER
 

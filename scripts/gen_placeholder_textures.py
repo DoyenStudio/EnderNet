@@ -196,6 +196,21 @@ ITEM_GLYPH = (
     "########",
 )
 
+#: 样板的占位配色与图形。**必须与介质区分开**：两者都是物品、都会被玩家
+#: 拿在手里，同一套底色会让「放进去的是盘还是样板」要靠读名字才知道。
+#: 用终端那档绿色，图形画成网格状——工作台摆位的意象。
+TEMPLATE_PALETTE = ("#3F8B4A", "#1F4A26", "#A3E0AC")
+TEMPLATE_GLYPH = (
+    "########",
+    "#.#..#.#",
+    "#.#..#.#",
+    "#......#",
+    "########",
+    "#.#..#.#",
+    "#.#..#.#",
+    "########",
+)
+
 
 def parse_color(text):
     text = text.lstrip("#")
@@ -297,6 +312,11 @@ def build_item_pixels(index_in_items):
     return render_pixels(ITEM_PALETTE, ITEM_GLYPH, index_in_items)
 
 
+def build_template_pixels(index_in_items):
+    """样板物品的占位图。"""
+    return render_pixels(TEMPLATE_PALETTE, TEMPLATE_GLYPH, index_in_items)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="生成 EnderNet 占位贴图")
     parser.add_argument("--force", action="store_true", help="覆盖已存在的贴图")
@@ -323,21 +343,29 @@ def main(argv=None):
             write_png(path, build_pixels(category, index))
             written.append(name)
 
-    # 介质物品：文件名与图集键都由 gen_items.py 的命名规则决定，这里保持一致
-    # （`item_texture_name(medium_id)`），否则图集指向的路径会落空。
+    # 物品：文件名与图集键都由 gen_items.py 的命名规则决定，这里保持一致
+    # （`item_texture_name(item_id)`），否则图集指向的路径会落空。
+    #
+    # 两类物品各用一个 `(清单, 画法)`：序号从 0 重新开始，因此两类物品的
+    # 右上角圆点各数各的；配色与图形不同，再把两类本身也区分开。
     item_written = []
     item_skipped = []
-    for index, medium_id in enumerate(definitions.item_mediums):
-        name = item_texture_name(medium_id)
-        path = os.path.join(ITEM_OUT_DIR, name + ".png")
-        if os.path.isfile(path) and not args.force:
-            item_skipped.append(name)
-            continue
-        write_png(path, build_item_pixels(index))
-        item_written.append(name)
+    item_groups = (
+        (definitions.item_mediums, build_item_pixels),
+        (definitions.item_templates, build_template_pixels),
+    )
+    for item_ids, painter in item_groups:
+        for index, item_id in enumerate(item_ids):
+            name = item_texture_name(item_id)
+            path = os.path.join(ITEM_OUT_DIR, name + ".png")
+            if os.path.isfile(path) and not args.force:
+                item_skipped.append(name)
+                continue
+            write_png(path, painter(index))
+            item_written.append(name)
 
     print("已生成 %d 张占位贴图（设备方块），跳过 %d 张已存在的" % (len(written), len(skipped)))
-    print("已生成 %d 张占位贴图（介质物品），跳过 %d 张已存在的" % (len(item_written), len(item_skipped)))
+    print("已生成 %d 张占位贴图（物品），跳过 %d 张已存在的" % (len(item_written), len(item_skipped)))
     print("这些是**占位图，不是成品美术**；用同名真实贴图覆盖即可，无需改动 JSON。")
     return 0
 

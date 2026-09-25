@@ -9,10 +9,12 @@
 | 逻辑时钟 | `ServerBootstrap` 持有，经 `context["tick"]` 下传 | 全进程只有一个帧序；不放进服务，就不需要共享单例，工厂也不必注入额外参数 |
 | 跨网轮转与唤醒路由 | `RuntimeManager`（用本模块的 `RotationCursor` / `NodeLocator`） | 只有它同时看得见所有运行时与全局预算 |
 
-**服务不覆盖 `power_ok`。** 能源是 04 的另一半（04-04/05），这里返回
-`True`/`False` 都是撒谎；继承基类的 `None`（「待确认」）才是诚实的答案，
-而主控不会据此放行。同理不覆盖 `handle`：命令路由表里没有调度器这一格，
-真调到这里就是编程错误，不该伪装成一条业务失败。
+**服务不覆盖 `power_ok`。** 能源的供需账属能源服务（`network/energy.py`），
+调度器不是能源权威：这里返回 `True`/`False` 都是越权作答。继承基类的
+`None`（「待确认」）才是诚实的答案，而主控不会据此放行。**这与「能源还没
+实现」不是同一句话**——能源落地了也不改变「由谁负责」。
+同理不覆盖 `handle`：命令路由表里没有调度器这一格，真调到这里就是编程错误，
+不该伪装成一条业务失败。
 
 **「时间」的单位一律是逻辑帧**（`context["tick"]` 的刻度），不是秒。
 `SchedulerPolicy` 里所有间隔数值都是尚未定案的测试替身，
@@ -297,8 +299,10 @@ class SchedulerService(NetworkService):
         # type: () -> bool
         return True
 
-    # 不覆盖 `power_ok`（能源是 04 的另一半）、不覆盖 `handle`
-    # （命令路由表里没有调度器）。理由见模块 docstring。
+    # 不覆盖 `power_ok`：能源由能源服务负责（`network/energy.py`），
+    # 调度器不是能源权威——**「由谁负责」与「有没有实现」是两件事**，
+    # 这里不答是因为不该答，不是因为它还没写。
+    # 不覆盖 `handle`：命令路由表里没有调度器。理由见模块 docstring。
 
     def save_node_data(self, node):
         # type: (object) -> object

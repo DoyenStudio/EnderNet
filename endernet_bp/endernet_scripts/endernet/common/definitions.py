@@ -101,6 +101,19 @@ CAP_TERMINAL_ENDPOINT = "terminal_endpoint"
 CAP_PROCESSING_SLOTS = "processing_slots"
 CAP_MEMORY = "memory"
 
+# -- 样板模式（07）---------------------------------------------------------
+#
+# 词汇放在这里而不是 `server/crafting/`：`common` 不得反向 import `server`，
+# 而样板物品表（下面）必须能校验自己的 mode 取值合法。`crafting/patterns.py`
+# 从这里 import，因此「物品类型」与「配方模式」共用同一套字符串，
+# 不可能分叉成两套写法。
+
+#: 合成样板：指定工作台合成配方，放入**装配仓**使用（items.md）。
+PATTERN_MODE_CRAFTING = "crafting"
+#: 工厂样板：指定自定义配方，放入**总线样板接口**使用（items.md）。
+PATTERN_MODE_FACTORY = "factory"
+PATTERN_MODES = frozenset([PATTERN_MODE_CRAFTING, PATTERN_MODE_FACTORY])
+
 #: 1 单位带宽记为 4 个「四分之一 u」。
 QUARTERS_PER_UNIT = 4
 
@@ -298,7 +311,27 @@ class BandwidthSpec(object):
 
 
 class DeviceDefinition(object):
-    """一种接入设备的静态定义。"""
+    """一种接入设备的静态定义。
+
+    **`energy` 与 `supply` 是两件事，刻意不合成一个字段。** `energy` 是这台设备
+    「花多少」（`EnergySpec`），`supply` 是它「给多少」。合成一个字段的话，
+    「能耗未知」与「供能未知」就分不开了——而这两种未知要报给用户的是两句
+    完全不同的话（「算不出这台设备要多少电」vs「算不出它能给多少电」）。
+
+    `supply` 的三种取值：
+
+    - `None`：该设备**不供能**。这是结构性事实，不是缺项——绝大多数设备都是这样。
+    - `Value(n)`：已定案的供能速率（EN/t）。目前只有创造能量源。
+    - `Value(UNCONFIGURED, unresolved=..., is_test_value=True)`：它供能，但速率未定。
+      能源接入口就是这一种（RF → EN 的折算比例属 R08，接入本身属 13-02）。
+      **不能省略成 `None`**：那会被读成「它不供能」，于是只接了能源接入口的网络
+      会报「确认没电」，而正确的答案是「供能速率未定」。
+
+    供能设备由「`supply is not None`」这一个事实认定，**不再额外挂一个能力名**：
+    能力 `energy_port` 的协议是 `accept_rf`（**拉**式，向外部机器要 RF 再折算），
+    而创造能量源是**推**式静态电源，两者不是同一个能力；`supply` 已经足以分类，
+    再存一份只会分叉。能源服务因此像 `admission` 读带宽那样直接读定义表。
+    """
 
     __slots__ = (
         "id",
@@ -306,6 +339,7 @@ class DeviceDefinition(object):
         "category",
         "bandwidth",
         "energy",
+        "supply",
         "capabilities",
         "allowed_device_ids",
         "max_stack_slots",
@@ -320,6 +354,7 @@ class DeviceDefinition(object):
         category,
         bandwidth=None,
         energy=None,
+        supply=None,
         capabilities=(),
         allowed_device_ids=None,
         max_stack_slots=None,
@@ -331,6 +366,8 @@ class DeviceDefinition(object):
         self.category = category
         self.bandwidth = bandwidth if bandwidth is not None else BandwidthSpec(UNCONFIGURED)
         self.energy = energy if energy is not None else EnergySpec()
+        #: 见类 docstring。None = 不供能；Value = 供能速率（可能未定）。
+        self.supply = supply
         self.capabilities = tuple(capabilities)
         #: 仅控制器使用：允许接入的设备 id 集合。None 表示 blocks.md 未作限定。
         self.allowed_device_ids = (
@@ -344,6 +381,24 @@ class DeviceDefinition(object):
         # type: (str) -> bool
         return name in self.capabilities
 
+    def supplies(self):
+        # type: () -> bool
+        """该设备是否向网络供能。**只认 `supply is not None` 这一个事实。**"""
+        return self.supply is not None
+
+    def supply_rate(self):
+        # type: () -> object
+        """供能速率（EN/t）。返回 `int` 或 `UNCONFIGURED`；不供能返回 `None`。
+
+        未解包 `Value` 的话调用方会拿到 `Value` 对象，做算术时才炸——
+        那时已经离出错的地方很远了。
+        """
+        if self.supply is None:
+            return None
+        if isinstance(self.supply, Value):
+            return self.supply.value
+        return self.supply
+
     def allows(self, other_device_id):
         # type: (str) -> bool
         """该控制器是否允许接入指定设备。未限定时一律允许。"""
@@ -353,6 +408,40 @@ class DeviceDefinition(object):
 
     def __repr__(self):
         return "DeviceDefinition(%s, %s)" % (self.id, self.category)
+
+
+class TemplateSpec(object):
+    """一种样板的静态定义，逐项取自 items.md 的「样板」一节。
+
+    **没有数值字段是有意的。** items.md 对两类样板只给了标识与用途，没给容量、
+    堆叠或耐久之类的数值——它不是存储介质，而是一件纯资源产物。凭空加一个
+    `capacity` 字段就等于替 R09 定案了一条从未被决定的玩法规则。
+
+    `mode` 的取值域与 `server/crafting/patterns.py` 是同一套词汇（常量在本文件，
+    那边 import 过去）。**样板物品的类型就是它能承载的配方模式**，两者不可能
+    分叉——分叉的形态是「物品叫合成样板、里面的内容却是工厂配方」，
+    而那正是 `PatternPolicy.kind_scope` 要拒绝的东西。
+    """
+
+    __slots__ = ("id", "label", "mode", "usage")
+
+    def __init__(self, template_id, label, mode, usage):
+        # type: (str, str, str, str) -> None
+        if mode not in PATTERN_MODES:
+            raise ValueError("未知样板模式: %r" % (mode,))
+        self.id = template_id
+        self.label = label
+        self.mode = mode
+        #: 用途说明，进物品说明与诊断，不参与任何判定。
+        #:
+        #: **只写「指定什么配方」那半句**：items.md 的原句还有后半段
+        #: 「放入某台设备使用」，而那半句由 `PATTERN_DEVICES` 提供、
+        #: 由 `gen_items.template_tip` 拼上去。两处各写一遍的代价是
+        #: 设备表改了名字，物品提示还说着旧设备。
+        self.usage = usage
+
+    def __repr__(self):
+        return "TemplateSpec(%s, %s)" % (self.id, self.mode)
 
 
 class MediumSpec(object):
@@ -409,6 +498,46 @@ STORAGE_DRIVER_SLOT_COUNT = Value(
     note="驱动器槽数；也是方块容器格数（gen_blocks.py 从同一条读出）",
 )
 
+# -- 接口槽位（2026-09-25 接口规格）----------------------------------------
+#
+# 这三条是**已定案**的（`blocks.md` 的「网络接口」一节逐条写明），因此
+# **不带 `unresolved` 标签**——它们不是替身值。
+#
+# 早先这里只有一条 `BUS_BUFFER_SLOT_COUNT`，把被动接口与样板接口当成同一种
+# 「R05 测试缓冲」。规格同步之后两者的槽位**用途完全不同**：
+# 被动接口的 9 格是存取共用的**真实库存**，样板接口的 9 格**专用于工厂样板**。
+# 合成一条的代价是「9 格 × 64 件 = 576」这个估计被套到两种设备上，
+# 而它既不成立（真实容量要按每件物品的 maxStackSize 算），
+# 也让 R05 的诊断多报一条已经定案的规则。
+
+
+#: 被动总线接口的槽数：**存货与取货共用这 9 格**（`blocks.md`）。
+#: 同时是方块容器的格数（`scripts/gen_blocks.py` 从这一条读出），
+#: 因此界面格数与领域层槽数不可能分叉。
+PASSIVE_PORT_SLOT_COUNT = Value(
+    9,
+    note="被动接口存取共用的真实槽位数；也是方块容器格数（blocks.md 已确定）",
+)
+
+#: 样板接口的槽数：**专用于存放工厂样板**，与原料缓冲分离（`blocks.md`）。
+#: 同样由生成器读作方块容器格数——那个容器归任务 07 使用，
+#: **任务 06 的投料不碰它**。
+TEMPLATE_PATTERN_SLOT_COUNT = Value(
+    9,
+    note="样板接口的工厂样板专用槽数；也是方块容器格数（blocks.md 已确定）",
+)
+
+#: 取货（被动接口的取货与主动取货口）**最多能配置多少种资源**。
+#: `blocks.md`：「对于取货，允许设定 9 种物品/流体」/「只能设定至多 9 种待取物」。
+#:
+#: **它只管取货。** 存货口的过滤条目上限**尚未定案**，文档明写
+#: 「不得从取货 9 种上限推导存货过滤上限」——那一条在 `PortPolicy` 里，
+#: 不在定义表里。
+PICKUP_FILTER_LIMIT = Value(
+    9,
+    note="取货最多可配置的资源种类数（blocks.md 已确定；不适用于存货过滤）",
+)
+
 
 # -- 介质表（items.md）-----------------------------------------------------
 
@@ -438,6 +567,56 @@ ITEM_MEDIUMS = (
     "endernet:singleside_tape",
     "endernet:softdisk_1k",
 )
+
+
+# -- 样板表（items.md）-----------------------------------------------------
+
+#: 两类样板，逐项取自 items.md 的「样板」一节。
+#:
+#: **没有数值字段是有意的**：items.md 只给了标识与用途，没给容量或堆叠数，
+#: 凭空补一个就等于替 R09 定案。真实数值补齐之前，这里只有足以做出物品、
+#: 做出版本校验、以及判「这块样板该进哪台设备」的信息。
+PATTERN_TEMPLATES = (
+    TemplateSpec(
+        "endernet:crafting_template",
+        "合成样板",
+        PATTERN_MODE_CRAFTING,
+        "指定工作台合成配方",
+    ),
+    TemplateSpec(
+        "endernet:factorical_template",
+        "工厂样板",
+        PATTERN_MODE_FACTORY,
+        "指定自定义配方",
+    ),
+)
+
+#: **已注册为游戏物品**的样板。与 `ITEM_MEDIUMS` 同一地位、同一理由：
+#: 规格表与「已经做出来了」是两件事。本次两类样板都已做出物品，
+#: 但方向相反——介质是「表里有很多、只做了两个」，样板是「表里就两个、都做了」。
+ITEM_TEMPLATES = (
+    "endernet:crafting_template",
+    "endernet:factorical_template",
+)
+
+#: 每种样板模式**在文档里指定**的设备（items.md 的用途、blocks.md 的样板接口一节）。
+#:
+#: 这张表本身是已定案的事实，**不带 unresolved 标签**；它是否被**强制执行**
+#: 取决于 `PatternPolicy.kind_scope`——R09 要澄清的正是「两类样板的适用范围」，
+#: 所以规则在策略里，事实在这张表里。这样策略换成宽松口径时不需要改数据。
+#:
+#: 装配仓与样板接口都在设备表里（`CATEGORY_ASSEMBLY` / `endernet:bus_template_io`）；
+#: 后者恰好也是**装配仓之外唯一**声明 `CAP_PATTERN_PROVIDER` 的方块。
+PATTERN_DEVICES = {
+    PATTERN_MODE_CRAFTING: frozenset(["endernet:assemble_chamber"]),
+    PATTERN_MODE_FACTORY: frozenset(["endernet:bus_template_io"]),
+}
+
+
+def devices_for_mode(mode):
+    # type: (str) -> frozenset
+    """该模式的样板在文档里指定给哪些设备。未知模式返回空集。"""
+    return PATTERN_DEVICES.get(mode, frozenset())
 
 
 # -- 设备表（blocks.md）----------------------------------------------------
@@ -649,14 +828,45 @@ DEVICES = (
         notes="占用 1 个配方处理槽位。",
     ),
     # --- 其他 ---
+    # 这一组两台都是「能源类设备」：只连基带、不占带宽，不参与负载域。
+    # 分类复用 CATEGORY_ENERGY_INPUT 而不是再开一个：blocks.md 把它们同放在
+    # 「其他」下，连接规则也完全一样；新开分类要同时改 ConnectionRules 与
+    # PortRuleSet 两张表（`node.py` 的守卫会因半张表报错），还要补
+    # gen_placeholder_textures 的调色板与图形表——那两张表对未知分类是**静默
+    # 回退**（灰块 + 默认挖掘等级），没有测试拦得住。一个分类里住着「转换」与
+    # 「发电」两种角色，由 `supply` 区分。
     DeviceDefinition(
         "endernet:energy_input_interface",
         "能源接入口",
         CATEGORY_ENERGY_INPUT,
         bandwidth=BandwidthSpec(0),  # blocks.md：不占用带宽
         energy=EnergySpec(),
+        # 它**供能**，但 RF → EN 的折算比例属 R08、真实接入属 13-02，因此速率未定。
+        # 写成 None 会被读成「它不供能」，于是只接它的网络误报「确认没电」。
+        supply=Value(
+            UNCONFIGURED,
+            unresolved="R08",
+            is_test_value=True,
+            note="RF→EN 折算比例待定（R08），真实接入见 13-02",
+        ),
         capabilities=(CAP_ENERGY_PORT,),
         notes="不占带宽不代表耗能为零；耗能未列，归入 R10。",
+    ),
+    DeviceDefinition(
+        "endernet:creative_energy_source",
+        "创造能量源",
+        CATEGORY_ENERGY_INPUT,
+        bandwidth=BandwidthSpec(0),  # blocks.md：不占用带宽
+        # blocks.md 未列它自身的耗能，归入 R10。不供能设备才写 EnergySpec(Value(0))。
+        energy=EnergySpec(),
+        # 数值取自 blocks.md，已是定案值，不是替身。
+        supply=Value(2147483647, note="blocks.md：为网络提供 2147483647 EN/t"),
+        # 不声明任何能力：它没有运行期接口（静态电源，由能源服务读定义表得知）。
+        capabilities=(),
+        notes=(
+            "供能设备：为网络提供 2147483647 EN/t。不占带宽，"
+            "因此不影响负载域与带宽准入。"
+        ),
     ),
 )
 
@@ -669,14 +879,29 @@ class DefinitionSet(object):
     #: 不必在别处再维护一份未定项清单。
     DEFAULT_CONFIG = {
         "storage_driver.slot_count": STORAGE_DRIVER_SLOT_COUNT,
+        "port.passive_slot_count": PASSIVE_PORT_SLOT_COUNT,
+        "port.template_pattern_slot_count": TEMPLATE_PATTERN_SLOT_COUNT,
+        "port.pickup_filter_limit": PICKUP_FILTER_LIMIT,
     }
 
-    def __init__(self, devices=None, mediums=None, config=None, item_mediums=None):
-        # type: (tuple, tuple, dict, tuple) -> None
+    def __init__(
+        self,
+        devices=None,
+        mediums=None,
+        config=None,
+        item_mediums=None,
+        templates=None,
+        item_templates=None,
+    ):
+        # type: (tuple, tuple, dict, tuple, tuple, tuple) -> None
         self.devices = {}
         self.mediums = {}
+        self.templates = {}
         self.item_mediums = tuple(
             ITEM_MEDIUMS if item_mediums is None else item_mediums
+        )
+        self.item_templates = tuple(
+            ITEM_TEMPLATES if item_templates is None else item_templates
         )
         self.config = dict(self.DEFAULT_CONFIG)
         self.config.update(config or {})
@@ -684,14 +909,22 @@ class DefinitionSet(object):
             self._add_unique(self.devices, definition.id, definition, "设备")
         for spec in mediums if mediums is not None else MEDIUMS:
             self._add_unique(self.mediums, spec.id, spec, "介质")
-        # 只在用默认介质表时校验：测试常传自制的 mediums 子集来构造夹具，
-        # 那时「物品注册表里的型号必须存在」这条约束并不适用（它约束的是
+        for template in templates if templates is not None else PATTERN_TEMPLATES:
+            self._add_unique(self.templates, template.id, template, "样板")
+        # 只在用默认表时校验：测试常传自制的子集来构造夹具，那时
+        # 「物品注册表里的型号必须存在」这条约束并不适用（它约束的是
         # 交付出去的这份真实定义表）。
         if mediums is None:
             for medium_id in self.item_mediums:
                 if medium_id not in self.mediums:
                     raise ValueError(
                         "已注册为物品的介质型号不在介质表中: %s" % (medium_id,)
+                    )
+        if templates is None:
+            for template_id in self.item_templates:
+                if template_id not in self.templates:
+                    raise ValueError(
+                        "已注册为物品的样板不在样板表中: %s" % (template_id,)
                     )
 
     @staticmethod
@@ -738,6 +971,70 @@ class DefinitionSet(object):
         # type: () -> list
         """已注册为物品的介质规格，顺序与 `item_mediums` 一致。"""
         return [self.get_medium(medium_id) for medium_id in self.item_mediums]
+
+    # -- 样板 ----------------------------------------------------------
+
+    def has_template(self, template_id):
+        # type: (str) -> bool
+        return template_id in self.templates
+
+    def get_template(self, template_id):
+        # type: (str) -> TemplateSpec
+        try:
+            return self.templates[template_id]
+        except KeyError:
+            raise KeyError("未注册的样板标识: %s" % (template_id,))
+
+    def get_item_template(self, template_id):
+        # type: (str) -> TemplateSpec
+        """取**已注册为游戏物品**的样板规格。与 `get_item_medium` 同一分工。"""
+        if template_id not in self.item_templates:
+            raise KeyError("样板 %s 尚未注册为游戏物品" % (template_id,))
+        return self.get_template(template_id)
+
+    def item_template_specs(self):
+        # type: () -> list
+        """已注册为物品的样板规格，顺序与 `item_templates` 一致。"""
+        return [self.get_template(item) for item in self.item_templates]
+
+    def item_specs(self):
+        # type: () -> list
+        """**全部已注册为游戏物品的规格**（介质 + 样板）。
+
+        资产检查与物品生成器读这一份：两边各维护一张清单的话，新增一类物品
+        时总有一处会漏，而漏掉的表现是「游戏里有这件物品、但没人检查它的贴图」
+        或者反过来「检查报缺文件、其实这件物品还没做」。
+        两种规格都带 `id` 与 `label`，这正是那两处用到的全部字段。
+        """
+        return self.item_medium_specs() + self.item_template_specs()
+
+    def item_keys(self):
+        # type: () -> tuple
+        """全部已注册为游戏物品的标识。"""
+        return tuple(self.item_mediums) + tuple(self.item_templates)
+
+    def item_id_for_template_mode(self, mode):
+        # type: (str) -> str
+        """该模式**已注册为物品**的样板标识；没有就返回空串。
+
+        写样板物品时按模式反查标识，因此「合成样板写成了工厂样板的物品」
+        这一路径根本不存在——两者查的是同一个映射。
+        """
+        for template_id in self.item_templates:
+            if self.get_template(template_id).mode == mode:
+                return template_id
+        return ""
+
+    def template_mode_of(self, template_id):
+        # type: (str) -> str
+        """该样板物品承载的配方模式；不是样板物品时返回空串。
+
+        **只看标识，不看内容**：物品类型就是模式，这是 `TemplateSpec.mode`
+        与 `crafting/patterns.py` 共用一套词汇的全部意义。插槽拒收要在
+        事件路径上判类型，那条路径拿不到（也不必拿）物品的 `userData`。
+        """
+        spec = self.templates.get(template_id)
+        return spec.mode if spec is not None else ""
 
     def config_value(self, key, default=None):
         # type: (str, object) -> object
@@ -822,6 +1119,17 @@ class DefinitionSet(object):
                     (
                         "%s.energy.per_unit" % device_id,
                         self._as_value(energy.per_unit),
+                    )
+                )
+            if definition.supply is not None:
+                # 供能速率同样要过守卫：没登记的话，一个「带未定标签却不是测试值」
+                # 的供能速率会**恰好**落在 assert_no_silent_unresolved() 的覆盖
+                # 范围之外——那正是这个守卫存在的理由。不供能的设备（supply is None）
+                # 不产出路径，免得把 23 台设备的「不供能」都报成缺项。
+                out.append(
+                    (
+                        "%s.supply" % device_id,
+                        self._as_value(definition.supply),
                     )
                 )
             out.append(

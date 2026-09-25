@@ -21,11 +21,31 @@
 from ...common.protocol import (
     BlockReason,
     CommandResult,
+    ORIGIN_EXTERNAL,
+    ORIGIN_INTERNAL,
     Reason,
     TransferReceipt,
+    TransferRequest,
     TransferStatus,
 )
 from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
+from ..devices.io import (
+    FILTER_MODES,
+    INTAKE,
+    MODE_WHITELIST,
+    PASSIVE_PORT_SLOT_COUNT,
+    ROLE_FILTER_MODES,
+    OUTPUT,
+    PASSIVE,
+    TEMPLATE,
+    PortConfig,
+    PortDispatcher,
+    PortGateway,
+    PortRunner,
+    is_port_device,
+    port_blocker,
+    role_of,
+)
 from ..devices.storage_driver import DRIVER_DEVICE_ID
 from ..network.controller import RequestLedger
 from ..network.services import NetworkService, ServiceId
@@ -35,35 +55,20 @@ from .medium import (
     MediumRecovery,
     TransferBudget,
 )
+from .transfer import (
+    CURSOR_IGNORE,
+    NetworkEndpoint,
+    SlotAnchor,
+    TransferCoordinator,
+    TransferPolicy,
+    anchored_extract_endpoint,
+    anchored_insert_endpoint,
+    receipt_result,
+)
 
 
 #: `NetworkNode.has_capability` 用的能力名。与 `devices/capabilities.py` 一致。
 STORAGE_PROVIDER_CAPABILITY = "storage_provider"
-
-
-class _OpResult(object):
-    """把 `TransferReceipt` 适配成去重账本认的结果。
-
-    账本只要求一个 `is_applied()`（03-05 的契约），而回执回答的是
-    「实际移动了多少」——两者不是同一个问题。因此在这里做一层薄适配，
-    而不是为了复用去给回执加一个它本不该有的方法。
-    """
-
-    __slots__ = ("receipt",)
-
-    def __init__(self, receipt):
-        # type: (TransferReceipt) -> None
-        self.receipt = receipt
-
-    def is_applied(self):
-        # type: () -> bool
-        return self.receipt.status in (
-            TransferStatus.COMPLETE,
-            TransferStatus.PARTIAL,
-        )
-
-    def __repr__(self):
-        return "_OpResult(%r)" % (self.receipt,)
 
 
 class MountRecord(object):
@@ -163,8 +168,18 @@ class StorageService(NetworkService):
     is_stand_in = False
     pending_task = ""
 
-    def __init__(self, runtime=None, drivers=None, policy=None, ledger_policy=None):
-        # type: (object, object, object, object) -> None
+    def __init__(
+        self,
+        runtime=None,
+        drivers=None,
+        policy=None,
+        ledger_policy=None,
+        ports=None,
+        transfer_policy=None,
+        reflow_sink=None,
+        inventories=None,
+    ):
+        # type: (object, object, object, object, object, object, object, object) -> None
         #: 驱动器状态集合与介质权威表，由启动层注入（架构 §3）。
         #: **裸构造是合法的**（`default_stand_ins()` 会用 `None` 构造每个槽位），
         #: 此时 `is_ready()` 为假，一切业务给 `SERVICE_NOT_READY`——
@@ -172,6 +187,29 @@ class StorageService(NetworkService):
         self.drivers = drivers
         self.policy = policy
         self.runtime = runtime
+        #: 接口状态集合（06），同样由启动层注入。**与 `drivers` 同一地位**：
+        #: 接口缓冲里的东西不能因为网络断开或运行时重建而消失。
+        self.ports = ports
+        #: 转移的未定案旋钮（R04/R05/R12）。
+        self.transfer_policy = (
+            transfer_policy if transfer_policy is not None else TransferPolicy()
+        )
+        #: 合格回流入口（任务 10）。未接线时为 None，诊断里会写明
+        #: 「外部输入通知无处可去」——那是「还没接」，不是「不用发」。
+        self.reflow_sink = reflow_sink
+        #: 每网络一份的转移协调器。**惰性构造**：接口跑起来之前它不该存在，
+        #: 否则每个网络都会白拿一份账本与待核对台账。
+        self._transfer = None
+        #: 背包提供者（06-09）。生产实现是 `adapters/containers_engine.py`
+        #: 的 `EngineInventoryProvider`，离线测试注入替身。
+        self.inventories = inventories
+        #: 接口的轮询驱动。同样惰性构造（需要运行时里的调度服务）。
+        self._ports_runner = None
+        #: 接口的命令处理器。每网络一份，与协调器同源。
+        self._port_dispatcher = None
+        # 轮询注册表**只有一份**：`PortRunner._registered`。
+        # 服务这边再存一份的代价是两张表要靠调用顺序保持一致，
+        # 而任何一处绕过服务直接调 runner 都会让它们分叉。
 
         # -- 派生索引（权威在介质与预留台账）--
         #: `ResourceKey -> [stored, reserved]`
@@ -221,13 +259,103 @@ class StorageService(NetworkService):
         # type: () -> bool
         return self.drivers is not None
 
+    # -- 转移与接口 ----------------------------------------------------
+
+    def transfer(self):
+        # type: () -> TransferCoordinator
+        """本网络的转移协调器。**惰性构造**，每网络一份。
+
+        它属于存储服务而不是独立服务槽位：AE2 那边也是「网络存取入口」
+        （`IStorageMonitorableAccessor`）由存储暴露，而不是另开一个服务。
+        少一个槽位意味着装配表、替身清单与 `assert_profile_ok` 都不用动。
+        """
+        if self._transfer is None:
+            self._transfer = TransferCoordinator(
+                policy=self.transfer_policy,
+                sink=self.reflow_sink,
+                network_id=(
+                    self.runtime.component_id if self.runtime is not None else ""
+                ),
+            )
+        return self._transfer
+
+    def ports_runner(self):
+        # type: () -> PortRunner
+        """接口的轮询驱动。惰性构造——需要运行时里已经装好的调度服务。"""
+        if self._ports_runner is None:
+            gateway = PortGateway(self.runtime)
+            self._ports_runner = PortRunner(
+                self.ports, gateway, coordinator=self.transfer()
+            )
+        return self._ports_runner
+
+    def ports_runner_view(self):
+        # type: () -> dict
+        """接口驱动的只读诊断。**公开访问器**：启动层的诊断走它，
+        不伸手读 `_ports_runner`（那会让任何没有这个私有名的实现把整块
+        诊断打崩，而诊断正是网络坏掉时最该能答的东西）。
+
+        `wired=False` 与 `registered=0` 是两件事：前者说「驱动还没建起来」，
+        后者说「建起来了但没有接口注册」。混在一起就查不出
+        「接口为什么不动」。
+        """
+        if self.ports is None:
+            return {"wired": False, "reason": "本网络没有接入接口状态集合"}
+        if self._ports_runner is None:
+            return {"wired": False, "registered": 0,
+                    "reason": "尚未构造：本网络的接口还没被登记过"}
+        view = self._ports_runner.diagnostics()
+        view["wired"] = True
+        return view
+
+    def _scheduler(self):
+        # type: () -> object
+        """本网络的调度服务。没有装配时返回 None（**不报错**）：
+        接口只是不会被轮询，注册表与状态查询照常。"""
+        if self.runtime is None:
+            return None
+        return self.runtime.services.get(ServiceId.SCHEDULER)
+
+    def _attach_port(self, node):
+        # type: (object) -> bool
+        """登记一台接口：建立专属状态、注册轮询。**幂等**。
+
+        `add_node` 对每个成员反复调用，因此这里必须自己保证「只注册一次」——
+        `SchedulerService.set_poll_handler` 每调用一次就把退避打回初值，
+        在里面直接注册会让退避永远失效（表现为「每帧都在轮询」）。
+        """
+        if self.ports is None or not is_port_device(node.device_id):
+            return False
+        # 朝向以 `NetworkNode` 上的读数为准：它来自注册表，而注册表在
+        # 放置与补查两条路径上都会解析朝向（`lifecycle._resolve_facing`）。
+        state = self.ports.ensure(node.ref, node.device_id, node.facing)
+        if state is None:
+            return False
+        scheduler = self._scheduler()
+        if scheduler is None:
+            return False
+        return self.ports_runner().attach(node, scheduler)
+
+    def _detach_port(self, node):
+        # type: (object) -> bool
+        """注销一台接口的轮询。**缓冲与配置保留**（06 验收）。"""
+        if self._ports_runner is None:
+            return False
+        scheduler = self._scheduler()
+        if scheduler is None:
+            return False
+        return self._ports_runner.detach(node, scheduler)
+
     def add_node(self, node, saved_data=None):
         # type: (object, object) -> bool
-        """把一个驱动器节点上的介质挂上来。**对每个成员每帧都会被调用**，必须幂等。
+        """登记一个成员。**对每个成员每帧都会被调用**，必须幂等。
 
-        挂载集合来自驱动器自己的权威槽位，因此这里不解析 `saved_data`
+        两种成员：存储驱动器（挂载介质）与接口设备（登记轮询）。
+        驱动器的挂载集合来自它自己的权威槽位，因此这里不解析 `saved_data`
         决定装了什么——那会让「存档说什么」盖过「设备上真的有什么」。
         """
+        if is_port_device(node.device_id):
+            return self._attach_port(node)
         if self.drivers is None or node.device_id != DRIVER_DEVICE_ID:
             return False
         if not node.has_capability(STORAGE_PROVIDER_CAPABILITY):
@@ -289,7 +417,14 @@ class StorageService(NetworkService):
 
     def remove_node(self, node):
         # type: (object) -> bool
-        """节点离开网络：解除它贡献的挂载。**不等于世界里的方块被拆了。**"""
+        """节点离开网络：解除它贡献的挂载。**不等于世界里的方块被拆了。**
+
+        接口设备走另一条：注销轮询、撤销任务，**保留缓冲与配置**——
+        06 验收要求「外部物流已送入缓冲的资源仍保留」，而拆线、失去主控、
+        运行时重建都不该让那些东西消失。
+        """
+        if is_port_device(node.device_id):
+            return self._detach_port(node)
         affected = [
             medium_id
             for medium_id, record in self.mounted.items()
@@ -316,21 +451,34 @@ class StorageService(NetworkService):
 
     def on_wake(self, node_key):
         # type: (object) -> bool
-        """方块声明 `tick: false`，介质也没有被动推进，因此不处理唤醒。"""
-        return False
+        """方块实体 tick 到达。介质没有被动推进，因此只转发给接口。
+
+        **接口这边也只记一笔**：退避的归属是调度服务，搬运的发起是轮询。
+        唤醒在这里不产生任何业务副作用（与 `NetworkService.on_wake` 的契约一致）。
+        """
+        if self._ports_runner is None or self.ports is None:
+            return False
+        return self._ports_runner.note_wake(node_key)
 
     def tick(self, context, budget):
         # type: (dict, int) -> int
-        """推进时钟与账本清理。**不在这里做任何库存全量扫描。**
+        """推进时钟、账本清理与接口时基。**不在这里做任何库存全量扫描。**
 
         发布窗口属任务 11：本轮只维护准确的索引与脏集合，无人订阅时
         `take_dirty_keys()` 不会被调用，因此这里的工作量恒为常数。
+
+        接口的搬运**不在这里发起**：它挂在调度服务的轮询上，而轮询只在
+        运行时开放时才会被推进。这里只推一个时基给批次时间戳用。
         """
         context = context or {}
         tick = context.get("tick")
         if tick is not None:
             self.advance_clock(int(tick))
         self._ledger.prune(self._clock_tick)
+        if self.ports is not None:
+            self.ports.advance_clock(self._clock_tick)
+        if self._transfer is not None:
+            self._transfer.tick(self._clock_tick)
         return 0
 
     def save_node_data(self, node):
@@ -374,9 +522,25 @@ class StorageService(NetworkService):
                 "publish_version": self.publish_version,
                 "clock_tick": self._clock_tick,
                 "ledger": self._ledger.stats,
+                # 接口那半边的内容在 `bootstrap.io_diagnostics()` 里，这里不抄
+                # 一份——抄一份的代价是两处迟早对不上（同 `energy_diagnostics`
+                # 把逐设备明细留在 `status_view()` 的理由）。
+                "ports": (
+                    len(self._ports_runner._registered)
+                    if self._ports_runner is not None else 0
+                ),
+                "transfer": (
+                    self._transfer.diagnostics() if self._transfer is not None
+                    else {"wired": False,
+                          "note": "本网络还没有发起过转移，协调器尚未构造"}
+                ),
                 "scope_note": (
                     "介质挂载、汇总索引、预留与受控读写已实现；"
-                    "真实物品交接（06）、存档后端（12）与界面同步（11）未接入。"
+                    "**真实物品交接（06）已接入**——接口设备与转移协调器都挂在"
+                    "本服务下，端点预检、受控提交、中转缓冲与实际数量回执均已落地。"
+                    "但**接触真实引擎的那一段只有部分游戏内验证**"
+                    "（详见 06-交付说明第五节）；存档后端（12）与界面同步（11）"
+                    "仍未接入。"
                 ),
             }
         )
@@ -912,7 +1076,7 @@ class StorageService(NetworkService):
         if state == RequestLedger.BEGIN_REPLAYED:
             stored = self._ledger.replay(op_key)
             if stored is not None:
-                return stored.receipt
+                return stored
             return TransferReceipt(op_id, count, 0, TransferStatus.UNCERTAIN, "", key)
         if state == RequestLedger.BEGIN_IN_FLIGHT:
             # **不确定就不重放**（05-03 步骤 6）。
@@ -921,7 +1085,7 @@ class StorageService(NetworkService):
             )
 
         receipt = self._do_transfer(op_id, key, count, direction, owner_id, now)
-        self._ledger.finish(op_key, _OpResult(receipt), now)
+        self._ledger.finish(op_key, receipt, now)
         return receipt
 
     def _do_transfer(self, op_id, key, count, direction, owner_id, now):
@@ -1104,6 +1268,18 @@ class StorageService(NetworkService):
             "extract": self._cmd_extract,
             "reserve": self._cmd_reserve,
             "release": self._cmd_release,
+            # 接口（06）
+            "port_status": self._cmd_port_status,
+            "port_configure": self._cmd_port_configure,
+            "port_dispatch": self._cmd_port_dispatch,
+            "port_stage": self._cmd_port_stage,
+            "port_clear": self._cmd_port_clear,
+            # 自定义背包槽（06-09，服务端半边）
+            "inv_take": self._cmd_inv_take,
+            "inv_put": self._cmd_inv_put,
+            "inv_split": self._cmd_inv_split,
+            "inv_merge": self._cmd_inv_merge,
+            "inv_quick_move": self._cmd_inv_quick_move,
         }
         handler = handlers.get(action)
         if handler is None:
@@ -1348,6 +1524,546 @@ class StorageService(NetworkService):
             command.request_id, {"action": "release", "released": released}
         )
 
+    # -- 接口命令（06）-------------------------------------------------
+
+    def _dispatcher(self):
+        # type: () -> object
+        """接口的命令处理器。与转移协调器一样**每网络一份**。"""
+        if self._port_dispatcher is None:
+            self._port_dispatcher = PortDispatcher(
+                self.ports,
+                self.transfer(),
+                NetworkEndpoint(self, self._network_id()),
+            )
+        return self._port_dispatcher
+
+    def _network_id(self):
+        # type: () -> str
+        return self.runtime.component_id if self.runtime is not None else ""
+
+    def _port_state_of(self, command):
+        # type: (object) -> tuple
+        """取命令目标的那台接口。三种失败分开报。"""
+        ref = command.device_ref
+        if ref is None:
+            return None, self._reject(command, Reason.BAD_PARAMETER, "命令没有目标设备")
+        if self.ports is None:
+            return None, CommandResult.blocked(
+                command.request_id,
+                [
+                    BlockReason(
+                        Reason.SERVICE_NOT_READY, "存储服务未接入接口状态集合"
+                    )
+                ],
+            )
+        state = self.ports.get_by_ref(ref)
+        if state is None:
+            return None, self._reject(
+                command, Reason.DEVICE_GONE, "目标位置上没有接口实例"
+            )
+        if not state.loaded:
+            return None, CommandResult.blocked(
+                command.request_id,
+                [
+                    BlockReason(
+                        Reason.DRIVER_UNLOADED,
+                        "接口所在区块未加载；这不代表它已被拆除",
+                    )
+                ],
+            )
+        return state, None
+
+    def _cmd_port_status(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        state, refusal = self._port_state_of(command)
+        if refusal is not None:
+            return refusal
+        view = state.to_dict()
+        blocker = port_blocker(state)
+        view["action"] = "port_status"
+        view["blocker"] = blocker.to_dict() if blocker is not None else None
+        # **这条命令走的是 `CommandKind.STORAGE`，因此要过主控准入**——
+        # 网络没有主控时它压根到不了这里（那是有意的：设备不得绕过主控）。
+        # 想在离线/无主控时查看接口，走只读入口 `debug_query("port")`，
+        # 那条路径不经过主控，也不碰任何业务状态。
+        return CommandResult.ok(command.request_id, view)
+
+    def _cmd_port_configure(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """写入接口配置。**载荷只表达意图**：过滤内容、方向、单次上限。
+
+        不接受客户端直接提交的「缓冲里现在有几个」之类的计数——那是权威状态
+        （架构 §4 的同一条纪律，`disk_count` 那边照此办理）。
+        """
+        state, refusal = self._port_state_of(command)
+        if refusal is not None:
+            return refusal
+        raw = payload.get("config")
+        if not isinstance(raw, dict):
+            return self._reject(command, Reason.BAD_PARAMETER, "config 必须是字典")
+        # **合并而不是整体替换。** 界面往往只改其中一项（比如只改过滤），
+        # 整体替换会把没提到的字段打回默认值——玩家会发现「我只改了过滤，
+        # 方向怎么回去了」。合并的语义是「改我说的那几项」，与命令载荷
+        # 「只表达意图」的定位一致。
+        merged = state.config.to_dict()
+        for field, value in raw.items():
+            if field in merged:
+                merged[field] = value
+            else:
+                return self._reject(
+                    command, Reason.BAD_PARAMETER,
+                    "配置里没有 %r 这一项（可用：%s）" % (field, "、".join(sorted(merged))),
+                )
+        try:
+            config = PortConfig.from_dict(merged, self.ports.policy)
+        except (KeyError, TypeError, ValueError) as error:
+            return self._reject(
+                command, Reason.BAD_PARAMETER, "配置内容不合法：%s" % (error,)
+            )
+        refusal = self._validate_port_config(
+            state, config, command.request_id
+        )
+        if refusal is not None:
+            return refusal
+        self.ports.configure(state.ref, config)
+        # **配置变更是「立即尝试」的触发点**：`SchedulerService.wake` 把该设备的
+        # 轮询提前到本帧。槽位变化没有通知通道（容器 API 不提供），那条路只能
+        # 靠方块实体 tick 打回退避——04 明确警告过不能拿心跳当变化信号。
+        self._wake_port(state.ref)
+        view = state.to_dict()
+        view["action"] = "port_configure"
+        return CommandResult.ok(command.request_id, view)
+
+    def _validate_port_config(self, state, config, prefix):
+        # type: (object, PortConfig, str) -> object
+        """按**角色**校验配置。返回拒绝结果，通过时返回 None。
+
+        三条校验都放在服务端（客户端只提意图）——11-07 的验收明确要求
+        「非法第 10 种取货配置被服务端拒绝」，因此不能只在界面上拦住。
+        """
+        allowed = ROLE_FILTER_MODES.get(state.role, frozenset([MODE_WHITELIST]))
+        if config.filter_mode not in allowed:
+            return CommandResult.rejected(
+                prefix,
+                [
+                    BlockReason(
+                        Reason.FILTER_MODE_MISMATCH,
+                        "%s 角色不支持 %s 过滤（可用：%s）"
+                        % (state.role, config.filter_mode, "、".join(sorted(allowed))),
+                    )
+                ],
+            )
+        limit = self.ports.policy.filter_limit_for(state.role)
+        if len(config.filter) > limit:
+            return CommandResult.rejected(
+                prefix,
+                [
+                    BlockReason(
+                        Reason.FILTER_LIMIT_REACHED,
+                        "%s 最多配置 %d 种资源，收到 %d 种"
+                        % (state.role, limit, len(config.filter)),
+                    )
+                ],
+            )
+        if config.supply_slots:
+            if state.role != PASSIVE:
+                return CommandResult.rejected(
+                    prefix,
+                    [
+                        BlockReason(
+                            Reason.SUPPLY_SLOTS_INVALID,
+                            "只有被动接口有存取共用的槽位，%s 没有供货位"
+                            % (state.role,),
+                        )
+                    ],
+                )
+            slot_count = self.ports.supply_slot_count(state)
+            for slot in config.supply_slots:
+                if slot < 0 or slot >= slot_count:
+                    return CommandResult.rejected(
+                        prefix,
+                        [
+                            BlockReason(
+                                Reason.SUPPLY_SLOTS_INVALID,
+                                "供货位 %r 越界（这台接口有 %d 格）"
+                                % (slot, slot_count),
+                            )
+                        ],
+                    )
+        return None
+
+    def _wake_port(self, ref):
+        # type: (object) -> bool
+        """把该接口的轮询提前到本帧。没有调度服务时静默返回 False——
+        「不能立刻试」不等于「配置没生效」，下一次轮询照样会用新配置。"""
+        scheduler = self._scheduler()
+        if scheduler is None or self._ports_runner is None:
+            return False
+        return self._ports_runner.wake(ref, scheduler)
+
+    def _cmd_port_dispatch(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """接口自报的一次搬运尝试。**由接口自己的轮询发起。**
+
+        意图必须与设备的角色一致：设备不得要求一台取货口去做存货口的事
+        （全局约束 2：设备不得绕过主控改库存，也不得越权扮演别的角色）。
+        """
+        state, refusal = self._port_state_of(command)
+        if refusal is not None:
+            return refusal
+        intent = payload.get("intent")
+        if intent != state.role:
+            return self._reject(
+                command,
+                Reason.PORT_DIRECTION_MISMATCH,
+                "设备 %s 的角色是 %r，却要求执行 %r"
+                % (state.device_id, state.role, intent),
+            )
+        # **一份门**（`port_blocker`）：轮询、这里、只读诊断三处共用。
+        # 各写一份的代价是加新门时漏掉一处，而那处的症状是
+        # 「`port_status` 说正常、命令却不动」——最难查的一类。
+        blocker = port_blocker(state)
+        if blocker is not None:
+            return CommandResult.blocked(command.request_id, [blocker])
+        return self._dispatcher().dispatch(
+            state, command.request_id, command.topology_version
+        )
+
+    def _cmd_port_stage(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """成批备料入口（06-07）。**由任务 09 的工厂服务调用。**
+
+        09 还未实现，因此这条命令目前只有测试与诊断会用到；它在这里的意义是
+        **把契约定下来**：工厂给出 `op_id`、资源与数量，网络把料备进接口的
+        中转位，接口再一台一台投给外部机器。工厂不需要知道投料怎么实现。
+        """
+        state, refusal = self._port_state_of(command)
+        if refusal is not None:
+            return refusal
+        if state.role != TEMPLATE:
+            return self._reject(
+                command,
+                Reason.UNSUPPORTED,
+                "只有样板接口支持成批备料（设备 %s 的角色是 %r）"
+                % (state.device_id, state.role),
+            )
+        raw = payload.get("key")
+        count = payload.get("count")
+        op_id = payload.get("op_id") or command.request_id
+        if not isinstance(raw, dict) or isinstance(count, bool) or not isinstance(count, int):
+            return self._reject(command, Reason.BAD_PARAMETER, "需要 key 与整数 count")
+        if count <= 0:
+            return self._reject(command, Reason.OUT_OF_RANGE, "count 必须为正")
+        return self._dispatcher().stage_batch(
+            state,
+            ResourceKey.from_dict(raw),
+            count,
+            op_id,
+            command.request_id,
+            command.topology_version,
+        )
+
+    def _cmd_port_clear(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """人工解除待核对标记。**它不做任何搬运**，只是允许这条路重新尝试。
+
+        需要这个入口的理由：一次 `UNCERTAIN` 会让该接口停用（06-02 不许
+        盲目重试），而自动重试不能替代核对。没有它，一条不确定就永久停用。
+        """
+        state, refusal = self._port_state_of(command)
+        if refusal is not None:
+            return refusal
+        # 走访问器而不是读私有字段：`clear_hold` 只碰状态，不碰调度器，
+        # 因此没装调度服务时也该能解除（那是台不能轮询但能销账的接口）。
+        runner = self.ports_runner()
+        ok, detail = runner.clear_hold(state.ref)
+        view = state.to_dict()
+        view["action"] = "port_clear"
+        view["cleared"] = ok
+        view["detail"] = detail
+        # 没有待核对标记**不是错误**：重复点一次「解除」应当得到同一条回答，
+        # 而不是一个看起来像失败的原因码。
+        return CommandResult.ok(command.request_id, view)
+
+    # -- 自定义背包槽（06-09，服务端半边）------------------------------
+
+    def _inventory_endpoint_for(self, command, payload):
+        # type: (object, dict) -> tuple
+        """取请求所指向的背包端点。返回 `(endpoint, refusal)`。
+
+        玩家身份取**服务端可信来源**（`command.source.player_id`），
+        不接受载荷里自报的玩家——那等于让客户端指定去动谁的背包。
+        """
+        if self.inventories is None:
+            return None, CommandResult.blocked(
+                command.request_id,
+                [BlockReason(Reason.SERVICE_NOT_READY, "存储服务未接入背包提供者")],
+            )
+        source = command.source
+        player_id = source.player_id if source is not None else None
+        if not player_id:
+            return None, self._reject(
+                command, Reason.BAD_PARAMETER, "命令没有可信的玩家身份"
+            )
+        endpoint = self.inventories.endpoint_of(player_id)
+        if endpoint is None:
+            return None, self._reject(
+                command, Reason.DEVICE_GONE, "找不到玩家 %s 的背包" % (player_id,)
+            )
+        if not endpoint.can_read():
+            return None, CommandResult.blocked(
+                command.request_id,
+                [BlockReason(Reason.CONTAINER_UNCERTAIN, "背包当前不可读")],
+            )
+        return endpoint, None
+
+    @staticmethod
+    def _anchor_of(payload):
+        # type: (dict) -> object
+        """从载荷里读槽锚。缺 `slot` 时返回 None（表示「不按槽定位」）。"""
+        slot = payload.get("slot")
+        if slot is None:
+            return None
+        raw = payload.get("key")
+        key = ResourceKey.from_dict(raw) if isinstance(raw, dict) else None
+        return SlotAnchor(slot, key, payload.get("slot_version"))
+
+    def _cursor_refusal(self, command, payload):
+        # type: (object, dict) -> object
+        """R12 的显式拦截：客户端说手里还拿着东西时怎么办**尚未定案**。
+
+        替身口径是「拒绝接管」。没有这个拦截，一份没有规则的东西会被
+        「看起来能用」的实现悄悄定下来（全局约束 7）。
+        """
+        if not payload.get("cursor"):
+            return None
+        if self.transfer_policy.cursor_disposition == CURSOR_IGNORE:
+            return None
+        return CommandResult.rejected(
+            command.request_id,
+            [
+                BlockReason(
+                    Reason.CURSOR_UNRESOLVED,
+                    "R12 未定案：本模组目前不接管关闭界面时手里的物品",
+                )
+            ],
+        )
+
+    def _transfer_payload(self, command, payload, direction):
+        # type: (object, dict, str) -> CommandResult
+        """`inv_take` / `inv_put` 的公共实现。
+
+        **带槽锚时只动那个槽，但走的是同一条转移路径。** 锚被做成一个
+        「只能动这个槽」的端点视图（`AnchoredInventoryView`），于是预检、
+        去重、取出、放入、余量回退全都与普通路径共用一段代码。
+
+        早先锚定路径是一条**旁路**：核对锚、调 `anchored_extract`、完事。
+        那条路会同时漏掉三样东西——网络那一侧根本没人动（`inv_take` 于是把
+        背包里的东西凭空删掉、`inv_put` 凭空造出来）、去重账本不参与
+        （重发就再动一次）、外部输入通知不发（手动存入不算回流）。
+        """
+        cursor = self._cursor_refusal(command, payload)
+        if cursor is not None:
+            return cursor
+        endpoint, refusal = self._inventory_endpoint_for(command, payload)
+        if refusal is not None:
+            return refusal
+        raw = payload.get("key")
+        count = payload.get("count")
+        if not isinstance(raw, dict) or isinstance(count, bool) or not isinstance(count, int):
+            return self._reject(command, Reason.BAD_PARAMETER, "需要 key 与整数 count")
+        if count <= 0:
+            return self._reject(command, Reason.OUT_OF_RANGE, "count 必须为正")
+        key = ResourceKey.from_dict(raw)
+        try:
+            anchor = self._anchor_of(payload)
+        except (TypeError, ValueError) as error:
+            return self._reject(command, Reason.BAD_PARAMETER, "槽锚不合法：%s" % (error,))
+
+        op_id = payload.get("op_id") or command.request_id
+        network = NetworkEndpoint(self, self._network_id())
+        if direction == DIRECTION_WRITE:
+            source, target = network, endpoint
+        else:
+            source, target = endpoint, network
+
+        if anchor is not None:
+            if anchor.expected_key is None:
+                return self._reject(
+                    command, Reason.BAD_PARAMETER,
+                    "按槽操作必须给出期望物品指纹（key）",
+                )
+            if direction == DIRECTION_READ:
+                source = anchored_extract_endpoint(endpoint, anchor)
+            else:
+                target = anchored_insert_endpoint(endpoint, anchor)
+            # **锚先过一道**，为的是给出准确的原因码：预检只会说
+            # 「来源没有可动的 / 目标放不下」，而玩家要做的是**刷新界面**。
+            view = source if direction == DIRECTION_READ else target
+            ok, reason, detail = view.anchor_verdict()
+            if not ok:
+                return self._receipt_result(
+                    command,
+                    TransferReceipt(
+                        op_id, count, 0, TransferStatus.REFUSED, reason, key,
+                        endpoint.holder_id(),
+                    ),
+                    "inv",
+                )
+
+        request = TransferRequest(
+            op_id,
+            source.endpoint_id(),
+            target.endpoint_id(),
+            key,
+            count,
+            command.topology_version,
+            owner_id=(command.source.player_id if command.source is not None else ""),
+            origin=ORIGIN_EXTERNAL if direction == DIRECTION_READ else ORIGIN_INTERNAL,
+        )
+        receipt = self.transfer().commit(request, source, target)
+        return self._receipt_result(command, receipt, "inv")
+
+    def _cmd_inv_take(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """从背包取出，存入网络。"""
+        return self._transfer_payload(command, payload, DIRECTION_READ)
+
+    def _cmd_inv_put(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """从网络取出，放进背包。**按 maxStackSize 拆分，不生成超堆叠物品。**
+        """
+        return self._transfer_payload(command, payload, DIRECTION_WRITE)
+
+    def _cmd_inv_split(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """拆分：从某个槽取走**一部分**存进网络，其余留在原槽。
+
+        实现上就是带槽锚的 `inv_take`——分开命名是因为它在界面上是另一个
+        手势，而「同一次点击重发只生效一次」这条要求对两者都一样。
+        """
+        if payload.get("slot") is None:
+            return self._reject(command, Reason.BAD_PARAMETER, "拆分必须给出 slot")
+        return self._transfer_payload(command, payload, DIRECTION_READ)
+
+    def _cmd_inv_merge(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """合并：把 `slot` 的内容并进 `into_slot`。**背包内部移动，不经过网络。**
+
+        仍然要服务端做，因为客户端看到的两个槽可能已经过期：两个槽锚各自
+        核对一遍，任一不过就整体拒绝，而不是「并一半」。
+        """
+        cursor = self._cursor_refusal(command, payload)
+        if cursor is not None:
+            return cursor
+        endpoint, refusal = self._inventory_endpoint_for(command, payload)
+        if refusal is not None:
+            return refusal
+        from_slot = payload.get("slot")
+        into_slot = payload.get("into_slot")
+        if from_slot is None or into_slot is None:
+            return self._reject(
+                command, Reason.BAD_PARAMETER, "合并需要 slot 与 into_slot"
+            )
+        if from_slot == into_slot:
+            return self._reject(command, Reason.BAD_PARAMETER, "两个槽不能是同一个")
+        try:
+            source_anchor = SlotAnchor(
+                from_slot, self._key_from(payload), payload.get("slot_version")
+            )
+            target_view = endpoint.slot_view(into_slot)
+            target_key = (
+                ResourceKey.from_dict(target_view["key"])
+                if target_view["key"] is not None
+                else source_anchor.expected_key
+            )
+            target_anchor = SlotAnchor(
+                into_slot, target_key, payload.get("into_slot_version")
+            )
+        except (TypeError, ValueError, KeyError) as error:
+            return self._reject(command, Reason.BAD_PARAMETER, "槽锚不合法：%s" % (error,))
+
+        op_id = payload.get("op_id") or command.request_id
+        view = endpoint.slot_view(source_anchor.slot)
+        count = min(view["count"], int(payload.get("count") or view["count"]))
+        if count <= 0:
+            return self._reject(command, Reason.INSUFFICIENT_STOCK, "源槽是空的")
+
+        ok, reason, detail = endpoint.anchor_verdict(source_anchor)
+        if not ok:
+            return CommandResult.rejected(
+                command.request_id, [BlockReason(reason, detail)]
+            )
+        ok, reason, detail = endpoint.anchor_verdict(target_anchor)
+        if not ok and target_view["key"] is not None:
+            return CommandResult.rejected(
+                command.request_id, [BlockReason(reason, detail)]
+            )
+        # 先取后放，两次都锚定。取出的那部分若放不进去，**退回原槽**——
+        # 这比留在「手里」强，因为手里不属于任何一处权威状态。
+        taken = endpoint.anchored_extract(op_id + ":out", source_anchor, count)
+        if taken.moved <= 0:
+            return self._receipt_result(command, taken)
+        placed = endpoint.anchored_insert(op_id + ":in", target_anchor, taken.moved)
+        if placed.moved < taken.moved:
+            undo = endpoint.anchored_insert(
+                op_id + ":undo", source_anchor, taken.moved - placed.moved
+            )
+            if undo.moved < taken.moved - placed.moved:
+                return CommandResult.blocked(
+                    command.request_id,
+                    [
+                        BlockReason(
+                            Reason.CONTAINER_UNCERTAIN,
+                            "合并只完成了一部分，且有 %d 个物品没能退回原槽"
+                            % (taken.moved - placed.moved - undo.moved,),
+                        )
+                    ],
+                )
+        return self._receipt_result(
+            command, placed if placed.moved >= taken.moved else
+            TransferReceipt(
+                op_id, count, placed.moved, TransferStatus.PARTIAL,
+                Reason.CONTAINER_PARTIAL, taken.resource_key, endpoint.endpoint_id(),
+            )
+        )
+
+    @staticmethod
+    def _key_from(payload):
+        # type: (dict) -> object
+        raw = payload.get("key")
+        return ResourceKey.from_dict(raw) if isinstance(raw, dict) else None
+
+    def _cmd_inv_quick_move(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """快捷转移：把某个槽整槽搬走，方向由 `target` 决定。
+
+        `target == "network"` 走 `inv_take`（进网络），
+        `target == "backpack"` 走 `inv_put`（从网络回背包）。
+        载荷里的 `count` 缺省为整槽——快捷转移的语义就是「整槽」。
+        """
+        target = payload.get("target")
+        if target not in ("network", "backpack"):
+            return self._reject(
+                command, Reason.BAD_PARAMETER, "target 必须是 network 或 backpack"
+            )
+        if not payload.get("count"):
+            endpoint, refusal = self._inventory_endpoint_for(command, payload)
+            if refusal is not None:
+                return refusal
+            slot = payload.get("slot")
+            if slot is None:
+                return self._reject(command, Reason.BAD_PARAMETER, "快捷转移必须给出 slot")
+            view = endpoint.slot_view(slot)
+            if view["count"] <= 0:
+                return self._reject(command, Reason.INSUFFICIENT_STOCK, "该槽是空的")
+            payload = dict(payload)
+            payload["count"] = view["count"]
+            payload["key"] = payload.get("key") or view["key"]
+        if target == "network":
+            return self._transfer_payload(command, payload, DIRECTION_READ)
+        return self._transfer_payload(command, payload, DIRECTION_WRITE)
+
     def _refuse_mount(self, command, reason, detail):
         # type: (object, str, str) -> CommandResult
         """装载类失败的三种归宿，必须分开，否则界面给不出可操作的提示。
@@ -1370,26 +2086,15 @@ class StorageService(NetworkService):
             return CommandResult.rejected(command.request_id, [block_reason])
         return CommandResult.blocked(command.request_id, [block_reason])
 
-    def _receipt_result(self, command, receipt):
-        # type: (object, TransferReceipt) -> CommandResult
-        payload = {"action": "transfer", "receipt": receipt.to_dict()}
-        if receipt.is_complete():
-            return CommandResult.ok(command.request_id, payload)
-        if receipt.status == TransferStatus.PARTIAL:
-            return CommandResult.partial(
-                command.request_id,
-                payload,
-                [BlockReason(receipt.reason or Reason.CONTAINER_PARTIAL, "只完成了实际数量")],
-            )
-        if receipt.status == TransferStatus.UNCERTAIN:
-            return CommandResult.blocked(
-                command.request_id,
-                [BlockReason(Reason.CONTAINER_UNCERTAIN, "结果不确定，不得重发整批")],
-            )
-        return CommandResult.blocked(
-            command.request_id,
-            [BlockReason(receipt.reason or Reason.INSUFFICIENT_STOCK, "转移未完成")],
-        )
+    def _receipt_result(self, command, receipt, action="transfer"):
+        # type: (object, TransferReceipt, str) -> CommandResult
+        """回执 -> 命令结果。
+
+        分流口径与接口那边**共用一份实现**（`transfer.receipt_result`）：
+        `stale`（取新快照再发）与 `rejected`（重发无用）与 `blocked`
+        （暂时不通）对界面意味着三种不同的下一步提示，两处各写一份迟早分叉。
+        """
+        return receipt_result(command.request_id, receipt, action)
 
 #: 介质恢复状态 -> 人可读的说明。诊断与界面共用，避免两处各写一套措辞。
 RECOVERY_TEXT = {

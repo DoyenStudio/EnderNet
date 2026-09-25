@@ -47,12 +47,13 @@ from endernet.server.network.services import (
     route_of,
 )
 
-#: 仍是替身的槽位。调度核心已在任务 04 落地、存储领域层已在任务 05 落地，
-#: 能源（04 的另一半）与工厂（09）尚未开始。
+#: 仍是替身的槽位。调度核心已在任务 04 落地、存储领域层已在任务 05 落地、
+#: 能源的固定耗能结算与供能判定也在任务 04 落地，**只剩工厂（09）没写**。
 #:
-#: **存储不再是替身，不等于存储能用**：拦住它的是能源那一项网络级准入
-#: （`NETWORK_CRITICAL_SERVICES`），见 `test_bootstrap` 的准入断言。
-STAND_IN_SLOTS = (ServiceId.ENERGY, ServiceId.FACTORY)
+#: **「不是替身」与「能交付」是两件事**：能源是正式实现，但它带着两条未定
+#: 规则的替身口径（`EnergyPolicy`），因此仍然会被未定规则那一路拦下，
+#: 见 `test_energy` 与 `test_bootstrap` 的断言。
+STAND_IN_SLOTS = (ServiceId.FACTORY,)
 
 
 class EchoService(NetworkService):
@@ -298,6 +299,10 @@ class TestServiceFactory(unittest.TestCase):
             registry.get(ServiceId.STORAGE).is_stand_in,
             "存储领域层已落地（任务 05）",
         )
+        self.assertFalse(
+            registry.get(ServiceId.ENERGY).is_stand_in,
+            "能源服务已落地（任务 04 的固定耗能结算与供能判定）",
+        )
         for service_id in STAND_IN_SLOTS:
             self.assertTrue(registry.get(service_id).is_stand_in)
         # 没有替身混进别的槽位。
@@ -316,9 +321,7 @@ class TestServiceFactory(unittest.TestCase):
             {ServiceId.STORAGE: lambda runtime: EchoService(ServiceId.STORAGE)}
         )
         self.assertEqual(sorted(factory.ids()), sorted(ServiceId.ALL))
-        self.assertEqual(
-            factory.stand_in_slots(), (ServiceId.ENERGY, ServiceId.FACTORY)
-        )
+        self.assertEqual(factory.stand_in_slots(), STAND_IN_SLOTS)
         registry = factory.create(None)
         self.assertFalse(registry.get(ServiceId.STORAGE).is_stand_in)
 
@@ -333,17 +336,18 @@ class TestServiceFactory(unittest.TestCase):
     def test_replace_after_construction(self):
         factory = ServiceFactory()
         factory.replace(ServiceId.FACTORY, lambda runtime: EchoService(ServiceId.FACTORY))
-        self.assertEqual(factory.stand_in_slots(), (ServiceId.ENERGY,))
+        self.assertEqual(factory.stand_in_slots(), ())
 
     def test_pending_tasks_match_the_documented_tasks(self):
         """替身槽位对应的任务编号是可查的，界面才能说清「等哪个任务」。"""
         pending = ServiceFactory().pending_tasks()
         self.assertEqual(pending[ServiceId.FACTORY], "09")
-        self.assertEqual(pending[ServiceId.ENERGY], "04")
-        # 调度核心（04）与存储领域层（05）都已落地，
-        # 这两个槽位不该再被报成「等某个任务」——**存储也不再是替身**。
+        # 调度核心（04）、存储领域层（05）与能源的固定结算（04）都已落地，
+        # 这三个槽位不该再被报成「等某个任务」——**「已落地」就够摘掉这一项**，
+        # 它们是否已定案由未定规则那一路管，两件事不混。
         self.assertNotIn(ServiceId.SCHEDULER, pending)
         self.assertNotIn(ServiceId.STORAGE, pending)
+        self.assertNotIn(ServiceId.ENERGY, pending)
 
     def test_stand_in_slots_is_judged_by_instance_not_by_identity(self):
         """默认构造器**本身**是正式实现时，身份判断就不成立了。
@@ -351,13 +355,16 @@ class TestServiceFactory(unittest.TestCase):
         这是 04 带出来的一处真实退化：`stand_in_slots()` 原先比的是
         「构造器还是默认表里那一个」，而 SCHEDULER 的默认构造器现在是
         `SchedulerService`——它仍然「是默认的那一个」，却显然不是替身。
-        05 的 STORAGE 走的正是同一条路。
+        05 的 STORAGE 与 04 的 ENERGY 走的正是同一条路。
         """
         factory = ServiceFactory()
         self.assertNotIn(ServiceId.SCHEDULER, factory.stand_in_slots())
         self.assertNotIn(ServiceId.STORAGE, factory.stand_in_slots())
+        self.assertNotIn(ServiceId.ENERGY, factory.stand_in_slots())
         # 反向：替身槽位仍然被认出来，别把判据改成了「什么都不算替身」。
-        self.assertIn(ServiceId.ENERGY, factory.stand_in_slots())
+        # 现在只剩 FACTORY 一个，它同时是这条反向断言唯一的证人——
+        # 它要是也没了，这条测试就再也证明不了判据还在起作用。
+        self.assertIn(ServiceId.FACTORY, factory.stand_in_slots())
 
     def test_no_pending_tasks_after_full_override(self):
         builders = dict(
@@ -371,8 +378,8 @@ class TestServiceFactory(unittest.TestCase):
     def test_default_builders_cover_every_slot(self):
         """默认表与会话槽位表必须同步，否则新增槽位会漏装。"""
         self.assertEqual(sorted(default_builders()), sorted(ServiceId.ALL))
-        # 待办表只列替身槽位：调度核心（04）与存储领域层（05）已落地，
-        # 都不再列在这里。
+        # 待办表只列替身槽位：调度核心（04）、存储领域层（05）与能源（04）
+        # 都已落地，都不再列在这里。
         self.assertEqual(sorted(default_pending_tasks()), sorted(STAND_IN_SLOTS))
 
     def test_the_default_tables_are_one_table(self):

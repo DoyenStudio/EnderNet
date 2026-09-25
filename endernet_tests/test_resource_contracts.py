@@ -5,7 +5,7 @@ import unittest
 
 import testsupport  # noqa: F401
 from endernet.common.resource_key import ResourceKey, canonical_tree, tree_text
-from endernet.common.item_codec import item_key, item_key_from_dict, item_dict_from_key, item_from_key
+from endernet.common.item_codec import item_key, item_key_from_dict, item_dict_from_key, item_from_key, unbox_engine_value
 from endernet.common.protocol import StorageChanged
 from endernet.common.resource_sync import ResourceDescriptions, ResourceResyncRequired
 from endernet.server.adapters.containers import ContainerEntry
@@ -265,6 +265,72 @@ class RecoveryTests(unittest.TestCase):
         entry = RestoredResourceEntry(payload, unavailable)
         self.assertFalse(entry.available)
         self.assertEqual(entry.to_dict(), payload)
+
+
+class EngineUserDataBoxingTests(unittest.TestCase):
+    """引擎读回来的 `userData` 是**带类型标签**的，必须先解包。
+
+    2026-09-25 游戏内实测的形状，逐条钉在这里。少了这一层，
+    任何读 `userData` 的功能都会得到「格式不对」——而写进去时明明是对的。
+    离线测试此前照不到它：`FakeContainer` 原样存取，而真引擎会包。
+    """
+
+    def box(self, tag, value):
+        return {"__type__": tag, "__value__": value}
+
+    def test_scalars_are_unboxed(self):
+        self.assertEqual(unbox_engine_value(self.box(3, 7)), 7)
+        self.assertEqual(unbox_engine_value(self.box(3, -3)), -3)
+        self.assertEqual(unbox_engine_value(self.box(3, 0)), 0)
+        self.assertEqual(unbox_engine_value(self.box(5, 1.5)), 1.5)
+        self.assertEqual(unbox_engine_value(self.box(8, "hi")), "hi")
+
+    def test_the_byte_tag_carries_both_booleans_and_none(self):
+        """实测：`True`→1、`False`→0、`None`→2，**共用同一个标签**。
+        因此解包要看值，不能只看标签。"""
+        self.assertIs(unbox_engine_value(self.box(1, 1)), True)
+        self.assertIs(unbox_engine_value(self.box(1, 0)), False)
+        self.assertIsNone(unbox_engine_value(self.box(1, 2)))
+
+    def test_containers_are_walked(self):
+        boxed = {
+            "list": [self.box(3, 1), self.box(8, "a")],
+            "nested": {"x": self.box(3, 5)},
+            "empty_list": [],
+            "empty_dict": {},
+        }
+        self.assertEqual(
+            unbox_engine_value(boxed),
+            {"list": [1, "a"], "nested": {"x": 5}, "empty_list": [], "empty_dict": {}},
+        )
+
+    def test_plain_values_pass_through(self):
+        for value in (7, "x", None, True, [], {}, [1, 2]):
+            self.assertEqual(unbox_engine_value(value), value)
+
+    def test_a_dict_that_merely_looks_like_a_tag_is_not_unboxed(self):
+        """**这条防的是误伤。** 别的模组的数据里可能真有
+        `{"__type__": 3, "__value__": 7}` 这种形状；引擎把它包过之后，
+        外层的 `__type__` 是**字典**而不是整数，因此不该被当成标签解掉。"""
+        boxed = {
+            "__type__": self.box(3, 3),
+            "__value__": self.box(3, 7),
+        }
+        self.assertEqual(
+            unbox_engine_value(boxed), {"__type__": 3, "__value__": 7}
+        )
+
+    def test_an_unknown_tag_is_left_alone(self):
+        """认不出的标签**原样返回**：那说明引擎换了表示法，
+        把整棵树交回去让上层报「读不出来」，好过在这里猜一个值。"""
+        odd = self.box(99, "?")
+        self.assertEqual(unbox_engine_value(odd), odd)
+
+    def test_a_boolean_is_not_mistaken_for_a_tag(self):
+        """`True` 是 `int` 的子类，但它不是类型标签——不判这一条的话
+        `{"__type__": True, "__value__": ...}` 会被当成 Byte 解掉。"""
+        odd = {"__type__": True, "__value__": "x"}
+        self.assertEqual(unbox_engine_value(odd), odd)
 
 
 if __name__ == "__main__":

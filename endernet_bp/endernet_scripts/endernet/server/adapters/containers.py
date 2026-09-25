@@ -28,6 +28,7 @@ from ...common.protocol import (
     TransferReceipt,
     TransferStatus,
 )
+from ...common.item_codec import item_dict_from_key, item_key_from_dict
 from ...common.resource_key import ResourceKey, _require_count
 from ...common import settings
 
@@ -333,6 +334,46 @@ class FakeContainer(ContainerAdapter):
         if not isinstance(entry, ContainerEntry):
             raise TypeError("set_slot 需要 ContainerEntry")
         self._slots[index] = entry
+
+    # -- 按槽原语 ------------------------------------------------------
+    #
+    # 有了这三个，假容器就能承载**按槽**的转移（`transfer.SlotView` 与
+    # 被动接口的供货位/存货位都走它）。语义只有一份实现，在
+    # `storage/transfer.py` 的 `slot_insert` / `slot_extract`；
+    # 这里只提供原始操作，与 `containers_engine.SlotBackedContainer`
+    # 的分工完全相同——**真机能做的，替身也要能做**，
+    # 否则「假容器通过、真机失败」这类偏差只能在游戏里暴露。
+
+    def read_slot(self, slot):
+        # type: (int) -> object
+        if not self.valid:
+            raise IOError("容器已失效，不应再被读取")
+        if slot < 0 or slot >= len(self._slots):
+            return None
+        entry = self._slots[slot]
+        if entry is None:
+            return None
+        return item_dict_from_key(entry.resource_key, entry.count)
+
+    def write_slot(self, slot, data):
+        # type: (int, object) -> bool
+        if not self.valid:
+            return False
+        if slot < 0 or slot >= len(self._slots):
+            return False
+        if data is None or data.get("count", 0) <= 0:
+            self._slots[slot] = None
+            return True
+        key = item_key_from_dict(data)
+        if key is None:
+            self._slots[slot] = None
+            return True
+        self._slots[slot] = ContainerEntry(key, int(data["count"]))
+        return True
+
+    def stack_limit_of(self, resource_key):
+        # type: (ResourceKey) -> int
+        return int(self.max_stack)
 
 
 class GhostContainer(FakeContainer):

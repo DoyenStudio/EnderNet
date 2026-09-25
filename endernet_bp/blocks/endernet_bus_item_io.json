@@ -22,6 +22,11 @@
             "netease:listen_block_remove": {
                 "value": true
             },
+            "netease:block_container": {
+                "custom_description": "总线物品接口",
+                "screen_name": "bus_item_io_ui.main",
+                "container_size": 9
+            },
             "netease:custom_tips": {
                 "value": "\n§7与外部物流系统交换特定物品。"
             }
@@ -29,6 +34,7 @@
         "description": {
             "category": "endernet",
             "identifier": "endernet:bus_item_io",
+            "base_block": "netease_container",
             "traits": {
                 "minecraft:placement_direction": {
                     "enabled_states": [

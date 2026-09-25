@@ -141,6 +141,43 @@ class Reason(object):
     INSUFFICIENT_STOCK = "insufficient_stock"
     RATE_LIMITED = "rate_limited"
 
+    # 转移与接口（06）
+    #: 有界中转缓冲放不下。与 `NO_CAPACITY`（介质容量不足）分开：
+    #: 前者说的是**接口这台设备的中转位**满了，后者说的是网络存不下。
+    #: 两条都要能各自显示，否则玩家看到「网络没容量」而实际卡在接口上。
+    BUFFER_FULL = "buffer_full"
+    #: 接口还没配置过滤/方向，因此没有可执行的动作。**不是错误**，
+    #: 是「还没告诉它要搬什么」——与「搬不动」是两回事。
+    PORT_UNCONFIGURED = "port_unconfigured"
+    #: 朝向未知或朝向那面没有方块。方块缺 `minecraft:cardinal_direction`
+    #: 或该位置为空都归这里，界面要提示玩家重新放置/放置容器。
+    FACING_UNKNOWN = "facing_unknown"
+    #: 朝向位置有方块，但没有可用的容器适配器（不是容器、或适配器未登记）。
+    #: 与 `NO_ADAPTER` 的区别：那个是「这个类型我们没做适配」，
+    #: 这个是「那个位置根本不是容器」。
+    NO_CONTAINER = "no_container"
+    #: 请求依据的槽位内容已经变了（06-09 的槽锚失效）。
+    #: **必须与 `STALE_VERSION` 分开**：后者是版本号过期，可以取新快照重发；
+    #: 这里说的是「你看到的那个槽现在已经不是那样了」，重发等于误操作。
+    SLOT_CHANGED = "slot_changed"
+    #: R12 尚未定案：玩家手里还拿着东西时的退出/断线处置没有规则。
+    #: 本轮**不接管光标持有物**，遇到就明确拒绝而不是猜一个行为。
+    CURSOR_UNRESOLVED = "r12_cursor_held"
+    #: 目标端点已失效（邻接容器被拆、维度变化、依赖关闭）。
+    ENDPOINT_INVALID = "endpoint_invalid"
+    #: 该方向/该资源在这个接口上没有配置，或配置与设备能力不匹配。
+    PORT_DIRECTION_MISMATCH = "port_direction_mismatch"
+
+    # 接口配置（06 / 11-07）
+    #: 配置的过滤种类数超过该角色的上限（取货为 9 种）。
+    #: 与 `OUT_OF_RANGE` 分开：界面要能直接说「最多 9 种」，
+    #: 而不是让玩家自己去数。
+    FILTER_LIMIT_REACHED = "filter_limit_reached"
+    #: 该角色不接受这种过滤模式（取货只接受白名单，存货才支持黑白名单）。
+    FILTER_MODE_MISMATCH = "filter_mode_mismatch"
+    #: 供货位配置不合法（越界、重复，或该角色没有共享槽可分配）。
+    SUPPLY_SLOTS_INVALID = "supply_slots_invalid"
+
     # 介质与驱动器（05）
     #: 目标物品不是已登记的介质型号（R10 决定最终接受范围）。
     #: 与 `UNSUPPORTED` 分开：这里说的是**这个物品不对**，不是这个功能没做。
@@ -159,6 +196,25 @@ class Reason(object):
     SLOT_OCCUPIED = "slot_occupied"
     #: 驱动器所在区块未加载。**不等于它被拆掉了**（与 `MASTER_UNLOADED` 同一条纪律）。
     DRIVER_UNLOADED = "driver_unloaded"
+
+    # 样板与配方（07）
+    #: 样板结构本身不合法：数量为零或负、没有任何产物、资源键无效。
+    #: **与 `BAD_PARAMETER` 分开**：那说的是「请求的写法不对」，
+    #: 这一条说的是「样板的**内容**不是一个合法配方」，界面要指到具体哪一条。
+    PATTERN_INVALID = "pattern_invalid"
+    #: 样板编码的格式版本认不出来，或已经失效。**可读性判断在这里，
+    #: 不在 `PATTERN_INVALID`**：内容可能完全合法，只是这个版本不再允许派发。
+    PATTERN_FORMAT_UNSUPPORTED = "pattern_format_unsupported"
+    #: 判断依据的样板版本已经变了（被编辑、被换成另一块、被拔出后重挂）。
+    #: **必须与 `SLOT_CHANGED` 分开**：那是「槽里的东西换了」，这条是
+    #: 「同一块样板的内容变了」；两者对旧规划的影响相同，但处置不同——
+    #: 前者要重新找样板，后者只要重新核对。
+    PATTERN_STALE = "pattern_stale"
+    #: 样板类型与这台设备不匹配（合成样板插进了样板接口，或反过来）。
+    PATTERN_KIND_MISMATCH = "pattern_kind_mismatch"
+    #: 槽里的物品根本不是本模组的样板。与 `PATTERN_INVALID` 分开：
+    #: 那是「是样板但内容坏了」，这是「压根不是样板」。
+    PATTERN_NOT_A_TEMPLATE = "pattern_not_a_template"
 
     # 外部容器（13）
     CONTAINER_REFUSED = "container_refused"
@@ -432,12 +488,27 @@ class TransferReceipt(object):
 
     核心纪律（架构规划 6.3）：**只按实际数量记账**。
     `moved` 是唯一可信的完成量，`requested` 只是意图。
+
+    `holder` 是任务 06 加上的第三样东西（「实际量、余量、当前持有者」）：
+    它回答的是**没搬成的那一部分现在在谁手上**。只报「成功了多少」而不报
+    「剩下的在哪」，正是「先删源再假定目标接收」的温床——那批东西会变成
+    账外资产。空串表示「说不清」（缺少端点身份时），**不是「没有主」**。
     """
 
-    __slots__ = ("op_id", "requested", "moved", "status", "reason", "resource_key")
+    __slots__ = (
+        "op_id",
+        "requested",
+        "moved",
+        "status",
+        "reason",
+        "resource_key",
+        "holder",
+    )
 
-    def __init__(self, op_id, requested, moved, status, reason="", resource_key=None):
-        # type: (str, int, int, str, str, object) -> None
+    def __init__(
+        self, op_id, requested, moved, status, reason="", resource_key=None, holder=""
+    ):
+        # type: (str, int, int, str, str, object, str) -> None
         if moved < 0 or requested < 0:
             raise ValueError("转移数量不能为负: requested=%r moved=%r" % (requested, moved))
         if moved > requested:
@@ -450,6 +521,8 @@ class TransferReceipt(object):
         self.status = status
         self.reason = reason
         self.resource_key = resource_key
+        #: 余量当前的持有者标识。空串 = 无法确认（**不等于「没人持有」**）。
+        self.holder = holder
 
     @property
     def remainder(self):
@@ -460,6 +533,17 @@ class TransferReceipt(object):
     def is_complete(self):
         return self.status == TransferStatus.COMPLETE and self.moved == self.requested
 
+    def is_applied(self):
+        # type: () -> bool
+        """是否真的动过东西。**去重账本只记这一类结果。**
+
+        `COMPLETE` 与 `PARTIAL` 都算：两者都真的搬了东西，因此重发必须返回
+        原回执而不是再搬一次。`UNCERTAIN` **不算**——但它的处理方式不是
+        「当没发生」：调用方必须把它留在在途标记里（见 `TransferCoordinator.commit`），
+        否则重发会再动一遍。
+        """
+        return self.status in (TransferStatus.COMPLETE, TransferStatus.PARTIAL)
+
     def to_dict(self):
         # type: () -> dict
         return {
@@ -468,6 +552,7 @@ class TransferReceipt(object):
             "moved": self.moved,
             "status": self.status,
             "reason": self.reason,
+            "holder": self.holder,
             "resource_key": (
                 self.resource_key.to_dict() if self.resource_key is not None else None
             ),
@@ -479,6 +564,112 @@ class TransferReceipt(object):
             self.status,
             self.moved,
             self.requested,
+        )
+
+
+# -- 转移请求 --------------------------------------------------------------
+
+#: 这份资源是**外部**送进本模组的（其他模组的物流、玩家手动放入、漏斗）。
+#: 只有它会为订单结果累加器贡献一次（`concepts.md`「无论产物对应的物品以任何
+#: 方式输入网络…都会…累加器 +1」）。
+ORIGIN_EXTERNAL = "external"
+#: 本模组自己搬的（缓冲↔网络、介质间搬运、补偿、索引重建）。
+#: **不算新回流**——把它记成输入会让一份资源被反复计入产物
+#: （`terminal_item_index.md` §3 与全局约束 3）。
+ORIGIN_INTERNAL = "internal"
+
+ORIGINS = frozenset([ORIGIN_EXTERNAL, ORIGIN_INTERNAL])
+
+
+class TransferRequest(object):
+    """一次资源转移的意图。**纯数据**：可序列化、可比较，不含任何端点对象。
+
+    端点对象由调用方按 `source_id` / `target_id` 解析后另行交给协调器。
+    这样分开是有理由的：请求要能跨命令边界、进诊断、进存档，
+    而端点可能持有容器句柄甚至引擎对象，两者不该被绑在同一个结构里。
+
+    `topology_version` 与 `reservation_id` 都是**可选但要显式**的：
+    `None` 表示「不依图版本」，空串表示「没有预留凭据」——而不是「随便挑一个」。
+    """
+
+    __slots__ = (
+        "op_id",
+        "source_id",
+        "target_id",
+        "resource_key",
+        "count",
+        "topology_version",
+        "reservation_id",
+        "owner_id",
+        "origin",
+    )
+
+    def __init__(
+        self,
+        op_id,
+        source_id,
+        target_id,
+        resource_key,
+        count,
+        topology_version=None,
+        reservation_id="",
+        owner_id="",
+        origin=ORIGIN_INTERNAL,
+    ):
+        # type: (str, str, str, ResourceKey, int, int, str, str, str) -> None
+        if not op_id:
+            raise ValueError("转移请求必须携带 op_id（用于去重与恢复核对）")
+        if settings.DEBUG and not isinstance(resource_key, ResourceKey):
+            raise TypeError("转移请求需要 ResourceKey，得到 %r" % (type(resource_key),))
+        _require_count(count, "转移数量")
+        if origin not in ORIGINS:
+            raise ValueError("未知来源标识: %r" % (origin,))
+        self.op_id = op_id
+        self.source_id = source_id
+        self.target_id = target_id
+        self.resource_key = resource_key
+        self.count = int(count)
+        self.topology_version = topology_version
+        self.reservation_id = reservation_id
+        self.owner_id = owner_id
+        self.origin = origin
+
+    def to_dict(self):
+        # type: () -> dict
+        return {
+            "op_id": self.op_id,
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+            "resource_key": self.resource_key.to_dict(),
+            "count": self.count,
+            "topology_version": self.topology_version,
+            "reservation_id": self.reservation_id,
+            "owner_id": self.owner_id,
+            "origin": self.origin,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        # type: (dict) -> TransferRequest
+        return cls(
+            data["op_id"],
+            data["source_id"],
+            data["target_id"],
+            ResourceKey.from_dict(data["resource_key"]),
+            data["count"],
+            data.get("topology_version"),
+            data.get("reservation_id", ""),
+            data.get("owner_id", ""),
+            data.get("origin", ORIGIN_INTERNAL),
+        )
+
+    def __repr__(self):
+        return "TransferRequest(%s, %s->%s, %s x%d)" % (
+            self.op_id,
+            self.source_id,
+            self.target_id,
+            self.resource_key.name,
+            self.count,
         )
 
 
@@ -645,6 +836,58 @@ class DeviceStatusChanged(Notification):
 
     def to_dict(self):
         return {"kind": self.kind, "status": self.status.to_dict()}
+
+
+class ExternalInput(Notification):
+    """一份资源**真的**从外部进入了网络。任务 10 的合格回流入口。
+
+    **它只发一次，而且只在真的进入之后发。** 三条纪律写在字段里：
+
+    - `op_id` 是唯一操作身份，接收方据此去重。同一批被重发、被重放、
+      或被缓冲往返搬了几次，都只有这一个 `op_id`。
+    - `count` 是**实际进入**的数量（`TransferReceipt.moved`），不是请求量。
+      部分接收时只报进来多少，剩下的还在外面。
+    - `origin` 必须是 `ORIGIN_EXTERNAL`。补偿、介质间搬运、索引重建都不发这条
+      通知——把它们记成回流会让同一份资源被反复计入订单产物
+      （全局约束 3，`architecture_analysis.md` §6.4）。
+    """
+
+    kind = "external_input"
+    __slots__ = ("op_id", "network_id", "resource_key", "count", "source_id", "tick")
+
+    def __init__(self, op_id, network_id, resource_key, count, source_id="", tick=0):
+        # type: (str, str, ResourceKey, int, str, int) -> None
+        if settings.DEBUG:
+            if not op_id:
+                raise ValueError("外部输入通知必须携带 op_id（接收方据此去重）")
+            if not isinstance(resource_key, ResourceKey):
+                raise TypeError("ExternalInput requires an available ResourceKey")
+            _require_count(count, "external input count")
+        self.op_id = op_id
+        self.network_id = network_id
+        self.resource_key = resource_key
+        self.count = int(count)
+        self.source_id = source_id
+        self.tick = int(tick)
+
+    def to_dict(self):
+        # type: () -> dict
+        return {
+            "kind": self.kind,
+            "op_id": self.op_id,
+            "network_id": self.network_id,
+            "resource_key": self.resource_key.to_dict(),
+            "count": self.count,
+            "source_id": self.source_id,
+            "tick": self.tick,
+        }
+
+    def __repr__(self):
+        return "ExternalInput(%s, %s x%d)" % (
+            self.op_id,
+            self.resource_key.name,
+            self.count,
+        )
 
 
 class CancelToken(object):

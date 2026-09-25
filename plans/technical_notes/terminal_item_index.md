@@ -113,7 +113,7 @@
 
 ## 7. 步骤六：客户端缓存、搜索与排序（11-03、11-09）
 
-建议归属 `ROOT/client/network_client.py`、`view_models.py`。
+归属 `ROOT/client/network_client.py`、`ROOT/client/ui/item_list_model.py`，按 [设备脚本架构](script_architecture.md) 与当前 `client/ui/` 合并，不另建 view_models。
 
 1. 建立 `entries[key]` 物品摘要表、`ordered_keys` 显示顺序和缓存的名称/搜索文本；数据与 UI 控件独立。
 2. upsert 更新数据；remove 删除条目与相关选择状态。纯数量变化只标记对应显示条目，不重建整张列表。
@@ -126,7 +126,7 @@ Python 普通列表插入会移动元素；二分查找位置不意味着插入�
 
 ## 8. 步骤七：虚拟槽位与局部刷新（11-10）
 
-沿用 [custom_slot](./custom_slot.md)，在 `ROOT/client/widgets/`、`slots/` 中实现：
+沿用 [custom_slot](./custom_slot.md)，在 `ROOT/client/ui/widgets/` 中实现槽位显示与控件池，列表模型位于 `client/ui/item_list_model.py`：
 
 1. 根据可见行列数建立控件池，加少量上下缓冲行；控件数不随全网 K 增长。
 2. 初始化时缓存控件引用。滚动跨行时重绑池中槽位，重置旧图标、标签、耐久、锁定、选中和事件目标。
