@@ -13,10 +13,17 @@
 4. **注销**：玩家离线时关掉他的全部会话。
 
 **事件类必须在函数体里建。** 模块顶层的 `class X(CustomC2SEvent)` 需要
-模块顶层 `import tooldelta`，而 `tooldelta/__init__.py` 在模块级
-`import mod.server.extraServerApi`——那会让本模块（以及 import 它的
-`bootstrap`）脱离游戏后无法导入，整条离线链路随之失效
-（`test_import_boundaries.py` 的
+模块顶层取到 `tooldelta.events`，而两条路都断：绝对写
+`from tooldelta import events` 在真机上必 `ImportError`（脚本目录被整体当
+包挂载，`tooldelta` 就在包内），相对写 `from ....tooldelta import events`
+在离线模块名下是**越界**的层级（离线名少两层）。本机实测还有一条：
+`import tooldelta` 本身就是失败的——`tooldelta/__init__` → `events` →
+`events/client/control.py` 上那条模块级的
+`from mod.client.extraClientApi import ...` 撞上了工具链装在
+site-packages 里那份 `mod` 桩自身的循环导入。也就是说这个 vendored 包
+**本来就不能在没游戏的环境里整体导入**；函数体导入不是保守起见，是必需
+的，否则本模块（以及 import 它的 `bootstrap`）脱离游戏后无法导入，整条
+离线链路随之失效（`test_import_boundaries.py` 的
 `test_no_module_level_engine_import_in_adapter` 逐文件钉这一条）。
 代价是「事件类的名字对不对」在真机上才看得出来，因此留了一个
 `build_event_classes()` 的口子让离线检查能跑同一份类定义——
