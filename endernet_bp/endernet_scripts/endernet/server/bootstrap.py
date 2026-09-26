@@ -10,9 +10,11 @@
 替身服务留的，现在留着是因为**能源的替身口径**——库默认取保守的那一侧，
 而 DEV 档允许显式换成能跑得起来的那一侧。
 
-**「不是替身」不等于「能玩」。** 09 的产物回流入口还是任务 10 的具名替身
-（`AbsentReturns`），装配仓执行是 07-06，两者都**明确拒绝**而不是假装成功：
-订单会一路推进到「等待产物」然后如实阻塞并给出 `order_returns_absent`。
+**「不是替身」不等于「能玩」。** 10 的回流分配已落地（`crafting/returns.py`），
+但**装配仓执行是 07-06**，仍未实现：那一条入口（`ReturnsPort.accept_assembled`）
+备好了却没有调用方。另外库默认装配**不给** `returns_sink`，理由是 09 的
+`returns_absent` 计数与一整套用例都钉在「库默认不假装能用」上；
+游戏内由 `start_server()` 显式装配 `ReturnsService`，那时订单才真的能走完。
 
 **「已实现」不等于「已定案」。** 能源是正式实现，但它的两条策略字段仍是
 未定规则的替身口径，而库默认取的是保守的那一侧；游戏内由 `start_server()`
@@ -47,6 +49,7 @@ from .crafting.capacity import OrderPolicy
 from .crafting.executor import AbsentReturns, FactoryService
 from .crafting.patterns import PatternPolicy
 from .crafting.planner import PlanPolicy, Planner
+from .crafting.returns import ReturnPolicy, ReturnsService
 from .crafting.store import PatternStore
 from .devices.io import (
     TEMPLATE as PORT_TEMPLATE_ROLE,
@@ -106,8 +109,9 @@ def _energy_builder(policy):
     return build
 
 
-def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories):
-    # type: (object, object, object, object, object) -> object
+def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories,
+                     returns=None):
+    # type: (object, object, object, object, object, object) -> object
     """把**驱动器状态集合**与**接口状态集合**绑进存储服务的构造器。
 
     服务槽位是逐运行时各造一份的，而驱动器、介质与接口是**跨网络共享**的
@@ -118,6 +122,13 @@ def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories
     转移策略与背包提供者也是全局各一份：策略里的未定案数值必须与实际
     生效的是同一份（否则 `unresolved_report()` 报的数字与真正用的对不上），
     而背包是玩家级资源，与网络归属无关。
+
+    `returns`（任务 10）是**第二条接缝**：`TransferCoordinator` 只在
+    `commit()` 成功之后才把「一份外部资源真的进来了」通知给 `reflow_sink`，
+    通知里带的是**实际到达量**。`inbox_for(runtime)` 给出的是与 09 那边
+    **同一个** `ReturnsPort`——两条线共用一份索引，才不会出现「订单在等什么」
+    与「东西给了谁」对不上的形状。接不上时保持 `None`：那种情况下诊断里
+    写的是「还没接，通知无处可去」，而不是「不用发」。
     """
     def build(runtime):
         # type: (object) -> StorageService
@@ -128,9 +139,48 @@ def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories
             ports=ports,
             transfer_policy=transfer_policy,
             inventories=inventories,
+            reflow_sink=_reflow_sink_for(returns, runtime),
         )
 
     return build
+
+
+def _reflow_sink_for(returns, runtime):
+    # type: (object, object) -> object
+    """把全局的回流接收侧落到某一个分量上。**鸭子类型**：
+
+    - 真实现（`returns.ReturnsService`）有 `inbox_for`；
+    - 测试里注入的具名假回流（`test_executor.FakeReturns`）没有，它本身
+      就是个可调用对象，原样返回即可；
+    - `None`（没接线）保持 `None`。
+
+    **可调用性是这个入口的准入条件**：库的默认口径 `AbsentReturns` 没有
+    `inbox_for`，但它也**不是**可调用的——原样交给存储服务只会在第一次
+    回流时炸成 `'AbsentReturns' object is not callable`。它要的是「没接上」，
+    而那正是 `None` 的含义，因此这里如实给 `None`（09 那一侧另走
+    工厂服务，拿到的仍是 `AbsentReturns`，`available: False` 由它报）。
+
+    写成函数而不是在构造器里 `getattr` 内联：两个构造器（存储与工厂）
+    要的是**同一个**对象的两副面孔，把「怎么取」收在一处，
+    两边的取法就不会分叉。
+    """
+    if returns is None:
+        return None
+    inbox_for = getattr(returns, "inbox_for", None)
+    if callable(inbox_for):
+        return inbox_for(runtime)
+    return returns if callable(returns) else None
+
+
+def _returns_port_for(returns, runtime):
+    # type: (object, object) -> object
+    """把全局的回流索引落到 09 需要的那副面孔上（见 `_reflow_sink_for`）。"""
+    if returns is None:
+        return None
+    port_for = getattr(returns, "port_for", None)
+    if callable(port_for):
+        return port_for(runtime)
+    return returns
 
 
 def _factory_builder(policy, planner, patterns, ports, returns=None):
@@ -148,9 +198,15 @@ def _factory_builder(policy, planner, patterns, ports, returns=None):
 
     `port_blocker` 与 `TEMPLATE` 也从这里注入：`crafting/` 是领域层，
     不该 import 设备模块；而装配层两侧都看得见，正是接这根线的地方。
+
+    `returns` 接上时交给 09 的是**本分量的端口**（`port_for(runtime)`），
+    与 `_storage_builder` 给 06 的是同一个对象；没接上时仍是
+    `AbsentReturns`——它明确回答「我没接上」，订单因此如实停在等待产物，
+    而不是假装收到（09 的 `TestReturnsNotWired` 钉着这条）。
     """
     def build(runtime):
         # type: (object) -> FactoryService
+        port = _returns_port_for(returns, runtime)
         return FactoryService(
             runtime,
             policy=policy,
@@ -158,7 +214,7 @@ def _factory_builder(policy, planner, patterns, ports, returns=None):
             patterns=patterns,
             ports=ports,
             gateway=PortGateway(runtime),
-            returns=returns if returns is not None else AbsentReturns(),
+            returns=port if port is not None else AbsentReturns(),
             port_blocker=port_blocker,
             template_role=PORT_TEMPLATE_ROLE,
         )
@@ -224,6 +280,7 @@ class ServerBootstrap(object):
         pattern_policy=None,
         plan_policy=None,
         order_policy=None,
+        return_policy=None,
         returns_sink=None,
         container_primitives=None,
         container_provider=None,
@@ -306,12 +363,34 @@ class ServerBootstrap(object):
         self.order_policy = (
             order_policy if order_policy is not None else OrderPolicy()
         )
+        #: 回流策略（R06）。**全进程一份**，理由同上面各份。
+        #: **它与订单策略是两份**：订单回答「一张订单占几个槽位、几张一块推进、
+        #: 返还物算不算完成」，回流回答「同一份资源同时有多个等待者时先给谁」。
+        #: 两者都涉及返还物，但一个问的是「算不算数」、另一个问的是「先给谁」。
+        #:
+        #: **库默认是那侧的替身口径**（登记先后），于是接上 `returns_sink`
+        #: 之后 DEV 档能真的走完；正式档由 `assert_assembly_ok()` 报出
+        #: `return.priority` / `return.starvation` 两条未定项。取向与
+        #: `BandwidthPolicy` 相同，理由写在 `ReturnPolicy` 的 docstring 里。
+        if return_policy is None and returns_sink is not None:
+            # 注入的接收侧自带策略时**采纳它那一份**：`returns_sink` 是
+            # 真正干活的实现，诊断报出来的必须就是它生效的那个口径。
+            return_policy = getattr(returns_sink, "policy", None)
+        self.return_policy = (
+            return_policy if return_policy is not None else ReturnPolicy()
+        )
         #: 产物回流的接收侧（任务 10）。**默认是明确报「没接上」的替身**：
         #: 订单因此会停在等待产物并给出 `ORDER_RETURNS_ABSENT`，而不是
         #: 假装收到。离线测试注入具名假回流来驱动状态机（09 文档允许）；
         #: 生产装配**不接受**一个什么都不做的假实现。
         #: 这里把替身**当成默认值真的造出来**，而不是留一个 `None`：
         #: `None` 在诊断里与「接了但对象是空的」看起来一样。
+        #:
+        #: **默认不接线是有意的**（与 R06 的替身默认是两件事）：09 的
+        #: `returns_absent` 计数、`order_view()` 与一整套用例都钉在
+        #: 「库默认不假装能用」上，改它属于动 09 的可见行为。游戏内要能玩，
+        #: 由 `start_server()` 显式装配 `ReturnsService`——与
+        #: `EnergyPolicy.dev_stand_in()` 只出现在那一个写了理由的地方同例。
         self.returns_sink = (
             returns_sink if returns_sink is not None else AbsentReturns()
         )
@@ -402,6 +481,7 @@ class ServerBootstrap(object):
                         self.ports,
                         self.transfer_policy,
                         self.inventories,
+                        self.returns_sink,
                     ),
                     ServiceId.ENERGY: _energy_builder(self.energy_policy),
                     ServiceId.FACTORY: _factory_builder(
@@ -793,15 +873,19 @@ class ServerBootstrap(object):
                 "以及任务 08 的合成规划（批次与余量、库存优先、多级依赖与共享"
                 "子需求、环检测与有界失败、可分帧推进与提交前复核凭据）、"
                 "任务 09 的订单与执行（状态机、提交时复核与独占预留、"
-                "槽位与内存租约、分帧备料与派发、暂停取消与重验）；"
+                "槽位与内存租约、分帧备料与派发、暂停取消与重验）、"
+                "任务 10 的产物回流与分配（资源键索引、按真实到达量分配、"
+                "归属与计数同步、回执去重、迟到产物走普通库存）；"
                 "装配档位 %s。**接口接触真实引擎的那一段（箱子、背包、其他模组的"
                 "物流）没有在游戏内实测过**，流体路径则整条未接入（13-03）。"
                 "**四个服务槽位都已是正式实现**（工厂的替身已随任务 09 撤掉），"
                 "但「不是替身」不等于「能玩」："
-                "产物回流入口还是任务 10 的具名替身（`AbsentReturns`），"
-                "因此订单会一路推进到「等待产物」然后**如实阻塞**并给出"
-                "order_returns_absent——那不是缺料、也不是机器坏了，"
-                "是那一半还没写；装配仓执行是 07-06，同样明确拒绝。"
+                "本装配若没显式注入 `returns_sink`，产物回流入口仍是任务 10 的"
+                "具名替身（`AbsentReturns`），订单会一路推进到「等待产物」然后"
+                "**如实阻塞**并给出 order_returns_absent——那不是缺料、"
+                "也不是机器坏了，是**这条装配没有把 10 接上**"
+                "（游戏内由 `start_server()` 接上）；"
+                "装配仓执行是 07-06，它的回流入口已备好但仍无调用方。"
                 "存档后端与界面同步尚未接入（任务 12/11）。"
                 "预设配方适配（07-03）与样板编辑界面（11）都未开始，"
                 "因此样板目前只能看不能用——`debug_query(\"pattern\")`"
@@ -873,8 +957,11 @@ class ServerBootstrap(object):
             "已实现并通过离线断言；**接触真实引擎的那一段（箱子读写、玩家背包、"
             "外部模组物流）没有游戏内实测**，因此它目前只有领域层的证据。"
             "流体接口整条未接入（13-03），会明确回 no_adapter。"
-            "样板口的成批投料入口已备好（`port_stage`），但**没有调用方**"
-            "——工厂（09）尚未实现。"
+            "样板口的成批投料入口（`port_stage`）由工厂（09）的备料调用，"
+            "这条路已通；而**回流那一侧**（`TransferCoordinator.sink`）"
+            "要装配层显式注入 `returns_sink` 才发得出去，默认装配下它还是"
+            "「还没接」——`diagnostics()` 里看得见 `sink_wired` 与 "
+            "`sink_missing`。"
         )
         return report
 
@@ -913,19 +1000,23 @@ class ServerBootstrap(object):
 
     def order_diagnostics(self):
         # type: () -> dict
-        """订单层诊断（09）。
+        """订单层诊断（09）与回流层诊断（10）。
 
         **只给策略、替身口径与各网络的合计**：逐张订单的内容属于那台网络的
         工厂服务（订单是每网络一份的状态），不该在启动层再存一份。
-        想看某张订单走 `debug_query("order", component_id=..., order_id=...)`。
+        想看某张订单走 `debug_query("order", component_id=..., order_id=...)`，
+        想看逐条等待记录走 `debug_query("returns", component_id=..., key=...)`。
 
-        这里最要紧的一条是 `returns_sink`：它把「回流入口是替身」这件事
-        摆在启动层的诊断里，而不是只藏在某个网络的服务里——否则
-        「订单为什么不动」在最外层看起来像什么都没发生。
+        这里最要紧的一条是 `returns_sink`：无论接没接上，它都把答案摆在
+        启动层的诊断里，而不是只藏在某个网络的服务里——否则「订单为什么
+        不动」在最外层看起来像什么都没发生：接上之前是 `available: False`
+        （那一半还没写），接上之后是 `available: True` 而 `waiting_*` 为 0
+        （没人等产物，那是正常的）。
         """
         return {
             "policy": self.order_policy.describe(),
             "unresolved": self.order_policy.unresolved_report(),
+            "return_policy": self.return_policy.describe(),
             "returns_sink": self.returns_sink.describe(),
             "runtimes": self.runtimes.order_view(),
         }
@@ -1025,6 +1116,17 @@ class ServerBootstrap(object):
                 # 「这份配方里哪些输入要备料」，订单策略回答「一个订单占几个
                 # 槽位、计多少内存、返还物到齐才算完成」。
                 self.order_policy,
+                # 10 的回流策略带的是 R06（分配优先级与防饥饿）。
+                # **它与订单策略是两份**：订单回答「一张订单占几个槽位、
+                # 返还物算不算完成」，回流回答「同一份资源同时有多个等待者时
+                # 先给谁」。两者都碰返还物，但问的不是同一件事。
+                #
+                # 注意**这条只在这里生效**：主控准入链第 10 条读的是
+                # `runtime.py` / `application.py` 传下去的那一份
+                # `admission.policy`（`BandwidthPolicy`），`_PolicyBundle`
+                # **从不进入主控**。所以 R06 的正式档拦截走的是
+                # `assert_assembly_ok()`，与 R04/R09/R11 现状一致。
+                self.return_policy,
                 # 07 的样板策略带的是 R09（无限燃料、返还物规则、两类样板
                 # 适用范围）。少放一份的代价是正式验收时那三条漏网，
                 # 而它们正是全局约束 7 最怕的形态。
@@ -1085,13 +1187,11 @@ def start_server():
     # type: () -> ServerBootstrap
     """由 `modMain.OnServerInited` 调用。
 
-    **两件事都在这里显式写出来，理由也写在这里。**
+    **三件事都在这里显式写出来，理由也写在这里。**
 
-    1. **DEV 档。** 工厂（09）还是替身，PRODUCTION 档不会让它开始工作，
-       只会让每一条业务命令都被拒（`assembly_unresolved` + `service_absent`），
-       并且把诊断里的「哪些数值还没定案」当成正常结论报出来。游戏内现在
-       只能用 DEV 档，而 DEV 档的代价是**涉及工厂的命令被拒**——两种档位都
-       不假装能用，区别只在说法。这一点 `diagnostics()` 的 `scope_note` 里也写着。
+    1. **DEV 档。** PRODUCTION 档不会让未完成的实现开始工作，只会让每一条
+       业务命令都被拒（`assembly_unresolved`），并且把诊断里的「哪些数值
+       还没定案」当成正常结论报出来。游戏内现在只能用 DEV 档。
 
     2. **能源取替身口径（`EnergyPolicy.dev_stand_in()`）。** 库默认口径下，
        基带的耗能（blocks.md 未列，R10）与 `per_unit` 的装置数量都算不出来，
@@ -1105,15 +1205,30 @@ def start_server():
        等 R10 补齐、05/08/09 把装置数量与工作态接过来之后，这里改回默认口径
        即可——那时判定会自己变准，不需要动能源服务的代码。
 
+    3. **回流接上真实现（任务 10 的 `ReturnsService`）。** 库默认给的是
+       `AbsentReturns`（明确报「没接上」），因此默认装配下订单**永远到不了
+       completed**——那是 09 交付时刻意的形状，用来把「这一半还没写」摆在
+       诊断里。10 落地之后游戏内要的是能玩：产物真的回流进来，订单真的结单。
+
+       **R06 仍是替身口径**（登记先后）。与第 2 条同理：替身取值只出现在
+       这一个写了理由的地方，策略字段照旧进 `unresolved_report()`，
+       `assert_assembly_ok()` 照旧拒绝。
+
     写成显式参数而不是依赖默认值：默认值将来若被改动，这里不会跟着悄悄
     改变游戏内的行为。
     """
     global _SERVER
     if _SERVER is not None:
         _SERVER.stop()
+    # 两份引用同一个策略对象：`unresolved_report()` 报出来的必须就是
+    # 服务真正按它分配的那一份（装配层也会从 `returns_sink.policy` 采纳它）。
+    return_policy = ReturnPolicy()
+    returns = ReturnsService(policy=return_policy)
     _SERVER = ServerBootstrap(
         assembly_profile=AssemblyProfile.DEV,
         energy_policy=EnergyPolicy.dev_stand_in(),
+        return_policy=return_policy,
+        returns_sink=returns,
     )
     _SERVER.start()
     return _SERVER

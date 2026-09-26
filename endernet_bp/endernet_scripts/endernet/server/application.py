@@ -74,8 +74,9 @@ DEBUG_OPS = frozenset(
         "pattern",
         #: 用**真库存与真样板索引**跑一次合成规划（08），返回批次、缺料清单
         #: 与候选三元组。存在的理由有两个：
-        #: 1. 09（订单与执行）尚未实现，那之前规划没有别的调用方，而仓库纪律
-        #:    明写「只有类文件、没有装配与调用路径的实现不算完整交付」；
+        #: 1. 规划原本没有别的调用方（订单提交那条路径要过主控准入，坏掉的
+        #:    网络上问不到），而仓库纪律明写「只有类文件、没有装配与调用
+        #:    路径的实现不算完整交付」；
         #: 2. 规划是**只读计算**（不扣库存、不预留、不占槽位），因此它可以
         #:    安全地做成一条查询——这也是它敢放在只读白名单里的唯一理由。
         #:    订单的提交与派发属 09，不在这里。
@@ -87,6 +88,12 @@ DEBUG_OPS = frozenset(
         #: 「订单为什么不动」最需要被回答的时候。
         #: 下单、取消、暂停、继续仍然只能走主控那条写路径。
         "order",
+        #: 产物回流的台账与等待明细（10）。**只读**：本入口一条命令都不发、
+        #: 一份库存都不改，只读回流服务自己的索引。与 `order` 同一条理由：
+        #: 回流没有命令——它由**外部资源真的进网**驱动，因此没有主控时
+        #: 它照样是准的（甚至更准：订单命令发不出去时，回流是唯一还在动的
+        #: 那一半）。而「产物回来了为什么没记上」正是这里最需要被回答的。
+        "returns",
     ]
 )
 
@@ -375,6 +382,8 @@ class ApplicationService(object):
             return self._run_plan_query(kwargs)
         if op == "order":
             return self._run_order_query(kwargs)
+        if op == "returns":
+            return self._run_returns_query(kwargs)
         # 白名单与非白名单之间没有第三条路：走到这里说明 DEBUG_OPS 加了
         # 一项却没在 `_run_query` 里实现，那是个缺陷，不该静默返回空。
         raise NotImplementedError("调试操作 %r 已在白名单中但未实现" % (op,))
@@ -537,9 +546,10 @@ class ApplicationService(object):
         必须过主控准入——因此它们在网络不能工作时发不出去，而那正是
         这里另开一条只读路径的理由（与 `port` / `pattern` / `plan` 同形）。
 
-        订单不动时最该被看见的是 `returns`：回流入口（任务 10）还没接线，
-        订单会**如实**停在「等待产物」而不是假装收到。少了这一项，
-        「订单为什么卡住」在最外层看起来会像缺料或机器坏了。
+        订单不动时最该被看见的是 `returns` 那一段（`debug_query("returns")`
+        有更细的台账）：回流入口接上之后，订单停在「等待产物」的含义是
+        **东西真的还没回来**，而不再是「那一半没实现」——两者在诊断里
+        必须分得开，否则「订单为什么卡住」在最外层看起来会像缺料或机器坏了。
         """
         component_id = kwargs.get("component_id")
         order_id = kwargs.get("order_id")
@@ -577,6 +587,60 @@ class ApplicationService(object):
             "component_id": None,
             "networks": views,
             "note": "未指定 component_id，逐网络列出；订单 ID 只在所属网络内唯一",
+        }
+
+    def _run_returns_query(self, kwargs):
+        # type: (dict) -> dict
+        """产物回流台账的**只读**视图（10）。
+
+        参数：
+
+        - `component_id`：看哪张网络。不给时逐网络列出——等待索引虽然
+          全进程一份（跨网络才排得出顺序），但**分配**是按分量过滤的，
+          因此逐网络分开呈现才对得上「谁会拿到」。
+        - `key`：只看某个规范资源键的等待项。
+        - `execution_id`：只看某个执行实例的等待项。
+
+        **这不是业务入口**：它一条命令都不发、一份库存都不改，只读回流
+        服务的索引（沿用 `_run_order_query` 的纪律）。回流本来也没有命令
+        ——它由**外部资源真的进网**驱动，因此没有主控时它照样是准的，
+        甚至更准：订单命令发不出去的时候，回流往往正是唯一还在动的那一半。
+
+        入口取自**工厂服务持有的那个回流对象**，与 06 的 `reflow_sink`
+        是同一个实例（装配层注入的是同一个），所以这里看到的「谁在等」
+        与「东西给了谁」天然是同一份账。
+
+        回流的实现可能不是 10 的（自定义实现只要满足两条接缝的鸭子类型
+        就能装进来），因此这里**只走 `view()` / `describe()` 这两个契约
+        方法**，不伸手读它的内部表——与 `scheduler` / `energy` 那两条
+        同一条纪律。只有 `describe()` 的实现在下面按「没有逐条明细」处理，
+        而不是把它打崩。
+        """
+        component_id = kwargs.get("component_id")
+        canonical = kwargs.get("key")
+        execution_id = kwargs.get("execution_id")
+        if component_id is not None:
+            runtime = self.runtimes.runtime(component_id)
+            if runtime is None:
+                return {"error": "没有这个网络", "component_id": component_id}
+            return _returns_view_of(runtime, canonical, execution_id)
+
+        # 没有指定网络：逐网络分开读，理由同 `_run_order_query`——合并会
+        # 让两张网络各自的等待项看起来是一份。
+        views = {}
+        for runtime in self.runtimes.runtimes():
+            if runtime is None:
+                continue
+            views[runtime.component_id] = _returns_view_of(
+                runtime, canonical, execution_id
+            )
+        return {
+            "component_id": None,
+            "networks": views,
+            #: **全部**网络都接上了才算 `True`：只要有一张没接，
+            #: 「回流接好了没有」的答案就是「还没有」。
+            "wired": bool(views) and all(row["wired"] for row in views.values()),
+            "note": "未指定 component_id，逐网络列出；回流索引全局一份，但只按同网络分配",
         }
 
     def _plan_inventory(self, runtime):
@@ -658,6 +722,35 @@ def _blocker_dict(state):
 
     blocker = port_blocker(state)
     return blocker.to_dict() if blocker is not None else None
+
+
+def _returns_view_of(runtime, canonical=None, execution_id=None):
+    # type: (object, str, str) -> dict
+    """一张网络的回流台账。**鸭子类型**，只认契约方法。
+
+    真实现（10 的 `ReturnsPort`）有 `view()`，给得出逐条明细；库的默认
+    口径与任何只做了 `describe()` 的替身没有——那时如实说「只有摘要」，
+    而不是把这条只读查询打崩。**「回流为什么没接上」正是它最该回答的
+    问题**，所以「接的是替身」必须是答得出来的答案之一。
+    """
+    service = runtime.services.get(ServiceId.FACTORY)
+    if service is None:
+        return {"error": "该网络没有装配工厂服务", "component_id": runtime.component_id}
+    returns = getattr(service, "returns", None)
+    if returns is None:
+        return {"error": "该网络的工厂服务没有持有回流入口"}
+    view = getattr(returns, "view", None)
+    if callable(view):
+        report = view(canonical, execution_id)
+        report["wired"] = bool(report.get("summary", {}).get("wired", False))
+        return report
+    describe = getattr(returns, "describe", None)
+    return {
+        "entries": [],
+        "summary": describe() if callable(describe) else {"adapter_id": None},
+        "wired": False,
+        "note": "该网络的回流入口没有逐条明细（只有摘要）——多半是替身实现",
+    }
 
 
 #: `CommandKind.STATUS` 与 `CommandKind.RECOVERY` 是仅有的两种只读命令，

@@ -533,9 +533,11 @@ def default_pending_tasks():
     **「有实现」不等于「能玩」**：能源的 RF 计量（04-05）、断电暂停（04-06）
     与设备级状态通知（04-08）仍未实现，写在 `network/energy.py` 的
     `scope_note` 里；DEV 档为了让网络真的能跑给能源选了替身口径
-    （`EnergyPolicy.dev_stand_in()`），正式档照样拒绝。工厂侧的替身更具体——
-    产物回流入口还是任务 10 的具名替身（`AbsentReturns`），
-    装配仓执行是 07-06，两者都**不会**让订单看起来成功。
+    （`EnergyPolicy.dev_stand_in()`），正式档照样拒绝。工厂侧的不完整更具体——
+    **库默认装配不给 `returns_sink`**（那一份默认仍是 `AbsentReturns`，
+    于是订单停在 `order_returns_absent`），10 的回流分配只在
+    `start_server()` 显式装配 `ReturnsService` 之后才生效；装配仓执行是 07-06，
+    仍未实现。两者都**不会**让订单看起来成功。
     """
     return {}
 

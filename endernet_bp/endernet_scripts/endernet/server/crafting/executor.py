@@ -102,11 +102,15 @@ RETRYABLE_CODES = frozenset(
 
 
 class ReturnsSink(object):
-    """任务 10 的接收侧契约（**鸭子类型，尚未实现**）。
+    """任务 10 的接收侧契约（**鸭子类型**）。
 
-    目标形态由 10 的 `crafting/returns.py` 实现：维护「资源键 → 等待执行实例」
-    的索引与每实例每产物的剩余需求，按 R06 的顺序把真实回执分配下去，
-    再调 `OrderExecutor.receive_output()` 把分配结果交回来。
+    实现是 `crafting/returns.py` 的 `ReturnsPort`——它**不继承本类**（契约
+    明写这里是鸭子类型，因此两个模块互不 import，没有任何环）：它维护
+    「资源键 → 等待执行实例」的索引与每实例每产物的剩余需求，按 R06 的顺序
+    把真实回执分配下去，再调 `OrderExecutor.receive_output()` 把分配结果
+    交回来。
+
+    本类只作为**形状的声明**保留：`ReturnsSink` 的实例化对象仍然不可用。
 
     三个方法就是两边的全部接缝：
 
@@ -133,11 +137,16 @@ class ReturnsSink(object):
 
 
 class AbsentReturns(ReturnsSink):
-    """任务 10 未接线时的**具名替身**。
+    """回流入口**没接上**时的**具名替身**，也是库默认装配的那一个。
+
+    10 的实现（`crafting/returns.py` 的 `ReturnsPort`）已经落地，但**库默认
+    不把它接上**：`ServerBootstrap` 不传 `returns_sink` 时仍是本类，
+    `runtime.order_view()["returns_absent"]` 与一整套用例都钉在
+    「库默认不假装能用」上。游戏内由 `start_server()` 显式装配。
 
     **它不假装能用**：`register` 返回 `False`，并把登记内容原样收下，
     好让诊断能回答「如果 10 在，它会看到哪些等待者」。订单因此停在等待产物
-    并报 `ORDER_RETURNS_ABSENT`——那是「这一半还没实现」，
+    并报 `ORDER_RETURNS_ABSENT`——那是「这条装配没把 10 接上」，
     与「机器没出货」「缺料」都是不同的话。
 
     返回 `False` 而不是抛错：登记本身不该让订单提交失败。任务文档要的是
@@ -177,7 +186,8 @@ class AbsentReturns(ReturnsSink):
         # type: () -> BlockReason
         return BlockReason(
             Reason.ORDER_RETURNS_ABSENT,
-            u"产物回流入口尚未接线（任务 10）：步骤已经投料完毕、正在等产物，"
+            u"产物回流入口尚未接线（任务 10 已实现，但这条装配没注入 "
+            u"returns_sink）：步骤已经投料完毕、正在等产物，"
             u"但没有任何东西会把入库的资源分配给订单；"
             u"当前登记着 %d 个等待实例" % (len(self.registered),),
         )
@@ -1437,6 +1447,26 @@ class OrderExecutor(object):
         """把订单的镜像对齐到 05 的活预约占。返回活着的量。"""
         row = order.reservations.get(canonical)
         live = self._live_reservations(order, canonical)
+        if row is None and live:
+            # **10 会在计划没认领的键上为这张订单预留。** 中间产物走的就是
+            # 这条路：计划只为 `from_stock > 0` 的键建行（`planner` 的 claims），
+            # 而 10 把回流到的中间产物按订单归属锁住。
+            #
+            # 没有本地行时 `_stock_blocker_for_staging` 会算 `mine = 0`，
+            # 而它读的 `available` 已经把**我们自己**锁住的那一份扣掉了，
+            # 于是 `usable` 少算一份 → 报一条**假的** `ORDER_STOCK_TAKEN`
+            # → 多步订单永远停在第二步备料上。
+            #
+            # 补一行镜像就是修法：镜像的职责本来就是「05 的活预约占在这里
+            # 长什么样」，而不是「计划当时认领了多少」。`claimed` 填 0
+            # 与 `Order.to_dict()` 的 `.get("claimed", 0)` 相容。
+            row = {
+                "reservation_id": None,
+                "key": live[0].key,
+                "claimed": 0,
+                "reserved": 0,
+            }
+            order.reservations[canonical] = row
         if row is not None:
             row["reserved"] = sum(int(r.count) for r in live)
             row["reservation_id"] = live[0].reservation_id if live else None
