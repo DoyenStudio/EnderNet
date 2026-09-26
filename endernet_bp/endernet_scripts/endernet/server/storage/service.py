@@ -16,6 +16,13 @@
 数据结构逐条对应 `plans/technical_notes/terminal_item_index.md` §2 的契约，
 名字不改：`item_totals[key] = [stored, reserved]`、`item_sources[key]`、
 `mounted[medium_id]`、`dirty_items`。
+
+**索引是全量的，物品视图是它的投影——两者不要混为一谈。** 介质里同时装物品
+与流体，`item_totals` / `item_sources` / 额度与预留都建立在**全量**之上，
+`rebuild_index()` 与 `audit()` 也按全量校验，因此它们含流体键。而
+`dirty_items` 与 `take_dirty_keys()`/`publish_version` 服务的**物品视图**
+（终端首版不显示流体，`11. 终端与客户端同步.md`）——凡改动索引的地方
+一律经 `_mark_dirty()` 落标记，它会把流体挡在外面。详见 `_mark_dirty`。
 """
 
 from ...common.protocol import (
@@ -216,7 +223,8 @@ class StorageService(NetworkService):
         self.item_totals = {}
         #: `ResourceKey -> set(medium_id)`
         self.item_sources = {}
-        #: 待发布的物品键。同一窗口内去重。
+        #: 待发布的**物品**键（流体不入表）。同一窗口内去重。
+        #: 只经 `_mark_dirty()` 写入，别处不要直接 add。
         self.dirty_items = set()
         #: `medium_id -> MountRecord`
         self.mounted = {}
@@ -718,6 +726,21 @@ class StorageService(NetworkService):
                         del self.item_sources[key]
             reserved = entry[1] if entry is not None else 0
             self._set_stored(key, after, reserved)
+            self._mark_dirty(key)
+
+    def _mark_dirty(self, key):
+        # type: (ResourceKey) -> None
+        """脏标记的**唯一入口**：只有物品进物品视图。
+
+        介质里同时装物品与流体（`Medium.stored_view()` 返回全部条目），
+        但终端首版不显示流体，而 `take_dirty_keys()` 一旦非空就会推进
+        `publish_version`——若不在这里挡一道，**一次纯流体提交也会推进
+        物品视图版本**，客户端于是收到一批它根本不显示的键。
+
+        流体将来会有自己的 `view_kind`，到那时按视图分别维护脏集合，
+        而不是把流体塞进物品的这一个。
+        """
+        if key.is_item():
             self.dirty_items.add(key)
 
     def _set_stored(self, key, stored, reserved):
@@ -745,7 +768,7 @@ class StorageService(NetworkService):
             self.item_totals.pop(key, None)
             return
         self.item_totals[key] = [stored, reserved]
-        self.dirty_items.add(key)
+        self._mark_dirty(key)
 
     def rebuild_index(self):
         # type: () -> int
@@ -807,13 +830,42 @@ class StorageService(NetworkService):
 
     def take_dirty_keys(self):
         # type: () -> tuple
-        """取出并清空脏键集合。**非空时才推进发布版本**（§6）。"""
+        """取出并清空物品视图的脏键。**非空时才推进发布版本**（§6）。
+
+        这一个调用就是发布窗口的原子点：排序、清空、推进 `publish_version`
+        在同一条语句序列里完成，主线程 tick 内不插入其他提交，因此窗口
+        之后到达的改动必然落到下一个窗口（`base_version` 就是这里推到的值）。
+        """
         if not self.dirty_items:
             return ()
         keys = tuple(sorted(self.dirty_items, key=lambda item: item.canonical()))
         self.dirty_items = set()
         self.publish_version += 1
         return keys
+
+    # -- 物品视图的窄读口（供 11 的同步层，勿绕过去直接戳 item_totals）--
+
+    def has_dirty_items(self):
+        # type: () -> bool
+        """物品视图是否有待发布变化。**不推进版本、不清空集合。**"""
+        return bool(self.dirty_items)
+
+    def iter_item_records(self):
+        # type: () -> tuple
+        """`((key, stored, reserved), ...)`，canonical 序，**只含物品键**。
+
+        与 `keys()` 的相对顺序一致（canonical 把 kind 摆在最前，流体因此
+        整体排在物品之前或之后，这里只是把流体滤掉，不重排）。返回
+        `tuple`，供发布窗口一次性冻结快照用——调用方可以放心持有它，
+        不必担心后续提交把它改掉。
+        """
+        out = []
+        for key in self.keys():
+            if not key.is_item():
+                continue
+            entry = self.item_totals[key]
+            out.append((key, entry[0], entry[1]))
+        return tuple(out)
 
     def audit(self):
         # type: () -> dict
@@ -1233,7 +1285,7 @@ class StorageService(NetworkService):
                 self.item_sources[key] = sources
             else:
                 self.item_sources.pop(key, None)
-            self.dirty_items.add(key)
+            self._mark_dirty(key)
         self.index_version += 1
 
     # -- 命令 ----------------------------------------------------------

@@ -780,6 +780,78 @@ class TestTransfers(Fixture):
         self.assertEqual(self.service.publish_version, before + 1)
 
 
+class TestItemViewMarking(Fixture):
+    """脏标记只收物品：流体不得推进物品视图版本。
+
+    `dirty_items` 的契约是「待发布的**物品**键」，而介质里同时装物品与流体
+    （`stored_view()` 返回全部条目）。若不在这里挡一道，一次纯流体提交就会
+    推进 `publish_version`，客户端于是收到一批它根本不显示的键。
+
+    这**不是**「库存索引不含流体」——正相反，索引必须含流体，额度、预留与
+    `audit()` 都建立在全量之上。两类断言因此必须分开写。
+    """
+
+    def test_fluid_only_commit_does_not_advance_publish_version(self):
+        self.new_medium()
+        tick = self.seed(STONE, 1, tick=10)
+        self.service.take_dirty_keys()  # 清空并推进到基线
+        version = self.service.publish_version
+        index_version = self.service.index_version
+
+        receipt = self.service.commit_insert("fluid:1", WATER, 2, now_tick=tick)
+        self.assertEqual(receipt.moved, 2, receipt)
+
+        self.assertEqual(self.service.query(WATER)["stored"], 2, "索引仍然记流体")
+        self.assertGreater(
+            self.service.index_version,
+            index_version,
+            "流体提交仍是存储提交，交易验证必须看得见它——两个版本分工不同",
+        )
+        self.assertFalse(self.service.has_dirty_items())
+        self.assertEqual(self.service.take_dirty_keys(), ())
+        self.assertEqual(self.service.publish_version, version, "物品视图版本不动")
+
+    def test_item_commit_advances_publish_version_only_when_taken(self):
+        """推进属于发布窗口，不属于提交本身。"""
+        self.new_medium()
+        before = self.service.publish_version
+        self.seed(STONE, 1, tick=10)
+        self.assertTrue(self.service.has_dirty_items())
+        self.assertEqual(
+            self.service.publish_version, before, "没取走就不推进"
+        )
+        self.service.take_dirty_keys()
+        self.assertEqual(self.service.publish_version, before + 1)
+
+    def test_iter_item_records_matches_keys_order_and_excludes_fluids(self):
+        self.new_medium()
+        tick = self.seed(STONE, 1, tick=10)
+        tick = self.seed(DIRT, 1, tick=tick)
+        self.service.commit_insert("fluid:1", WATER, 2, now_tick=tick)
+
+        records = self.service.keys()
+        self.assertIn(WATER, records, "流体确实在索引里，只是不进物品视图")
+
+        view_keys = [key for key, _, _ in self.service.iter_item_records()]
+        self.assertEqual(
+            view_keys,
+            [key for key in records if key.is_item()],
+            "与 keys() 的相对顺序一致",
+        )
+        self.assertEqual(view_keys, [DIRT, STONE], "canonical 序（dirt 在 stone 前）")
+        for _, stored, reserved in self.service.iter_item_records():
+            self.assertEqual((stored, reserved), (1, 0))
+
+    def test_iter_item_records_is_immutable_and_does_not_leak_the_index(self):
+        """窗口冻结的快照必须是不可变的——发布期间还会有提交落进来。"""
+        self.new_medium()
+        self.seed(STONE, 1, tick=10)
+        frozen = self.service.iter_item_records()
+        self.seed(STONE, 1, tick=20)
+        self.assertEqual(frozen[0][1], 1, "冻结之后索引变了，快照不该跟着变")
+        self.assertEqual(self.service.query(STONE)["stored"], 2)
+
+
 class TestProviderContract(Fixture):
     """能力对象与命令入口。"""
 
