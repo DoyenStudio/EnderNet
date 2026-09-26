@@ -414,6 +414,10 @@ class TerminalSyncHub(object):
             # 但从现象上看都是「什么都没发出去」。计数留着，否则查不出来。
             "storage_unreadable": 0,
             "version_chain_breaks": 0,
+            # 解析不出来的包。**与「有没有包发过来」分开计**：那个数在适配器
+            # 的 `AdapterSyncPort.stats["requests"]` 上。「一个包都没收到」与
+            # 「收到的都读不懂」是两件不同的事，前者查总线，后者查版本。
+            "bad_packets": 0,
         }
 
     # -- 装配 ----------------------------------------------------------
@@ -432,6 +436,32 @@ class TerminalSyncHub(object):
         return self._context_of(player_id, device_ref)
 
     # -- 请求入口 ------------------------------------------------------
+
+    def receive(self, player_id, data):
+        # type: (str, object) -> object
+        """C2S 的**线上入口**：原始字典进，编码好的回包（或 `None`）出。
+
+        **解析与编码都在这里，不在适配器里。** 编码要用该会话的资源描述表
+        （序号是逐会话发的），而那张表只有 hub 拿得到；让适配器去
+        `registry.get(...)` 取表，等于把会话表的内部结构摊给引擎边界。
+
+        坏包**不抛也不回错**：这是引擎事件路径，抛出去打挂的是这一帧；
+        而连信封都解析不出来时，「回给谁、按哪个请求号回」都无从谈起——
+        回一条无名无姓的 `error` 只会让界面显示「出错了」而说不出是哪次。
+        计数留在 `stats["bad_packets"]`：它非零就是**版本不匹配或对面发了
+        脏数据**，而不是「什么都没发生」。
+        """
+        try:
+            envelope = SyncEnvelope.from_dict(data)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            self.stats["bad_packets"] += 1
+            return None
+        reply = self.handle(envelope, player_id)
+        if reply is None:
+            return None
+        session = self.registry.get(reply.session_id)
+        descriptions = session.descriptions if session is not None else None
+        return reply.to_dict(descriptions)
 
     def handle(self, envelope, player_id, frame=None):
         # type: (object, str, int) -> object
@@ -969,8 +999,9 @@ class TerminalSyncHub(object):
         try:
             ok = self.port.send(session.player_id, payload)
         except Exception:
-            # 适配器约定抛 `SyncTransportError`，但引擎边界什么都可能抛；
-            # 这里一律当作「这一条没发出去」，不让它穿出 tick()。
+            # 端口的契约是**返回 `False`**（收件人不存在这类可预判的情形），
+            # 异常留给引擎真的出错那一类；两种都要接住、且分开计数——
+            # 前者是「没人在收」，后者是「引擎坏了」，查法完全不同。
             self.stats["transport_errors"] += 1
             ok = False
         if not ok:

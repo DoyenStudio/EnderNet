@@ -33,11 +33,13 @@ from endernet.common.protocol import (
     MSG_SNAPSHOT_BEGIN,
     MSG_SNAPSHOT_CHUNK,
     MSG_SNAPSHOT_END,
+    MSG_SESSION_READY,
     Reason,
     SessionClose,
     SessionOpen,
     SnapshotRequest,
     SyncEnvelope,
+    SYNC_SCHEMA_VERSION,
     VIEW_ITEM,
     VIEW_ORDER,
 )
@@ -62,8 +64,9 @@ WATER = ResourceKey.fluid("minecraft:water")
 class FakePort(object):
     """记录发出的包；可整体「打不通」，用来测失败与退避。
 
-    **不猜引擎行为**：适配器约定 `send` 失败返回假值（并可能抛
-    `SyncTransportError`），这里就用返回值这条路，与 `_send` 的契约一致。
+    **端口契约只有两条**（与 `AdapterSyncPort` 对齐）：正常返回 `True`，
+    「没有收件人」这类可预判的情形返回 `False`；**引擎真的出错时才抛**。
+    这里走返回值这一路，`reachable = False` 模拟的正是「没人在收」。
     """
 
     def __init__(self):
@@ -824,6 +827,124 @@ class TestRefusals(Fixture):
         wire = json.loads(json.dumps(reply.to_dict()))
         decoded = SyncEnvelope.from_dict(wire)
         self.assertEqual(decoded.message.request_id, "q1")
+
+
+class TestWireEntry(Fixture):
+    """`receive()`：C2S 的**线上入口**——原始字典进，编码好的回包出。
+
+    它与 `handle()` 只差两件事：**解析**在入口做，**编码**也在这里做。
+    编码要用该会话的资源描述表，而那张表是**逐会话发号**的，只有 hub
+    拿得到；让引擎适配器自己去 `registry.get(...)` 取表，等于把会话表的
+    内部结构摊到引擎边界上。这就是这一步放在 hub 而不是适配器的理由。
+
+    因此这里的用例都走一遍真的 JSON 往返——与线上完全一致。
+    """
+
+    def wire(self, message, **kwargs):
+        # type: (object, object) -> dict
+        """按客户端会发出来的样子造一个原始字典。"""
+        return json.loads(json.dumps(SyncEnvelope(message, **kwargs).to_dict()))
+
+    def decode(self, payload):
+        # type: (dict) -> object
+        """把回包按客户端的方式解回来：**用该会话自己的描述表**。"""
+        session = self.hub.registry.get(payload["session_id"])
+        descriptions = None if session is None else session.descriptions
+        return SyncEnvelope.from_dict(payload, descriptions)
+
+    def test_a_well_formed_open_is_answered_with_a_decodable_payload(self):
+        """回包必须**当场解得开**。
+
+        快照与增量的资源是**序号**，解号要那张逐会话的表。一旦回包用的表
+        与客户端手里的不是同一张，症状是客户端显示一片空白，而服务端这边
+        每一处都「成功」——所以这条只能在往返里测。
+        """
+        data = self.wire(SessionOpen("r1", self.devices[NETWORK], 0))
+        payload = self.hub.receive("p1", data)
+        self.assertIsNotNone(payload)
+        envelope = self.decode(payload)
+        self.assertEqual(envelope.message.kind, MSG_SESSION_READY)
+        self.assertEqual(envelope.epoch, EPOCH)
+        self.assertEqual(envelope.network_id, NETWORK)
+
+    def test_the_session_belongs_to_the_caller_not_to_the_payload(self):
+        """身份由**调用方**给（引擎的 `__id__`），消息体里没有这个字段。
+
+        协议层连字段都没定义，因此这里能测的正是「hub 用的是哪一个」。
+        """
+        data = self.wire(SessionOpen("r1", self.devices[NETWORK], 0))
+        payload = self.hub.receive("p2", data)
+        session = self.hub.registry.get(payload["session_id"])
+        self.assertEqual(session.player_id, "p2")
+
+    def test_an_error_reply_carries_the_request_id(self):
+        """会话不存在时回 `error`，带原请求号——界面才挂得回那次操作。
+
+        `error` 也是 S2C 里唯一允许不带会话的一条（`SyncEnvelope._validate`），
+        因为此时服务端根本没有可填的会话。
+        """
+        data = self.wire(
+            Ack("ack-1", "b1", 0),
+            session_id="s404",
+            network_id=NETWORK,
+            epoch=EPOCH,
+        )
+        payload = self.hub.receive("p1", data)
+        self.assertIsNotNone(payload)
+        envelope = SyncEnvelope.from_dict(payload)
+        self.assertEqual(envelope.message.kind, MSG_ERROR)
+        self.assertEqual(envelope.message.code, Reason.SESSION_INVALID)
+        self.assertEqual(envelope.message.request_id, "ack-1")
+
+    def test_garbage_is_not_answered_but_is_counted(self):
+        """连信封都解不出来时**不回话**。
+
+        回一条无名无姓的 `error` 只会让界面显示「出错了」而说不出是哪次；
+        而抛出去打挂的是这一帧（引擎每秒调用数十次）。计数是唯一诚实的
+        出口：`bad_packets` 非零就是版本不匹配或对面发了脏数据。
+        """
+        before = self.hub.stats["bad_packets"]
+        self.assertIsNone(self.hub.receive("p1", {"nonsense": True}))
+        self.assertIsNone(self.hub.receive("p1", "not a dict"))
+        self.assertIsNone(self.hub.receive("p1", None))
+        self.assertIsNone(self.hub.receive("p1", []))
+        self.assertEqual(self.hub.stats["bad_packets"], before + 4)
+        self.assertEqual(self.port.sent, [])
+
+    def test_an_unknown_message_kind_is_not_answered(self):
+        """未知种类是**协议错误**，不是「不认识就跳过」。
+
+        静默跳过会让「客户端版本比服务端新」表现成「这个功能没反应」。
+        """
+        data = self.wire(SessionOpen("r1", self.devices[NETWORK], 0))
+        data["message"] = {"kind": "no_such_kind"}
+        self.assertIsNone(self.hub.receive("p1", data))
+        self.assertEqual(self.hub.stats["bad_packets"], 1)
+
+    def test_a_future_schema_version_is_not_answered(self):
+        """版本先于一切：拿旧解析器读新格式，最危险的是「能解析但意思不对」。"""
+        data = self.wire(SessionOpen("r1", self.devices[NETWORK], 0))
+        data["schema_version"] = SYNC_SCHEMA_VERSION + 1
+        self.assertIsNone(self.hub.receive("p1", data))
+        self.assertEqual(self.hub.stats["bad_packets"], 1)
+
+    def test_a_message_that_needs_no_answer_returns_none(self):
+        """`handle` 返回 `None` 时**不发空包**，且入口照样如实返回 `None`。
+
+        「不回」本身是有含义的：这条消息不需要回答。补一个空包会让客户端
+        不断收到无法归类的东西；而在这里编一条回包，等于把「关闭成功」
+        表现成一次多余的往返。
+        """
+        session, _ = self.open_view()
+        data = self.wire(
+            SessionClose("close-1"),
+            session_id=session.session_id,
+            network_id=session.network_id,
+            epoch=session.epoch,
+        )
+        self.assertIsNone(self.hub.receive("p1", data))
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+        self.assertEqual(self.port.sent, [])
 
 
 if __name__ == "__main__":

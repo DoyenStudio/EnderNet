@@ -71,46 +71,82 @@ def is_engine_module(module_name):
     return root in ENGINE_MODULES
 
 
+def engine_import_of(node, required):
+    """一个 import 节点引用的引擎模块名；不是引擎导入时返回 `None`。
+
+    **绝对与相对共用这一份判断。** `tooldelta` 就在行为包里，所以
+    `from ....tooldelta.api.server.player import GetPlayerDimensionId`
+    是**真能跑通**的——它既不触发「绝对导入」那条规则，层级也对，
+    但效果与绝对导入完全一样：领域层从此依赖引擎，整个离线测试的前提没了。
+    因此这里按层级解析：相对层数正好回到 `endernet_scripts` 时，
+    模块名就是顶层名。
+
+    抽出来是因为**两条规则要问同一个问题**：领域层「有没有」引擎导入，
+    与适配器「有没有模块顶层的」引擎导入。各写一份的话，相对导入那条
+    总有一天只在一处被修好。
+    """
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if is_engine_module(alias.name):
+                return alias.name
+        return None
+    if not isinstance(node, ast.ImportFrom):
+        return None
+    if not node.level:
+        return node.module if is_engine_module(node.module) else None
+    if required and node.level == required and is_engine_module(node.module):
+        return "%s%s" % ("." * node.level, node.module)
+    return None
+
+
+def parse_source(path):
+    """读源码并解析成 AST；读不了或语法不对时返回 `None`。
+
+    必须显式指定 UTF-8：Windows 上 open() 默认用 GBK，源码里的中文注释会炸。
+    """
+    with io.open(path, "r", encoding="utf-8") as handle:
+        source = handle.read()
+    try:
+        return ast.parse(source, filename=path)
+    except SyntaxError:
+        return None
+
+
+def _scan_nodes(path, relative, nodes):
+    # type: (str, object, object) -> list
+    """按 `nodes(path)` 给定的遍历方式扫引擎导入，返回 `[(行号, 模块名)]`。"""
+    tree = parse_source(path)
+    if tree is None:
+        return []
+    if relative is None:
+        relative = relative_path(path)
+    required = required_level_for(relative)
+    found = []
+    for node in nodes(tree):
+        module = engine_import_of(node, required)
+        if module is not None:
+            found.append((node.lineno, module))
+    return found
+
+
 def find_engine_imports(path, relative=None):
     """返回该文件中所有引擎导入的 (行号, 模块名)。
 
     `relative` 可显式给出（相对 `endernet/` 的路径），供守卫自身的正例
     用临时文件测试——那时文件不在仓库树里，`relative_path` 推不出来。
     """
-    # 必须显式指定 UTF-8：Windows 上 open() 默认用 GBK，源码里的中文注释会炸。
-    with io.open(path, "r", encoding="utf-8") as handle:
-        source = handle.read()
-    try:
-        tree = ast.parse(source, filename=path)
-    except SyntaxError:
-        return []
+    return _scan_nodes(path, relative, ast.walk)
 
-    if relative is None:
-        relative = relative_path(path)
-    required = required_level_for(relative)
-    found = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if is_engine_module(alias.name):
-                    found.append((node.lineno, alias.name))
-        elif isinstance(node, ast.ImportFrom):
-            if not node.level:
-                if is_engine_module(node.module):
-                    found.append((node.lineno, node.module or ""))
-                continue
-            # **相对导入也可能是引擎导入。**
-            #
-            # `tooldelta` 就在行为包里，所以领域层里写
-            # `from ....tooldelta.api.server.player import GetPlayerDimensionId`
-            # 是**能跑通**的——它既不触发「绝对导入」那条，层级也对。
-            # 但它的效果与绝对导入完全一样：领域层从此依赖引擎，
-            # 整个离线测试的前提没了。因此这里按层级解析：
-            # 相对层数正好回到 `endernet_scripts` 时，模块名就是顶层名。
-            if required and node.level == required:
-                if is_engine_module(node.module):
-                    found.append((node.lineno, "%s%s" % ("." * node.level, node.module)))
-    return found
+
+def find_module_level_engine_imports(path, relative=None):
+    """只看**模块顶层**的引擎导入（函数体里的不算）。
+
+    适配器必须一条都没有：适配器的约束不是「不许用引擎」，而是
+    「模块顶层不许 import 引擎」——引擎调用放在方法体内部，适配器模块
+    本身才能离线导入，`ServerBootstrap(bind_engine=False)` 也才能在
+    没有 `mod.server.*` 的环境里构造出整条链路。
+    """
+    return _scan_nodes(path, relative, lambda tree: tree.body)
 
 
 class TestDomainLayerIsEngineFree(unittest.TestCase):
@@ -143,6 +179,54 @@ class TestDomainLayerIsEngineFree(unittest.TestCase):
             if find_engine_imports(path):
                 offenders.append(relative)
         self.assertEqual(offenders, [], "引擎导入出现在非边界位置：%r" % (offenders,))
+
+    def test_no_module_level_engine_import_in_adapter(self):
+        """适配器的引擎导入必须留在方法体内，模块顶层 import 会毁掉离线测试。
+
+        「适配器在允许的目录里」只说明它**可以**碰引擎，不说明它碰的方式
+        无所谓：模块顶层 import 会让适配器自身无法离线导入，于是
+        `ServerBootstrap(bind_engine=False)` 构造不出来，整条链路在
+        没有 `mod.server.*` 的环境里就断了——而那些只查「目录对不对」的
+        守卫一条都不会响，**测试会全绿**。
+
+        **逐文件扫整个 `server/adapters/`，不是只看 `events.py`。**
+        「哪些文件算适配器」是会长大的：新加 `messages.py` 时它同样是适配器，
+        同样要受这条约束，而只审一个文件的写法不会发现它。
+        """
+        offenders = []
+        directory = os.path.join(ENDERNET_ROOT, "server", "adapters")
+        for name in sorted(os.listdir(directory)):
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(directory, name)
+            relative = relative_path(path)
+            for lineno, module in find_module_level_engine_imports(path, relative):
+                offenders.append("%s:%d %s" % (relative, lineno, module))
+        self.assertEqual(
+            offenders,
+            [],
+            "适配器模块顶层出现了引擎导入，离线测试会因此失效：\n  "
+            + "\n  ".join(offenders),
+        )
+
+    def test_there_are_adapters_to_check(self):
+        """守卫本身要有东西可守。"""
+        directory = os.path.join(ENDERNET_ROOT, "server", "adapters")
+        files = [n for n in os.listdir(directory) if n.endswith(".py")]
+        self.assertGreater(len(files), 2)
+
+    def test_module_level_scan_ignores_imports_inside_methods(self):
+        """正例：`events.py` 正是「方法体内导入」这个写法，必须扫不出东西。
+
+        反过来说，如果扫描改成 `ast.walk`，这条会失败——那正是它存在的
+        意义：两条规则共用一份层级判断，但**范围**必须不同。
+        """
+        path = os.path.join(ENDERNET_ROOT, "server", "adapters", "events.py")
+        self.assertEqual(find_module_level_engine_imports(path), [])
+        self.assertTrue(
+            find_engine_imports(path),
+            "events.py 里确实有引擎导入（在方法体内），全树扫描应当扫得到",
+        )
 
     def test_domain_packages_exist(self):
         """守卫本身要有东西可守；目录改名后这里会失败。"""
@@ -490,27 +574,6 @@ class TestEventClassMapping(unittest.TestCase):
             "本项目约定原版与自定义事件全部走 GetMCServerEventBus：\n  "
             + "\n  ".join(offenders),
         )
-
-    def test_no_module_level_engine_import_in_adapter(self):
-        """适配器的 tooldelta 导入必须留在方法体内，模块顶层 import 会毁掉离线测试。"""
-        from endernet.server.adapters import events as adapter
-
-        path = adapter.__file__
-        if path.endswith(".pyc"):
-            path = path[:-1]
-        with io.open(path, "r", encoding="utf-8") as handle:
-            tree = ast.parse(handle.read(), filename=path)
-
-        offenders = []
-        for node in tree.body:  # 只看模块顶层
-            if isinstance(node, ast.ImportFrom) and node.module == "tooldelta":
-                offenders.append((node.lineno, node.module))
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name.split(".")[0] == "tooldelta":
-                        offenders.append((node.lineno, alias.name))
-        self.assertEqual(offenders, [], "适配器顶层出现了 tooldelta 导入：%r" % (offenders,))
-
 
 class TestSourceFilesAreFound(unittest.TestCase):
     def test_source_files_are_discovered(self):
