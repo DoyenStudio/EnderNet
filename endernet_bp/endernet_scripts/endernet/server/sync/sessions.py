@@ -200,10 +200,17 @@ class Session(object):
         "transfer_cursor",
         "pending_deltas",
         "pending_delta_bytes",
+        #: `transfer_id -> {"packets": [(条目数, 字节数), ...], "acked": int}`。
+        #: 确认按**传输**而不是按会话记账：一次快照与一批增量同时在途时，
+        #: 只按会话记总量就分不清哪个包还没到。
+        "outstanding",
         "backlog_items",
         "backlog_bytes",
         "fail_count",
         "backoff_until_frame",
+        #: 服务端已判定本会话的缓存不可信，等着一份新快照。**置位期间不发
+        #: 增量**——发了也只会被客户端丢掉（它正要丢弃缓存）。
+        "must_resync",
         "close_reason",
     )
 
@@ -245,11 +252,13 @@ class Session(object):
         #: 快照期间到达的增量（有界暂存，见 `SyncPolicy`）。
         self.pending_deltas = []
         self.pending_delta_bytes = 0
+        self.outstanding = {}
         #: 慢客户端的积压计数（已发出但未确认的部分）。
         self.backlog_items = 0
         self.backlog_bytes = 0
         self.fail_count = 0
         self.backoff_until_frame = 0
+        self.must_resync = False
         self.close_reason = ""
 
     def touch(self, frame):

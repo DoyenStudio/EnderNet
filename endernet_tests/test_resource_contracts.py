@@ -360,10 +360,42 @@ class SyncMessageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             protocol.SyncEnvelope.from_dict(payload)
 
-    def test_s2c_messages_require_session_network_and_epoch(self):
-        """每个服务端→客户端包都必须能回答「这是谁的、哪一代的」。"""
+    def test_the_error_message_is_the_only_s2c_message_without_a_session(self):
+        """`error` 是那条规则**唯一的**例外，且它自带 `request_id`。
+
+        会话不存在、会话属于别人、协议版本对不上——这些情形下服务端根本
+        没有可填的会话与网络。若也要求非空，就只剩两条路：不发（客户端只
+        看到界面不响应），或者硬编一个假会话（客户端会以为那个会话存在）。
+        带上 `request_id` 之后它仍能挂回对应的那次请求，不是无名广播。
+        """
+        envelope = protocol.SyncEnvelope(protocol.SyncError("r1", protocol.Reason.SESSION_INVALID))
+        self.assertEqual(envelope.session_id, "")
+        self.assertEqual(envelope.network_id, "")
+        self.assertEqual(envelope.message.request_id, "r1")
+
+        # 例外**只此一条**：把空会话下仍被放行的种类列出来，它必须恰好是
+        # `error`。写成「排除 error 再检查其余」的话，将来多出第二个例外
+        # 也不会有人发现。
+        tolerated = []
         for message in self.every_message():
             if message.kind not in protocol.SERVER_TO_CLIENT_KINDS:
+                continue
+            try:
+                protocol.SyncEnvelope._validate(message, "", "", "", protocol.VIEW_ITEM)
+            except ValueError:
+                continue
+            tolerated.append(message.kind)
+        self.assertEqual(tolerated, [protocol.MSG_ERROR])
+
+    def test_s2c_messages_require_session_network_and_epoch(self):
+        """每个服务端→客户端包都必须能回答「这是谁的、哪一代的」。
+
+        `error` 不在此列（见上一条），其余一个都不能漏。
+        """
+        for message in self.every_message():
+            if message.kind not in protocol.SERVER_TO_CLIENT_KINDS:
+                continue
+            if message.kind == protocol.MSG_ERROR:
                 continue
             for field in ("session_id", "network_id", "epoch"):
                 envelope = protocol.SyncEnvelope(

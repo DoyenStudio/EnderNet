@@ -1737,6 +1737,13 @@ class SyncEnvelope(object):
             raise ValueError("未知的视图种类 %r" % (view_kind,))
         kind = message.kind
         if kind in SERVER_TO_CLIENT_KINDS:
+            # `error` 是**唯一的例外**：会话不存在、会话属于别人、协议版本
+            # 对不上，这些情形下服务端根本没有可填的会话与网络。它带
+            # `request_id`，客户端按它把错误挂回对应的那次请求（因此不是
+            # 「无名无姓的广播」）。若也要求非空，服务端就只能要么不发、
+            # 要么硬编一个假会话——后者会让客户端以为那个会话存在。
+            if kind == MSG_ERROR:
+                return
             require_text(session_id, "session_id")
             require_text(network_id, "network_id")
             require_text(epoch, "epoch")

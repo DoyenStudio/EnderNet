@@ -850,6 +850,27 @@ class StorageService(NetworkService):
         """物品视图是否有待发布变化。**不推进版本、不清空集合。**"""
         return bool(self.dirty_items)
 
+    def read_items(self, keys):
+        # type: (object) -> tuple
+        """按 `keys` 的顺序返回其中**当前仍然存在**的 `(key, stored, reserved)`。
+
+        发布窗口拿到脏键后要取各键的最新值，走这里而不是 `query()`：
+        `query()` 对不存在的键返回一份 0/0 的记录，与「存在但当前可用量为
+        0」在返回值上分不出来——而这两个结论在线上是 upsert 与 remove 的
+        区别。这里**返回的元组里没有的键就是已经消失的**，调用方据此构造
+        remove，不必再猜。
+
+        刻意不排序：调用方（`take_dirty_keys()`）给的已经是 canonical 序，
+        再排一次是白花时间；顺序即输入顺序。
+        """
+        out = []
+        for key in keys:
+            entry = self.item_totals.get(key)
+            if entry is None:
+                continue
+            out.append((key, entry[0], entry[1]))
+        return tuple(out)
+
     def iter_item_records(self):
         # type: () -> tuple
         """`((key, stored, reserved), ...)`，canonical 序，**只含物品键**。
