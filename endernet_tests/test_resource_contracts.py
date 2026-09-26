@@ -4,6 +4,8 @@ import copy
 import unittest
 
 import testsupport  # noqa: F401
+from endernet.common import protocol
+from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.resource_key import ResourceKey, canonical_tree, tree_text
 from endernet.common.item_codec import item_key, item_key_from_dict, item_dict_from_key, item_from_key, unbox_engine_value
 from endernet.common.protocol import StorageChanged
@@ -225,6 +227,237 @@ class DescriptionTests(unittest.TestCase):
         with self.assertRaises(ResourceResyncRequired):
             table.encode(ResourceKey.item("test:other"))
         self.assertEqual(table.resolve("session", 1), self.key)
+
+
+def wire_keys(value, out=None):
+    """递归收集一个线格式载荷里出现过的全部字段名。"""
+    if out is None:
+        out = set()
+    if isinstance(value, dict):
+        for name, item in value.items():
+            out.add(name)
+            wire_keys(item, out)
+    elif isinstance(value, list):
+        for item in value:
+            wire_keys(item, out)
+    return out
+
+
+class SyncMessageTests(unittest.TestCase):
+    """11-01 / 11-02 的线格式：两个版本各有其名，边界检查无条件执行。"""
+
+    def setUp(self):
+        self.sender = ResourceDescriptions("net", "epoch-1")
+        self.receiver = ResourceDescriptions("net", "epoch-1")
+        self.stone = ResourceKey.item("minecraft:stone")
+        self.dirt = ResourceKey.item("minecraft:dirt")
+        self.ref = DeviceRef(NodeKey(0, 1, 2, 3), 4)
+
+    def envelope_of(self, message):
+        """按消息方向补上必要路由字段，返回一个可上线的信封。"""
+        if message.kind in protocol.SERVER_TO_CLIENT_KINDS:
+            return protocol.SyncEnvelope(message, "s1", "net", "epoch-1")
+        session_id = "" if message.kind == protocol.MSG_SESSION_OPEN else "s1"
+        return protocol.SyncEnvelope(message, session_id)
+
+    def every_message(self):
+        """每种消息各一条实例。**新增种类忘了加进来会让下面几条用例失效**，
+        因此另有 `test_every_registered_kind_is_covered_here` 兜底。"""
+        return (
+            protocol.SessionOpen("r1", self.ref, 0),
+            protocol.SessionClose("r2"),
+            protocol.SnapshotRequest("r3", 7),
+            protocol.Ack("r4", "transfer-1", 3),
+            protocol.SessionReady(11, 12),
+            protocol.SnapshotBegin("snap-1", 12, 3),
+            protocol.SnapshotChunk("snap-1", 0, [(self.stone, 5, 1)]),
+            protocol.SnapshotEnd("snap-1", 2),
+            protocol.ItemDelta("batch-1", 0, 2, 12, 13, [(self.stone, 5, 1)], [self.dirt]),
+            protocol.ResyncRequired("stale_version", "缺口已回收"),
+            protocol.SyncError("r5", "stale_version", "期望版本过期"),
+        )
+
+    def test_every_registered_kind_is_covered_here(self):
+        covered = set(message.kind for message in self.every_message())
+        self.assertEqual(covered, set(protocol.sync_message_kinds()))
+
+    def test_message_kind_registry_matches_direction_sets(self):
+        """方向表与注册表必须覆盖同一批种类，且互不重叠。"""
+        self.assertEqual(
+            protocol.CLIENT_TO_SERVER_KINDS | protocol.SERVER_TO_CLIENT_KINDS,
+            set(protocol.sync_message_kinds()),
+        )
+        self.assertEqual(
+            protocol.CLIENT_TO_SERVER_KINDS & protocol.SERVER_TO_CLIENT_KINDS, set()
+        )
+
+    def test_no_bare_version_field_on_the_wire(self):
+        """**两个版本必须各有其名。**
+
+        同名是「客户端拿 UI 发布版本当交易预期版本」唯一可能的入口：
+        一旦线上有一个含义模糊的 `version`，两边各自往里面塞不同的东西
+        也能收发自如，而这种错在离线与真机都不会报错，只会让命令偶尔
+        被判成过期版本。
+
+        注意 `storage_changed` 通知里的 `version`（提交版本）不在此列——
+        它不是终端通道的一部分，也已有生产者之外的含义。
+        """
+        for message in self.every_message():
+            for descriptions in (None, self.sender):
+                payload = self.envelope_of(message).to_dict(descriptions)
+                self.assertNotIn(
+                    "version",
+                    wire_keys(payload),
+                    "%s 的载荷里出现了裸 version 字段" % (message.kind,),
+                )
+
+    def test_large_counts_survive_roundtrip_exactly(self):
+        """大数量不得经浮点往返。2^30 是验收里点名的量级。"""
+        for count in (0, 1, 64, 2 ** 30, 2 ** 30 + 1, protocol.PROTOCOL_MAX_COUNT):
+            sender = ResourceDescriptions("net", "epoch-1")
+            receiver = ResourceDescriptions("net", "epoch-1")
+            delta = protocol.ItemDelta("b", 0, 1, 1, 2, [(self.stone, count, 0)])
+            envelope = protocol.SyncEnvelope(delta, "s1", "net", "epoch-1")
+            restored = protocol.SyncEnvelope.from_dict(
+                envelope.to_dict(sender), receiver
+            )
+            self.assertEqual(restored.message.upserts[0][1], count)
+            self.assertIsInstance(restored.message.upserts[0][1], int)
+
+    def test_require_count_rejects_bool_negative_and_float(self):
+        for bad in (True, False, -1, 1.0, "3", None):
+            with self.assertRaises((TypeError, ValueError)):
+                protocol.require_count(bad, "count")
+        self.assertEqual(protocol.require_count(2 ** 30, "count"), 2 ** 30)
+        with self.assertRaises(ValueError):
+            protocol.require_count(protocol.PROTOCOL_MAX_COUNT + 1, "count")
+
+    def test_unknown_message_kind_is_rejected_not_ignored(self):
+        """静默忽略未知种类会把「协议版本不一致」表现成「界面不刷新」。"""
+        with self.assertRaises(ValueError):
+            protocol.decode_sync_message({"kind": "no_such_message"})
+        with self.assertRaises(ValueError):
+            protocol.decode_sync_message({"kind": None})
+
+    def test_spoofed_identity_field_is_rejected(self):
+        """消息体里自称的身份不是「被忽略」，而是**整条消息非法**。
+
+        只忽略的话，注入的字段会静静躺在那里，而任何一次「顺手读一下」
+        的改动都能让它生效。拒绝未知字段把这条路堵死在协议边界上。
+        """
+        payload = protocol.SessionOpen("r1", self.ref, 0).to_dict()
+        payload["player_id"] = "attacker"
+        with self.assertRaises(ValueError):
+            protocol.decode_sync_message(payload)
+        self.assertNotIn("player", protocol.SessionOpen("r1", self.ref, 0).to_dict())
+
+    def test_schema_version_is_validated_before_anything_else(self):
+        envelope = protocol.SyncEnvelope(
+            protocol.SessionReady(1, 2), "s1", "net", "epoch-1"
+        )
+        payload = envelope.to_dict()
+        payload["schema_version"] = protocol.SYNC_SCHEMA_VERSION + 1
+        with self.assertRaises(ValueError):
+            protocol.SyncEnvelope.from_dict(payload)
+
+    def test_s2c_messages_require_session_network_and_epoch(self):
+        """每个服务端→客户端包都必须能回答「这是谁的、哪一代的」。"""
+        for message in self.every_message():
+            if message.kind not in protocol.SERVER_TO_CLIENT_KINDS:
+                continue
+            for field in ("session_id", "network_id", "epoch"):
+                envelope = protocol.SyncEnvelope(
+                    message, "s1", "net", "epoch-1", protocol.VIEW_ITEM
+                )
+                setattr(envelope, field, "")
+                with self.assertRaises(ValueError, msg="%s 的 %s" % (message.kind, field)):
+                    protocol.SyncEnvelope._validate(
+                        envelope.message, envelope.session_id, envelope.network_id,
+                        envelope.epoch, envelope.view_kind,
+                    )
+
+    def test_c2s_messages_require_a_session_except_open(self):
+        self.assertIsNone(
+            protocol.SyncEnvelope._validate(
+                protocol.SessionOpen("r1", self.ref, 0), "", "", "", protocol.VIEW_ITEM
+            ),
+            "session_open 是唯一一条在会话存在之前发出的消息",
+        )
+        for message in (protocol.SessionClose("r2"), protocol.Ack("r3", "t", 0)):
+            with self.assertRaises(ValueError):
+                protocol.SyncEnvelope._validate(
+                    message, "", "", "", protocol.VIEW_ITEM
+                )
+
+    def test_order_view_is_known_but_not_yet_produced(self):
+        """`order` 是**已知**种类却没有生产者，与「发了个不认识的种类」不同。
+
+        前者要回 `unsupported`（还没做），后者是协议错误（发错了）。
+        把两者混成一条会让人以为订单视图只是坏了，而不是还没接。
+        """
+        self.assertIn(protocol.VIEW_ORDER, protocol.VIEW_KINDS)
+        self.assertNotIn(protocol.VIEW_ORDER, protocol.VIEW_KINDS_WITH_PRODUCER)
+        with self.assertRaises(ValueError):
+            protocol.SyncEnvelope._validate(
+                protocol.SessionReady(1, 2), "s1", "net", "epoch-1", "no_such_view"
+            )
+
+    def test_snapshot_and_delta_share_one_item_encoding(self):
+        """快照与增量走同一套条目编码，两条路径不会各自漂移。"""
+        for message in (
+            protocol.SnapshotChunk("snap-1", 0, [(self.stone, 5, 1)]),
+            protocol.ItemDelta("b", 0, 1, 1, 2, [(self.stone, 5, 1)]),
+        ):
+            payload = self.envelope_of(message).to_dict(self.sender)
+            entries = payload["message"].get("items") or payload["message"]["upserts"]
+            self.assertIn("resource_ref", entries[0])
+            self.assertEqual(entries[0]["stored"], 5)
+
+    def test_reserved_above_stored_is_rejected_on_the_wire(self):
+        payload = self.envelope_of(
+            protocol.SnapshotChunk("snap-1", 0, [(self.stone, 5, 1)])
+        ).to_dict(self.sender)
+        payload["message"]["items"][0]["reserved"] = 6
+        with self.assertRaises(ValueError):
+            protocol.SyncEnvelope.from_dict(payload, self.receiver)
+
+    def test_delta_packet_index_must_be_inside_the_batch(self):
+        with self.assertRaises(ValueError):
+            protocol.ItemDelta("b", 2, 2, 1, 2)
+        with self.assertRaises(ValueError):
+            protocol.ItemDelta("b", 0, 0, 1, 2)
+
+    def test_full_roundtrip_carries_keys_and_versions(self):
+        delta = protocol.ItemDelta(
+            "b", 1, 2, 12, 13, [(self.stone, 2 ** 30, 0)], [self.dirt]
+        )
+        envelope = protocol.SyncEnvelope(delta, "s1", "net", "epoch-1")
+        restored = protocol.SyncEnvelope.from_dict(
+            envelope.to_dict(self.sender), self.receiver
+        )
+        self.assertEqual(restored.message.base_version, 12)
+        self.assertEqual(restored.message.new_version, 13)
+        self.assertEqual(restored.message.packet_count, 2)
+        self.assertEqual(restored.message.upserts[0], (self.stone, 2 ** 30, 0))
+        self.assertEqual(restored.message.removes, (self.dirt,))
+        self.assertEqual(restored.epoch, "epoch-1")
+        self.assertEqual(restored.direction(), "s2c")
+        self.assertTrue(restored.message.is_last(), "1 是 2 个包里的最后一包")
+
+    def test_a_delta_referencing_an_unknown_serial_asks_for_resync(self):
+        """客户端解不出引用时必须走重同步，而不是猜一把键。
+
+        复现的是真实断档：服务端在某条**客户端没收到**的消息里首次
+        登记了这把键，于是之后的引用只剩序号、不带描述，客户端这时
+        才发现自己对不上。
+        """
+        self.sender.encode(self.stone)  # 登记过了，后续引用只带序号
+        payload = self.envelope_of(
+            protocol.ItemDelta("b", 0, 1, 1, 2, [(self.stone, 5, 0)])
+        ).to_dict(self.sender)
+        self.assertNotIn("description", payload["message"]["upserts"][0]["resource_ref"])
+        with self.assertRaises(ResourceResyncRequired):
+            protocol.SyncEnvelope.from_dict(payload, self.receiver)
 
 
 class RecoveryTests(unittest.TestCase):

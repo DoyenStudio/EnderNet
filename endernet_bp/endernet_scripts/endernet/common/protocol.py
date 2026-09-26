@@ -13,7 +13,7 @@
 并按实际数量提交（架构规划 6.3）。
 """
 
-from .resource_key import ResourceKey, _require_count
+from .resource_key import ResourceKey, _TEXT_TYPES, _require_count
 from . import settings
 
 # -- 结果状态 --------------------------------------------------------------
@@ -988,3 +988,826 @@ class CancelToken(object):
     @property
     def reason(self):
         return self._reason
+
+
+# -- 终端同步通道（11-01 / 11-02）------------------------------------------
+#
+# 客户端与终端服务端之间的**线格式**。它不是 `StorageChanged` 那类进程内
+# 通知：那里的订阅者是本进程的服务，这里的对端是客户端，字段一旦上线就
+# 得长期兼容，因此边界检查（数量范围、未知字段、未知消息种类）全部写在
+# 这里，且**解析时无条件执行**（`settings.DEBUG` 只管构造时的那一半，
+# 与 `StorageChanged` 的分工一致）。
+#
+# **两个版本在这一层必须各有其名，不允许出现裸 `version`。** 交易预期
+# 版本一律叫 `expected_index_version`，物品视图版本一律叫 `item_view_version`
+# 或增量的 `base_version`/`new_version`。名字不同是唯一的防线：同名的话
+# 「客户端拿 UI 发布版本当交易预期版本」在代码层面根本看不出来。
+
+SYNC_SCHEMA_VERSION = 1
+
+#: 客户端→服务端与 服务端→客户端 的事件名（`CustomC2SEvent` / `CustomS2CEvent`）
+SYNC_CHANNEL_C2S = "endernet:terminal_request"
+SYNC_CHANNEL_S2C = "endernet:terminal_sync"
+
+#: 视图种类。`order` **是已知种类**（消息词汇里为它留了位置），但尚无生产者，
+#: 因此与「客户端发来一个我们不认识的种类」必须给出不同的拒绝理由——
+#: 前者是 `Reason.UNSUPPORTED`（还没做），后者是协议错误（发错了）。
+VIEW_ITEM = "item"
+VIEW_ORDER = "order"
+VIEW_KINDS = (VIEW_ITEM, VIEW_ORDER)
+VIEW_KINDS_WITH_PRODUCER = (VIEW_ITEM,)
+
+MSG_SESSION_OPEN = "session_open"
+MSG_SESSION_CLOSE = "session_close"
+MSG_SNAPSHOT_REQUEST = "snapshot_request"
+MSG_ACK = "ack"
+MSG_SESSION_READY = "session_ready"
+MSG_SNAPSHOT_BEGIN = "snapshot_begin"
+MSG_SNAPSHOT_CHUNK = "snapshot_chunk"
+MSG_SNAPSHOT_END = "snapshot_end"
+MSG_ITEM_DELTA = "item_delta"
+MSG_RESYNC_REQUIRED = "resync_required"
+MSG_ERROR = "error"
+
+CLIENT_TO_SERVER_KINDS = frozenset(
+    [MSG_SESSION_OPEN, MSG_SESSION_CLOSE, MSG_SNAPSHOT_REQUEST, MSG_ACK]
+)
+SERVER_TO_CLIENT_KINDS = frozenset(
+    [
+        MSG_SESSION_READY,
+        MSG_SNAPSHOT_BEGIN,
+        MSG_SNAPSHOT_CHUNK,
+        MSG_SNAPSHOT_END,
+        MSG_ITEM_DELTA,
+        MSG_RESYNC_REQUIRED,
+        MSG_ERROR,
+    ]
+)
+
+#: 线格式数量上限。取双精度能精确表示整数的上界：再大就不能保证
+#: 经过任何一次 JSON 中转后仍与原值相等，而「大数量精确保留」是验收项。
+#: 注意这比 `resource_key._require_count` 严——那条只管住本地库存，
+#: 这条还要管住「对面解出来是不是同一个数」。
+PROTOCOL_MAX_COUNT = 2 ** 53 - 1
+
+
+def require_count(value, name):
+    # type: (object, str) -> int
+    """线格式数量校验：拒 bool / 非整数 / 负数 / 超出双精度整数范围。
+
+    判据的前三条与 `resource_key._require_count` 相同，改动要同步；
+    这里多出的第四条是线上特有的（见 `PROTOCOL_MAX_COUNT`）。
+    """
+    _require_count(value, name)
+    if value > PROTOCOL_MAX_COUNT:
+        raise ValueError(
+            "%s 超出线格式上限 %d，得到 %r" % (name, PROTOCOL_MAX_COUNT, value)
+        )
+    return value
+
+
+def require_text(value, name):
+    # type: (object, str) -> str
+    """非空文本校验。空串对身份类字段永远是错的（它等于「没说」）。"""
+    if not isinstance(value, _TEXT_TYPES) or not value:
+        raise ValueError("%s 必须是非空文本，得到 %r" % (name, value))
+    return value
+
+
+def _require_fields(data, required, label):
+    # type: (dict, tuple, str) -> None
+    """严格字段检查：**缺项与多项都拒绝**。
+
+    多项也拒绝是有意的。它让「消息里塞一个自称的 `player_id`」变成协议
+    错误而不是被静静忽略的字段——身份只能来自引擎附的 `__id__`，
+    那么任何试图在消息体里声明身份的做法都应当当场失败。
+    """
+    if not isinstance(data, dict):
+        raise TypeError("%s 必须是字典，得到 %r" % (label, type(data)))
+    present = set(data)
+    missing = [name for name in required if name not in present]
+    if missing:
+        raise ValueError("%s 缺少字段 %r" % (label, missing))
+    unknown = present - set(required)
+    if unknown:
+        raise ValueError("%s 出现未知字段 %r" % (label, sorted(unknown)))
+
+
+def _encode_item(descriptions, key, stored, reserved):
+    # type: (object, ResourceKey, int, int) -> dict
+    """快照与增量**共用**的条目编码，防止两条路径漂移。"""
+    require_count(stored, "stored")
+    require_count(reserved, "reserved")
+    if reserved > stored:
+        raise ValueError("Reserved count exceeds stored count")
+    if descriptions is None:
+        return {
+            "resource_key": key.canonical(),
+            "resource_description": key.to_dict(),
+            "stored": stored,
+            "reserved": reserved,
+        }
+    return {
+        "resource_ref": descriptions.encode(key),
+        "stored": stored,
+        "reserved": reserved,
+    }
+
+
+def _encode_remove(descriptions, key):
+    # type: (object, ResourceKey) -> dict
+    """`remove` 只带身份，不带数量——带数量会诱使对端把它当成「减到某个数」。"""
+    if descriptions is None:
+        return {
+            "resource_key": key.canonical(),
+            "resource_description": key.to_dict(),
+        }
+    return {"resource_ref": descriptions.encode(key)}
+
+
+def _decode_remove(data, descriptions=None):
+    # type: (dict, object) -> ResourceKey
+    if "resource_ref" in data:
+        _require_fields(data, ("resource_ref",), "item remove")
+        if descriptions is None:
+            raise ValueError("收到资源引用，但当前没有会话描述表")
+        return descriptions.decode(data["resource_ref"])
+    _require_fields(
+        data, ("resource_key", "resource_description"), "item remove"
+    )
+    key = ResourceKey.from_dict(data["resource_description"])
+    if data["resource_key"] != key.canonical():
+        raise ValueError("Resource fingerprint mismatch")
+    return key
+
+
+def _decode_item(data, descriptions=None):
+    # type: (dict, object) -> tuple
+    """`_encode_item` 的逆。**所有检查通过后才认这把键。**"""
+    if "resource_ref" in data:
+        _require_fields(data, ("resource_ref", "stored", "reserved"), "item entry")
+        if descriptions is None:
+            raise ValueError("收到资源引用，但当前没有会话描述表")
+        key = descriptions.decode(data["resource_ref"])
+    else:
+        _require_fields(
+            data, ("resource_key", "resource_description", "stored", "reserved"),
+            "item entry",
+        )
+        key = ResourceKey.from_dict(data["resource_description"])
+        if data["resource_key"] != key.canonical():
+            raise ValueError("Resource fingerprint mismatch")
+    stored = require_count(data["stored"], "stored")
+    reserved = require_count(data["reserved"], "reserved")
+    if reserved > stored:
+        raise ValueError("Reserved count exceeds stored count")
+    return key, stored, reserved
+
+
+class SyncMessage(object):
+    """同步消息的公共外层。**只放消息自己的字段**，路由字段在 `SyncEnvelope`。"""
+
+    kind = ""
+    __slots__ = ()
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        raise NotImplementedError
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> SyncMessage
+        raise NotImplementedError
+
+
+class SessionOpen(SyncMessage):
+    """客户端请求打开一个终端会话。
+
+    **消息体里没有玩家字段，这是有意的。** 服务端只认引擎在 C2S 事件上
+    附的 `__id__`；不定义该字段，就没有一处代码会去读它，也就没有
+    「忘了忽略它」的机会（`_require_fields` 还会把塞进来的这类字段
+    判为未知字段而拒收整条消息）。
+    """
+
+    kind = MSG_SESSION_OPEN
+    __slots__ = ("request_id", "device_ref", "dimension")
+
+    def __init__(self, request_id, device_ref, dimension):
+        if settings.DEBUG:
+            require_text(request_id, "request_id")
+            _require_count(dimension, "dimension")
+        self.request_id = request_id
+        self.device_ref = device_ref
+        self.dimension = dimension
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "request_id": self.request_id,
+            "device_ref": self.device_ref.to_dict(),
+            "dimension": self.dimension,
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> SessionOpen
+        from .identity import DeviceRef
+
+        _require_fields(
+            data, ("kind", "request_id", "device_ref", "dimension"), "session_open"
+        )
+        require_text(data["request_id"], "request_id")
+        _require_fields(
+            data["device_ref"], ("node_key", "generation"), "session_open.device_ref"
+        )
+        _require_count(data["dimension"], "dimension")
+        return cls(
+            data["request_id"],
+            DeviceRef.from_dict(data["device_ref"]),
+            data["dimension"],
+        )
+
+
+class SessionClose(SyncMessage):
+    kind = MSG_SESSION_CLOSE
+    __slots__ = ("request_id",)
+
+    def __init__(self, request_id):
+        if settings.DEBUG:
+            require_text(request_id, "request_id")
+        self.request_id = request_id
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {"kind": self.kind, "request_id": self.request_id}
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> SessionClose
+        _require_fields(data, ("kind", "request_id"), "session_close")
+        require_text(data["request_id"], "request_id")
+        return cls(data["request_id"])
+
+
+class SnapshotRequest(SyncMessage):
+    """请求（重新）取一份快照。`from_version` 是客户端当前的物品视图版本。
+
+    服务端据此判断能不能只补增量：缺口早于历史起点就只能重发快照。
+    """
+
+    kind = MSG_SNAPSHOT_REQUEST
+    __slots__ = ("request_id", "from_version")
+
+    def __init__(self, request_id, from_version):
+        if settings.DEBUG:
+            require_text(request_id, "request_id")
+            require_count(from_version, "from_version")
+        self.request_id = request_id
+        self.from_version = from_version
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "request_id": self.request_id,
+            "from_version": self.from_version,
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> SnapshotRequest
+        _require_fields(data, ("kind", "request_id", "from_version"), "snapshot_request")
+        require_text(data["request_id"], "request_id")
+        require_count(data["from_version"], "from_version")
+        return cls(data["request_id"], data["from_version"])
+
+
+class Ack(SyncMessage):
+    """确认某次传输里**连续到达**到的最大包序号。
+
+    只报最高连续序号（而不是逐包报），是因为丢掉中间某一包时后面的包
+    即使到了也不能算数——游标本来就只能按连续段推进。
+    """
+
+    kind = MSG_ACK
+    __slots__ = ("request_id", "transfer_id", "sequence")
+
+    def __init__(self, request_id, transfer_id, sequence):
+        if settings.DEBUG:
+            require_text(request_id, "request_id")
+            require_text(transfer_id, "transfer_id")
+            require_count(sequence, "sequence")
+        self.request_id = request_id
+        self.transfer_id = transfer_id
+        self.sequence = sequence
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "request_id": self.request_id,
+            "transfer_id": self.transfer_id,
+            "sequence": self.sequence,
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> Ack
+        _require_fields(
+            data, ("kind", "request_id", "transfer_id", "sequence"), "ack"
+        )
+        require_text(data["request_id"], "request_id")
+        require_text(data["transfer_id"], "transfer_id")
+        require_count(data["sequence"], "sequence")
+        return cls(data["request_id"], data["transfer_id"], data["sequence"])
+
+
+class SessionReady(SyncMessage):
+    """会话已建立，附带两个版本。
+
+    **两个版本都在这里，且名字不同**：客户端把它们存成两个属性，
+    提交命令时只能用 `index_version`。参见本节开头的说明。
+    """
+
+    kind = MSG_SESSION_READY
+    __slots__ = ("index_version", "item_view_version")
+
+    def __init__(self, index_version, item_view_version):
+        if settings.DEBUG:
+            require_count(index_version, "index_version")
+            require_count(item_view_version, "item_view_version")
+        self.index_version = index_version
+        self.item_view_version = item_view_version
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "index_version": self.index_version,
+            "item_view_version": self.item_view_version,
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> SessionReady
+        _require_fields(
+            data, ("kind", "index_version", "item_view_version"), "session_ready"
+        )
+        require_count(data["index_version"], "index_version")
+        require_count(data["item_view_version"], "item_view_version")
+        return cls(data["index_version"], data["item_view_version"])
+
+
+class SnapshotBegin(SyncMessage):
+    kind = MSG_SNAPSHOT_BEGIN
+    __slots__ = ("snapshot_id", "item_view_version", "total_items")
+
+    def __init__(self, snapshot_id, item_view_version, total_items):
+        if settings.DEBUG:
+            require_text(snapshot_id, "snapshot_id")
+            require_count(item_view_version, "item_view_version")
+            require_count(total_items, "total_items")
+        self.snapshot_id = snapshot_id
+        self.item_view_version = item_view_version
+        self.total_items = total_items
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "snapshot_id": self.snapshot_id,
+            "item_view_version": self.item_view_version,
+            "total_items": self.total_items,
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> SnapshotBegin
+        _require_fields(
+            data,
+            ("kind", "snapshot_id", "item_view_version", "total_items"),
+            "snapshot_begin",
+        )
+        require_text(data["snapshot_id"], "snapshot_id")
+        require_count(data["item_view_version"], "item_view_version")
+        require_count(data["total_items"], "total_items")
+        return cls(
+            data["snapshot_id"], data["item_view_version"], data["total_items"]
+        )
+
+
+class SnapshotChunk(SyncMessage):
+    kind = MSG_SNAPSHOT_CHUNK
+    __slots__ = ("snapshot_id", "chunk_index", "items")
+
+    def __init__(self, snapshot_id, chunk_index, items):
+        if settings.DEBUG:
+            require_text(snapshot_id, "snapshot_id")
+            require_count(chunk_index, "chunk_index")
+        self.snapshot_id = snapshot_id
+        self.chunk_index = chunk_index
+        self.items = tuple(items)
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "snapshot_id": self.snapshot_id,
+            "chunk_index": self.chunk_index,
+            "items": [
+                _encode_item(descriptions, key, stored, reserved)
+                for key, stored, reserved in self.items
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> SnapshotChunk
+        _require_fields(
+            data, ("kind", "snapshot_id", "chunk_index", "items"), "snapshot_chunk"
+        )
+        require_text(data["snapshot_id"], "snapshot_id")
+        require_count(data["chunk_index"], "chunk_index")
+        if not isinstance(data["items"], list):
+            raise TypeError("snapshot_chunk.items 必须是列表")
+        items = tuple(_decode_item(entry, descriptions) for entry in data["items"])
+        return cls(data["snapshot_id"], data["chunk_index"], items)
+
+
+class SnapshotEnd(SyncMessage):
+    """快照传输结束。
+
+    `chunk_count` 让客户端**不依赖「最后一个包一定到」**就能判断缺包：
+    收齐 `chunk_count` 个分片才算完整，否则重取。
+    """
+
+    kind = MSG_SNAPSHOT_END
+    __slots__ = ("snapshot_id", "chunk_count")
+
+    def __init__(self, snapshot_id, chunk_count):
+        if settings.DEBUG:
+            require_text(snapshot_id, "snapshot_id")
+            require_count(chunk_count, "chunk_count")
+        self.snapshot_id = snapshot_id
+        self.chunk_count = chunk_count
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "snapshot_id": self.snapshot_id,
+            "chunk_count": self.chunk_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> SnapshotEnd
+        _require_fields(
+            data, ("kind", "snapshot_id", "chunk_count"), "snapshot_end"
+        )
+        require_text(data["snapshot_id"], "snapshot_id")
+        require_count(data["chunk_count"], "chunk_count")
+        return cls(data["snapshot_id"], data["chunk_count"])
+
+
+class ItemDelta(SyncMessage):
+    """一个发布窗口的增量，可能拆成多包。
+
+    **一次窗口 = 一次版本推进。** 整批的所有包共享同一对
+    `base_version` / `new_version`，客户端**收齐 `packet_count` 个包才应用**，
+    缺包即断档。不采用「V→V+1→…→V+N 链式推进」：那会把一个窗口变成 N 次
+    版本推进，断档判定随之复杂化，而收益只是让单包能独立应用。
+    """
+
+    kind = MSG_ITEM_DELTA
+    __slots__ = (
+        "batch_id",
+        "packet_index",
+        "packet_count",
+        "base_version",
+        "new_version",
+        "upserts",
+        "removes",
+    )
+
+    def __init__(
+        self,
+        batch_id,
+        packet_index,
+        packet_count,
+        base_version,
+        new_version,
+        upserts=(),
+        removes=(),
+    ):
+        if settings.DEBUG:
+            require_text(batch_id, "batch_id")
+            require_count(packet_index, "packet_index")
+            require_count(packet_count, "packet_count")
+            require_count(base_version, "base_version")
+            require_count(new_version, "new_version")
+            if packet_count < 1:
+                raise ValueError("packet_count 至少为 1")
+            if packet_index >= packet_count:
+                raise ValueError("packet_index 越界")
+        self.batch_id = batch_id
+        self.packet_index = packet_index
+        self.packet_count = packet_count
+        self.base_version = base_version
+        self.new_version = new_version
+        self.upserts = tuple(upserts)
+        self.removes = tuple(removes)
+
+    def is_last(self):
+        # type: () -> bool
+        return self.packet_index == self.packet_count - 1
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "batch_id": self.batch_id,
+            "packet_index": self.packet_index,
+            "packet_count": self.packet_count,
+            "base_version": self.base_version,
+            "new_version": self.new_version,
+            "upserts": [
+                _encode_item(descriptions, key, stored, reserved)
+                for key, stored, reserved in self.upserts
+            ],
+            "removes": [
+                _encode_remove(descriptions, key) for key in self.removes
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> ItemDelta
+        _require_fields(
+            data,
+            (
+                "kind",
+                "batch_id",
+                "packet_index",
+                "packet_count",
+                "base_version",
+                "new_version",
+                "upserts",
+                "removes",
+            ),
+            "item_delta",
+        )
+        require_text(data["batch_id"], "batch_id")
+        packet_index = require_count(data["packet_index"], "packet_index")
+        packet_count = require_count(data["packet_count"], "packet_count")
+        if packet_count < 1:
+            raise ValueError("packet_count 至少为 1")
+        if packet_index >= packet_count:
+            raise ValueError("packet_index 越界")
+        base_version = require_count(data["base_version"], "base_version")
+        new_version = require_count(data["new_version"], "new_version")
+        if not isinstance(data["upserts"], list) or not isinstance(data["removes"], list):
+            raise TypeError("item_delta 的 upserts / removes 必须是列表")
+        # **先全部解析再交出对象**：中途失败不能留下半批效果。
+        upserts = tuple(
+            _decode_item(entry, descriptions) for entry in data["upserts"]
+        )
+        removes = tuple(
+            _decode_remove(entry, descriptions) for entry in data["removes"]
+        )
+        return cls(
+            data["batch_id"],
+            packet_index,
+            packet_count,
+            base_version,
+            new_version,
+            upserts,
+            removes,
+        )
+
+
+class ResyncRequired(SyncMessage):
+    """服务端判定客户端无法按增量追上，必须重取快照。
+
+    出现即意味着**客户端要丢弃当前缓存**，因此它总是先于新的
+    `snapshot_begin` 发出，不能与增量混在同一个批次里。
+    """
+
+    kind = MSG_RESYNC_REQUIRED
+    __slots__ = ("code", "detail")
+
+    def __init__(self, code, detail=""):
+        if settings.DEBUG:
+            require_text(code, "code")
+        self.code = code
+        self.detail = detail
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {"kind": self.kind, "code": self.code, "detail": self.detail}
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> ResyncRequired
+        _require_fields(data, ("kind", "code", "detail"), "resync_required")
+        require_text(data["code"], "code")
+        return cls(data["code"], data["detail"])
+
+
+class SyncError(SyncMessage):
+    """一次请求被拒绝。`code` 用 `Reason` 里的原因码。"""
+
+    kind = MSG_ERROR
+    __slots__ = ("request_id", "code", "detail")
+
+    def __init__(self, request_id, code, detail=""):
+        if settings.DEBUG:
+            require_text(code, "code")
+        self.request_id = request_id
+        self.code = code
+        self.detail = detail
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "request_id": self.request_id,
+            "code": self.code,
+            "detail": self.detail,
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> SyncError
+        _require_fields(data, ("kind", "request_id", "code", "detail"), "error")
+        require_text(data["code"], "code")
+        return cls(data["request_id"], data["code"], data["detail"])
+
+
+def _build_sync_message_types(classes):
+    # type: (tuple) -> dict
+    """建立 `kind -> 类` 注册表，并**当场拒绝重复的种类名**。
+
+    重复会让后一个类静静盖掉前一个，而两条消息的字段检查都还在——
+    表现成「某个方向的消息总是解析成另一条」，很难从现象追回这里。
+    """
+    table = {}
+    for message_class in classes:
+        kind = message_class.kind
+        if not kind:
+            raise ValueError("%s 没有 kind" % (message_class.__name__,))
+        if kind in table:
+            raise ValueError("同步消息种类重复：%r" % (kind,))
+        table[kind] = message_class
+    return table
+
+
+#: 消息种类注册表。**唯一事实来源**：`decode_sync_message` 用它解析，
+#: `sync_message_kinds()` 把它交给测试去和方向表对账。
+_SYNC_MESSAGE_TYPES = _build_sync_message_types(
+    (
+        SessionOpen,
+        SessionClose,
+        SnapshotRequest,
+        Ack,
+        SessionReady,
+        SnapshotBegin,
+        SnapshotChunk,
+        SnapshotEnd,
+        ItemDelta,
+        ResyncRequired,
+        SyncError,
+    )
+)
+
+
+def sync_message_kinds():
+    # type: () -> frozenset
+    """已注册的种类集合。给测试与方向表对账用。"""
+    return frozenset(_SYNC_MESSAGE_TYPES)
+
+
+def decode_sync_message(data, descriptions=None):
+    # type: (dict, object) -> SyncMessage
+    """按 `kind` 解析一条同步消息。**未知种类一律拒绝，不静默忽略。**
+
+    忽略未知种类会让「客户端用了新协议、服务端是旧的」表现成「界面一直
+    不刷新」——最难查的那种故障。这里当场报错，故障就落在协议边界上。
+    """
+    if not isinstance(data, dict):
+        raise TypeError("同步消息必须是字典，得到 %r" % (type(data),))
+    kind = data.get("kind")
+    message_class = _SYNC_MESSAGE_TYPES.get(kind)
+    if message_class is None:
+        raise ValueError("未知的同步消息种类 %r" % (kind,))
+    return message_class.from_dict(data, descriptions)
+
+
+class SyncEnvelope(object):
+    """同步包的外层：**路由字段 + 一个消息体**。
+
+    路由字段刻意**不放进消息体**（而是嵌套成 `message`），有两个好处：
+
+    1. 「每个服务端→客户端包都带 session_id 与 epoch」成为结构保证，
+       不必靠每条消息各自记得写一遍、也不会因为漏写而静默失效；
+    2. 消息体的字段检查只看得到自己的字段，未知字段的判定不会被
+       路由字段干扰。
+
+    方向（谁发给谁）由消息种类决定，因此**不额外下发一个 direction 字段**：
+    可推导的冗余字段迟早会和被推导的那个对不上。
+    """
+
+    __slots__ = ("message", "session_id", "network_id", "epoch", "view_kind")
+
+    def __init__(self, message, session_id="", network_id="", epoch="", view_kind=VIEW_ITEM):
+        if settings.DEBUG:
+            self._validate(message, session_id, network_id, epoch, view_kind)
+        self.message = message
+        self.session_id = session_id
+        self.network_id = network_id
+        self.epoch = epoch
+        self.view_kind = view_kind
+
+    @staticmethod
+    def _validate(message, session_id, network_id, epoch, view_kind):
+        # type: (SyncMessage, str, str, str, str) -> None
+        """方向相关的路由约束。构造与解析**共用**，两条路径不会分叉。"""
+        if view_kind not in VIEW_KINDS:
+            raise ValueError("未知的视图种类 %r" % (view_kind,))
+        kind = message.kind
+        if kind in SERVER_TO_CLIENT_KINDS:
+            require_text(session_id, "session_id")
+            require_text(network_id, "network_id")
+            require_text(epoch, "epoch")
+            return
+        if kind not in CLIENT_TO_SERVER_KINDS:
+            raise ValueError("未知的同步消息种类 %r" % (kind,))
+        # `session_open` 是唯一一条在会话存在之前发出的消息，
+        # 其余 C2S 消息必须带会话——否则服务端无从判断「这条是谁的」。
+        if kind != MSG_SESSION_OPEN:
+            require_text(session_id, "session_id")
+
+    def direction(self):
+        # type: () -> str
+        return (
+            "s2c" if self.message.kind in SERVER_TO_CLIENT_KINDS else "c2s"
+        )
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "schema_version": SYNC_SCHEMA_VERSION,
+            "session_id": self.session_id,
+            "network_id": self.network_id,
+            "epoch": self.epoch,
+            "view_kind": self.view_kind,
+            "message": self.message.to_dict(descriptions),
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> SyncEnvelope
+        _require_fields(
+            data,
+            (
+                "schema_version",
+                "session_id",
+                "network_id",
+                "epoch",
+                "view_kind",
+                "message",
+            ),
+            "sync envelope",
+        )
+        # 版本先于一切：拿旧解析器读新格式，最可能的后果是字段语义变了
+        # 而字段名没变，那是最危险的一种「能解析但意思不对」。
+        if data["schema_version"] != SYNC_SCHEMA_VERSION:
+            raise ValueError(
+                "不支持的同步协议版本 %r（本端为 %d）"
+                % (data["schema_version"], SYNC_SCHEMA_VERSION)
+            )
+        message = decode_sync_message(data["message"], descriptions)
+        # 解析路径的检查**无条件执行**：这是来自对面的数据，不能因为
+        # 本端没开 DEBUG 就把边界检查关掉。
+        cls._validate(
+            message,
+            data["session_id"],
+            data["network_id"],
+            data["epoch"],
+            data["view_kind"],
+        )
+        return cls(
+            message,
+            data["session_id"],
+            data["network_id"],
+            data["epoch"],
+            data["view_kind"],
+        )
+
+    def __repr__(self):
+        return "SyncEnvelope(%s, session=%r)" % (
+            self.message.kind,
+            self.session_id,
+        )
+
