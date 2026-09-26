@@ -30,6 +30,15 @@
 
 实现它属于 07-05，本次不做，接口按 `service_absent` 拒绝。
 
+**那条路已经有一条活的实现，07-05 落地时应当复用它**：
+`executor.OrderExecutor._port_stage()` 就是「构造一条设备发起的
+`CommandKind.STORAGE` 命令（`op_id` 稳定、经注入的 `PortGateway` 交出去）」，
+订单执行器现在正是靠它备料的。`push_inputs` 要做的是**同一件事**——
+因此它应当把 `(ref, key, count, op_id)` 交给同一个门面，
+而不是在 `PatternProviderPort` 里另写一份命令构造。多出来的那一份
+一旦与这份在 `op_id` 的形状上不一致，去重就会失效，而两边的账本
+各自都显示正常。
+
 ## 07-06 的槽位租约所有权属 09
 
 任务 07 原文与 09 文档都写明：执行器所有权属于 09，装配仓**不独立领取或释放
@@ -214,8 +223,9 @@ class PatternProviderPort(object):
         # type: () -> BlockReason
         return BlockReason(
             Reason.SERVICE_ABSENT,
-            "样板提供者的执行半边尚未实现：投料走 06 的 port_stage 命令"
-            "（需 09 的订单执行器驱动），本对象只提供只读的样板列表",
+            "样板提供者的执行半边尚未实现（07-05）：投料走 06 的 port_stage 命令、"
+            "由订单执行器驱动——订单那条路已经通了"
+            "（`crafting/executor.py` 的 `_port_stage`），本对象只提供只读的样板列表",
         )
 
     def describe(self):

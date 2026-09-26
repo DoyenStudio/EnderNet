@@ -1,5 +1,5 @@
 # coding=utf-8
-"""样板、配方与合成规划（任务 07、08）。
+"""样板、配方、合成规划与订单执行（任务 07、08、09）。
 
 模块分工：
 
@@ -10,9 +10,24 @@
   **它是只读计算**：不扣库存、不预留、不占真实槽位；两份输入（库存快照、
   样板快照）由调用方采集后交进来，因此它不认识 05 与 07 的实现——
   两份快照都会被**深拷贝成纯值**，这样规划结果不会被世界的变化悄悄改动。
+- `capacity.py` —— 处理器槽位与内存租约，以及订单的未定案旋钮。（09）
+  它**就是** `capabilities.ProcessingSlots` 与 `capabilities.Memory` 的实现：
+  那两个契约的方法本来就是网络级语义（按执行实例领用/释放），
+  因此不为每台处理器再建一个答不了领用问题的对象。
+- `jobs.py` —— 订单、步骤状态机、等待台账与订单集合。（09）**纯领域**：
+  不认识网络服务，一条命令都不发。
+- `executor.py` —— 分帧执行器与 `ServiceId.FACTORY` 的服务门面。（09）
+  本包**唯一会动真实资源**的那一层。
+
+**包内的依赖方向是一条线**：`jobs` ← `executor`，`capacity` ← `executor`，
+而 `executor` 反向依赖它们只通过构造注入的鸭子类型（规划器、样板索引、
+接口状态集合、命令网关、回流接收侧）。因此 08 的规划器与 07 的样板索引
+都不需要知道 09 的存在。
 
 **本包是领域层**：不得 import 引擎（`test_import_boundaries.py` 静态拦着）。
 引擎访问一律经注入的契约：容器走 `adapters/containers_engine.py` 的
 `ContainerProvider.container_at(node_key)`，容器变更通知走
-`adapters/events.py` 翻译进来的位置信号。
+`adapters/events.py` 翻译进来的位置信号。09 还要一扇**设备发起命令**的门
+（`port_stage` 必须经主控准入），那一扇同样是注入的（`PortGateway`），
+因此本包不 import `devices/io.py`。
 """

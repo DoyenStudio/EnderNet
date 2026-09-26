@@ -212,16 +212,23 @@ class ControllerFixture(unittest.TestCase):
 
     def builders(self):
         # type: () -> dict
-        """只换三个槽位，**工厂槽位保持默认替身**。
+        """三个槽位换成记录型服务，**工厂槽位显式装一个替身**。
 
-        有意留一个替身：这样「只检查这条命令要的那项服务」才有可验的对象，
-        而且它与「04/05/09 尚未实现」的真实装配形态一致。
+        **为什么是显式的替身而不是「保持默认」**：任务 09 之后默认表里的
+        工厂已经是正式实现，而它在这个夹具里 `is_ready()` 为假（没有规划器、
+        没有样板索引），于是 `order` 命令会得到 `service_not_ready` 而不是
+        `service_absent`——那是另一条闸门、另一个原因码。夹具要验的是
+        「这条命令要的那项服务不可用」，因此把「不可用」这件事**明写出来**，
+        而不是靠默认表恰好是什么样。
         """
         return {
             ServiceId.STORAGE: lambda runtime: self.make_service(ServiceId.STORAGE),
             ServiceId.SCHEDULER: lambda runtime: self.make_service(ServiceId.SCHEDULER),
             ServiceId.ENERGY: lambda runtime: RecordingEnergy(
                 ServiceId.ENERGY, self.energy_power
+            ),
+            ServiceId.FACTORY: lambda runtime: StandInService(
+                ServiceId.FACTORY, "09", "订单与执行"
             ),
         }
 
@@ -929,7 +936,12 @@ class TestChainBandwidth(ControllerFixture):
 
 class TestChainRouteBlocker(ControllerFixture):
     def test_order_without_a_factory_service_is_blocked(self):
-        """`ORDER` 要的是工厂服务，而它还没实现（夹具里故意留了替身）。"""
+        """`ORDER` 要的是工厂服务，而这张网络的工厂是不可用的（夹具装的是替身）。
+
+        **这条验的是闸门 12 的形状**，与「09 实现到什么程度」无关：
+        替身与「装了但没就绪」给的是两个不同的原因码（`service_absent` 与
+        `service_not_ready`），而对玩家都是同一句话——这条命令现在发不出去。
+        """
         result = self.submit(self.command(kind=CommandKind.ORDER, request_id="o1"))
         self.assertBlocked(result, Reason.SERVICE_ABSENT)
 

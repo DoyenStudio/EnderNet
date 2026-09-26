@@ -101,11 +101,11 @@
                                                         "anchor_to": "center",
                                                         "grid_dimensions": [
                                                             9,
-                                                            2
+                                                            1
                                                         ],
                                                         "offset": [
                                                             0,
-                                                            -40
+                                                            -24
                                                         ]
                                                     }
                                                 }

@@ -47,13 +47,19 @@ from endernet.server.network.services import (
     route_of,
 )
 
-#: 仍是替身的槽位。调度核心已在任务 04 落地、存储领域层已在任务 05 落地、
-#: 能源的固定耗能结算与供能判定也在任务 04 落地，**只剩工厂（09）没写**。
+#: 仍是替身的槽位。**任务 09 之后是空的**：调度核心在任务 04、存储领域层在
+#: 任务 05、能源的固定结算在任务 04 的能源增量、订单与执行在任务 09，
+#: 四个槽位都是正式实现。
+#:
+#: 留着这个常量（而不是把它删掉、让断言变成「列表为空」）是因为它是一处
+#: **会重新变成非空的位置**：新增一个服务槽位时，正确的做法是先让它以替身
+#: 出现，再把这里改成 `(那个槽位,)`。
 #:
 #: **「不是替身」与「能交付」是两件事**：能源是正式实现，但它带着两条未定
-#: 规则的替身口径（`EnergyPolicy`），因此仍然会被未定规则那一路拦下，
-#: 见 `test_energy` 与 `test_bootstrap` 的断言。
-STAND_IN_SLOTS = (ServiceId.FACTORY,)
+#: 规则的替身口径（`EnergyPolicy`）；工厂也是正式实现，但它的产物回流入口
+#: 还是任务 10 的具名替身（`AbsentReturns`）。两者都仍然会被未定规则或
+#: 替身那一路拦下，见 `test_energy` / `test_bootstrap` / `test_executor`。
+STAND_IN_SLOTS = ()
 
 
 class EchoService(NetworkService):
@@ -303,6 +309,10 @@ class TestServiceFactory(unittest.TestCase):
             registry.get(ServiceId.ENERGY).is_stand_in,
             "能源服务已落地（任务 04 的固定耗能结算与供能判定）",
         )
+        self.assertFalse(
+            registry.get(ServiceId.FACTORY).is_stand_in,
+            "订单与执行已落地（任务 09）",
+        )
         for service_id in STAND_IN_SLOTS:
             self.assertTrue(registry.get(service_id).is_stand_in)
         # 没有替身混进别的槽位。
@@ -338,33 +348,49 @@ class TestServiceFactory(unittest.TestCase):
         factory.replace(ServiceId.FACTORY, lambda runtime: EchoService(ServiceId.FACTORY))
         self.assertEqual(factory.stand_in_slots(), ())
 
-    def test_pending_tasks_match_the_documented_tasks(self):
-        """替身槽位对应的任务编号是可查的，界面才能说清「等哪个任务」。"""
+    def test_no_slot_is_a_stand_in_after_task_09(self):
+        """四个槽位都有正式实现了，待办表因此是空的。
+
+        **「空的」与「表坏了」必须能分开**：判据本身由下一条用例看守，
+        这一条只断言现状。少了下一条，「什么都没报」既可能是判据正确、
+        也可能是判据已经不生效了。
+        """
         pending = ServiceFactory().pending_tasks()
-        self.assertEqual(pending[ServiceId.FACTORY], "09")
-        # 调度核心（04）、存储领域层（05）与能源的固定结算（04）都已落地，
-        # 这三个槽位不该再被报成「等某个任务」——**「已落地」就够摘掉这一项**，
-        # 它们是否已定案由未定规则那一路管，两件事不混。
-        self.assertNotIn(ServiceId.SCHEDULER, pending)
-        self.assertNotIn(ServiceId.STORAGE, pending)
-        self.assertNotIn(ServiceId.ENERGY, pending)
+        self.assertEqual(pending, {})
+        for service_id in sorted(ServiceId.ALL):
+            self.assertNotIn(service_id, pending)
 
     def test_stand_in_slots_is_judged_by_instance_not_by_identity(self):
-        """默认构造器**本身**是正式实现时，身份判断就不成立了。
+        """两个条件同时成立才算替身：构造器仍是默认表里的那一个，
+        **且该槽位的默认实现本来就是替身**。
 
-        这是 04 带出来的一处真实退化：`stand_in_slots()` 原先比的是
+        第二个条件是 04 带出来的一处真实退化：`stand_in_slots()` 原先只比
         「构造器还是默认表里那一个」，而 SCHEDULER 的默认构造器现在是
         `SchedulerService`——它仍然「是默认的那一个」，却显然不是替身。
-        05 的 STORAGE 与 04 的 ENERGY 走的正是同一条路。
+        05 的 STORAGE、04 的 ENERGY 与 09 的 FACTORY 走的都是同一条路。
+
+        **任务 09 之后，四个槽位对第二个条件都不成立**，因此这里把「默认
+        待办表」临时改掉来验判据本身——不然这条断言会退化成「什么都没报」，
+        而那正是它要防的形态。
         """
+        import endernet.server.network.services as services_module
+
         factory = ServiceFactory()
-        self.assertNotIn(ServiceId.SCHEDULER, factory.stand_in_slots())
-        self.assertNotIn(ServiceId.STORAGE, factory.stand_in_slots())
-        self.assertNotIn(ServiceId.ENERGY, factory.stand_in_slots())
-        # 反向：替身槽位仍然被认出来，别把判据改成了「什么都不算替身」。
-        # 现在只剩 FACTORY 一个，它同时是这条反向断言唯一的证人——
-        # 它要是也没了，这条测试就再也证明不了判据还在起作用。
-        self.assertIn(ServiceId.FACTORY, factory.stand_in_slots())
+        self.assertEqual(factory.stand_in_slots(), ())
+
+        original = services_module.default_pending_tasks
+        services_module.default_pending_tasks = lambda: {ServiceId.ENERGY: "99"}
+        try:
+            # 默认表说 ENERGY 是替身，而构造器没被换过 → 报出来。
+            self.assertEqual(factory.stand_in_slots(), (ServiceId.ENERGY,))
+            # 换过构造器之后就不再算「默认替身」（身份那一半）。
+            factory.replace(
+                ServiceId.ENERGY, lambda runtime: EchoService(ServiceId.ENERGY)
+            )
+            self.assertEqual(factory.stand_in_slots(), ())
+        finally:
+            services_module.default_pending_tasks = original
+        self.assertEqual(factory.stand_in_slots(), ())
 
     def test_no_pending_tasks_after_full_override(self):
         builders = dict(
@@ -400,9 +426,14 @@ class TestProfileGuard(unittest.TestCase):
     """开发档与正式档的分界：替身与未定规则不得静默流入正式装配。"""
 
     def test_dev_tolerates_and_reports(self):
-        registry = ServiceRegistry()
+        """开发档把问题**列出来**而不是一句「有警告」。
+
+        这里用一份带替身的注册表而不是默认表：任务 09 之后默认表里一个替身
+        都没有了，拿它当样本会让这条断言退化成「什么都没报」——而
+        「替身会被报出来」正是它要验的判据，不能靠当前恰好没有替身来通过。
+        """
+        registry = ServiceRegistry([StandInService(ServiceId.FACTORY, "09", "订单")])
         problems = registry.assert_profile_ok(AssemblyProfile.DEV, BandwidthPolicy())
-        # 4 个替身 + 未定策略字段，逐条列出而不是一句「有警告」
         self.assertGreaterEqual(len(problems), 4)
         self.assertTrue(any("替身服务" in item for item in problems))
 
@@ -429,12 +460,24 @@ class TestProfileGuard(unittest.TestCase):
             registry.assert_profile_ok(AssemblyProfile.PRODUCTION, BandwidthPolicy())
 
     def test_error_message_names_the_unresolved_rules(self):
-        """报错要说清是哪些规则没定案，否则只能去翻代码。"""
-        registry = ServiceRegistry()
+        """报错要说清是哪些规则没定案、哪个槽位还是替身，否则只能去翻代码。"""
+        registry = ServiceRegistry([StandInService(ServiceId.FACTORY, "09", "订单")])
         with self.assertRaises(AssemblyError) as caught:
             registry.assert_profile_ok(AssemblyProfile.PRODUCTION, BandwidthPolicy())
         self.assertIn("R02", str(caught.exception))
         self.assertIn("替身服务", str(caught.exception))
+
+    def test_production_still_refuses_an_unresolved_policy_without_any_stand_in(self):
+        """**替身撤干净了也不等于正式档放行。**
+
+        任务 09 之后四个槽位都是正式实现，但 R02/R13 与 04/09 的那些未定项
+        一条都没定案。没有这条用例，撤离替身很容易被读成「正式档可以过了」。
+        """
+        registry = ServiceRegistry(
+            [EchoService(service_id) for service_id in sorted(ServiceId.ALL)]
+        )
+        with self.assertRaises(AssemblyError):
+            registry.assert_profile_ok(AssemblyProfile.PRODUCTION, BandwidthPolicy())
 
 
 if __name__ == "__main__":

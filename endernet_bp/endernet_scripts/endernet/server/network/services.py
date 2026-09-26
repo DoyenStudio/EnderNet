@@ -196,12 +196,16 @@ class NetworkService(object):
 
 
 class StandInService(NetworkService):
-    """尚未实现的服务槽位（当前只有 09 的工厂）。
+    """尚未实现的服务槽位。
+
+    **当前没有任何槽位在用它**（任务 09 之后四个槽位都有了正式实现），
+    但它是装配契约的一部分：新增一个槽位时，先让它以替身的样子出现，
+    比让它以一个「看起来正常但什么都不做」的空实现出现安全得多。
 
     **它不假装能用。** 登记节点时什么都不挂载，业务调用一律返回
     `SERVICE_ABSENT`，只有状态查询是有意义的。这样下游拿到的是
     「这个功能还没做」，而不是一份看起来正常的空库存——
-    后者会让 05 的替身数值被当成正式结果（全局约束 7）。
+    后者会让替身数值被当成正式结果（全局约束 7）。
     """
 
     is_stand_in = True
@@ -521,20 +525,19 @@ def default_pending_tasks():
     # type: () -> dict
     """`service_id -> 尚未实现该服务的任务编号`。**只列替身槽位。**
 
-    SCHEDULER 不在表里：调度核心已在任务 04 落地。STORAGE 也不在表里：
-    它的脚本领域层已在任务 05 落地（挂载、汇总索引、预留、受控读写）。
-    ENERGY 不在表里：能源服务的固定耗能结算与供能判定已落地（`network/energy.py`）。
-    **这不代表能源已经完整**——RF 计量（04-05）、断电暂停（04-06）与设备级
-    能源状态通知（04-08）仍未实现，它们写在那个模块的 `scope_note` 里；
-    而 DEV 档为了让网络真的能跑，给能源选了替身口径（`EnergyPolicy.dev_stand_in()`），
-    正式档照样拒绝。
+    **此刻是空的**——四个槽位都有正式实现了：SCHEDULER 在任务 04、
+    STORAGE 在任务 05、ENERGY 在任务 04 的能源增量、FACTORY 在任务 09。
+    表留着是因为它是一份**契约**（新增槽位时先在这里登记「为什么还不能用」），
+    而不是因为它现在还有内容。
 
-    **只有 FACTORY 还是「根本没写」**，因此业务命令被替身拦下的那条老路
-    现在只剩工厂一条；存储与转移命令拦在能源、带宽或工厂上，各有各的说法。
+    **「有实现」不等于「能玩」**：能源的 RF 计量（04-05）、断电暂停（04-06）
+    与设备级状态通知（04-08）仍未实现，写在 `network/energy.py` 的
+    `scope_note` 里；DEV 档为了让网络真的能跑给能源选了替身口径
+    （`EnergyPolicy.dev_stand_in()`），正式档照样拒绝。工厂侧的替身更具体——
+    产物回流入口还是任务 10 的具名替身（`AbsentReturns`），
+    装配仓执行是 07-06，两者都**不会**让订单看起来成功。
     """
-    return {
-        ServiceId.FACTORY: "09",
-    }
+    return {}
 
 
 def default_builders():
@@ -542,19 +545,21 @@ def default_builders():
     """`service_id -> callable(runtime) -> NetworkService` 的默认装配。
 
     返回的是**构造器**而不是实例：同一份装配表要能为多个运行时各造一套。
-    SCHEDULER / STORAGE / ENERGY 是正式实现，工厂仍是替身。
+    四个槽位都是正式实现（SCHEDULER / STORAGE / ENERGY / FACTORY）。
 
-    **这三个槽位的 `(None)` 裸构造都是合法的**：`default_stand_ins()` 会用
+    **每个槽位的 `(None)` 裸构造都是合法的**：`default_stand_ins()` 会用
     `None` 构造每个槽位，此时它们的 `is_ready()` 为假、业务给
-    `SERVICE_NOT_READY`——那是「装了但还没接上运行时/驱动器」，不是
-    「这个功能没写」。真正带有驱动器与策略的实例由启动层用
-    `_storage_builder()` / `_energy_builder()` 注入。
+    `SERVICE_NOT_READY`——那是「装了但还没接上运行时/驱动器」，
+    不是「这个功能没写」。真正带有驱动器、接口集合与规划器的实例由启动层用
+    `_storage_builder()` / `_factory_builder()` 注入。
 
-    **导入写在函数体里是有意的。** 本模块是契约层，`ticking.py`、`energy.py`
-    与 `storage/service.py` 是实现层，它们在模块级 import 本模块；若在这里也
-    模块级 import 回去就成环了。而 `default_builders()` 只在构造工厂/注册表时
-    被调用，不在导入期，因此函数内导入不引入环——**不要把它提到模块顶部**。
+    **导入写在函数体里是有意的。** 本模块是契约层，`ticking.py`、`energy.py`、
+    `storage/service.py` 与 `crafting/executor.py` 是实现层，它们在模块级
+    import 本模块；若在这里也模块级 import 回去就成环了。而
+    `default_builders()` 只在构造工厂/注册表时被调用，不在导入期，
+    因此函数内导入不引入环——**不要把它提到模块顶部**。
     """
+    from ..crafting.executor import FactoryService
     from ..storage.service import StorageService
     from .energy import EnergyService
     from .ticking import SchedulerService
@@ -567,10 +572,13 @@ def default_builders():
         ServiceId.SCHEDULER: SchedulerService,
         ServiceId.STORAGE: StorageService,
         ServiceId.ENERGY: EnergyService,
+        ServiceId.FACTORY: FactoryService,
     }
     for service_id in sorted(ServiceId.ALL - frozenset(out)):
+        # 四个槽位都有实现时这一轮是空的；留着它是为了让**新增槽位**时
+        # 忘记登记 pending 的代价是「说明为空」而不是装配直接 KeyError。
         out[service_id] = _stand_in_builder(
-            service_id, pending[service_id], notes[service_id]
+            service_id, pending.get(service_id, ""), notes.get(service_id, "")
         )
     return out
 

@@ -717,14 +717,9 @@ class TestRuntimeWiring(unittest.TestCase):
         self.build_network()
         report = self.server.diagnostics()
         self.assertEqual(report["assembly"]["profile"], AssemblyProfile.DEV)
-        self.assertEqual(
-            sorted(report["assembly"]["stand_ins"]),
-            [
-                # 调度核心（04）、存储领域层（05）与能源的固定结算（04）
-                # 都已落地，不再列在这里。**只剩工厂**。
-                "替身服务 factory（待任务 09 实现）",
-            ],
-        )
+        # 调度核心（04）、存储领域层（05）、能源的固定结算（04）与
+        # 订单执行（09）都已落地，四个槽位一个替身都不剩。
+        self.assertEqual(sorted(report["assembly"]["stand_ins"]), [])
         self.assertGreaterEqual(len(report["assembly"]["unresolved"]), 1)
         self.assertEqual(report["runtimes"]["count"], 1)
         self.assertIn("submitted", report["application"])
@@ -732,6 +727,11 @@ class TestRuntimeWiring(unittest.TestCase):
         self.assertIn("energy", report)
         self.assertEqual(report["energy"]["networks"], 1)
         self.assertEqual(report["energy"]["pending"], 1)
+        # 订单那一节（09）同理：**首要信息是「回流入口还没接线」**，
+        # 否则「订单为什么卡住」在最外层看起来像什么都没发生。
+        self.assertIn("order", report)
+        self.assertFalse(report["order"]["returns_sink"]["available"])
+        self.assertEqual(report["order"]["returns_sink"]["pending_task"], "10")
 
     def test_scope_note_says_the_network_cannot_be_used_yet(self):
         """诊断里必须写明「业务会被拒」，否则 DEV 档看起来像网络能用了。

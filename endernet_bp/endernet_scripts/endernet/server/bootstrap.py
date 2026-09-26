@@ -4,10 +4,15 @@
 对应任务 01-01、01-06 的入口与分帧补查部分，03 起接入主控与网络运行时。
 
 **本批次的范围。** 装配 01 的设备层、02 的拓扑/负载层、03 的主控与运行时、
-04 的调度核心与能源服务、05 的存储领域层、06 的转移与接口层、
-07 的样板层。网络服务里**只剩工厂是替身**
-（任务 09），因此**涉及工厂的业务命令仍会被拒绝**并给出 `service_absent`
-——这是诚实的结果，不是故障。所以默认装配档是 `AssemblyProfile.DEV`。
+04 的调度核心与能源服务、05 的存储领域层、06 的转移与接口层、07 的样板层、
+08 的合成规划与 09 的订单与执行。**四个网络服务槽位都是正式实现**，
+替身已经撤干净了。默认装配档仍是 `AssemblyProfile.DEV`：它本来是为
+替身服务留的，现在留着是因为**能源的替身口径**——库默认取保守的那一侧，
+而 DEV 档允许显式换成能跑得起来的那一侧。
+
+**「不是替身」不等于「能玩」。** 09 的产物回流入口还是任务 10 的具名替身
+（`AbsentReturns`），装配仓执行是 07-06，两者都**明确拒绝**而不是假装成功：
+订单会一路推进到「等待产物」然后如实阻塞并给出 `order_returns_absent`。
 
 **「已实现」不等于「已定案」。** 能源是正式实现，但它的两条策略字段仍是
 未定规则的替身口径，而库默认取的是保守的那一侧；游戏内由 `start_server()`
@@ -38,10 +43,18 @@ from .adapters.events import ServerEventBinder
 from .adapters.world import ToolDeltaWorldAdapter
 from .application import ApplicationService
 from .devices.catalog import DeviceCatalog
+from .crafting.capacity import OrderPolicy
+from .crafting.executor import AbsentReturns, FactoryService
 from .crafting.patterns import PatternPolicy
 from .crafting.planner import PlanPolicy, Planner
 from .crafting.store import PatternStore
-from .devices.io import PortPolicy, PortStore
+from .devices.io import (
+    TEMPLATE as PORT_TEMPLATE_ROLE,
+    PortGateway,
+    PortPolicy,
+    PortStore,
+    port_blocker,
+)
 from .devices.registry import DeviceRegistry
 from .devices.storage_driver import DriverPolicy, StorageDriverStore
 from .network.admission import AdmissionService
@@ -120,6 +133,39 @@ def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories
     return build
 
 
+def _factory_builder(policy, planner, patterns, ports, returns=None):
+    # type: (object, object, object, object, object) -> object
+    """把规划器、样板索引与接口状态集合绑进工厂服务的构造器。
+
+    这三样都是**全进程一份**的（它们本来就跨网络：样板装在方块里、
+    规划器没有节点、接口缓冲不能因为网络断开而消失），而服务槽位是逐运行时
+    各造一份的，因此注入的是同一批对象。**订单状态不在这里**——它在
+    `FactoryService.attach()` 里按 `component_id` 新建，两张网络绝不共享。
+
+    网关（`PortGateway`）**逐运行时新建**：它要绑的就是那一个运行时。
+    设备发起的命令因此走的还是主控那条路（准入 + 去重账本），
+    与 06 的接口轮询同一条。
+
+    `port_blocker` 与 `TEMPLATE` 也从这里注入：`crafting/` 是领域层，
+    不该 import 设备模块；而装配层两侧都看得见，正是接这根线的地方。
+    """
+    def build(runtime):
+        # type: (object) -> FactoryService
+        return FactoryService(
+            runtime,
+            policy=policy,
+            planner=planner,
+            patterns=patterns,
+            ports=ports,
+            gateway=PortGateway(runtime),
+            returns=returns if returns is not None else AbsentReturns(),
+            port_blocker=port_blocker,
+            template_role=PORT_TEMPLATE_ROLE,
+        )
+
+    return build
+
+
 class _PolicyBundle(object):
     """把几份未定案策略合成一份，交给 `assert_profile_ok` 一起检查。
 
@@ -177,6 +223,8 @@ class ServerBootstrap(object):
         transfer_policy=None,
         pattern_policy=None,
         plan_policy=None,
+        order_policy=None,
+        returns_sink=None,
         container_primitives=None,
         container_provider=None,
         inventory_provider=None,
@@ -250,6 +298,22 @@ class ServerBootstrap(object):
         #: 合在一起会让「哪条规则在拦我」查不出来。
         self.plan_policy = (
             plan_policy if plan_policy is not None else PlanPolicy()
+        )
+        #: 订单策略（R04/R09 的执行侧旋钮）。同样**全进程一份**：
+        #: `unresolved_report()` 报出来的必须就是真正生效的那份数值。
+        #: 它与规划策略是两份——规划回答「要几个批次、缺什么」，
+        #: 订单回答「一个订单占几个槽位、几个订单一块推进、返还物算不算完成」。
+        self.order_policy = (
+            order_policy if order_policy is not None else OrderPolicy()
+        )
+        #: 产物回流的接收侧（任务 10）。**默认是明确报「没接上」的替身**：
+        #: 订单因此会停在等待产物并给出 `ORDER_RETURNS_ABSENT`，而不是
+        #: 假装收到。离线测试注入具名假回流来驱动状态机（09 文档允许）；
+        #: 生产装配**不接受**一个什么都不做的假实现。
+        #: 这里把替身**当成默认值真的造出来**，而不是留一个 `None`：
+        #: `None` 在诊断里与「接了但对象是空的」看起来一样。
+        self.returns_sink = (
+            returns_sink if returns_sink is not None else AbsentReturns()
         )
         #: 容器与背包的引擎原语。**构造是安全的、调用必须在游戏里**——
         #: `EngineItemPrimitives` 把引擎 import 放在方法体内，因此离线也能
@@ -340,6 +404,13 @@ class ServerBootstrap(object):
                         self.inventories,
                     ),
                     ServiceId.ENERGY: _energy_builder(self.energy_policy),
+                    ServiceId.FACTORY: _factory_builder(
+                        self.order_policy,
+                        self.planner,
+                        self.patterns,
+                        self.ports,
+                        self.returns_sink,
+                    ),
                 }
             )
         # 运行时管理器**必须在 `AdmissionService` 之后构造**：两者都订阅
@@ -707,6 +778,7 @@ class ServerBootstrap(object):
             "io": self.io_diagnostics(),
             "pattern": self.pattern_diagnostics(),
             "plan": self.plan_diagnostics(),
+            "order": self.order_diagnostics(),
             "energy": self.energy_diagnostics(),
             "world": self.world.diagnostics(),
             "scope_note": (
@@ -719,14 +791,21 @@ class ServerBootstrap(object):
                 "任务 07 的样板层（配方结构与编解码、9 格读写、"
                 "产物到提供者的索引、样板槽拒收），"
                 "以及任务 08 的合成规划（批次与余量、库存优先、多级依赖与共享"
-                "子需求、环检测与有界失败、可分帧推进与提交前复核凭据）；"
+                "子需求、环检测与有界失败、可分帧推进与提交前复核凭据）、"
+                "任务 09 的订单与执行（状态机、提交时复核与独占预留、"
+                "槽位与内存租约、分帧备料与派发、暂停取消与重验）；"
                 "装配档位 %s。**接口接触真实引擎的那一段（箱子、背包、其他模组的"
                 "物流）没有在游戏内实测过**，流体路径则整条未接入（13-03）。"
-                "存档后端与界面同步尚未接入（任务 12/11），工厂仍是替身（任务 09），"
-                "能源则**只做完了固定部分**（04-05/06/08 未实现）。"
-                "**样板只做完了「读」的那半边**：执行侧（投料与回流）依赖 09，"
-                "预设配方适配（07-03）与编辑界面（11）都未开始，因此样板目前"
-                "只能看不能用——`debug_query(\"pattern\")` 查得到 9 格里有什么。"
+                "**四个服务槽位都已是正式实现**（工厂的替身已随任务 09 撤掉），"
+                "但「不是替身」不等于「能玩」："
+                "产物回流入口还是任务 10 的具名替身（`AbsentReturns`），"
+                "因此订单会一路推进到「等待产物」然后**如实阻塞**并给出"
+                "order_returns_absent——那不是缺料、也不是机器坏了，"
+                "是那一半还没写；装配仓执行是 07-06，同样明确拒绝。"
+                "存档后端与界面同步尚未接入（任务 12/11）。"
+                "预设配方适配（07-03）与样板编辑界面（11）都未开始，"
+                "因此样板目前只能看不能用——`debug_query(\"pattern\")`"
+                "查得到 9 格里有什么。"
                 "因此网络能不能开工，取决于当地那台网络的能源判定与带宽判定："
                 "判定为「待确认」时业务命令被拒并给出"
                 "energy_unavailable / bandwidth_unknown——**那是「算不出来」，"
@@ -832,6 +911,25 @@ class ServerBootstrap(object):
         report["pattern_policy"] = self.pattern_policy.describe()
         return report
 
+    def order_diagnostics(self):
+        # type: () -> dict
+        """订单层诊断（09）。
+
+        **只给策略、替身口径与各网络的合计**：逐张订单的内容属于那台网络的
+        工厂服务（订单是每网络一份的状态），不该在启动层再存一份。
+        想看某张订单走 `debug_query("order", component_id=..., order_id=...)`。
+
+        这里最要紧的一条是 `returns_sink`：它把「回流入口是替身」这件事
+        摆在启动层的诊断里，而不是只藏在某个网络的服务里——否则
+        「订单为什么不动」在最外层看起来像什么都没发生。
+        """
+        return {
+            "policy": self.order_policy.describe(),
+            "unresolved": self.order_policy.unresolved_report(),
+            "returns_sink": self.returns_sink.describe(),
+            "runtimes": self.runtimes.order_view(),
+        }
+
     def energy_diagnostics(self):
         # type: () -> dict
         """能源诊断（04-04）。
@@ -891,7 +989,8 @@ class ServerBootstrap(object):
                 "替身服务 %s（待任务 %s 实现）" % (service_id, pending[service_id])
                 for service_id in sorted(pending)
             ],
-            # 四份策略一起报：只报带宽那一份会让 R07/R08/R10 在正式验收时漏网。
+            # 全部策略一起报：只报带宽那一份会让 R04/R05/R07/R08/R09/R10/R11
+            # 在正式验收时漏网。
             "unresolved": self.policy_bundle().unresolved_report(),
             "storage_unresolved": (
                 self.driver_policy.unresolved_report()
@@ -921,6 +1020,11 @@ class ServerBootstrap(object):
                 self.energy_policy,
                 self.port_policy,
                 self.transfer_policy,
+                # 09 的订单策略带的是 R04（槽位/内存计费）与 R09 的执行侧
+                # （返还物算不算完成）。**它与样板策略是两份**：样板策略回答
+                # 「这份配方里哪些输入要备料」，订单策略回答「一个订单占几个
+                # 槽位、计多少内存、返还物到齐才算完成」。
+                self.order_policy,
                 # 07 的样板策略带的是 R09（无限燃料、返还物规则、两类样板
                 # 适用范围）。少放一份的代价是正式验收时那三条漏网，
                 # 而它们正是全局约束 7 最怕的形态。
@@ -938,7 +1042,7 @@ class ServerBootstrap(object):
         """正式验收用的装配期检查。**不会被自动调用**（与 03 同一条理由：
         抛错会让正式档整个起不来，而运行期拦截给出的「待确认」更有用）。
 
-        把四份策略一起交出去，否则 `PRODUCTION` 档会放行带未定案数值的存储
+        把全部策略一起交出去，否则 `PRODUCTION` 档会放行带未定案数值的存储
         或能源，而「漏报」正是全局约束 7 最怕的形态。**替身服务**这一项同理：
         能源虽然是正式实现，但它仍是替身口径（`dev_stand_in()`）时会被策略
         那一路拦下，而不是靠「不是替身所以放行」。

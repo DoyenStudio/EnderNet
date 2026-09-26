@@ -1156,12 +1156,14 @@ class TestAssembly(unittest.TestCase):
         self.server.push(NormalizedEvent.place(key(0, 65), DRIVER_DEVICE_ID))
         return self.server.tick()
 
-    def test_storage_is_no_longer_a_stand_in(self):
+    def test_no_service_slot_is_a_stand_in_any_more(self):
+        """任务 09 之后四个槽位都是正式实现，装配表里一个替身都不剩。
+
+        **「没有替身」不等于「能玩」**：这一条只断言槽位。能玩与否仍然卡在
+        能源判定、带宽判定与回流入口（任务 10）那几处，各自的诊断里都写着。
+        """
         report = self.server.diagnostics()
-        self.assertEqual(
-            sorted(report["assembly"]["stand_ins"]),
-            ["替身服务 factory（待任务 09 实现）"],
-        )
+        self.assertEqual(sorted(report["assembly"]["stand_ins"]), [])
         self.assertEqual(
             report["assembly"]["slots"], ["energy", "factory", "scheduler", "storage"]
         )

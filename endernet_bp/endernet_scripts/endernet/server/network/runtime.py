@@ -1127,6 +1127,76 @@ class RuntimeManager(object):
         )
         return report
 
+    def order_view(self):
+        # type: () -> dict
+        """汇总各网络的订单状态（09），供诊断与任务 14 的验收读取。
+
+        只统计**正式实现**的服务，理由与 `scheduler_view()` 同：替身槽位
+        根本没有订单可言，把它算进来会让「0 张订单」既可能是真的没有、
+        也可能是还没写。
+
+        **`returns_absent` 单列一项**，因为它是 09 这个增量里最容易被读错
+        的状态：回流入口（任务 10）还没接线时，订单会一路推进到「等待产物」
+        然后停住，而那看起来**像缺料或机器坏了**。把它显式报出来，
+        「订单为什么不动」在最外层才答得上来。
+        """
+        report = {
+            "networks": 0,
+            "orders": 0,
+            "live": 0,
+            "by_status": {},
+            "waiting_instances": 0,
+            "slots": 0,
+            "memory": 0,
+            #: 进度合计：**已完成的配方数 / 计划里配方树的总配方数**。
+            #: 两个数一起给，不直接给一个平均比例——平均会让
+            #: 「10/10 完成」与「0/5 完成」拼成 50%，而那份一张都没做。
+            "steps_completed": 0,
+            "steps_total": 0,
+            "returns_absent": 0,
+            #: 没有可汇总指标的**非替身**服务数。与 0 分开的理由同
+            #: `scheduler_view()`：缺项不等于 0。
+            "unreported": 0,
+            "per_network": {},
+        }
+        for component_id in sorted(self._runtimes):
+            service = self._runtimes[component_id].services.get(ServiceId.FACTORY)
+            if service is None or service.is_stand_in:
+                continue
+            detail = service.diagnostics()
+            store = detail.get("order_store")
+            if store is None:
+                report["unreported"] += 1
+                continue
+            report["networks"] += 1
+            counter = store.get("by_status") or {}
+            for status in sorted(counter):
+                report["by_status"][status] = (
+                    report["by_status"].get(status, 0) + counter[status]
+                )
+            waiting = detail.get("waiting") or {}
+            pending = int(waiting.get("pending") or 0)
+            report["orders"] += int(store.get("orders") or 0)
+            report["live"] += int(detail.get("orders") or 0)
+            report["waiting_instances"] += pending
+            report["slots"] += int(detail.get("slots") or 0)
+            report["memory"] += int(detail.get("memory") or 0)
+            progress = detail.get("progress") or {}
+            report["steps_completed"] += int(progress.get("steps_completed") or 0)
+            report["steps_total"] += int(progress.get("steps_total") or 0)
+            if not detail.get("returns_wired"):
+                report["returns_absent"] += 1
+            report["per_network"][component_id] = {
+                "by_status": counter,
+                "live": detail.get("orders"),
+                "slots": detail.get("slots"),
+                "memory": detail.get("memory"),
+                "returns": detail.get("returns"),
+                "waiting": waiting,
+                "progress": progress,
+            }
+        return report
+
     # -- 诊断 ----------------------------------------------------------
 
     def status_view(self, component_id=None):

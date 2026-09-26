@@ -80,6 +80,13 @@ DEBUG_OPS = frozenset(
         #:    安全地做成一条查询——这也是它敢放在只读白名单里的唯一理由。
         #:    订单的提交与派发属 09，不在这里。
         "plan",
+        #: 订单台账与等待明细（09）。**只读**：本入口一条命令都不发、
+        #: 一张订单都不推进，只读工厂服务自己的状态。存在的理由与 `port` /
+        #: `pattern` 同一条（全局约束 9）：订单命令走 `CommandKind.ORDER`，
+        #: 必须过主控准入，因此没有主控的网络拿不到答案，而那恰恰是
+        #: 「订单为什么不动」最需要被回答的时候。
+        #: 下单、取消、暂停、继续仍然只能走主控那条写路径。
+        "order",
     ]
 )
 
@@ -366,6 +373,8 @@ class ApplicationService(object):
             return self._run_pattern_query(kwargs)
         if op == "plan":
             return self._run_plan_query(kwargs)
+        if op == "order":
+            return self._run_order_query(kwargs)
         # 白名单与非白名单之间没有第三条路：走到这里说明 DEBUG_OPS 加了
         # 一项却没在 `_run_query` 里实现，那是个缺陷，不该静默返回空。
         raise NotImplementedError("调试操作 %r 已在白名单中但未实现" % (op,))
@@ -508,6 +517,66 @@ class ApplicationService(object):
                 "这是只读预览：计划的槽位与内存是**估计值**（不是已预留），"
                 "订单的提交、预留与派发属任务 09，本入口一个都不做。"
             ),
+        }
+
+    def _run_order_query(self, kwargs):
+        # type: (dict) -> dict
+        """订单台账的**只读**视图（09）。
+
+        参数：
+
+        - `component_id`：看哪张网络。不给时汇总全部网络——每张网络的订单
+          台账是它自己的工厂服务持有的，因此没有「全局订单列表」这种东西，
+          这里只是把它们拼在一起读。
+        - `order_id`：只看某一张订单（**必须同时给 `component_id`**，
+          因为订单 ID 只在所属网络里唯一）。
+        - `status`：按状态过滤（只在列表形态下有意义）。
+
+        **这不是业务入口**：它一条命令都不发、一张订单都不推进，只读工厂
+        服务的状态。下单、取消、暂停、继续走 `CommandKind.ORDER`，
+        必须过主控准入——因此它们在网络不能工作时发不出去，而那正是
+        这里另开一条只读路径的理由（与 `port` / `pattern` / `plan` 同形）。
+
+        订单不动时最该被看见的是 `returns`：回流入口（任务 10）还没接线，
+        订单会**如实**停在「等待产物」而不是假装收到。少了这一项，
+        「订单为什么卡住」在最外层看起来会像缺料或机器坏了。
+        """
+        component_id = kwargs.get("component_id")
+        order_id = kwargs.get("order_id")
+        if component_id is not None and order_id is not None:
+            runtime = self.runtimes.runtime(component_id)
+            if runtime is None:
+                return {"error": "没有这个网络", "component_id": component_id}
+            service = runtime.services.get(ServiceId.FACTORY)
+            if service is None:
+                return {"error": "该网络没有装配工厂服务", "component_id": component_id}
+            return service.query("detail", {"order_id": order_id})
+        if component_id is not None:
+            runtime = self.runtimes.runtime(component_id)
+            if runtime is None:
+                return {"error": "没有这个网络", "component_id": component_id}
+            service = runtime.services.get(ServiceId.FACTORY)
+            if service is None:
+                return {"error": "该网络没有装配工厂服务", "component_id": component_id}
+            return service.query("list", {"status": kwargs.get("status")})
+
+        # 没有指定网络：把每张网络的视图拼起来。**逐网络分开呈现**，
+        # 不合并成一份「全部订单」——订单 ID 只在所属网络里唯一，
+        # 合并会让两个网络各自的 `order@1/.../1` 看起来是同一张单。
+        views = {}
+        for runtime in self.runtimes.runtimes():
+            if runtime is None:
+                continue
+            service = runtime.services.get(ServiceId.FACTORY)
+            if service is None:
+                continue
+            views[runtime.component_id] = service.query(
+                "list", {"status": kwargs.get("status")}
+            )
+        return {
+            "component_id": None,
+            "networks": views,
+            "note": "未指定 component_id，逐网络列出；订单 ID 只在所属网络内唯一",
         }
 
     def _plan_inventory(self, runtime):

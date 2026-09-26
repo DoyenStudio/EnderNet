@@ -1,124 +1,162 @@
 {
-    "namespace": "factoric_terminal_panel_ui",
     "content": {
         "type": "panel",
+        "size": [
+            180.0,
+            200.0
+        ],
         "layer": 1,
         "controls": [
             {
-                "flying_item_renderer@common.flying_item_renderer": {
-                    "layer": 11,
+                "bg@common.dialog_background_opaque": {
+                    "layer": 0,
+                    "texture": "textures/ui/endernet/background_panel_opaque"
+                }
+            },
+            {
+                "title": {
+                    "type": "image",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
                     "size": [
-                        0,
-                        0
-                    ]
-                }
-            },
-            {
-                "container_gamepad_helpers@common.container_gamepad_helpers": {
-                    "layer": 3
-                }
-            },
-            {
-                "selected_item_details_factory@common.selected_item_details_factory": {
-                    "layer": 4,
-                    "size": [
-                        0,
-                        0
-                    ]
-                }
-            },
-            {
-                "item_lock_notification_factory@common.item_lock_notification_factory": {
-                    "size": [
-                        0,
-                        0
-                    ]
-                }
-            },
-            {
-                "root_panel@common.root_panel": {
+                        78.0,
+                        16.0
+                    ],
+                    "layer": 1,
+                    "texture": "textures/ui/endernet/device_title_background",
                     "controls": [
                         {
-                            "bg@common.dialog_background_opaque": {
-                                "controls": [
-                                    {
-                                        "close@common.close_button": {
-                                            "size": [
-                                                18,
-                                                18
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "main": {
-                                            "type": "panel",
-                                            "controls": [
-                                                {
-                                                    "title": {
-                                                        "type": "image",
-                                                        "anchor_from": "top_left",
-                                                        "anchor_to": "top_left",
-                                                        "size": [
-                                                            74.0,
-                                                            16.0
-                                                        ],
-                                                        "layer": 1,
-                                                        "texture": "textures/ui/endernet/background_panel_2_flat",
-                                                        "controls": [
-                                                            {
-                                                                "title_text": {
-                                                                    "type": "label",
-                                                                    "anchor_from": "top_left",
-                                                                    "anchor_to": "top_left",
-                                                                    "offset": [
-                                                                        3.0,
-                                                                        3.0
-                                                                    ],
-                                                                    "color": [
-                                                                        0.3058823529411765,
-                                                                        0.2549019607843137,
-                                                                        0.3137254901960784
-                                                                    ],
-                                                                    "font_scale_factor": 1.2,
-                                                                    "font_type": "default",
-                                                                    "text": "tile.endernet:factoric_terminal_panel.name",
-                                                                    "text_alignment": "center"
-                                                                }
-                                                            }
-                                                        ]
-                                                    }
-                                                },
-                                                {
-                                                    "stat_bar@endernet_ui_common.device_stat_bar": {
-                                                        "offset": [
-                                                            84,
-                                                            1
-                                                        ]
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "inventory@endernet_container_common.inventory": {
-                                            "anchor_from": "bottom_middle",
-                                            "anchor_to": "bottom_middle",
-                                            "offset": [
-                                                0,
-                                                -4
-                                            ]
-                                        }
-                                    }
+                            "title_text": {
+                                "type": "label",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    3.0,
+                                    3.0
                                 ],
-                                "layer": 0,
-                                "texture": "textures/ui/endernet/background_panel_opaque"
+                                "color": [
+                                    0.3058823529411765,
+                                    0.2549019607843137,
+                                    0.3137254901960784
+                                ],
+                                "font_scale_factor": 1.2,
+                                "font_type": "default",
+                                "text": "tile.endernet:factoric_terminal_panel.name",
+                                "text_alignment": "center"
                             }
                         }
+                    ]
+                }
+            },
+            {
+                "stat_bar@endernet_ui_common.device_stat_bar": {
+                    "offset": [
+                        84,
+                        1
+                    ]
+                }
+            },
+            {
+                "close@endernet_ui_common.close_btn": {
+                    "anchor_from": "top_right",
+                    "anchor_to": "top_right",
+                    "offset": [
+                        -4,
+                        4
+                    ]
+                }
+            },
+            {
+                "active_orders_tip": {
+                    "type": "label",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        10.0,
+                        22.0
                     ],
-                    "layer": 0,
+                    "color": [
+                        0.2588235294117647,
+                        0.2588235294117647,
+                        0.2588235294117647
+                    ],
+                    "font_type": "default",
+                    "text": "活跃订单列表 0/0",
+                    "text_alignment": "center"
+                }
+            },
+            {
+                "orders_view@common.scrolling_panel": {
+                    "$background_nine_slice_buttom": 0,
+                    "$background_nine_slice_left": 0,
+                    "$background_nine_slice_right": 0,
+                    "$background_nine_slice_top": 0,
+                    "$background_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$background_offset|default": [
+                        0,
+                        0
+                    ],
+                    "$background_size|default": [
+                        "100%+0px",
+                        "100%+0px"
+                    ],
+                    "$box_nine_slice_buttom": 0,
+                    "$box_nine_slice_left": 0,
+                    "$box_nine_slice_right": 0,
+                    "$box_nine_slice_top": 0,
+                    "$box_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$is_background_nine_slice": false,
+                    "$is_box_nine_slice": false,
+                    "$is_track_nine_slice": false,
+                    "$scroll_background_image_control": "netease_editor_template_namespace.scroll_background_image",
+                    "$scroll_background_texture": "textures/ui/endernet/background_bottom",
+                    "$scroll_bar_contained|default": true,
+                    "$scroll_bar_left_padding_size_touch|default": [
+                        0,
+                        0
+                    ],
+                    "$scroll_box_mouse_image_control": "netease_editor_template_namespace.scroll_box_image",
+                    "$scroll_box_texture": "textures/ui/newTouchScrollBox",
+                    "$scroll_box_touch_image_control": "netease_editor_template_namespace.scroll_box_image",
+                    "$scroll_box_visible_touch|default": true,
+                    "$scroll_track_image_control": "netease_editor_template_namespace.scroll_track_image",
+                    "$scroll_track_texture": "textures/ui/ScrollRail",
+                    "$scrolling_content": "factoric_terminal_panel_ui.orders",
+                    "$show_background": true,
+                    "$track_nine_slice_buttom": 0,
+                    "$track_nine_slice_left": 0,
+                    "$track_nine_slice_right": 0,
+                    "$track_nine_slice_top": 0,
+                    "$track_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$view_port_size|default": [
+                        "100%+2px",
+                        "100%+0px"
+                    ],
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "layer": 9,
+                    "offset": [
+                        0,
+                        32
+                    ],
                     "size": [
-                        174,
-                        200
+                        162,
+                        152
                     ]
                 }
             }
@@ -126,5 +164,231 @@
     },
     "main@common.inventory_screen_common": {
         "$screen_content": "factoric_terminal_panel_ui.content"
+    },
+    "namespace": "factoric_terminal_panel_ui",
+    "order": {
+        "type": "panel",
+        "size": [
+            80.0,
+            20.0
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "interact_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "textures/ui/endernet/background_panel_2_flat",
+                    "$hover_texture": "textures/ui/endernet/background_panel_2_flat",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        1,
+                        1,
+                        1
+                    ],
+                    "$label_font_scale_factor": 1.0,
+                    "$label_font_size": "large",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0,
+                        0
+                    ],
+                    "$label_text": "Button",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_texture": "textures/ui/endernet/background_panel_2_flat",
+                    "$texture_layer": 2,
+                    "layer": 2,
+                    "button_mappings": [],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {
+                                "color": [
+                                    1,
+                                    1,
+                                    0.7529
+                                ]
+                            }
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {
+                                "color": [
+                                    0.6667,
+                                    1,
+                                    1
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "res_item_renderer": {
+                    "type": "custom",
+                    "renderer": "inventory_item_renderer",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        2.0,
+                        2.0
+                    ],
+                    "size": [
+                        12.0,
+                        12.0
+                    ],
+                    "layer": 5,
+                    "property_bag": {
+                        "#item_id_aux": 131072
+                    }
+                }
+            },
+            {
+                "res_item_name": {
+                    "type": "label",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        16.0,
+                        1.0
+                    ],
+                    "layer": 10,
+                    "color": [
+                        0.2588235294117647,
+                        0.2588235294117647,
+                        0.2588235294117647
+                    ],
+                    "font_type": "default",
+                    "text": "999 x 某某某",
+                    "text_alignment": "center"
+                }
+            },
+            {
+                "progress_text": {
+                    "type": "label",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        16.0,
+                        10.0
+                    ],
+                    "layer": 10,
+                    "color": [
+                        0.2588235294117647,
+                        0.2588235294117647,
+                        0.2588235294117647
+                    ],
+                    "font_size": "small",
+                    "font_type": "default",
+                    "text": "100.0%%",
+                    "text_alignment": "center"
+                }
+            },
+            {
+                "progress_bar": {
+                    "type": "panel",
+                    "anchor_from": "bottom_middle",
+                    "anchor_to": "bottom_middle",
+                    "size": [
+                        "100%+-2px",
+                        2.0
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "bg": {
+                                "type": "image",
+                                "anchor_from": "bottom_left",
+                                "anchor_to": "bottom_left",
+                                "offset": [
+                                    0.0,
+                                    -1.0
+                                ],
+                                "layer": 4,
+                                "color": [
+                                    0.4313725490196079,
+                                    0.4313725490196079,
+                                    0.5529411764705883
+                                ],
+                                "texture": "textures/ui/white_background",
+                                "tiled": true
+                            }
+                        },
+                        {
+                            "mask": {
+                                "type": "image",
+                                "anchor_from": "bottom_left",
+                                "anchor_to": "bottom_left",
+                                "offset": [
+                                    0.0,
+                                    -1.0
+                                ],
+                                "size": [
+                                    "50%+0px",
+                                    "default"
+                                ],
+                                "layer": 4,
+                                "color": [
+                                    1.0,
+                                    1.0,
+                                    0.0
+                                ],
+                                "texture": "textures/ui/white_background",
+                                "tiled": true
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "orders": {
+        "type": "panel",
+        "size": [
+            "100%c+2px",
+            "100%c+2px"
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "grid": {
+                    "type": "grid",
+                    "size": [
+                        160.0,
+                        "default"
+                    ],
+                    "collection_name": "orders",
+                    "grid_dimensions": [
+                        2,
+                        2
+                    ],
+                    "grid_item_template": "factoric_terminal_panel_ui.order",
+                    "grid_rescaling_type": "horizontal",
+                    "maximum_grid_items": 8
+                }
+            }
+        ]
     }
 }
