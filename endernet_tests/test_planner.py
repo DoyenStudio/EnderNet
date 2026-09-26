@@ -42,6 +42,10 @@ from endernet.server.storage.service import StorageService
 
 TEMPLATE_DEVICE = "endernet:bus_template_io"
 
+#: 2026-09-26 新计费口径的用例用到的两个键（有别于上面那套铁镐树）。
+GEAR = ResourceKey.item("minecraft:iron_gear")
+WATER = ResourceKey.fluid("minecraft:water")
+
 #: 计划里的状态与原因码用得多，取个短名字，免得每一行都写一长串。
 Status = planner.PlanStatus
 Cause = planner.GapCause
@@ -580,46 +584,88 @@ class TestCyclesAndDeadEnds(unittest.TestCase):
     T = ResourceKey.item("t:t")
     SELF = ResourceKey.item("t:self")
 
-    def test_a_simple_cycle_is_reported_with_its_path(self):
+    def test_a_simple_cycle_is_reported_as_a_shortfall_with_its_path(self):
+        """`A ← B`、`B ← A`：A 只有这一条候选，而它会绕回来。
+
+        2026-09-26 的规则下这是 **A 的原料拿不到**（`RECURSIVE_CANDIDATES`），
+        不是整单「成环」：总判决是 `MISSING_MATERIALS`，环路路径留在 `detail`
+        里作为缺料诊断——玩家要看的是「哪条路线在打转」。
+
+        缺口记在 **B** 上：B 才是那个「候选会绕回自己」的键，A 只是被上游连累
+        （它拿到的是那条被接受的边，报 `MISSING_INPUTS`）。
+        """
         recipes = {
             self.A: recipe([item("t:b")], [item("t:a")]),
             self.B: recipe([item("t:a")], [item("t:b")]),
         }
-        plan = solve(self.A, 1, recipes)
-        self.assertEqual(plan.status, Status.CYCLE)
-        gap = gap_of(plan, self.A)
-        self.assertEqual(gap["cause"], Cause.CYCLE)
-        # 环路**从被拒绝的那条输入开始写**，因此它的首尾是同一个键：
+        job = planner.plan(self.A, 1, inventory({}), snapshot(recipes))
+        job.step(10 ** 6)
+        plan = job.result()
+        self.assertEqual(plan.status, Status.MISSING_MATERIALS)
+        gap = gap_of(plan, self.B)
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap["cause"], Cause.RECURSIVE_CANDIDATES)
+        self.assertEqual(gap["shortfall"], 1)
+        # 环路**从被绕回的那个键开始写**，因此它的首尾是同一个键：
         # 读起来就是「A 要去 B，B 又回到 A」。顺序是确定的（DFS 按身份排序），
         # 因此这条断言不会今天过一个明天挂。
         self.assertIn(u"t:a -> t:b -> t:a", gap["detail"])
+        # A 自己没有缺口，它断在上游。
+        self.assertIsNone(gap_of(plan, self.A))
+        self.assertEqual(blocked_of(plan, self.A)["cause"], Cause.MISSING_INPUTS)
+        # 没有任何边被拒：候选是在建步骤**之前**被排除的，不是事后被拒的。
+        self.assertEqual(job.refused_edges(), ())
+        # 命令层那一侧仍然拿得到「打转了」这个码——只是作用域变成了逐路线。
+        self.assertEqual(plan.reasons()[0].code, Reason.PLAN_MISSING_MATERIALS)
+        self.assertEqual(gap["reason"], Reason.PLAN_CYCLE)
 
     def test_a_cycle_through_a_sibling_is_still_caught(self):
         """目标同时要 A 和 B，而 A、B 互为配方。
 
-        **这条用例是环检测必须建在边图上的理由。** 按「祖先路径」判环的实现
-        在这里看不到 `A→B` 这条已经存在的边（B 的路径是 `T,B`），于是两条边
-        互相长大，只能等上限截断——报出来是「超限」而不是「循环」。
+        **这条用例是环检测必须建在边图上的理由**，现在也是**候选预筛**的理由。
+        按「祖先路径」判环的实现在这里看不到 `A→B` 这条已经存在的边
+        （B 的路径是 `T,B`），于是两条边互相长大，只能等上限截断——报出来是
+        「超限」而不是「循环」。预筛问的正是「B 的输入 A 能不能回到 B」，
+        而那条边的存在只有**整张边图**知道。
         """
         recipes = {
             self.T: recipe([item("t:a"), item("t:b")], [item("t:t")]),
             self.A: recipe([item("t:b")], [item("t:a")]),
             self.B: recipe([item("t:a")], [item("t:b")]),
         }
-        plan = solve(self.T, 1, recipes)
-        self.assertEqual(plan.status, Status.CYCLE)
+        job = planner.plan(self.T, 1, inventory({}), snapshot(recipes))
+        job.step(10 ** 6)
+        plan = job.result()
+        self.assertEqual(plan.status, Status.MISSING_MATERIALS)
         self.assertEqual(plan.limits["truncated"], False)
         self.assertLessEqual(len(plan.steps), 3)
+        # **判据落在边上**：`A→B` 被接受，而 `B→A` 压根没被建出来
+        # ——不是「建了又被拒」，是候选在挑选阶段就被排除了。
+        edges = set((parent, child) for parent, child, _count in job.edges())
+        self.assertEqual(
+            edges,
+            set([(self.T, self.A), (self.T, self.B), (self.A, self.B)]),
+        )
+        self.assertEqual(job.refused_edges(), ())
 
-    def test_a_self_referencing_recipe_is_a_cycle(self):
-        """`A ← A + B`（催化剂/回收）。首版不支持循环生产，因此明确拒绝。"""
+    def test_a_self_referencing_recipe_is_excluded_as_recursive(self):
+        """`A ← A + B`（催化剂/回收）：那条候选会绕回自己，因此被排除。
+
+        「首版不支持循环生产」这句仍然成立，但它现在说的是**环里的那份产出
+        不作为可用的原料**，而不是「见到环就整单拒绝」。这里 A 没有别的路线，
+        所以结论是缺料 + 一条环路诊断，并且**那一步根本不存在**
+        ——建出来它就会声称消耗自己。
+        """
         recipes = {self.SELF: recipe([item("t:self"), item("t:u")], [item("t:self")])}
         plan = solve(self.SELF, 1, recipes)
-        self.assertEqual(plan.status, Status.CYCLE)
-        self.assertEqual(gap_of(plan, self.SELF)["cause"], Cause.CYCLE)
+        self.assertEqual(plan.status, Status.MISSING_MATERIALS)
+        gap = gap_of(plan, self.SELF)
+        self.assertEqual(gap["cause"], Cause.RECURSIVE_CANDIDATES)
+        self.assertIn(u"t:self -> t:self", gap["detail"])
+        self.assertEqual(plan.steps, [])
 
     def test_a_cycle_deep_in_the_tree_still_terminates(self):
-        """A ← B ← C ← A。目标 A 的一切都在环上。"""
+        """A ← B ← C ← A。目标 A 的一切都在环上：预算内停下并给出缺料。"""
         C = ResourceKey.item("t:c")
         recipes = {
             self.A: recipe([item("t:b")], [item("t:a")]),
@@ -629,8 +675,39 @@ class TestCyclesAndDeadEnds(unittest.TestCase):
         job = planner.plan(self.A, 1, inventory({}), snapshot(recipes))
         while job.status() == Status.RUNNING:
             job.step(1)
-        self.assertEqual(job.status(), Status.CYCLE)
+        self.assertEqual(job.status(), Status.MISSING_MATERIALS)
         self.assertLess(job.spent(), 1000)
+        gap = gap_of(job.result(), C)
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap["cause"], Cause.RECURSIVE_CANDIDATES)
+        self.assertIn(u"t:a -> t:b -> t:c -> t:a", gap["detail"])
+
+    def test_only_cyclic_routes_report_the_shortfall_not_a_cycle_verdict(self):
+        """验收 1：`T ← A`、`A ← B`、`B ← A`、没有库存。
+
+        改前：整单 `CYCLE`（`_verdict` 里「有环就报环」），缺口记在别处。
+        改后：`MISSING_MATERIALS` + B 上的缺料，环路是**诊断**不是判决。
+
+        三条断言一起才说明「缺料 / 环路诊断 / 预算超限」是**真的可区分**，
+        而不只是把名字换了：判决码、缺口原因、`truncated` 各管一件事。
+        """
+        recipes = {
+            self.T: recipe([item("t:a")], [item("t:t")]),
+            self.A: recipe([item("t:b")], [item("t:a")]),
+            self.B: recipe([item("t:a")], [item("t:b")]),
+        }
+        job = planner.plan(self.T, 1, inventory({}), snapshot(recipes))
+        job.step(10 ** 6)
+        plan = job.result()
+        self.assertEqual(plan.status, Status.MISSING_MATERIALS)
+        gap = gap_of(plan, self.B)
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap["cause"], Cause.RECURSIVE_CANDIDATES)
+        self.assertEqual(gap["shortfall"], 1)
+        self.assertIn(u"t:a -> t:b -> t:a", gap["detail"])
+        self.assertEqual(job.refused_edges(), ())
+        self.assertIs(plan.limits["truncated"], False)
+        self.assertEqual(plan.reasons()[0].code, Reason.PLAN_MISSING_MATERIALS)
 
     def test_a_dead_end_does_not_make_its_ancestors_look_covered(self):
         """一条深链断在底部时，**祖先步骤不能看起来有货**。
@@ -681,26 +758,296 @@ class TestCyclesAndDeadEnds(unittest.TestCase):
                          Cause.NO_RECIPE)
 
     def test_a_mutually_dependent_pair_is_not_reported_as_complete(self):
-        """`A ← B` 且 `B ← A`、两者都没有库存：**必须报环，不能报「做完了」**。
+        """`A ← B` 且 `B ← A`、两者都没有库存：**必须报缺料，不能报「做完了」**。
 
         可达量的不动点如果从「全都能跑」往下减，就会得出「A 的 B 由 B 提供、
         B 的 A 由 A 提供」这种互相作保的结论，于是环在缺口被清掉之后
         伪装成一份能做完的计划。方向必须是从零往上加。
+
+        新规则下 B 的候选在建步骤之前就被排除，因此 **B 的步骤不存在**
+        ——这才是「环里的产出没被记成原料」的直接证明。旧的观测点是
+        `refused_edges()`，而候选根本走不到建边那一步，它恒为空。
         """
         recipes = {
             self.A: recipe([item("t:b")], [item("t:a")]),
             self.B: recipe([item("t:a")], [item("t:b")]),
         }
         plan = solve(self.A, 1, recipes)
-        self.assertEqual(plan.status, Status.CYCLE)
+        self.assertEqual(plan.status, Status.MISSING_MATERIALS)
         self.assertNotEqual(plan.status, Status.COMPLETE)
         self.assertTrue(plan.blocked_keys)
+        self.assertIsNone(step_of(plan, self.B))
 
-    def test_a_refused_edge_does_not_inflate_demand(self):
-        """被环拒绝的那条边**不记需求**，因此重走时也不会重复累加。
+    def test_a_stock_seeded_cycle_is_not_reported_complete(self):
+        """环里有一个键**有库存**时，可达量会自己圆回来 ⇒ 旧实现报 `COMPLETE`。
 
-        记需求会让那个键的需求凭空膨胀（每重走一遍加一次），而膨胀出来的
-        需求谁也满足不了——报告里就成了一个查不出原因的缺口。
+        `T ← A + B`、`A ← B`、`B ← A`，库存只有一个 B。B 的步骤被建出来
+        （`own_output[B] += 1`），它要的 A 又成环被拒；收尾时可达量以
+        `from_stock = 1` 为 B 播种，于是 A 的步骤看着能跑、反哺 B，
+        B 的缺口被 `demand - achievable <= 0` 删掉 —— 判决 `COMPLETE`。
+        可那份计划在物理上做不到：1 个 B 变不出「1 个 A + 1 个 B」，
+        而且 `steps[B].inputs` 声称消耗 1 个 A、`materials[A]` 的需求又对不上，
+        同一份计划里躺着两个互相矛盾的数字。
+
+        新设计下 B 的候选在**建步骤之前**就被排除，那个步骤根本不存在。
+        """
+        job = planner.plan(
+            self.T, 1, inventory({self.B: 1}),
+            snapshot({
+                self.T: recipe([item("t:a"), item("t:b")], [item("t:t")]),
+                self.A: recipe([item("t:b")], [item("t:a")]),
+                self.B: recipe([item("t:a")], [item("t:b")]),
+            }),
+        )
+        job.step(10 ** 6)
+        plan = job.result()
+        self.assertEqual(plan.status, Status.MISSING_MATERIALS)
+        self.assertNotEqual(plan.status, Status.COMPLETE)
+        # 那条做不到的步骤一旦存在，它就会声称消耗 1 个 A —— 而环里那份
+        # 产出是谁也拿不到的东西。它不存在，池子才是诚实的。
+        self.assertIsNone(step_of(plan, self.B))
+        row = row_of(plan, self.B)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["demand"], 2)
+        self.assertEqual(row["from_stock"], 1)
+        self.assertEqual(row["outstanding"], 1)
+        # 没有任何边被拒：B 的候选是在建步骤之前被排除的，不是事后被拒的。
+        self.assertEqual(job.refused_edges(), ())
+
+    def test_a_stock_seeded_cycle_is_satisfied_by_stock(self):
+        """同一套夹具、库存两个 B：需求真的被库存兑掉了，计划成立。
+
+        **这条是钉住（不是回归）**，它要挡住一种读法：「上面那条报缺料，
+        是不是只要有库存就一律判死？」不是——`T` 要 1 个 B、`A` 又要 1 个 B，
+        一共 2 个，给 2 个就够。改前它也报 `COMPLETE`，但理由是错的
+        （B 的步骤被建出来自己产自己）；改后报 `COMPLETE` 的理由是「库存够了」。
+        两个理由的分界线就是 `step_of(plan, B) is None`
+        ——B 一个批次都不用做，它**不该有步骤**。
+        """
+        job = planner.plan(
+            self.T, 1, inventory({self.B: 2}),
+            snapshot({
+                self.T: recipe([item("t:a"), item("t:b")], [item("t:t")]),
+                self.A: recipe([item("t:b")], [item("t:a")]),
+                self.B: recipe([item("t:a")], [item("t:b")]),
+            }),
+        )
+        job.step(10 ** 6)
+        plan = job.result()
+        self.assertEqual(plan.status, Status.COMPLETE)
+        self.assertIsNone(step_of(plan, self.B))
+        self.assertEqual(plan.gaps, [])
+        self.assertEqual(plan.blocked_keys, [])
+        row = row_of(plan, self.B)
+        self.assertEqual(row["demand"], 2)
+        self.assertEqual(row["from_stock"], 2)
+        self.assertEqual(row["own_output"], 0)
+        self.assertEqual(row["outstanding"], 0)
+
+    def test_a_non_cyclic_candidate_is_used_after_the_recursive_one_is_excluded(self):
+        """验收 3（本次的核心能力）：B 有两条候选，**递归的那条排在前面**。
+
+        `B ← A`（而 A 的配方要 B，会绕回来）与 `B ← C`（C 有库存）。
+        旧实现挑中第一条、等建边时才判环，于是整单做不到；新实现在挑选阶段
+        就把第一条排掉、用第二条，计划成立。
+
+        **夹具必须让 A 先提交**（`T ← A` 把 A 压到 depth 1），不能用
+        `T ← [A, B]` 那种同深度形状：同深度时 `_next_pending` 按 `_canon` 定序，
+        若 B 先提交，`B ← A` 在当时**还不是**递归的就会被选中，
+        这条用例就变成在考 `pick_candidate` 取不取 `usable[0]`
+        ——换个资源名就会静默翻转结论。
+        """
+        recursive = recipe([item("t:a")], [item("t:b")])
+        alternative = recipe([item("t:c")], [item("t:b")])
+        job = planner.plan(
+            self.T, 1, inventory({ResourceKey.item("t:c"): 1}),
+            snapshot(
+                {
+                    self.T: recipe([item("t:a")], [item("t:t")]),
+                    self.A: recipe([item("t:b")], [item("t:a")]),
+                },
+                extra=[(self.B, (
+                    candidate(recursive, ordinal=0),
+                    candidate(alternative, ordinal=1, slot=1),
+                ))],
+            ),
+        )
+        while job.status() == Status.RUNNING:
+            job.step(1)
+        plan = job.result()
+        self.assertEqual(plan.status, Status.COMPLETE)
+        step = step_of(plan, self.B)
+        self.assertIsNotNone(step)
+        # 用的是第二条候选，而且它只要 C —— 环里那条 `B ← A` 一点痕迹都没留。
+        self.assertEqual(step["provider"]["ordinal"], 1)
+        self.assertEqual(
+            [(entry["key"], entry["total"]) for entry in step["inputs"]],
+            [("t:c", 1)],
+        )
+        # 落选的候选仍然被记下来（玩家要看得到「还有一条路，但它会打转」），
+        # 只是没被展开。
+        self.assertEqual([row["ordinal"] for row in step["candidates"]], [0, 1])
+        self.assertIsNone(gap_of(plan, self.B))
+        self.assertEqual(job.refused_edges(), ())
+        # 预筛确实跑了：有候选被「试过并排除」，而不是压根没有候选。
+        self.assertEqual(job.progress()["counters"]["recursive_candidates"], 1)
+        self.assertEqual(job.progress()["counters"]["cycles_refused"], 0)
+        # 验收 4a（候选隔离）：A 只有那条被接受路线要的一份需求，
+        # 被排除的候选没有从它底下抽走任何东西、也没有多记产出。
+        self.assertEqual(row_of(plan, self.A)["demand"], 1)
+        self.assertEqual(row_of(plan, self.A)["own_output"], 1)
+
+    def test_a_truncated_candidate_window_is_not_a_confirmed_shortage(self):
+        """验收 4：候选窗口被 `max_candidates` 截断时，**不能报成已确认的缺料**。
+
+        三条候选、前两条都会绕回自己、第三条可行，而窗口只放得下两条。
+        这时我们**不知道**第三条能不能走通，所以只能报「没看完」
+        （`CANDIDATE_LIMIT` + `truncated`），不能报「没有非循环路线」。
+        混为一谈会让玩家去拆掉一台没坏的设备，而真正要做的是放宽窗口。
+        """
+        recursive_one = recipe([item("t:a")], [item("t:b")])
+        recursive_two = recipe([item("t:a", 2)], [item("t:b")])
+        alternative = recipe([item("t:c")], [item("t:b")])
+        job = planner.plan(
+            self.T, 1, inventory({ResourceKey.item("t:c"): 1}),
+            snapshot(
+                {
+                    self.T: recipe([item("t:a")], [item("t:t")]),
+                    self.A: recipe([item("t:b")], [item("t:a")]),
+                },
+                extra=[(self.B, (
+                    candidate(recursive_one, ordinal=0),
+                    candidate(recursive_two, ordinal=1, slot=1),
+                    candidate(alternative, ordinal=2, slot=2),
+                ))],
+            ),
+            policy=planner.PlanPolicy(max_candidates=2),
+        )
+        while job.status() == Status.RUNNING:
+            job.step(1)
+        plan = job.result()
+        self.assertEqual(plan.status, Status.LIMITED)
+        self.assertIs(plan.limits["truncated"], True)
+        self.assertEqual(plan.limits["hit"], [Cause.CANDIDATE_LIMIT])
+        gap = gap_of(plan, self.B)
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap["cause"], Cause.CANDIDATE_LIMIT)
+        # 「没看完」与「看完了、都会成环」是两句话，不能同时说。
+        self.assertNotEqual(gap["cause"], Cause.RECURSIVE_CANDIDATES)
+        self.assertEqual(
+            [other["cause"] for other in plan.gaps], [Cause.CANDIDATE_LIMIT]
+        )
+
+    def test_the_three_ways_a_key_can_be_unreachable_stay_distinct(self):
+        """验收 4b：没有配方 / 候选都会成环 / 候选没看完，**必须是三个结论**。
+
+        三者混成一个「做不到」的话，玩家没法知道下一步该做什么：
+        换配方、别用循环生产、还是把窗口开大一点。
+        夹具各自**只留一种** absence 原因——否则断言到的是 `_verdict` 里
+        `sorted(leaf or real)[0]` 的字面序，而不是原因本身。
+        """
+        no_recipe = solve(ResourceKey.item("t:unknown"), 1, {})
+        recursive = solve(self.A, 1, {
+            self.A: recipe([item("t:b")], [item("t:a")]),
+            self.B: recipe([item("t:a")], [item("t:b")]),
+        })
+        recursive_one = recipe([item("t:a")], [item("t:b")])
+        recipes = {
+            self.T: recipe([item("t:a")], [item("t:t")]),
+            self.A: recipe([item("t:b")], [item("t:a")]),
+        }
+        truncated = solve(
+            self.T, 1, recipes,
+            patterns_snapshot=snapshot(
+                recipes,
+                extra=[(self.B, (
+                    candidate(recursive_one, ordinal=0),
+                    candidate(recursive_one, ordinal=1, slot=1),
+                    candidate(recursive_one, ordinal=2, slot=2),
+                ))],
+            ),
+            policy=planner.PlanPolicy(max_candidates=2),
+        )
+        answers = [
+            (no_recipe.status, no_recipe.gaps[0]["cause"]),
+            (recursive.status, recursive.gaps[0]["cause"]),
+            (truncated.status, truncated.gaps[0]["cause"]),
+        ]
+        self.assertEqual(
+            answers,
+            [
+                (Status.NO_RECIPE, Cause.NO_RECIPE),
+                (Status.MISSING_MATERIALS, Cause.RECURSIVE_CANDIDATES),
+                (Status.LIMITED, Cause.CANDIDATE_LIMIT),
+            ],
+        )
+        self.assertEqual(len(set(answers)), 3)
+
+    def test_an_unlimited_input_does_not_exclude_a_candidate(self):
+        """**预筛与走查必须问同一个输入集合**——这是四条支撑事实里最容易写错的一条。
+
+        预筛若按 `definition.inputs` 问，就会把**不限量**的输入也算进去，
+        于是 A 的候选因为 `A ← [燃料, B]` 里有燃料、而燃料又由 A 做出来
+        被判成「会绕回自己」并排除。可走查根本不碰不限量输入
+        （`required_inputs` 把它滤掉），**那条边压根不会被建、也就没有环**。
+        结果是一句反方向的谎话：明明做得出来，却报缺料。
+
+        这里 `T ← [燃料, A]` 让「燃料由 A 做」这条依赖**先存在**
+        （燃料是 T 的普通输入，会走查、会建边），A 的候选才真正处在
+        那个岔路口上；夹具不这么摆时，预筛看到的边图还没有燃料那条边，
+        两种写法都给同一个答案，用例就验不出东西。
+        """
+        # 三个**本地**键：身份排序要让燃料排在中间物之前（燃料先被走查到），
+        # 所以它的名字取 `t:aaa_fuel`。不要用类上的 A/B——`t:b` 正是本夹具
+        # 的中间物，混用会让 `self.A` 指向错误的键。
+        fuel = ResourceKey.item("t:aaa_fuel")
+        middle = ResourceKey.item("t:b")
+        base = ResourceKey.item("t:bbb")
+        recipes = {
+            self.T: recipe([item("t:aaa_fuel"), item("t:b")], [item("t:t")]),
+            middle: recipe(
+                [item("t:aaa_fuel", 1, unlimited=True), item("t:bbb")],
+                [item("t:b")],
+            ),
+            fuel: recipe([item("t:b")], [item("t:aaa_fuel")]),
+        }
+        job = planner.plan(self.T, 1, inventory({base: 2}), snapshot(recipes))
+        while job.status() == Status.RUNNING:
+            job.step(1)
+        plan = job.result()
+        self.assertEqual(plan.status, Status.COMPLETE)
+        self.assertEqual(plan.gaps, [])
+        self.assertIsNone(gap_of(plan, middle))
+        step = step_of(plan, middle)
+        self.assertIsNotNone(step)
+        # 不限量燃料进 `external_inputs`（要报告出来），但不进 `inputs`
+        # ——不进的证据就是边图里没有这条边。
+        self.assertEqual(
+            [(entry["key"], entry["total"]) for entry in step["external_inputs"]],
+            [("t:aaa_fuel", 2)],
+        )
+        self.assertEqual(
+            [(entry["key"], entry["total"]) for entry in step["inputs"]],
+            [("t:bbb", 2)],
+        )
+        self.assertNotIn(
+            (middle, fuel), set((parent, child) for parent, child, _n in job.edges())
+        )
+
+    def test_a_repeated_pass_does_not_inflate_demand(self):
+        """一个步骤的输入边被**重走**时，需求不重复累加。
+
+        这条用例的前身靠遍历 `job.refused_edges()` 来守「被拒绝的边不记需求」；
+        候选预筛之后那个集合恒为空，**循环体会一次都不执行**——整条用例
+        变成空转（仓库里已经吃过一次「空泛用例」的亏，见 08-04 的盘点）。
+        改成两步：先断言没有任何边被拒，再用一个**批次会长大的形状**直接验
+        增量算得对。
+
+        重走的场景：`tall ← [consumer, a]`，两个键都要 `a`，而 `a` 因为身份
+        排序**先被选中**。于是 `a` 的步骤先按 1 个批次建好、输入边也记了 1；
+        后来 `consumer` 又添了一份需求，`a` 的批次涨到 2，光标重走一遍输入
+        ——增量必须相对「已经记过的总量」算（`per_batch × batches - already`），
+        否则每重走一次就多记一遍。
         """
         job = planner.plan(
             self.A, 1, inventory({}),
@@ -710,11 +1057,33 @@ class TestCyclesAndDeadEnds(unittest.TestCase):
             }),
         )
         job.step(10 ** 6)
-        # 需求只来自根与那条被接受的边：各 1，一共 2。
-        self.assertEqual(job.ledger()[0].demand + job.ledger()[1].demand, 2)
-        for _parent, _child, count in job.refused_edges():
-            # 被拒绝的毛量只报一次（B 每批要 1 个 A、共 1 批）。
-            self.assertEqual(count, 1)
+        self.assertEqual(job.refused_edges(), ())
+        plan = job.result()
+        # 需求只来自根与那条被接受的边：各 1。
+        self.assertEqual(row_of(plan, self.A)["demand"], 1)
+        self.assertEqual(row_of(plan, self.B)["demand"], 1)
+
+        SHARED = ResourceKey.item("t:a")
+        CONSUMER = ResourceKey.item("t:consumer")
+        RAW = ResourceKey.item("t:raw")
+        TALL = ResourceKey.item("t:tall")
+        job = planner.plan(
+            TALL, 1, inventory({}),
+            snapshot({
+                TALL: recipe([item("t:consumer"), item("t:a")], [item("t:tall")]),
+                CONSUMER: recipe([item("t:a")], [item("t:consumer")]),
+                SHARED: recipe([item("t:raw")], [item("t:a")]),
+            }),
+        )
+        while job.status() == Status.RUNNING:
+            job.step(1)
+        plan = job.result()
+        # SHARED 被两个消费者各要一次 ⇒ 需求 2、两个批次。
+        self.assertEqual(step_of(plan, SHARED)["batches"], 2)
+        self.assertEqual(row_of(plan, SHARED)["demand"], 2)
+        # 而它每批只要 1 份原料 ⇒ 原料的需求就是 2，不是 3（重走时多记一次
+        # 就会变成 3，再多走一次还会继续涨）。
+        self.assertEqual(row_of(plan, RAW)["demand"], 2)
 
     def test_a_cycle_gap_survives_when_the_chain_is_unrunnable(self):
         """环上的键**必须留住缺口**，否则「执行不了」这件事就没有出处。"""
@@ -722,10 +1091,14 @@ class TestCyclesAndDeadEnds(unittest.TestCase):
             self.A: recipe([item("t:b")], [item("t:a")]),
             self.B: recipe([item("t:a")], [item("t:b")]),
         })
-        gap = gap_of(plan, self.A)
+        gap = gap_of(plan, self.B)
         self.assertIsNotNone(gap)
-        self.assertEqual(gap["cause"], Cause.CYCLE)
-        self.assertEqual(gap["shortfall"], blocked_of(plan, self.A)["shortfall"])
+        self.assertEqual(gap["cause"], Cause.RECURSIVE_CANDIDATES)
+        self.assertEqual(gap["reason"], Reason.PLAN_CYCLE)
+        self.assertEqual(gap["shortfall"], 1)
+        # **缺口数与「执行不了」那一栏必须是同一个数**：两个字段用两把尺子
+        # （账本池子 vs 可达量）时，读的人只能猜哪个对，而 09 据此决定提交。
+        self.assertEqual(gap["shortfall"], blocked_of(plan, self.B)["shortfall"])
 
     def _chain(self):
         """`T <- X <- Y <- Z`，而 Z 没有配方：整条链都执行不了。"""
@@ -761,21 +1134,26 @@ class TestCyclesAndDeadEnds(unittest.TestCase):
         self.assertIn("t:z", entry["detail"])
         self.assertNotIn("缺口记录已不在", entry["detail"])
 
-    def test_a_cycle_upstream_is_followed_through_the_refused_edge(self):
-        """断点在环上时，上游原因要顺着**被拒绝的边**找得到。
+    def test_a_cycle_upstream_is_named_not_just_guessed(self):
+        """断点在环上时，上游原因要**点名是哪个键在打转**。
 
-        被拒绝的边不进依赖图，只走依赖边的话这里会找不到任何上游缺口，
-        只剩一句「缺口记录已不在」——而玩家要做的是去看那个成环的键。
+        旧口径下断点是「一条被拒绝的边」（它不进依赖图，所以 `_inherited_gap`
+        要专门把 `_refused` 也走一遍）。新口径下断点是 B 自己那条
+        `RECURSIVE_CANDIDATES` 缺口——沿着**被接受的边** `A→B` 就能找到，
+        因此这里验的是：A 的条目是继承来的、说清了上游是谁，而且环路路径
+        跟着转发过来，而不是一句「缺口记录已不在」。
         """
         plan = solve(self.A, 1, {
             self.A: recipe([item("t:b")], [item("t:a")]),
             self.B: recipe([item("t:a")], [item("t:b")]),
         })
-        entry = blocked_of(plan, self.B)
+        entry = blocked_of(plan, self.A)
         self.assertIsNotNone(entry)
         self.assertEqual(entry["cause"], Cause.MISSING_INPUTS)
-        self.assertIn("cycle", entry["detail"])
-        self.assertIn("t:a", entry["detail"])
+        self.assertTrue(entry["inherited"])
+        self.assertIn("t:b", entry["detail"])
+        self.assertNotIn("缺口记录已不在", entry["detail"])
+        self.assertIn(u"t:a -> t:b -> t:a", entry["detail"])
 
     def test_a_missing_base_material_is_not_reported_as_no_recipe(self):
         recipes = {self.A: recipe([item("t:ore")], [item("t:a")])}
@@ -894,6 +1272,13 @@ class TestDeterminism(unittest.TestCase):
               ResourceKey.item("t:c"): recipe([item("t:d", 3)], [item("t:c")]),
               ResourceKey.item("t:d"): recipe([item("t:e")], [item("t:d")])},
              {ResourceKey.item("t:d"): 2}),
+            # 带环的一组：候选预筛会在挑选阶段排除候选，而**排除发生在哪一帧**
+            # 正是分帧推进最可能改变结果的地方（预算切法不同 ⇒ `_select` 的
+            # 时刻不同 ⇒ 当时的边图不同）。前两组都无环，覆盖不到这里。
+            (ResourceKey.item("t:a"), 1,
+             {ResourceKey.item("t:a"): recipe([item("t:b")], [item("t:a")]),
+              ResourceKey.item("t:b"): recipe([item("t:a")], [item("t:b")])},
+             {}),
         )
         for arguments_ in arguments:
             texts = set()
@@ -1369,6 +1754,111 @@ class TestRevalidation(StoreFixture, unittest.TestCase):
 # -- 策略与接口 ------------------------------------------------------------
 
 
+class TestRequiredBytes(unittest.TestCase):
+    """字节计费（R04 已定案）：**根原料单位物 × 1 B**。
+
+    2026-09-26 User 确认的两条口径：
+
+    - **每一单位物正好被计一次**：要么作为要生产的根原料，要么作为从库存／
+      外部拿的叶子。中间产物与副产物的产出**不重复收费**。
+    - **库存已抵扣而不再展开的中间品照样折算**（「把抵扣物折算成内存」）。
+    """
+
+    IRON_BLOCK = IRON_BLOCK
+
+    def gear_tree(self):
+        return {
+            IRON_BLOCK: recipe([item("minecraft:iron_ingot", 2)], [item("minecraft:iron_block", 1)]),
+            GEAR: recipe([item("minecraft:iron_block", 1)], [item("minecraft:iron_gear", 1)]),
+        }
+
+    def test_the_documented_example(self):
+        """验收原文：根原料 20 个物品 + 1000 mB 流体计 **40 B**。"""
+        recipes = {
+            GEAR: recipe(
+                [item("minecraft:iron_ingot", 20), patterns.PatternStack(WATER, 1000)],
+                [item("minecraft:iron_gear", 1)],
+            )
+        }
+        plan = solve(GEAR, 1, recipes, {INGOT: 20, WATER: 1000})
+        self.assertEqual(plan.to_dict()["required_micro_units"], 2000)
+        self.assertEqual(plan.to_dict()["required_bytes"], 40)
+
+    def test_discounting_an_intermediate_still_costs_memory(self):
+        """**把抵扣物折算成内存**：库里的铁块不再展开，但它照样占内存。"""
+        recipes = self.gear_tree()
+        full = solve(GEAR, 1, recipes, {INGOT: 2})
+        discounted = solve(GEAR, 1, recipes, {INGOT: 2, IRON_BLOCK: 1})
+        # 抵掉之后不再生产铁块，叶子从「2 个铁锭」变成「1 个铁块」。
+        self.assertEqual(full.to_dict()["required_bytes"], 2)
+        self.assertEqual(discounted.to_dict()["required_bytes"], 1)
+        self.assertEqual(
+            [row["key"] for row in discounted.to_dict()["leaf_materials"]],
+            ["minecraft:iron_block"],
+        )
+
+    def test_intermediate_products_are_not_charged_twice(self):
+        """中间产物自己有原料在账上，再计一次就是重复收费。"""
+        plan = solve(GEAR, 1, self.gear_tree(), {INGOT: 2})
+        keys = [row["key"] for row in plan.to_dict()["leaf_materials"]]
+        self.assertNotIn("minecraft:iron_block", keys)
+        self.assertEqual(keys, ["minecraft:iron_ingot"])
+
+    def test_the_same_material_in_two_branches_is_summed(self):
+        """同一原料在两个分支上按**实际总需求**收，不是只数种类。"""
+        recipes = {
+            IRON_BLOCK: recipe([item("minecraft:iron_ingot", 2)], [item("minecraft:iron_block", 1)]),
+            GEAR: recipe(
+                [item("minecraft:iron_block", 1), item("minecraft:iron_ingot", 3)],
+                [item("minecraft:iron_gear", 1)],
+            ),
+        }
+        plan = solve(GEAR, 1, recipes, {INGOT: 5})
+        self.assertEqual(plan.to_dict()["required_micro_units"], 5 * 50)
+
+    def test_repeats_multiply_the_charge(self):
+        """批次也要相乘：要 3 个就得按 3 个的原料收。"""
+        recipes = {IRON_BLOCK: recipe([item("minecraft:iron_ingot", 2)], [item("minecraft:iron_block", 1)])}
+        plan = solve(IRON_BLOCK, 3, recipes, {INGOT: 6})
+        self.assertEqual(plan.to_dict()["required_bytes"], 6)
+
+    def test_rounding_is_a_named_field_not_an_implicit_one(self):
+        """取整边界仍是 R07 的未定项，因此它是具名策略而不是隐式算术。"""
+        recipes = {GEAR: recipe([patterns.PatternStack(WATER, 1)], [item("minecraft:iron_gear", 1)])}
+        ceil_plan = solve(GEAR, 1, recipes, {WATER: 1})
+        floor_plan = solve(
+            GEAR, 1, recipes, {WATER: 1},
+            policy=planner.PlanPolicy(byte_rounding=planner.ByteRounding.FLOOR),
+        )
+        self.assertEqual(ceil_plan.to_dict()["required_bytes"], 1)
+        self.assertEqual(floor_plan.to_dict()["required_bytes"], 0)
+        with self.assertRaises(ValueError):
+            planner.PlanPolicy(byte_rounding="round-half-up")
+
+
+class TestTotalRecipeTasks(unittest.TestCase):
+    """任务总数 = **配方执行次数**，同配方跑 N 次算 N。"""
+
+    def test_repeats_are_counted_one_by_one(self):
+        recipes = {IRON_BLOCK: recipe([item("minecraft:iron_ingot", 2)], [item("minecraft:iron_block", 1)])}
+        plan = solve(IRON_BLOCK, 10, recipes, {INGOT: 20})
+        self.assertEqual(len(plan.steps), 1, "压缩成一条步骤")
+        self.assertEqual(plan.to_dict()["total_recipe_tasks"], 10, "但任务数是 10")
+
+    def test_the_tree_sums_its_steps(self):
+        recipes = {
+            IRON_BLOCK: recipe([item("minecraft:iron_ingot", 2)], [item("minecraft:iron_block", 1)]),
+            GEAR: recipe([item("minecraft:iron_block", 1)], [item("minecraft:iron_gear", 1)]),
+        }
+        plan = solve(GEAR, 2, recipes, {INGOT: 4})
+        self.assertEqual(plan.to_dict()["total_recipe_tasks"], 4)
+
+    def test_a_zero_step_plan_has_no_tasks(self):
+        recipes = {IRON_BLOCK: recipe([item("minecraft:iron_ingot", 2)], [item("minecraft:iron_block", 1)])}
+        plan = solve(IRON_BLOCK, 1, recipes, {IRON_BLOCK: 1})
+        self.assertEqual(plan.to_dict()["total_recipe_tasks"], 0)
+
+
 class TestTargetSemantics(unittest.TestCase):
     """R11 的两侧各有用例；替身取 `HOLD`。"""
 
@@ -1402,14 +1892,17 @@ class TestTargetSemantics(unittest.TestCase):
         self.assertEqual(planner.PlanPolicy().target_semantics, Targets.HOLD)
 
     def test_no_step_can_consume_the_target(self):
-        """**没有哪条被接受的边指向目标键**——那样的边必然成环，因此被拒绝。
+        """**没有哪条被接受的边指向目标键**——那样的边必然成环，因此不被采纳。
 
         这是结构性质而不是约定：每个步骤的需求都最终源自根，因此
         「某步 → 目标」与「目标 → … → 某步」合起来就是环。它让 R11 的
         `exempt` 只需要管根那一条需求：另一条路径根本不存在。
 
-        注意判据是**边图**而不是步骤的 `inputs` 列表：后者照抄配方内容，
-        因此被拒绝的那条输入仍然会列在里面（它确实要东西，只是这条依赖不被采纳）。
+        判据是**边图**：B 那条「要目标」的候选在建步骤之前就被排除了，
+        因此它既不在 `edges` 里、也不在 `refused_edges` 里（旧口径下它会以
+        一条「被拒绝的边」的形式留下）。**加强的一步**：所有步骤的输入条目
+        也不等于目标——旧口径下 `steps[B].inputs` 会照抄配方内容、把目标列在
+        里面，于是同一份计划里躺着两个互相矛盾的数字。
         """
         job = planner.plan(
             self.A, 1, inventory({}),
@@ -1419,13 +1912,16 @@ class TestTargetSemantics(unittest.TestCase):
             }),
         )
         job.step(10 ** 6)
-        self.assertEqual(job.status(), Status.CYCLE)
+        self.assertEqual(job.status(), Status.MISSING_MATERIALS)
         for _parent, child, _count in job.edges():
             self.assertNotEqual(child, self.A)
-        self.assertEqual(
-            [(parent, child) for parent, child, _count in job.refused_edges()],
-            [(self.B, self.A)],
-        )
+        self.assertEqual(job.refused_edges(), ())
+        plan = job.result()
+        for step in plan.steps:
+            for entry in step["inputs"]:
+                self.assertNotEqual(entry["canonical"], self.A.canonical())
+        # 缺口报在 B 上：它才是那个绕回自己的键。
+        self.assertEqual(gap_of(plan, self.B)["cause"], Cause.RECURSIVE_CANDIDATES)
 
     def test_unimplemented_policy_choices_raise_at_construction(self):
         """08-04 的两条还没定案：在装配期报错，而不是给出一个像样的顺序。"""
@@ -1512,9 +2008,12 @@ class TestPolicyReport(unittest.TestCase):
         fields = set(item["field"] for item in policy.unresolved_report())
         self.assertEqual(len(policy.unresolved_report()), len(planner.UNRESOLVED_FIELDS))
         self.assertIn("plan.target_semantics", fields)
-        self.assertIn("plan.memory_units_per_step", fields)
+        # 2026-09-26：字节计费本身已由 R04 定案，**只剩取整边界**还是替身，
+        # 于是这一条从 `memory_units_per_step`（R04）换成了
+        # `byte_rounding`（R07）。
+        self.assertIn("plan.byte_rounding", fields)
         rules = set(item["rule"] for item in policy.unresolved_report())
-        self.assertEqual(rules, set(["R11", "R04", "08-04"]))
+        self.assertEqual(rules, set(["R11", "R07", "08-04"]))
 
     def test_assert_settled_refuses_to_declare_victory(self):
         with self.assertRaises(AssertionError):
@@ -1525,12 +2024,24 @@ class TestPolicyReport(unittest.TestCase):
         self.assertIn("target_semantics", text)
 
     def test_the_gap_causes_are_partitioned(self):
+        """三份分区**恰好**盖住全部原因，且两两不相交。
+
+        2026-09-26 起 `GapCause.CYCLE` 已删（环改成逐候选排除、记
+        `RECURSIVE_CANDIDATES`），于是这条恒等式不再需要打补丁
+        ——旧版这里要写 `| frozenset([Cause.CYCLE])` 才配得平。
+        分区本身是有行为含义的：归错了组就会让一条**已确认**的缺料
+        被折进「这次没看完」，或者反过来。
+        """
         self.assertEqual(Cause.LIMIT_CAUSES & Cause.ABSENCE_CAUSES, frozenset())
         self.assertEqual(
-            Cause.LIMIT_CAUSES | Cause.ABSENCE_CAUSES | Cause.DERIVED_CAUSES
-            | frozenset([Cause.CYCLE]),
+            Cause.LIMIT_CAUSES | Cause.ABSENCE_CAUSES | Cause.DERIVED_CAUSES,
             Cause.ALL,
         )
+        # 递归候选是「确实没有路线」，因此归 absence 那一侧；
+        # 它也不是传导来的（它就是断点本身）。
+        self.assertIn(Cause.RECURSIVE_CANDIDATES, Cause.ABSENCE_CAUSES)
+        self.assertNotIn(Cause.RECURSIVE_CANDIDATES, Cause.LIMIT_CAUSES)
+        self.assertNotIn(Cause.RECURSIVE_CANDIDATES, Cause.DERIVED_CAUSES)
 
 
 class TestPlanSurface(unittest.TestCase):
@@ -1587,24 +2098,30 @@ class TestPlanSurface(unittest.TestCase):
 
 class TestEstimates(unittest.TestCase):
     def test_estimates_are_marked_as_estimates(self):
-        """08-06：估计值**不是**真实资源已预留的证明。"""
+        """08-06：估计值**不是**真实资源已预留的证明。
+
+        **内存不再是「估计值」**（2026-09-26 规则更新）：字节数
+        （`required_bytes`）是 09 准入时要用的那个数，因此它被提到计划顶层，
+        与 `estimates` 分开。`estimates` 现在只剩派发位这一个估计。
+        """
         plan = solve(PICKAXE, 1, pickaxe_tree(), {RAW_IRON: 2})
         self.assertFalse(plan.estimates["authoritative"])
         self.assertEqual(plan.estimates["slots"], len(plan.steps))
-        self.assertEqual(
-            plan.estimates["memory_units"],
-            len(plan.steps) * planner.PlanPolicy().memory_units_per_step,
-        )
-        self.assertIn("R04", json.dumps(plan.estimates["policy"]["unresolved"]))
+        self.assertNotIn("memory_units", plan.estimates)
+        self.assertIn("required_bytes", plan.to_dict())
+        self.assertIn("R07", json.dumps(plan.estimates["policy"]["unresolved"]))
 
     def test_the_estimate_policy_is_the_one_that_ran(self):
         """策略必须是**实际生效的那一份对象**，否则诊断报的数值与行为对不上。"""
-        policy = planner.PlanPolicy(memory_units_per_step=7)
+        policy = planner.PlanPolicy(byte_rounding=planner.ByteRounding.FLOOR)
         plan = solve(PICKAXE, 1, pickaxe_tree(), {RAW_IRON: 2}, policy=policy)
-        self.assertEqual(
-            plan.estimates["memory_units"], len(plan.steps) * 7
+        self.assertEqual(plan.estimates["policy"]["byte_rounding"], "floor")
+        # 铁镐树的根原料是物品，而 1 个物品恰好 50 微单位 = 1 字节，
+        # **落不到取整边界上**，所以这里只断言「策略是这一份」而不钉死数值
+        # ——取整真正会咬住的只有流体，那一条在 `TestRequiredBytes` 里。
+        self.assertLessEqual(
+            plan.to_dict()["required_bytes"], plan.to_dict()["required_micro_units"]
         )
-        self.assertEqual(plan.estimates["policy"]["memory_units_per_step"], 7)
 
 
 class TestPlannerFacade(unittest.TestCase):
@@ -1622,7 +2139,7 @@ class TestPlannerFacade(unittest.TestCase):
         self.assertEqual(facade.stats["cancelled"], 1)
 
     def test_the_facade_hands_its_policy_to_the_job(self):
-        policy = planner.PlanPolicy(memory_units_per_step=3)
+        policy = planner.PlanPolicy(byte_rounding=planner.ByteRounding.FLOOR)
         facade = planner.Planner(policy=policy)
         job = facade.plan(PICKAXE, 1, inventory({}), snapshot(pickaxe_tree()))
         self.assertIs(job.policy, policy)
@@ -1762,6 +2279,10 @@ class TestConservationProperties(unittest.TestCase):
         大半落在同一条分支上——一个缺陷可以在整套性质测试里一次都不现形。
         这里把「够宽」写成断言：足够的步骤、足够的键、既有环也有做不完的图，
         以及**至少一轮含「同一种料写了两遍」的配方**（那个形状正是缺陷藏身处）。
+
+        第五个标志（`RECURSIVE_CANDIDATES` 缺口）是 2026-09-26 加上的：
+        候选预筛是这一批性质测试里**唯一**会自己安静退化的分支——没有它，
+        生成器只要不再产出带环的图，上面那几条性质就全都在验一条走不到的路。
         """
         shapes = []
         for job, _recipes, _storage in self.plans():
@@ -1776,16 +2297,23 @@ class TestConservationProperties(unittest.TestCase):
                         len(step.required_inputs) > len(step.input_pairs())
                         for step in job._steps.values()
                     ),
+                    any(
+                        gap["cause"] == Cause.RECURSIVE_CANDIDATES
+                        for gap in plan.gaps
+                    ),
                 )
             )
         self.assertTrue(shapes)
         self.assertTrue(any(item[0] >= 3 for item in shapes))
         self.assertTrue(any(item[1] >= 4 for item in shapes))
+        # 成环的图现在落到 `MISSING_MATERIALS`（`CYCLE` 已不再产出）。
         self.assertTrue(
             set(item[2] for item in shapes)
-            & set([Status.CYCLE, Status.MISSING_MATERIALS])
+            & set([Status.MISSING_MATERIALS, Status.LIMITED])
         )
+        self.assertNotIn(Status.CYCLE, set(item[2] for item in shapes))
         self.assertTrue(any(item[3] for item in shapes))
+        self.assertTrue(any(item[4] for item in shapes))
 
     def test_every_planned_output_is_credited_exactly_once(self):
         """计划产出与副产物产出都必须与各步骤报出的量**一一对上**。
@@ -1824,13 +2352,65 @@ class TestConservationProperties(unittest.TestCase):
                 )
         self.assertGreater(exercised, 0, "随机图里一条边都没有，这条性质没被验到")
 
+    def test_every_step_input_has_an_accepted_edge_with_the_same_total(self):
+        """**步骤说它要什么，边图里就必须有那条边、且毛量相同。**
+
+        这条比 `test_demand_is_explained_by_the_edges` 强：那条只核「需求 =
+        入边之和」，一份声称消耗 A、而环里那条边根本没被建的步骤**照样能通过**
+        ——需求与边自洽，只是两边一起错。候选预筛之前正是这个形状
+        （被拒的边不记需求，于是 `steps[B].inputs` 声称 A、`edges` 里没有）。
+        现在唯一的写入点是同一次走查，所以这条恒等式必须逐条成立。
+        """
+        checked = 0
+        for job, _recipes, _storage in self.plans():
+            accepted = {}
+            for parent, child, count in job.edges():
+                accepted[(parent, child)] = accepted.get((parent, child), 0) + count
+            for step in job._steps.values():
+                # `input_pairs()` 是**每批**量，边图记的是毛量（每批 × 批次），
+                # 所以取 `input_totals()` 的第三项对齐。
+                for child, _per_batch, total in step.input_totals():
+                    checked += 1
+                    self.assertEqual(
+                        accepted.get((step.key, child)),
+                        total,
+                        u"%s 的输入 %s 没有对应的被接受边（或有边但毛量对不上）"
+                        % (step.key.name, child.name),
+                    )
+        self.assertGreater(checked, 0, "随机图里一条步骤输入都没有，这条性质没被验到")
+
+    def test_the_defensive_edge_refusal_never_fires(self):
+        """防御网是**死代码**：`_expand_next_input` 那个拒绝分支在正常路径下不可达。
+
+        不可达的理由是四条（边只会加权重、简单路径不经过自己的出边、
+        光标在一个节点内一次走干、预筛与走查问同一个输入集合），
+        合起来就是「预筛排除掉的候选，走查时绝不会再撞上」。
+
+        这条计数器是**预筛与走查一致性的唯一观测点**：没有它，两者的分歧会
+        静默退化成「一个已经提交了批次的步骤被判了环」，而计划的其余部分
+        照旧自洽、没人会发现。**它一旦失败说明那四条有洞，去修设计，不要改断言。**
+
+        只断言 `blocked`——`blocked_keys` 由「需求减可达量」算出，与防御网无关，
+        它照旧该列出真正拿不到的键。
+        """
+        rounds = 0
+        for job, _recipes, _storage in self.plans():
+            rounds += 1
+            self.assertEqual(job.progress()["counters"]["cycles_refused"], 0)
+            self.assertEqual(job.refused_edges(), ())
+            for step in job._steps.values():
+                self.assertIs(step.blocked, False, step.key.name)
+                self.assertEqual(list(step.blocked_by), [], step.key.name)
+        self.assertGreater(rounds, 0)
+
     def test_demand_is_explained_by_the_edges(self):
         """每个键的需求 = 根贡献 + **被接受的**入边毛量之和。
 
         **被拒绝的边不记需求**：它既不会被任何步骤产出、也不会由库存来补，
         记进去就等于凭空造出一笔永远满足不了的需求（那会让 `PRODUCE` 口径
-        误以为自己用上了库存）。环由这个键自己的缺口、父步骤的 `blocked`
-        与收尾的 `_achievable` 三处表达，一样都不会丢。
+        误以为自己用上了库存）。环由这个键自己的缺口（`RECURSIVE_CANDIDATES`）
+        与收尾的 `_achievable` 反向传播表达——**不再是父步骤的 `blocked`**：
+        候选在挑选阶段就被排除，那条边根本不存在，也就没有「被拒的边」可标记。
         """
         for job, _recipes, _storage in self.plans():
             incoming = {}

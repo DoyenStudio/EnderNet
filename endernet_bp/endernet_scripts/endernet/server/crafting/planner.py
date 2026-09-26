@@ -67,16 +67,40 @@ capture 成纯数据快照交进来（`InventorySnapshot` / `PatternSnapshot`）
 终止性因此可证；`max_depth`/`max_steps`/`max_candidates` 只是实用安全阀，
 不是「靠它才停得下来」。
 
-代价写在明处：**自引用配方（`A ← A + B`，催化剂/回收类）一律判环拒绝**。
-这与 08 文档「循环生产不作为首版自动支持项」一致，也是保守的一侧
-（替身口径宁可报「做不到」，也不假装一条环能跑）。
+## 成环的候选是**被排除**，不是被拒绝整单（2026-09-26 规则）
 
-## 三种失败分开报（08 文档原文要求）
+同一问还要**用在选候选之前**：一个键有若干候选，凡是「它的输入会绕回这个键」的
+那些**根本不建步骤**（`_screen_inputs`），剩下的候选照常挑一条走。只有一条可用
+路线都不剩时，才按**原料不足**拒绝这个键——原因是 `GapCause.RECURSIVE_CANDIDATES`，
+环路路径作为缺料诊断写进 `detail`。规则原话：「先满足材料库存需求，再排除当前
+祖先链上的递归候选并尝试其他非循环路线；只有库存及可用路线均无法满足时，才按
+剩余缺料拒绝下单」——**不能因为一条候选成环就拒绝整单**。
+
+**为什么是预筛而不是「试算—回滚」。** 一条候选会不会绕回这个键，由它**自己的
+输入清单**在当前边图上的可达性就能答出来，不需要先提交再撤销。被排除的候选
+**根本不碰账本**（不改批次、不记产出、不建边、不记需求），因此不存在残留污染
+——这比「回滚到干净状态」更强。而且预筛是**唯一**守得住规则的手段：等边被拒绝
+时，那个步骤的批次与预计产出**早已提交**，那时再撤销就等于往一个单调账本里
+塞一套回滚机制。
+
+自引用配方（`A ← A + B`，催化剂/回收类）落在这条规则的同一个位置：它的候选会
+绕回自己，因此被排除。结论不再是「整单环」——这个键还有别的非循环路线时那条
+路线照走，都没有才报缺料。「首版不支持循环生产」这句仍然成立，它现在说的是
+**环里的那份产出不作为可用的原料**，而不是「见到环就整单拒绝」。
+
+`_expand_next_input` 里那条「边成环就拒绝」的分支保留为**防御网**：按上面的构造
+它在正常路径上不可达（预筛与走查在同一张冻结的边图上做同一个判断，且光标在
+同一个节点内走完，两者之间没有别的键被执行），一旦有人改掉这个结构，它保守地
+兜住（判做不到）而不是产出一份环状的计划。`counters["cycles_refused"]` 是它
+**唯一**的观测点——它不为 0 就说明这套构造有洞，要去修设计而不是改断言。
+
+## 几种失败分开报（08 文档原文要求）
 
     无解      样板索引里根本没有产出这个键的样板        → GapCause.NO_RECIPE
     无提供者  有样板，但候选全离线/读不到             → GapCause.NO_PROVIDER
     缺料      配方找到了，基础原料不够（**部分计划**） → 账本里的 outstanding
-    循环 / 超限 / 批次上限                            → 各自的 GapCause
+    递归候选  候选都在、但每条都会绕回自己            → GapCause.RECURSIVE_CANDIDATES
+    超限 / 批次上限 / 候选窗口用完                    → 各自的 GapCause
 
 `plan.status` 是**总判决**，`plan.gaps` 是**逐键原因**，两者分开：铁镐那个例子
 报的是 `MISSING_MATERIALS`（还有两个基础原料要补），而不是「没有配方」。
@@ -106,7 +130,12 @@ capture 成纯数据快照交进来（`InventorySnapshot` / `PatternSnapshot`）
 
 from ...common.identity import DeviceRef, NodeKey
 from ...common.protocol import BlockReason, Reason
-from ...common.resource_key import ResourceKey, canonical_tree, tree_text
+from ...common.resource_key import (
+    MICRO_UNITS_PER_UNIT,
+    ResourceKey,
+    canonical_tree,
+    tree_text,
+)
 from .patterns import PatternPolicy
 
 #: 计划结构的格式版本。与 `ResourceKey.schema_version`、`PATTERN_FORMAT_VERSION`
@@ -193,7 +222,7 @@ class AlternativeRecipes(object):
 
 
 class GapCause(object):
-    """一个资源键为什么没被满足。**七种，各自对应玩家不同的下一步动作。**
+    """一个资源键为什么没被满足。**八种，各自对应玩家不同的下一步动作。**
 
     合并成一个「没有配方」是 08 文档点名要防的：那会让「去装一块样板」
     「去把那台离线接口接回来」「去补基础原料」「少要一点」变成同一句话。
@@ -202,8 +231,12 @@ class GapCause(object):
     NO_RECIPE = "no_recipe"
     #: 有样板，但候选提供者现在都不能用（离线、容器读不到、被拆）。
     NO_PROVIDER = "no_provider"
-    #: 当前搜索路径上出现循环依赖。首版不支持循环生产。
-    CYCLE = "cycle"
+    #: **这个键的每一条可用候选都会把依赖绕回它自己**，因此全部被候选预筛
+    #: 排除（2026-09-26 规则）。这是**看完候选之后**的结论，不是「这次没看完」
+    #: ——所以它归 `ABSENCE_CAUSES` 而不是 `LIMIT_CAUSES`。环路路径写在
+    #: `detail` 里作为缺料诊断：玩家要看的是「哪条路线在打转」。
+    #: 旧口径下这个位置报的是整单的 `CYCLE`；那个常量已随规则更新删除。
+    RECURSIVE_CANDIDATES = "recursive_candidates"
     #: 依赖深度超过 `max_depth`。
     DEPTH_LIMIT = "depth_limit"
     #: 步骤数超过 `max_steps`。
@@ -221,8 +254,8 @@ class GapCause(object):
     #: 因为「没往下看」而产生的四类。**它们不构成「做不出来」的结论**，
     #: 只是「这次没看到那么远」——总判决里它们排在真实原因之后。
     LIMIT_CAUSES = frozenset([DEPTH_LIMIT, NODE_LIMIT, CANDIDATE_LIMIT, BATCH_LIMIT])
-    #: 因为「确实没有」而产生的两类。
-    ABSENCE_CAUSES = frozenset([NO_RECIPE, NO_PROVIDER])
+    #: 因为「确实没有」而产生的三类。
+    ABSENCE_CAUSES = frozenset([NO_RECIPE, NO_PROVIDER, RECURSIVE_CANDIDATES])
     #: 由上游传导而来的那一类（只出现在收尾的可达量传播里，不在 `_gaps` 里）。
     DERIVED_CAUSES = frozenset([MISSING_INPUTS])
 
@@ -230,7 +263,7 @@ class GapCause(object):
         [
             NO_RECIPE,
             NO_PROVIDER,
-            CYCLE,
+            RECURSIVE_CANDIDATES,
             DEPTH_LIMIT,
             NODE_LIMIT,
             CANDIDATE_LIMIT,
@@ -256,7 +289,10 @@ class PlanStatus(object):
     NO_RECIPE = "no_recipe"
     #: 有样板但候选全不可用。
     NO_PROVIDER = "no_provider"
-    #: 搜索路径上出现循环依赖。
+    #: **历史状态：规划器不再产出它。** 2026-09-26 的规则把环改成「排除递归候选」
+    #: （逐键的 `GapCause.RECURSIVE_CANDIDATES`），总判决落 `MISSING_MATERIALS`。
+    #: 保留这个常量是为了 12 从存档里恢复一份**旧计划**时
+    #: `CraftPlan.reasons()` 仍给得出原因码，而不是静默返回空。
     CYCLE = "cycle"
     #: 有截断，且没有更具体的失败原因（多半是深度或步骤数触顶）。
     LIMITED = "limited"
@@ -278,20 +314,30 @@ class PlanStatus(object):
 
 #: `GapCause` -> 命令层的 `Reason`。两套词汇的会合点（与 `store.reason_for_pattern_error`
 #: 同一分工）：前者描述「这个资源为什么没有」，后者描述「这条命令为什么被拒」。
+#:
+#: **`RECURSIVE_CANDIDATES` 映射到 `PLAN_CYCLE` 是有意的**：命令层那一侧
+#: 「取消一条做不到的订单」与原因码都是逐订单的，而 `PLAN_CYCLE` 是它唯一
+#: 表达「打转了」的码；换个新码会让 09/11 多一个必须认的值。
+#: 区别在**作用域**：从 2026-09-26 起拒绝是**逐路线**的（这个键的那几条候选
+#: 都在打转），不是逐订单的（整单碰到一个环就死）；订单层的结论去看
+#: `plan.status`——它现在是 `MISSING_MATERIALS`，环路径在 `status_detail` 里。
 _GAP_REASONS = {
     GapCause.NO_RECIPE: Reason.PLAN_NO_RECIPE,
     GapCause.NO_PROVIDER: Reason.PLAN_NO_PROVIDER,
-    GapCause.CYCLE: Reason.PLAN_CYCLE,
+    GapCause.RECURSIVE_CANDIDATES: Reason.PLAN_CYCLE,
     GapCause.DEPTH_LIMIT: Reason.PLAN_LIMIT_REACHED,
     GapCause.NODE_LIMIT: Reason.PLAN_LIMIT_REACHED,
     GapCause.CANDIDATE_LIMIT: Reason.PLAN_LIMIT_REACHED,
     GapCause.BATCH_LIMIT: Reason.PLAN_LIMIT_REACHED,
 }
 
-#: 目标**自己**的缺口原因 -> 总判决。三者当下字面相同，但**这不构成理由**：
+#: 目标**自己**的缺口原因 -> 总判决。两者当下字面相同，但**这不构成理由**：
 #: 写成显式映射，是为了让「改其中一个名字」不会悄悄改掉另一边。
+#:
+#: **这里不再有 `CYCLE` 一行**，那正是新规则要的行为：目标自己的配方自引用时
+#: 落到通用分支，总判决是 `MISSING_MATERIALS`（做不出来是因为料不够，
+#: 而不是因为「有个环」），环路径仍写在 `status_detail` 里。
 _TARGET_CAUSE_STATUS = {
-    GapCause.CYCLE: PlanStatus.CYCLE,
     GapCause.NO_RECIPE: PlanStatus.NO_RECIPE,
     GapCause.NO_PROVIDER: PlanStatus.NO_PROVIDER,
 }
@@ -302,6 +348,7 @@ _STATUS_REASONS = {
     PlanStatus.MISSING_MATERIALS: Reason.PLAN_MISSING_MATERIALS,
     PlanStatus.NO_RECIPE: Reason.PLAN_NO_RECIPE,
     PlanStatus.NO_PROVIDER: Reason.PLAN_NO_PROVIDER,
+    #: 规划器**不再产出**这个状态（见 `PlanStatus.CYCLE`），保留仅供 12 恢复旧计划。
     PlanStatus.CYCLE: Reason.PLAN_CYCLE,
     PlanStatus.LIMITED: Reason.PLAN_LIMIT_REACHED,
     PlanStatus.CANCELLED: Reason.PLAN_CANCELLED,
@@ -315,13 +362,36 @@ _STATUS_REASONS = {
 UNRESOLVED_FIELDS = (
     ("target_semantics", "R11", "目标量是生产量还是目标保有量，以及已有成品是否抵扣"),
     ("candidate_order", "08-04", "默认配方优先级（07 只给稳定顺序，优先级是 08 的规则）"),
-    ("alternative_recipes", "08-04", "替代配方的支持范围（首版只取第一条可用候选）"),
+    ("alternative_recipes", "08-04",
+     "替代配方的支持范围。「排除递归候选后试其他候选」**已定**（2026-09-26），"
+     "它不是这个字段：那是逐候选的**过滤器**（只问候选自己的输入在当前边图上"
+     "会不会绕回本键，**不展开候选子树**，每步仍只提交一条候选）。"
+     "这个字段问的是「要不要把多个候选当备选方案**搜索**」——那才是乘积级搜索，仍待定"),
     ("max_depth", "08-04", "依赖深度上限（帧安全阀，不是玩法数值）"),
     ("max_steps", "08-04", "单次计划的步骤数上限（帧安全阀）"),
     ("max_candidates", "08-04", "每个资源检查的候选数上限（帧安全阀）"),
     ("max_batches_per_step", "08-04", "单个步骤的批次数上限（明显的误输入安全阀）"),
-    ("memory_units_per_step", "R04", "内存占用估算口径（R04 未定，估算值不是预留证明）"),
+    ("byte_rounding", "R07", "根原料不足一个单位物时的字节取整口径；替身取向上取整"),
 )
+
+
+class ByteRounding(object):
+    """`required_bytes` 在「根原料微单位不是 50 的整数倍」时怎么取整。
+
+    **这是一条尚未定案的边界**（R07 的流体系列）：1 个物品恰好 50 微单位、
+    1 mB 恰好 1 微单位，因此 1 mB 的原料会算出 0.02 字节。
+    规则原文：「流体不足 50 mB 的精确计费及字节取整边界仍须随 R07 确认，
+    **不擅自舍入**」——所以这里不做算术上的隐式处理，而是把它做成一个具名
+    策略字段，让替身取值在诊断里看得见。
+    """
+
+    #: 替身：**向上取整**。宁可多收一点内存，也不放一个装不下的订单过去
+    #: ——与「宁可说做不到，也不说做得到」同一条取向。
+    CEIL = "ceil"
+    #: 另一侧：向下取整（少收），已实现但**默认不是它**。
+    FLOOR = "floor"
+
+    ALL = frozenset([CEIL, FLOOR])
 
 
 class PlanPolicy(object):
@@ -343,7 +413,7 @@ class PlanPolicy(object):
         "max_steps",
         "max_candidates",
         "max_batches_per_step",
-        "memory_units_per_step",
+        "byte_rounding",
     )
 
     def __init__(
@@ -355,9 +425,9 @@ class PlanPolicy(object):
         max_steps=64,
         max_candidates=8,
         max_batches_per_step=1000000,
-        memory_units_per_step=1,
+        byte_rounding=ByteRounding.CEIL,
     ):
-        # type: (str, str, str, int, int, int, int, int) -> None
+        # type: (str, str, str, int, int, int, int, str) -> None
         if target_semantics not in (TargetSemantics.HOLD, TargetSemantics.PRODUCE):
             raise ValueError(u"未知的目标量口径: %r" % (target_semantics,))
         if candidate_order != CandidateOrder.STABLE:
@@ -372,7 +442,9 @@ class PlanPolicy(object):
         if alternative_recipes != AlternativeRecipes.FIRST_MATCH:
             raise ValueError(
                 u"替代配方搜索 %r 尚未实现：把每个候选都当备选方案展开会让"
-                u"搜索空间变成候选数的乘积，需要先定案（08-04）。目前只能用 %r"
+                u"搜索空间变成候选数的乘积，需要先定案（08-04）。目前只能用 %r。"
+                u"注意「排除会成环的候选、继续试其他候选」是**已定案**的规则，"
+                u"它由候选预筛（`PlanJob._screen_inputs`）实现，与这个字段无关"
                 % (alternative_recipes, AlternativeRecipes.FIRST_MATCH)
             )
         self.target_semantics = target_semantics
@@ -384,10 +456,12 @@ class PlanPolicy(object):
         self.max_steps = max(1, int(max_steps))
         self.max_candidates = max(1, int(max_candidates))
         self.max_batches_per_step = max(1, int(max_batches_per_step))
-        #: 内存估算：一个步骤算多少个「内存单位」。**R04 未定**——
-        #: 内存条规格与计费公式都还没定，因此这里是个明显的替身，
-        #: 而计划里的每一个估计值都带 `authoritative: False`。
-        self.memory_units_per_step = max(0, int(memory_units_per_step))
+        #: **R07**：`required_bytes` 的取整边界。见 `ByteRounding`。
+        #: 字节计费本身（根原料单位物 × 1 B）已由 R04 定案，
+        #: **只有「不是整单位物」的取整**还悬着。
+        if byte_rounding not in ByteRounding.ALL:
+            raise ValueError(u"未知的字节取整口径: %r" % (byte_rounding,))
+        self.byte_rounding = byte_rounding
 
     # -- 判定 ----------------------------------------------------------
 
@@ -413,7 +487,13 @@ class PlanPolicy(object):
 
     def pick_candidate(self, usable):
         # type: (list) -> object
-        """从可用候选里挑一个。替身口径就是取第一个（快照顺序即 07 的稳定顺序）。"""
+        """从可用候选里挑一个。替身口径就是取第一个（快照顺序即 07 的稳定顺序）。
+
+        **会成环的候选根本送不到这里**：`PlanJob._select` 先用候选预筛
+        （`_screen_inputs`）把「输入会绕回本键」的那些摘掉，剩下的才进这个函数。
+        因此这里只需回答「哪个更优」，不必再自查递归性——两处各判一次的话，
+        两边判据一旦分叉就会出现「预筛放行、走查拒绝」的已提交步骤。
+        """
         return usable[0]
 
     # -- 未定案守卫 ----------------------------------------------------
@@ -454,7 +534,7 @@ class PlanPolicy(object):
             "max_steps": self.max_steps,
             "max_candidates": self.max_candidates,
             "max_batches_per_step": self.max_batches_per_step,
-            "memory_units_per_step": self.memory_units_per_step,
+            "byte_rounding": self.byte_rounding,
             "unresolved": self.unresolved_report(),
         }
 
@@ -960,11 +1040,12 @@ class CraftStep(object):
         按 `steps[].inputs` 派发又会多要——**同一份计划里的两个数互相矛盾**。
 
         合并之后，每条输入在每个步骤里只有一条，需求与派发不可能分叉。
+
+        **候选预筛必须走同一个函数**（`_merge_input_stacks`）：预筛问的是
+        「这条候选展开后会不会绕回本键」，它问的输入集合一旦与真正展开的那个
+        集合不一致，就会有输入在**已经提交之后**才被判成环，而那时没有回退。
         """
-        totals = {}
-        for stack in self.required_inputs:
-            totals[stack.key] = totals.get(stack.key, 0) + stack.count
-        return tuple((key, totals[key]) for key in sorted(totals, key=_canon))
+        return _merge_input_stacks(self.required_inputs)
 
     def input_totals(self):
         # type: () -> tuple
@@ -1463,9 +1544,13 @@ class CraftPlan(object):
             # 有几个键**最终拿不到**（含被上游连累的）。与 `produced` 一起读。
             "blocked": len(self.content["blocked_keys"]),
             "truncated": self.content["limits"]["truncated"],
+            # **内存不再是一个估计值**（2026-09-26 规则更新）：字节数是 09
+            # 准入时要用的那个数，因此单独给、且与 `estimates` 分开放——
+            # 混在 `authoritative: False` 里会让 09 顺手把它当参考值用。
+            "required_bytes": self.content["required_bytes"],
+            "total_recipe_tasks": self.content["total_recipe_tasks"],
             "estimates": {
                 "slots": self.content["estimates"]["slots"],
-                "memory_units": self.content["estimates"]["memory_units"],
                 "authoritative": False,
             },
         }
@@ -1533,6 +1618,7 @@ class PlanJob(object):
         "_status_detail",
         "_plan",
         "_spent_total",
+        "_frame",
         "counters",
     )
 
@@ -1573,46 +1659,93 @@ class PlanJob(object):
         self._status = PlanStatus.RUNNING
         self._status_detail = ""
         self._plan = None
+        #: 已经花掉的**配方节点**数（不是通用工作量）。
         self._spent_total = 0
+        #: 上一次推进用的帧号。见 `step()`：同帧重入不加算。
+        self._frame = None
         self.counters = {
             "selects": 0,
             "expansions": 0,
             "dfs_visits": 0,
             "steps": 0,
             "demands": 0,
+            "nodes": 0,
             "rounds": 0,
+            #: 同一帧里被重复调度的次数。**它随调用方式变化，因此不进指纹**
+            #: （与 `rounds` 同一条理由，见 `plan_counters`）。
+            "frame_repeats": 0,
+            #: 候选预筛试过的候选数、其中被递归排除的数。
+            "candidate_trials": 0,
+            "recursive_candidates": 0,
+            #: 防御网（`_expand_next_input` 的拒绝分支）触发的次数。
+            #: **正常路径下它恒为 0**：预筛与走查在同一张冻结边图上做同一个判断。
+            #: 它是这套构造**唯一**的观测点——不为 0 就说明设计有洞。
+            "cycles_refused": 0,
         }
         self._note_root()
 
     # -- 推进 ----------------------------------------------------------
 
-    def step(self, budget):
-        # type: (int) -> str
-        """推进 `budget` 个工作单位，返回当前状态。
+    def step(self, nodes, frame=None):
+        # type: (int, object) -> str
+        """推进 `nodes` 个**配方节点**，返回当前状态。
 
-        预算耗尽**不是失败**：状态仍是 `RUNNING`，调用方下一帧接着来。
-        `budget == 0` 是合法的空操作（返回当前状态，什么都不改）。
+        ## 「一个节点」是什么
+
+        **配方树上的一个键**：选定它的配方、展开它的输入。展开出来的子树
+        **本帧不再继续**——它们进待办，由下一次调用去算。这正是验收那句
+        「父节点与子节点不会在同 tick 计算」。
+
+        **单位就是节点，不是「通用工作量」。** 规则原话：「不能简单把通用
+        工作量预算设成 1 就宣称符合，工作单位必须与配方节点对应」。加批次、
+        环检测 DFS 这些都在**一个节点之内**完成，它们有界（受 `max_candidates`
+        与样板的输入条数约束），因此不是藏在一个节点里的无界递归。
+
+        `_select` 一次就是「算一个节点」：它只记这个键的需求、把子键排进
+        待办；真正的子树展开发生在**后面的**调用里。
+
+        ## `frame`：同 tick 重入不多算
+
+        调度器为了让每个网络都拿到份额，会在同一帧里把同一个运行时访问两次。
+        调用方把帧号传进来，同一个帧的第二次调用**什么都不做**（只计数）。
+        `frame=None`（离线直接调用）时不判重，每次调用算一帧——与引入这个
+        参数之前的行为一致。
+
+        预算耗尽**不是失败**：状态仍是 `RUNNING`，下一帧接着来。
+        `nodes == 0` 是合法的空操作。
         """
-        if isinstance(budget, bool) or not isinstance(budget, int):
-            raise TypeError(u"预算必须是整数，得到 %r" % (budget,))
-        if budget < 0:
-            raise ValueError(u"预算不能为负，得到 %r" % (budget,))
+        if isinstance(nodes, bool) or not isinstance(nodes, int):
+            raise TypeError(u"节点预算必须是整数，得到 %r" % (nodes,))
+        if nodes < 0:
+            raise ValueError(u"节点预算不能为负，得到 %r" % (nodes,))
+        if frame is not None and frame == self._frame:
+            self.counters["frame_repeats"] += 1
+            return self._status
+        self._frame = frame
         if self._status != PlanStatus.RUNNING:
             return self._status
-        spent = 0
         self.counters["rounds"] += 1
-        while spent < budget:
+        done = 0
+        while done < nodes:
             if self._cursor is not None:
-                spent += self._expand_next_input()
+                # 光标还在这一个节点的输入上：**它属于同一个节点**，不额外
+                # 计费。一个节点的输入条数由样板决定，是有界的。
+                self._expand_next_input()
+                if self._cursor is None:
+                    done += 1
                 continue
             key = self._next_pending()
             if key is None:
-                # 没有待办了 → 收尾。`_finalize` 自己幂等。
-                spent += 1
+                # 没有待办了 → 收尾。`_finalize` 自己幂等，**它不是配方节点**，
+                # 因此不占这次配额。
                 self._finalize()
                 break
-            spent += self._select(key)
-        self._spent_total += spent
+            self._select(key)
+            self.counters["nodes"] += 1
+            if self._cursor is None:
+                # 叶子、被库存满足、没有候选、被环拒绝……这条节点当场算完。
+                done += 1
+        self._spent_total += done
         return self._status
 
     def cancel(self, detail=""):
@@ -1643,6 +1776,7 @@ class PlanJob(object):
 
     def spent(self):
         # type: () -> int
+        """已经花掉的**配方节点**数。"""
         return self._spent_total
 
     def progress(self):
@@ -1761,13 +1895,20 @@ class PlanJob(object):
 
         - `NO_RECIPE` / `NO_PROVIDER`：只取决于冻结的快照，与走哪条路径无关，
           重开也是同一个答案。
-        - `CYCLE`：**它确实与路径有关，但重开依然没有意义**。这个缺口记在
-          **那条被拒绝的输入**上：某父步骤要它，而它已经能回到那个父步骤。
-          也就是说它自己的配方链最终绕回了父步骤——两边互相依赖，
-          谁先做都做不成。换一个父步骤来要它，并不改变「它的配方需要那个父步骤」
-          这件事，因此它仍然要不到。**保守侧**：宁可报成做不到，
-          也不假装另一条路径能绕过去。
+        - `RECURSIVE_CANDIDATES`：重开同样没有意义，但理由与旧口径不同，
+          而且**更强**——它不再依赖「路径」这个概念，只依赖两条单调性：
+          ①**候选的递归性是单调的**。边图只增不减（全文件没有一处 `-=`），
+          而候选来自**冻结快照**，所以「某条候选的输入绕得回本键」这件事
+          只会由否变是，不会由是变否。于是一条被排除的候选永远被排除，
+          `viable` 一旦为空就永远为空，重开只会得到同一个空集。
+          ②**这个缺口自己会消失**，当且仅当别的路子把需求满足了——
+          收尾的 `_finalize` 用 `demand - achievable <= 0` 删掉它（副产物或
+          库存覆盖了它时）。那时不需要「重开」，需求已经不缺了。
+          两条合起来：要么缺口消失、要么答案不变，中间没有第三种可能。
         - 各类上限：重开会让一次截断变成反复重试，而该看的是上限本身。
+
+        （旧口径下这里论证的是 `CYCLE`「与路径有关但重开无意义」；那个常量
+        已随 2026-09-26 的规则删除，理由也随之换成上面这条不依赖路径的版本。）
         """
         row = self._row(key)
         row.demand += count
@@ -1806,7 +1947,15 @@ class PlanJob(object):
 
     def _select(self, key):
         # type: (object) -> int
-        """为一个键选配方并安排批次。代价 = 1 + 检查过的候选数。"""
+        """为一个键选配方并安排批次。代价 = 1 + 检查过的候选数。
+
+        **预筛在选候选之前**：会绕回本键的候选不参与挑选（`_screen_inputs`）。
+        预筛的遍历**不动 tick 预算**——`step()` 丢掉这里返回的 `cost`，
+        配额只按「算完一个节点」计（`done += 1`）。把 DFS 计进配额的话，
+        「每 tick 一个逻辑配方节点」这条规则就破了（08-05）。
+        它仍然**有界**：每个节点最多 `max_candidates` 次 `_reachable`，
+        每次的范围是边图（键数 ≤ `max_steps`），次数记在 `counters` 里。
+        """
         cost = 1
         depth = self._pending.pop(key, None)
         if depth is None:
@@ -1868,13 +2017,43 @@ class PlanJob(object):
                 )
             return cost
 
-        chosen = self.policy.pick_candidate(usable)
+        # **挑候选之前先排除递归候选**（2026-09-26 规则）。预筛必须**紧挨着**
+        # 建步骤，中间不能插进别的 `_select`：走查（`_expand_next_input`）
+        # 在同一张边图上做同一个判断，而光标在同一个节点内一次走完
+        # （见 `step()` 的 `continue`），因此两者之间**零窗口**。
         step = self._steps.get(key)
         if step is not None:
-            # 同一次任务里候选集是**冻结的**，因此这一步早先选中的那条与
-            # 这次算出来的必然是同一条；用步骤自己记着的那份，
-            # 避免「重选时换了一条候选」这种本不该发生的事改变批次口径。
+            # 已经有步骤：沿用原来那条候选，**预筛整段跳过**。
+            #
+            # 这不是省事，是正确性。`step.chosen` 的每条输入都已经过了预筛、
+            # 又逐条拿到了被接受的边，因此它不可能变成递归的——候选的递归性
+            # 是**单调**谓词（边图只增不减、候选集来自冻结快照，论证见
+            # `_note_demand`）。反过来，若在这里按当下的 `usable` 重新挑，
+            # 就会从一个**已经提交了批次与预计产出**的步骤底下把候选抽掉，
+            # 而账本是单调的、没有回退。
             chosen = step.chosen
+        else:
+            viable = []
+            first_cycle = None
+            for item in usable:
+                self.counters["candidate_trials"] += 1
+                path = self._screen_inputs(key, item.definition)
+                if path is None:
+                    viable.append(item)
+                    continue
+                self.counters["recursive_candidates"] += 1
+                if first_cycle is None:
+                    first_cycle = path
+            if not viable:
+                # 候选都在、一条能走通的都没有。三种情形的区分见那个函数。
+                self._record_recursion_gap(
+                    key, candidates, window, first_cycle, depth
+                )
+                return cost
+            # `pick_candidate` 拿到的是**筛过之后**的整份可用集合，
+            # 而不是「筛出来的一条」：优先级规则（08-04 待定）要在所有
+            # 可行候选之间排序，只给它一条的话那条规则就没有意义了。
+            chosen = self.policy.pick_candidate(viable)
         # **建步骤之前先问产出**：索引说它有这个产物、内容里却没有时
         # （手工构造或从 JSON 恢复的快照可能与内容不一致），那一步压根不该
         # 被建出来——建完再判会留下一张 0 批次的空步骤，而它会进计划、
@@ -1974,24 +2153,30 @@ class PlanJob(object):
         self.counters["dfs_visits"] += visits
         cost += visits
         if path is not None:
-            # **环：拒绝这条依赖。** 于是它不会被继续展开、也不会无界长大。
+            # **防御网。** 按 2026-09-26 的设计它在正常路径上**不可达**：
+            # 预筛（`_screen_inputs`）在建步骤之前就用同一个判据问过同一条输入，
+            # 而光标在同一个节点内一次走完（`step()` 的 `continue`），两者之间
+            # 没有别的键被执行。四条腿的论证见模块 docstring。
+            #
+            # 保留它是为了让**改动这个结构的人**得到保守的结果：一旦预筛与走查
+            # 分叉（比如把预筛挪到别的调用里、或改用 `definition.inputs`），
+            # 这里会把那份已经提交的步骤判成做不到，而不是让它带着一条环状依赖
+            # 进计划。`counters["cycles_refused"]` 是它唯一的观测点。
             #
             # 这里**刻意不记需求**（与「缺口照记」相反）。被拒绝的那份既不会有
             # 任何步骤去产出、也不会由库存来补，把它记成需求就等于凭空造出一笔
             # 永远满足不了的需求：那个键的 `outstanding`、`materials` 与
             # `claims` 都会被撑大，而 `PRODUCE` 口径下还会让它误以为自己用上了
             # 库存（根需求之外多出来的那一份被算成了可抵扣的）。
-            # 「这条输入要不到」这件事由三处独立表达，一样都不会丢：
-            # 这个键自己的 `CYCLE` 缺口（带环路）、父步骤的 `blocked`/`blocked_by`、
-            # 以及收尾时 `_achievable` 把整条链标成执行不了。
+            self.counters["cycles_refused"] += 1
             step.blocked = True
             if child not in step.blocked_by:
                 step.blocked_by.append(child)
             refused[child] = refused.get(child, 0) + need
             self._record_gap(
                 child,
-                GapCause.CYCLE,
-                u"循环依赖：%s（首版不支持循环生产，这条链按做不到处理）"
+                GapCause.RECURSIVE_CANDIDATES,
+                u"循环依赖：%s（这条链按做不到处理）"
                 % (u" -> ".join([_name(item) for item in path + [child]]),),
                 step.depth + 1,
             )
@@ -2000,6 +2185,88 @@ class PlanJob(object):
         edge[child] = edge.get(child, 0) + need
         self._note_demand(child, need, step.depth + 1)
         return cost
+
+    def _screen_inputs(self, key, definition):
+        # type: (object, object) -> object
+        """这条候选展开后会不会把依赖绕回 `key`：会就返回环路路径，不会返回 `None`。
+
+        判据与走查用的是**同一个**：`_reachable(子键, key)`——「子键是不是已经
+        能回到 key」，也就是「子键是不是 key 的祖先」。见模块 docstring 里
+        「环检测必须在边图上做」那一段（纯路径判据会漏掉兄弟成环）。
+
+        **输入集合必须走 `pattern_policy.required_inputs`**
+        （与 `CraftStep.input_pairs()` 同源，见 `_merge_input_stacks`），
+        **不能**用 `definition.inputs`。不限量燃料那类输入走查时根本不建边
+        （`PatternPolicy.supplies` 把它划给外部自理），按原始输入预筛会看到
+        它「能回到 key」，于是排掉一条本来可行的候选、报出一个并不存在的缺料
+        ——那是**反方向的谎话**，与谎报「做得到」一样不能接受。
+
+        路径的写法与走查一致（`path + [子键]`，首尾同一个键），因此诊断里
+        读到的永远是「A 要去 B，B 又回到 A」这种可读的形状。
+        """
+        for child, _per_batch in _merge_input_stacks(
+            self.pattern_policy.required_inputs(definition)
+        ):
+            path, visits = self._reachable(child, key)
+            self.counters["dfs_visits"] += visits
+            if path is not None:
+                return path + [child]
+        return None
+
+    def _record_recursion_gap(self, key, candidates, window, first_cycle, depth):
+        # type: (object, tuple, tuple, object, int) -> None
+        """一个键的候选全被排除时，说清**是哪一种「没有路线」**。
+
+        三种情形，按「玩家下一步该做什么」分开报。顺序与上面 `not usable`
+        那一段**刻意一致**（都是先问「是不是没看完」），理由也一样：
+        **没看完的时候不能报成「确实没有」**——窗口外还有候选没看时，
+        我们并不知道那里有没有非循环路线，而 `RECURSIVE_CANDIDATES` 与
+        `NO_PROVIDER` 都属于「确实没有」那一侧。报成上限还保证
+        `limits["truncated"]` 是诚实的（否则截断会被一次「确实没有」盖掉）。
+        """
+        unseen = len(candidates) - len(window)
+        if unseen > 0:
+            self._record_gap(
+                key,
+                GapCause.CANDIDATE_LIMIT,
+                u"前 %d 个候选里可用的那些都会成环，而后面还有 %d 个没看；"
+                u"这是「没看完」，不是「没有非循环路线」"
+                % (len(window), unseen),
+                depth,
+            )
+            return
+        # **有路线，只是那台设备现在不能派发。** 不能报成「只能靠循环配方」：
+        # 玩家要做的是把接口接回来，而不是回去改配方。这里要再筛一次
+        # 不可用的那些候选——只有「筛掉它们之后还剩路线」才说明问题在可用性上。
+        offline = []
+        for item in window:
+            if item.available:
+                continue
+            self.counters["candidate_trials"] += 1
+            if self._screen_inputs(key, item.definition) is None:
+                offline.append(item)
+        if offline:
+            self._record_gap(
+                key,
+                GapCause.NO_PROVIDER,
+                u"产出 %s 的样板里，能走通非循环路线的那些提供者现在都不能用"
+                u"（%s）；其余候选都会成环"
+                % (_name(key), _blocker_text(tuple(offline))),
+                depth,
+            )
+            return
+        if first_cycle:
+            cycle = u" -> ".join([_name(item) for item in first_cycle])
+        else:  # pragma: no cover - 防御性：`usable` 非空时至少算过一条路径
+            cycle = u"（环路路径未记录）"
+        self._record_gap(
+            key,
+            GapCause.RECURSIVE_CANDIDATES,
+            u"循环依赖：%s。%s 的每一条可用候选都会把依赖绕回它自己，"
+            u"因此全部被排除；没有别的路线，按原料不足处理"
+            % (cycle, _name(key)),
+            depth,
+        )
 
     def _reachable(self, source, target):
         # type: (object, object) -> tuple
@@ -2054,7 +2321,9 @@ class PlanJob(object):
         """记一条缺口。**同一个键只留第一条原因**。
 
         原因之间不会互相冒充：`NO_RECIPE`/`NO_PROVIDER` 只取决于快照（与路径无关），
-        `CYCLE` 与各种上限则取决于处理顺序——而处理顺序是确定性的。
+        `RECURSIVE_CANDIDATES` 只取决于**冻结的候选集在当前边图上的可达性**
+        ——边图只增不减，因此它一旦成立就永久成立（见 `_note_demand` 的第①条）；
+        各种上限则取决于处理顺序——而处理顺序是确定性的。
         因此「先记哪一条」是确定的，不需要更复杂的优先级规则。
         `DEPTH_LIMIT` 例外：更浅的路径到来时它会被清掉（见 `_note_demand`）。
         """
@@ -2234,9 +2503,15 @@ class PlanJob(object):
         # type: (list) -> tuple
         """总判决与一句能读的说明。
 
-        优先级是有意的：**真实原因压过上限**（有环就报环，哪怕顺带截断了），
-        而 `NO_RECIPE` 只留给目标本身——否则「铁镐的原料缺了」会被报成
-        「没有铁镐的配方」，玩家会去到处找一份其实已经有的样板。
+        优先级是有意的：**真实原因压过上限**（材料真的缺就报缺料，哪怕顺带
+        截断了），而 `NO_RECIPE` 只留给目标本身——否则「铁镐的原料缺了」会被
+        报成「没有铁镐的配方」，玩家会去到处找一份其实已经有的样板。
+
+        **2026-09-26 起这里不再有「有环就报环」那一条。** 环现在是逐候选被排除的
+        （`GapCause.RECURSIVE_CANDIDATES`），它不在 `DERIVED_CAUSES` 里，
+        因此会作为「叶子原因」被 `sorted(leaf or real)[0]` 选中——总判决是
+        `MISSING_MATERIALS`（原料拿不到），而说明文字就是那条环路。
+        规则要的正是这个：**把「打转了」当缺料的诊断来说，而不是当整单的判决。**
         """
         if not self._gaps and not blocked:
             return PlanStatus.COMPLETE, ""
@@ -2245,8 +2520,6 @@ class PlanJob(object):
         # 目标**自己**的问题优先于别处的：玩家问的是「我要的东西能不能做出来」。
         if target_gap is not None and target_gap.cause in _TARGET_CAUSE_STATUS:
             return _TARGET_CAUSE_STATUS[target_gap.cause], target_gap.detail
-        if GapCause.CYCLE in causes:
-            return PlanStatus.CYCLE, self._first_detail(GapCause.CYCLE)
         if GapCause.NO_PROVIDER in causes:
             return PlanStatus.NO_PROVIDER, self._first_detail(GapCause.NO_PROVIDER)
         real = causes - GapCause.LIMIT_CAUSES
@@ -2279,6 +2552,79 @@ class PlanJob(object):
         rows.sort(key=lambda gap: (-gap.depth, _canon(gap.key)))
         return rows[0].detail
 
+    def leaf_units(self):
+        # type: () -> dict
+        """**叶子折算**：`{键: 微单位}`，每个键「不由本计划产出」的那部分需求。
+
+        **账本记的是件数/mB，这里折成微单位物**（1 个物品 = 50、1 mB = 1，
+        见 `resource_key`）。折算放在这一处，而不是让每个调用方自己乘：
+        乘错一次就是 50 倍的差额，而那个数会直接变成订单占的内存。
+
+        规则原文：`required_bytes = 根原料总单位物 × 1 B/单位物`，
+        并且「库存已抵扣而不再展开的中间品」**也要折算**（2026-09-26 User 确认）。
+
+            demand - own_output - byproduct_output
+
+        逐项都有理由：
+
+        - **根原料**（没有任何步骤产出它）：`own_output = 0`，于是整份需求都
+          计入——不管它是从库存来的还是从外部输入来的，它都是这个订单要占住的
+          那一份。
+        - **被库存抵扣、因而不再展开的中间品**：那份抵扣量就是这里的差额，
+          计入。**这正是「把抵扣物折算成内存」。**
+        - **由本计划产出的中间品**：`demand == own_output`，差额 0，不计入
+          ——它的原料在下一层已经计过了。
+        - **副产物**：从别的步骤顺带出来的，那份产出同样有自己的原料在账上，
+          再计一次就是重复收费。
+
+        结果是**每一单位物正好被计一次**：要么作为要生产的根原料，要么作为
+        从库存/外部拿的叶子。这也是验收「中间产物不重复收费」的判据。
+        """
+        out = {}
+        for key, row in self._ledger.items():
+            left = row.demand - row.own_output - row.byproduct_output
+            if left > 0:
+                out[key] = key.micro_units(left)
+        return out
+
+    def required_micro_units(self):
+        # type: () -> int
+        """叶子折算的合计（微单位）。**取整之前**的那个数。"""
+        total = 0
+        for value in self.leaf_units().values():
+            total += value
+        return total
+
+    def required_bytes(self):
+        # type: () -> int
+        """这个订单要占住的**字节数**（R04 已定案的口径）。
+
+        1 单位物 = 1 B；50 mB 流体 = 1 单位物。取整口径见 `ByteRounding`
+        ——它仍是 R07 的未定边界，替身取向上取整。
+        """
+        micro = self.required_micro_units()
+        unit = MICRO_UNITS_PER_UNIT
+        if self.policy.byte_rounding == ByteRounding.CEIL:
+            # py2 里 `-(-a // b)` 就是向上取整（两边都是整数，`//` 是整除）。
+            return -(-micro // unit)
+        return micro // unit
+
+    def total_recipe_tasks(self):
+        # type: () -> int
+        """订单配方树里的**配方任务总数**（含同配方的重复执行次数）。
+
+        压缩表示下就是各步骤的批次数之和：`batches` 数的是「这个键要生产几批」，
+        而一批就是一次配方执行。规则原文：「同配方执行 10 次计 10 个任务，
+        每次占 1 槽、完成一次进度加 1…不得因内部批次合并变成整批占 1 槽、
+        整批计 1 个任务」。
+
+        **进度与槽位按这个数计**，不是按步骤数。
+        """
+        total = 0
+        for step in self._steps.values():
+            total += step.batches
+        return total
+
     def plan_counters(self):
         # type: () -> dict
         """**与预算无关**的那部分计数（进计划内容，因此进指纹）。
@@ -2287,7 +2633,8 @@ class PlanJob(object):
         """
         return dict(
             (name, self.counters[name])
-            for name in ("selects", "expansions", "dfs_visits", "steps", "demands")
+            for name in
+            ("selects", "expansions", "dfs_visits", "steps", "demands", "nodes")
         )
 
     def execution_ranks(self):
@@ -2381,13 +2728,12 @@ class PlanJob(object):
             ),
         }
         estimates = {
-            # 「槽位」这里算的是**派发位**（每个步骤一个），因此它同样属于 R04
-            # 尚未定案的计费口径：真正的槽位来自处理器连接器与内存条，
-            # 那是 09-03 的事，不是「一个订单等于一个槽位」那种默认假设。
+            # 「槽位」这里算的是**派发位**（每个步骤一个）——它是给 08-04
+            # 的搜索上限看的估计，**不是**并行槽位的计费口径：并行槽位是
+            # 「每次配方执行占 1 槽」，由 `total_recipe_tasks` 那个数量级决定，
+            # 而且真正领取它的是 09（见 `capacity.py`）。
             "slots": len(steps),
-            "memory_units": len(steps) * self.policy.memory_units_per_step,
-            "basis": u"每个步骤占一个派发位；一个步骤算 %d 个内存单位"
-            % (self.policy.memory_units_per_step,),
+            "basis": u"每个步骤占一个派发位；内存见顶层的 required_bytes",
             # **估计值不是预留证明**（08-06 原文）。09 拿到计划之后要自己
             # 按 R04 复核槽位与内存，本模块的估算不构成任何占用。
             "authoritative": False,
@@ -2411,6 +2757,29 @@ class PlanJob(object):
             "gaps": gaps,
             "blocked_keys": blocked,
             "limits": limits,
+            # --- 交给 09 的两个数（2026-09-26 新增）----------------------
+            #: 这个订单要占住的字节数。**它是「按快照算的账」，不是预留**：
+            #: 规则原文要求「准入时重新核对网络当前可用字节」，因此 09 不能
+            #: 拿这个数直接扣，而是要用它去问当时的网络。
+            "required_bytes": self.required_bytes(),
+            #: 取整之前的那个数。留给诊断——「为什么是 41 不是 40」要答得出来。
+            "required_micro_units": self.required_micro_units(),
+            #: 叶子折算的逐键明细（`[{key, canonical, micro_units}]`）。
+            #: 与 `materials` 是**两个口径**：那里记的是全量需求与产出，
+            #: 这里只记「不由本计划产出、因此要占内存」的那部分。
+            "leaf_materials": [
+                {
+                    "key": _name(key),
+                    "canonical": _canon(key),
+                    "micro_units": units,
+                }
+                for key, units in sorted(
+                    self.leaf_units().items(), key=lambda item: _canon(item[0])
+                )
+            ],
+            #: 配方任务总数（含重复执行次数）。**进度与槽位按它计**，
+            #: 不是按 `len(steps)`——同配方跑 10 次要算 10 个任务。
+            "total_recipe_tasks": self.total_recipe_tasks(),
             "estimates": estimates,
             # `counters["rounds"]` **刻意不进计划**：它数的是 `step()` 被调了几次，
             # 而预算怎么切正是验收第 4 条允许自由变化的那一维。把它放进内容里，
@@ -2445,6 +2814,21 @@ class PlanJob(object):
             ),
         )
         return CraftPlan(content, seal)
+
+
+def _merge_input_stacks(stacks):
+    # type: (tuple) -> tuple
+    """把输入条目按资源键合并成 `((键, 每批数量), ...)`，按资源身份排序。
+
+    **`CraftStep.input_pairs()` 与候选递归预筛必须走这一个函数。** 合并本身
+    不是优化（理由见 `input_pairs` 的说明）；对预筛来说它还多一层意义：
+    预筛与走查问的必须是**同一个输入集合**，否则会出现「预筛放行、走查拒绝」
+    ——而走查拒绝时那个步骤的批次与预计产出早已提交，无法撤销。
+    """
+    totals = {}
+    for stack in stacks:
+        totals[stack.key] = totals.get(stack.key, 0) + stack.count
+    return tuple((key, totals[key]) for key in sorted(totals, key=_canon))
 
 
 def _yield_for(definition, key):

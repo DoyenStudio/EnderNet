@@ -1598,7 +1598,7 @@ class TestPlannerWiring(unittest.TestCase):
             "plan.max_steps",
             "plan.max_candidates",
             "plan.max_batches_per_step",
-            "plan.memory_units_per_step",
+            "plan.byte_rounding",
         ):
             self.assertIn(expected, fields)
 
@@ -1623,7 +1623,7 @@ class TestPlannerWiring(unittest.TestCase):
             any("plan.target_semantics" in item for item in problems), problems
         )
         self.assertTrue(
-            any("plan.memory_units_per_step" in item for item in problems), problems
+            any("plan.byte_rounding" in item for item in problems), problems
         )
 
     def test_diagnostics_say_what_is_not_done(self):
