@@ -94,6 +94,12 @@ class Fixture(unittest.TestCase):
         self.stands = {}
         self.devices = {}
         self.epochs = {}
+        #: 每请求复核要读的外部事实。测试改这几个字典就能模拟「玩家走开了」
+        #: 「换了维度」「网络不可用」，而不用另造一份上下文——复核走的是
+        #: 与开会话**同一个** `context_of`，两者必须看到同一批事实。
+        self.positions = {}
+        self.dimensions = {}
+        self.workable = {}
         self.hub = TerminalSyncHub(
             policy=self.policy,
             storage_of=self._storage_of,
@@ -125,19 +131,30 @@ class Fixture(unittest.TestCase):
         return None if stand is None else stand.service
 
     def _context_of(self, player_id, device_ref):
+        """按**坐标**查，返回注册表里**当前**那一台——与生产同形。
+
+        **不能按 `matches` 查**：生产里是「拿坐标去注册表问现在是谁」
+        （`runtime_of(node_key)` + `registry.get(node_key)`），于是拆掉又在原地
+        放一个时，问到的是一台代次更大的新设备。按 `matches` 查的话，那种
+        情形会退化成「查不到上下文」——结论碰巧一样（都是关掉会话），
+        但 `_drop_stale_devices` 里「代次变了」与「设备没了」两条分支就再也
+        测不出来了，而这正是复核与注销要分开计数的理由。
+        """
         if device_ref is None:
             return None
         for network_id, device in self.devices.items():
-            if device_ref.matches(device):
+            if device.node_key.as_key() == device_ref.node_key.as_key():
                 return SessionContext(
                     player_id,
                     device,
                     network_id,
                     self.epochs[network_id],
                     "master-1",
-                    network_workable=True,
-                    player_dimension=0,
-                    player_position=device.node_key.as_tuple(),
+                    network_workable=self.workable.get(network_id, True),
+                    player_dimension=self.dimensions.get(player_id, 0),
+                    player_position=self.positions.get(
+                        player_id, device.node_key.as_tuple()
+                    ),
                 )
         return None
 
@@ -570,6 +587,175 @@ class TestTransferLimits(Fixture):
         self.assertEqual(
             self.resync_codes(), [sync_terminal.RESYNC_RESOURCE_TABLE_FULL]
         )
+
+
+# ---------------------------------------------------------------------------
+# 每请求复核
+# ---------------------------------------------------------------------------
+
+
+class TestPerRequestRevalidation(Fixture):
+    """会话开着不等于一直成立：每条请求都要重新问一遍「它还成立吗」。
+
+    **不查的代价不是报错**，是服务端持续把库存组包发给一个已经走出交互
+    距离、或已经换了维度的客户端——实机上看起来只是「界面还开着」，直到
+    TTL 到点。因此这里的断言分两层：拒绝**并且**把会话关掉（只拒不放，
+    订阅表会留着一个永远不该再收包的人）。
+    """
+
+    def walk_away(self, player_id="p1", x=999.0):
+        """把玩家挪到远处。**改的是上下文解析的那份事实**，不是客户端说的
+        话——客户端根本没有「我在哪」这个字段，位置由服务端自己查。"""
+        self.positions[player_id] = (x, 64.0, 0.0)
+
+    def test_a_valid_session_keeps_being_served(self):
+        """复核通过 = **什么都不发生**：没有错误回包，会话照旧活着。
+
+        `SnapshotRequest` 走通时不回包（快照从这里开始，客户端从后续的
+        `snapshot_*` 拿结果），因此这里断言的是「回包为 None、也没有 error」，
+        而不是某个正常回包的形状。
+        """
+        session, _ = self.open_view()
+        self.assertIsNone(self.send(session, SnapshotRequest("q1", 0)))
+        self.assertEqual(self.of_kind(MSG_ERROR), [])
+        self.assertIsNotNone(self.hub.registry.get(session.session_id))
+        self.assertEqual(self.hub.stats["revalidate_refused"], 0)
+
+    def test_walking_out_of_range_refuses_and_closes(self):
+        session, _ = self.open_view()
+        self.walk_away()
+
+        reply = self.send(session, SnapshotRequest("q1", 0))
+
+        self.assertEqual(reply.message.kind, MSG_ERROR)
+        self.assertEqual(reply.message.code, Reason.OUT_OF_RANGE)
+        self.assertIsNone(self.hub.registry.get(session.session_id), "必须一并关掉")
+        self.assertEqual(self.hub.stats["revalidate_refused"], 1)
+        self.assertEqual(
+            session.close_reason, "revalidate:" + Reason.OUT_OF_RANGE
+        )
+
+    def test_a_refused_revalidation_leaves_no_subscription(self):
+        """拒绝之后**不能**留下订阅表：留着它，发布窗口每帧都以为还有人在看，
+        于是继续对着一批早已离线的玩家组包——那正是 11-02 要防的空转。"""
+        session, _ = self.open_view()
+        self.walk_away()
+
+        self.send(session, SnapshotRequest("q1", 0))
+
+        self.assertEqual(self.hub.diagnostics()["networks"], {})
+        self.assertEqual(self.hub.registry.count(), 0)
+
+    def test_an_ack_is_revalidated_too(self):
+        """**确认包是这条校验最关键的一条**：快照与增量的实际投递挂在它上面。
+
+        只复核「取快照」而不复核「确认」，等于人走开了之后服务端还在按他的
+        确认继续推分片——而分片里装的是库存内容。
+        """
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+        self.stand.seed(DIRT, 3)
+        self.hub.tick()
+        batch_id = self.of_kind(MSG_ITEM_DELTA)[0].message.batch_id
+        self.assertEqual(session.backlog_items, 1, "先确认这条增量真的在途")
+
+        self.walk_away()
+        self.ack(session, batch_id, 0)
+
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+        self.assertEqual(self.hub.stats["revalidate_refused"], 1)
+        self.assertEqual(session.backlog_items, 1, "被拒的确认不该改动积压账")
+
+    def test_the_boundary_distance_is_still_served(self):
+        """边界含端点，复核这一侧也是。写死一个数字就没这条了。"""
+        session, _ = self.open_view()
+        device = self.devices[NETWORK]
+        limit = self.hub.registry.policy.max_interaction_distance
+        self.positions["p1"] = (device.node_key.x + limit, 64.0, 0.0)
+
+        self.send(session, SnapshotRequest("q1", 0))
+
+        self.assertEqual(self.of_kind(MSG_ERROR), [])
+        self.assertIsNotNone(self.hub.registry.get(session.session_id))
+        self.assertEqual(self.hub.stats["revalidate_refused"], 0)
+
+    def test_changing_dimension_closes_the_session(self):
+        session, _ = self.open_view()
+        self.dimensions["p1"] = 1
+
+        reply = self.send(session, SnapshotRequest("q1", 0))
+
+        self.assertEqual(reply.message.code, Reason.SESSION_INVALID)
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+
+    def test_a_network_that_stops_working_closes_the_session(self):
+        session, _ = self.open_view()
+        self.workable[NETWORK] = False
+
+        reply = self.send(session, SnapshotRequest("q1", 0))
+
+        self.assertEqual(reply.message.code, Reason.WRONG_NETWORK)
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+
+    def test_a_replaced_device_closes_the_session(self):
+        """拆掉又在原地放一个：复核走的是与开会话同一句 `matches`。"""
+        session, _ = self.open_view()
+        self.devices[NETWORK] = DeviceRef(self.device.node_key, 2)
+
+        reply = self.send(session, SnapshotRequest("q1", 0))
+
+        self.assertEqual(reply.message.code, Reason.STALE_INSTANCE)
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+
+    def test_a_device_that_left_its_network_closes_the_session(self):
+        """设备不属于任何网络了（上下文解析不出来）：与开会话同向——拒绝。"""
+        session, _ = self.open_view()
+        self.devices.pop(NETWORK)
+
+        reply = self.send(session, SnapshotRequest("q1", 0))
+
+        self.assertEqual(reply.message.code, Reason.WRONG_NETWORK)
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+
+    def test_closing_never_needs_revalidation(self):
+        """客户端说要走就让它走：复核不过也只会走到同一个 `close_session`，
+        中间平白多回一条错误，而界面那边会把它当异常显示。
+
+        顺带钉住「关会话这条路不碰复核计数」——否则
+        `revalidate_refused` 就不再等于「有多少会话因为不成立而被关掉」。
+        """
+        session, _ = self.open_view()
+        self.walk_away()
+
+        self.close_view(session)
+
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+        self.assertEqual(session.close_reason, "client_closed")
+        self.assertEqual(self.hub.stats["revalidate_refused"], 0)
+
+    def test_only_the_walking_player_is_affected(self):
+        mine, _ = self.open_view(player_id="p1")
+        theirs, _ = self.open_view(player_id="p2", request_id="r2")
+
+        self.walk_away("p1")
+        self.send(mine, SnapshotRequest("q1", 0))
+
+        self.assertIsNone(self.hub.registry.get(mine.session_id))
+        self.assertIsNotNone(self.hub.registry.get(theirs.session_id))
+
+    def test_the_refusal_carries_the_distance_limit(self):
+        """拒绝的说明里要有**生效的**上限：实机上「为什么开不了」全靠它。
+
+        对着 policy 字段断言，因此改策略时这条跟着变。
+        """
+        session, _ = self.open_view()
+        self.walk_away()
+
+        reply = self.send(session, SnapshotRequest("q1", 0))
+
+        limit = self.hub.registry.policy.max_interaction_distance
+        self.assertIn("%g" % (limit,), reply.message.detail)
 
 
 # ---------------------------------------------------------------------------

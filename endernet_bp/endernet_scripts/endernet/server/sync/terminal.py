@@ -544,6 +544,10 @@ class TerminalSyncHub(object):
             "transport_errors": 0,
             "sessions_opened": 0,
             "sessions_refused": 0,
+            #: 其中有多少条是**开着之后**复核不过而关掉的（走开、传走、
+            #: 设备被换、网络不可用）。与开会话被拒分开计：前者是「这个人
+            #: 现在离得远」，后者是「这条请求本来就开不了」——查的东西不同。
+            "revalidate_refused": 0,
             "networks_dropped": 0,
             # 「服务在但只读口不全」与「版本链被别人推进过」都不是错误，
             # 但从现象上看都是「什么都没发出去」。计数留着，否则查不出来。
@@ -648,10 +652,27 @@ class TerminalSyncHub(object):
                 Reason.SESSION_INVALID,
                 "会话不存在或已关闭",
             )
-        session.touch(frame)
         if kind == MSG_SESSION_CLOSE:
+            # 关会话**不做复核**：客户端说要走，那就让它走。复核失败也只会
+            # 走到同一个 `close_session`，中间平白多回一条错误。
+            session.touch(frame)
             self.close_session(session.session_id, "client_closed")
             return None
+        verdict = self._revalidate(session, player_id)
+        if not verdict.ok:
+            # 判据不过就**关掉**，不是只拒这一条：距离/维度/设备哪一条不成立，
+            # 会话都不该继续活着——留着它，发布窗口会继续把库存组包发给一个
+            # 已经站在远处（或换了维度）的客户端，而那在实机上看起来只是
+            # 「界面还开着」，直到 TTL 到点。
+            self.stats["sessions_refused"] += 1
+            self.stats["revalidate_refused"] += 1
+            self.close_session(
+                session.session_id, "revalidate:%s" % (verdict.reason,)
+            )
+            return self._error(
+                envelope.session_id, request_id, verdict.reason, verdict.detail
+            )
+        session.touch(frame)
         if kind == MSG_SNAPSHOT_REQUEST:
             return self._on_snapshot_request(session, envelope.message, frame)
         if kind == MSG_ACK:
@@ -662,6 +683,22 @@ class TerminalSyncHub(object):
             Reason.UNSUPPORTED,
             "该消息不由物品视图处理：%r" % (kind,),
         )
+
+    def _revalidate(self, session, player_id):
+        # type: (object, str) -> object
+        """每请求复核一个已存在的会话，返回 `SessionCheckResult`。
+
+        **每条非 `session_open` 的消息都要过这里**（确认、取快照、关闭以外的
+        全部）。不查的代价不是报错，是服务端持续把库存内容发给一个已经走出
+        交互距离、或已经换了维度的客户端——它看起来只是「界面还开着」。
+
+        代价是每条消息一次上下文解析，其中两次是引擎查询（维度、脚部坐标）。
+        确认包的频率由发布窗口决定（每批一条），不是每帧每键一条，因此这个
+        开销有界。**不为此加一个「隔几帧查一次」的旋钮**：那是一个没有测量
+        依据的新数值，而它挡住的正是这条校验本身——漏查的那几帧里，包照发。
+        """
+        context = self._context_of(player_id, session.device_ref)
+        return self.registry.revalidate(session, context)
 
     def _open(self, envelope, player_id, frame):
         # type: (object, str, int) -> object

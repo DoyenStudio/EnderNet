@@ -277,6 +277,11 @@ class Session(object):
         self.view_kind = view_kind
         self.dimension = dimension
         #: 服务端解析出的终端坐标（不是客户端给的），距离校验的基准。
+        #:
+        #: **每请求复核读的不是它，而是注册表里当前的坐标**——两者必然相等：
+        #: 复核先判 `device_ref.matches(record_ref)`（位置与代次都相同才算同一台），
+        #: 通过了才谈距离。留这一份是会话自己的记录（`anchor` 进不开进线上格式
+        #: 由 `to_dict` 决定），也是「这条会话当初是对着哪一格开的」的唯一答案。
         self.anchor_position = anchor_position
         self.state = SESSION_ACTIVE
         self.opened_frame = frame
@@ -310,11 +315,6 @@ class Session(object):
         if policy.session_ttl_frames <= 0:
             return False
         return frame - self.last_seen_frame > policy.session_ttl_frames
-
-    def reaches(self, position, policy):
-        # type: (tuple, SessionPolicy) -> bool
-        """玩家是否还在交互距离内。"""
-        return within_reach(self.anchor_position, position, policy)
 
     def is_open(self):
         # type: () -> bool
@@ -417,8 +417,8 @@ class SessionRegistry(object):
 
     def check(self, envelope, context):
         # type: (object, SessionContext) -> SessionCheckResult
-        """逐项校验。顺序有意：先挡掉「根本不是这个设备/这个人」的请求，
-        再谈网络资格——后者要查更多东西，而前者的失败原因对排查更关键。
+        """开会话时的逐项校验。顺序有意：先挡掉「根本不是这个设备/这个人」的
+        请求，再谈网络资格——后者要查更多东西，而前者的失败原因对排查更关键。
 
         `SyncEnvelope` 构造时已经挡过一轮「未知视图种类」，这里再判一次是
         有意的：那一轮在 `settings.DEBUG` 关闭时不执行，而这条路径上的数据
@@ -442,27 +442,60 @@ class SessionRegistry(object):
                 "%s 视图尚未接入（依赖 11-06/11-09）" % (view_kind,),
             )
 
+        return self._check_target(context, request.device_ref, request.dimension)
+
+    def revalidate(self, session, context):
+        # type: (Session, object) -> SessionCheckResult
+        """复核一个**已经开着**的会话，返回与开会话同一套判据的结论。
+
+        会话开着不等于一直成立：玩家可能走出去、传走、换个维度，设备可能
+        被拆掉又在原地放一个，网络可能在重建。**中途不查的代价不是报错**，
+        是服务端持续把库存内容发给一个已经站在几百格外的客户端，而它在
+        实机上看起来只是「界面还开着」——直到 TTL 到点。
+
+        用会话自己存的 `device_ref` / `dimension` 而不是请求里的：这条路径上
+        的客户端说的是「我确认第 3 批」或「给我快照」，它**根本没有**重申
+        自己要看哪台设备。会话里存的那一份就是开会话时校验通过的那一份，
+        复核要问的是「它现在还成立吗」。
+
+        判据与 `check()` 共用同一段（`_check_target`），因此不存在「开会话
+        严、复核松」这种迟早会被钻的口子。`context` 为 `None` 表示连设备
+        属于哪个网络都查不到了，与开会话那条路径同样处理。
+        """
+        if context is None:
+            return SessionCheckResult.refused(
+                Reason.WRONG_NETWORK, "该终端当前不属于任何网络"
+            )
+        return self._check_target(context, session.device_ref, session.dimension)
+
+    def _check_target(self, context, device_ref, dimension):
+        # type: (SessionContext, object, int) -> SessionCheckResult
+        """**上下文一侧**的全部判据。开会话与每请求复核共用，因此只此一份。
+
+        参数是「请求方声称要看的东西」：开会话时来自 `SessionOpen`，复核时
+        来自会话自己存的那一份。会话是否存在、属于谁不在这里判——那是调用方
+        在更前面就挡掉的（别人拿不到会话号，拿到了也不该知道它存在）。
+        """
         if context.record_ref is None:
             return SessionCheckResult.refused(
                 Reason.DEVICE_GONE, "该位置上没有本模组的方块实例"
             )
-        if not request.device_ref.matches(context.record_ref):
+        if not device_ref.matches(context.record_ref):
             # 位置相同、代次不同 = 方块被拆掉又在原地放了一个。
             return SessionCheckResult.refused(
                 Reason.STALE_INSTANCE,
                 "终端实例已被替换（请求 %d，当前 %d）"
-                % (request.device_ref.generation, context.record_ref.generation),
+                % (device_ref.generation, context.record_ref.generation),
             )
 
         if context.player_dimension is None:
             return SessionCheckResult.refused(
                 Reason.SESSION_INVALID, "无法确认玩家所在维度"
             )
-        if context.player_dimension != request.dimension:
+        if context.player_dimension != dimension:
             return SessionCheckResult.refused(
                 Reason.SESSION_INVALID,
-                "维度不符（玩家 %r，请求 %r）"
-                % (context.player_dimension, request.dimension),
+                "维度不符（玩家 %r，请求 %r）" % (context.player_dimension, dimension),
             )
         if context.player_dimension != context.record_ref.node_key.dimension:
             return SessionCheckResult.refused(

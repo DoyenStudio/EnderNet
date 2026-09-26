@@ -253,6 +253,93 @@ class DistanceTests(Fixture):
         self.assertFalse(within_reach((0.0, 0.0, 0.0), None, self.policy))
 
 
+class RevalidationTests(Fixture):
+    """每请求复核（`revalidate`）：会话**开着**不等于一直成立。
+
+    这一组的核心不是「复核会拒」，而是「复核拒的理由与开会话拒的理由
+    是同一套」——判据一旦分成两份，迟早出现「开会话严、复核松」，而
+    中间那条缝正好是「人走开了还在收库存」。
+    """
+
+    def test_a_still_valid_session_passes(self):
+        session = self.open()
+        self.assertTrue(self.registry.revalidate(session, self.context()).ok)
+
+    def test_every_refusal_reason_matches_the_open_time_check(self):
+        """同一份上下文，`check` 与 `revalidate` 必须给出**同一个**理由。
+
+        逐条覆盖 `_check_target` 里的每一个分支。改判据时只改一处会让
+        这条立刻红——这正是它存在的意义。
+        """
+        session = self.open()
+        envelope = self.envelope()
+        cases = [
+            ("player_dimension=None", {"player_dimension": None}),
+            ("player_dimension=1", {"player_dimension": 1}),
+            ("player_position=None", {"player_position": None}),
+            ("player_position=(99, 64, 0)", {"player_position": (99.0, 64.0, 0.0)}),
+            ("record_ref=None", {"record_ref": None}),
+            ("record_ref=2nd generation", {"record_ref": ref(generation=2)}),
+            ("record_ref=other block", {"record_ref": ref(x=3)}),
+            ("network_id=None", {"network_id": None}),
+            ("master_instance_id=None", {"master_instance_id": None}),
+            ("network_workable=False", {"network_workable": False}),
+        ]
+        for name, overrides in cases:
+            context = self.context(**overrides)
+            expected = self.registry.check(envelope, context)
+            actual = self.registry.revalidate(session, context)
+            self.assertFalse(expected.ok, "%s：这份上下文本就该校验不过" % (name,))
+            self.assertEqual(
+                actual.reason,
+                expected.reason,
+                "%s：复核与开会话给出了不同的理由" % (name,),
+            )
+            self.assertFalse(actual.ok, name)
+
+    def test_an_unresolvable_context_is_refused_like_at_open_time(self):
+        """连网络都查不到（`context is None`）时与开会话同一条：拒绝。
+
+        `check()` 拿不到 `None`（开会话那条路径先挡过一轮），因此这一条
+        只能单独钉——两条路径在这一点上必须**同向**，否则「设备刚被拆掉」
+        这一瞬间复核会放行。
+        """
+        session = self.open()
+        result = self.registry.revalidate(session, None)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, Reason.WRONG_NETWORK)
+
+    def test_revalidation_reads_the_session_not_a_second_request(self):
+        """复核比的是**会话存的那一份**，不是任何新来的说法。
+
+        确认包里根本没有设备引用（客户端说的是「我收到第 3 批」），因此
+        这里能比的只有会话自己——钉住这一点，将来给确认消息加字段时才不会
+        顺手让它覆盖掉会话认准的那台设备。
+        """
+        session = self.open()
+        # 会话认的是 self.device；上下文改成另一台方块 → 复核必须拒。
+        elsewhere = ref(x=9)
+        context = self.context(
+            record_ref=elsewhere, player_position=elsewhere.node_key.as_tuple()
+        )
+        result = self.registry.revalidate(session, context)
+        self.assertEqual(result.reason, Reason.STALE_INSTANCE)
+        # 而把上下文换回原设备就通过——拒绝确实来自设备对不上，不是别的原因。
+        self.assertTrue(self.registry.revalidate(session, self.context()).ok)
+
+    def test_revalidation_is_a_read_only_probe(self):
+        """复核**不动会话表、不动计数**：它只回答「还成立吗」。
+
+        关会话是调用方的事（hub 在复核不过时才关）。复核自己顺手关掉的话，
+        「查一下」这个动作就有了副作用，而调用方再也分不清「它拒了」与
+        「它已经替我关了」。
+        """
+        session = self.open()
+        self.registry.revalidate(session, self.context(player_dimension=None))
+        self.assertIs(self.registry.get(session.session_id), session)
+        self.assertTrue(session.is_open())
+
+
 class SessionLifecycleTests(Fixture):
     def test_session_ids_are_not_reused_after_close(self):
         first = self.open()
