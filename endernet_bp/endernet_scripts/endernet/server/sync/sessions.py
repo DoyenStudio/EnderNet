@@ -75,7 +75,46 @@ class SessionPolicy(object):
         #: 查不到玩家坐标时是否拒绝。**默认拒绝（fail closed）**：
         #: 距离校验存在的意义就是挡住远处的伪造请求，而「查不到坐标」
         #: 恰恰是它最该挡住的情形。放行等于把这道校验变成可选项。
+        #:
+        #: **它不进 `unresolved_report()`**：这是一条有取向的安全默认，
+        #: 不是「等测量」的数值。混进去会让真正待定的那四项变得不起眼。
         self.require_position = bool(require_position)
+
+    def unresolved_report(self):
+        # type: () -> list
+        """仍带未定标签的字段。与 `BandwidthPolicy` / `MediumPolicy` 同形。
+
+        四项全部来自 11.md 页尾「请求大小、**会话过期**和分页上限由目标环境
+        测量后确定」。前两项直接就是那句话里的东西；后两项（每玩家/每网络的
+        会话数上限）是同一类资源上限，同批测量。
+        """
+        measured = "11-14 实测后确定；当前值是首轮测试配置，不是验收指标"
+        return [
+            {
+                "field": "session.max_interaction_distance",
+                "rule": "11-14",
+                "value": self.max_interaction_distance,
+                "note": "玩家与终端的交互距离上限；" + measured,
+            },
+            {
+                "field": "session.session_ttl_frames",
+                "rule": "11-14",
+                "value": self.session_ttl_frames,
+                "note": "多久没消息就回收会话（按逻辑帧）；" + measured,
+            },
+            {
+                "field": "session.max_sessions_per_player",
+                "rule": "11-14",
+                "value": self.max_sessions_per_player,
+                "note": "单个玩家的会话数上限，超限先关最旧的；" + measured,
+            },
+            {
+                "field": "session.max_sessions_per_network",
+                "rule": "11-14",
+                "value": self.max_sessions_per_network,
+                "note": "单个网络的会话数上限，超限先关最旧的；" + measured,
+            },
+        ]
 
 
 class SessionCheckResult(object):
@@ -546,6 +585,17 @@ class SessionRegistry(object):
         return self._close_matching(
             lambda session: session.network_id == network_id, reason
         )
+
+    def close_all(self, reason="shutdown"):
+        # type: (str) -> list
+        """关掉**全部**会话。停机与热重载用。
+
+        **它必须是这里的一个方法，而不是 `for session_id in ids(): close(...)`。**
+        调用方自己遍历就得先拿到一份 ID 快照——那份快照的取得与使用之间
+        隔着整个循环，中间新建的会话会**漏掉**（它不在快照里），于是停机后
+        仍有一张订阅表活着。放在这里就没有那个窗口。
+        """
+        return self._close_matching(lambda session: True, reason)
 
     def close_for_epoch(self, network_id, epoch, reason="epoch_rotated"):
         # type: (str, str, str) -> list

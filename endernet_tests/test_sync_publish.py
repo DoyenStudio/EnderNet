@@ -663,6 +663,150 @@ class TestSubscriptions(Fixture):
 
 
 # ---------------------------------------------------------------------------
+# 跟随运行时变化注销
+# ---------------------------------------------------------------------------
+
+
+def RUNTIME(kind):
+    # type: (str) -> str
+    """按名字取 `RuntimeChange` 的种类常量（`RUNTIME("retired")`）。
+
+    **不在这边抄一份字面量**：抄一份的话，「退役」写成 `"retire"` 就只是
+    「那条变化不是退役」，用例照样绿；`getattr` 会当场抛 `AttributeError`。
+    """
+    from endernet.server.network.runtime import RuntimeChange
+
+    return getattr(RuntimeChange, kind.upper())
+
+
+class TestRuntimeChanges(Fixture):
+    """`RuntimeChange` → 注销会话（bootstrap 把它挂在 `RuntimeManager` 上）。
+
+    这里测的是**接线那一侧的一半**：给定一条变化，哪些会话该关。另一半
+    （变化真的会从 `RuntimeManager` 流到这里）由 `test_bootstrap.py` 的
+    `TestSyncWiring` 经真实装配验证——两半分开是因为这一半要能单独驱动
+    任何一种变化，而真装配只走得出它自己会发的那几种。
+    """
+
+    def change(self, kind, network_id=NETWORK):
+        # type: (str, str) -> object
+        """造一条变化。**编号用线上形态**：运行时的编号是整数，而
+        `network_id_of` 是唯一的转换点（另有专门用例钉它）。"""
+        from endernet.server.network.runtime import RuntimeChange
+
+        return RuntimeChange(network_id, kind)
+
+    def test_a_retired_network_closes_its_sessions(self):
+        session, _ = self.open_view()
+        self.assertEqual(self.hub.on_runtime_change(self.change(RUNTIME("retired"))), 1)
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+        self.assertEqual(self.hub.diagnostics()["networks"], {})
+
+    def test_a_closed_network_closes_its_sessions(self):
+        """网络被关掉（重建中、无主控）时界面上的库存不该继续看下去。"""
+        session, _ = self.open_view()
+        self.assertEqual(self.hub.on_runtime_change(self.change(RUNTIME("closed"))), 1)
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+
+    def test_a_lost_master_closes_its_sessions(self):
+        session, _ = self.open_view()
+        self.assertEqual(self.hub.on_runtime_change(self.change(RUNTIME("master_lost"))), 1)
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+
+    def test_other_changes_are_no_ops(self):
+        """建立、绑主控、开放都不使任何既有会话失效。
+
+        把它们一并关掉会表现成「网络一重建，终端就自己关了」——而那些
+        变化在一次拆装里会出现好几回。
+        """
+        session, _ = self.open_view()
+        for kind in ("created", "master_bound", "opened"):
+            self.assertEqual(self.hub.on_runtime_change(self.change(RUNTIME(kind))), 0, kind)
+        self.assertIsNotNone(self.hub.registry.get(session.session_id))
+
+    def test_a_replaced_device_closes_only_its_own_sessions(self):
+        """拆掉又在原地放一个 → 代次变大 → 旧会话作废（判据与开会话同一句）。"""
+        session, _ = self.open_view()
+        # 同一坐标、新代次：注册表里那台已经不是界面对着的那一台了。
+        self.devices[NETWORK] = DeviceRef(session.device_ref.node_key, 2)
+
+        self.assertEqual(
+            self.hub.on_runtime_change(self.change(RUNTIME("members_changed"))), 1
+        )
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+
+    def test_an_unchanged_device_keeps_its_session(self):
+        """成员增减里没动到的那台终端不受影响——否则每次插拔都踢人。"""
+        session, _ = self.open_view()
+        self.assertEqual(
+            self.hub.on_runtime_change(self.change(RUNTIME("members_changed"))), 0
+        )
+        self.assertIsNotNone(self.hub.registry.get(session.session_id))
+
+    def test_a_missing_context_counts_as_replaced(self):
+        """查不到上下文（网络已不在、设备已消失）按失效处理：fail closed。"""
+        session, _ = self.open_view()
+        self.devices.pop(NETWORK)
+
+        self.assertEqual(
+            self.hub.on_runtime_change(self.change(RUNTIME("members_changed"))), 1
+        )
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+
+    def test_a_change_only_touches_its_own_network(self):
+        self.add_network(SECOND_NETWORK, x=40)
+        first_session, _ = self.open_view()
+        second_session, _ = self.open_view(player_id="p2", network_id=SECOND_NETWORK)
+
+        self.assertEqual(
+            self.hub.on_runtime_change(
+                self.change(RUNTIME("retired"), network_id=SECOND_NETWORK)
+            ),
+            1,
+        )
+        self.assertIsNotNone(self.hub.registry.get(first_session.session_id))
+        self.assertIsNone(self.hub.registry.get(second_session.session_id))
+
+    def test_a_change_for_an_unknown_network_is_harmless(self):
+        self.open_view()
+        self.assertEqual(
+            self.hub.on_runtime_change(
+                self.change(RUNTIME("retired"), network_id="nope")
+            ),
+            0,
+        )
+
+    def test_shutdown_closes_every_session_on_every_network(self):
+        """停机走 `shutdown()` 而不是让调用方自己遍历（见 `close_all` 的说明）。"""
+        self.add_network(SECOND_NETWORK, x=40)
+        first, _ = self.open_view()
+        second, _ = self.open_view(player_id="p2", network_id=SECOND_NETWORK)
+        self.settle(first)
+        self.settle(second)
+
+        self.assertEqual(self.hub.shutdown(), 2)
+        self.assertEqual(self.hub.registry.count(), 0)
+        self.assertEqual(self.hub.diagnostics()["networks"], {})
+        self.assertEqual(self.hub.stats["networks_dropped"], 2)
+
+    def test_shutdown_does_not_reuse_session_ids(self):
+        """序号不重置：停机前发出去的号，客户端手里可能还留着。"""
+        session, _ = self.open_view()
+        self.hub.shutdown()
+        second, _ = self.open_view(player_id="p2")
+        self.assertNotEqual(session.session_id, second.session_id)
+
+    def test_shutdown_with_nothing_open_is_harmless(self):
+        self.assertEqual(self.hub.shutdown(), 0)
+
+    def test_network_id_of_is_the_only_conversion(self):
+        """分量编号是整数，线上要的是文本；全项目只在这里转。"""
+        self.assertEqual(sync_terminal.TerminalSyncHub.network_id_of(7), "7")
+        self.assertEqual(sync_terminal.TerminalSyncHub.network_id_of("7"), "7")
+        self.assertEqual(sync_terminal.TerminalSyncHub.network_id_of(0), "0")
+
+
+# ---------------------------------------------------------------------------
 # 历史与重取
 # ---------------------------------------------------------------------------
 

@@ -45,6 +45,33 @@ except NameError:
     TEXT_TYPES = (str,)
 
 
+#: 引擎在 C2S 原始字典上**额外附加**的字段。它们不属于协议，解析前一律摘掉。
+#:
+#: `__id__` 是引擎给的发送者身份，它与协议字段**平级地混在同一个字典里**。
+#: 而 `SyncEnvelope.from_dict` 对未知字段是拒收整条的（那是要防「对面发了
+#: 脏数据」，不能放宽），于是不摘掉它的话，真机上每一条请求都会在解析那一步
+#: 就被判成坏包——症状是「界面什么都不显示」，而服务端计数说的是
+#: `bad_packets`，离原因隔着好几层。
+#:
+#: 摘掉它这件事只能由适配器做：它是唯一知道引擎约定的那一层，协议层不该
+#: 认识某个引擎的私有字段名。
+ENGINE_ADDED_FIELDS = ("__id__",)
+
+
+def raw_data(value):
+    # type: (object) -> object
+    """从「事件实例」或「原始字典」里取出那个字典，取不到返回 None。
+
+    两种形态都要认：组合根拿到的是引擎派发的事件实例（原始字典在 `.data` 上），
+    而离线测试与 `unmarshal` 之后的重放可能直接给字典。只认一种的话，另一种
+    会静默退化成「取不到身份」——那表现为「每一台终端都打不开」，
+    与「总线挂错了」同一个症状，查法却完全不同。
+    """
+    if isinstance(value, dict):
+        return value
+    return getattr(value, "data", None)
+
+
 def engine_events():
     # type: () -> object
     """引擎的 `tooldelta.events` 模块。**导入留在函数体内**（见模块 docstring）。
@@ -200,10 +227,32 @@ class AdapterSyncPort(object):
 
     # -- 身份与位置 ----------------------------------------------------
 
-    def source_player_id(self, data):
+    def source_player_id(self, value):
         # type: (object) -> str
-        """见模块级 `source_player_id`。本方法是同一份实现。"""
-        return source_player_id(data)
+        """见模块级 `source_player_id`。本方法多认一种形态：**事件实例**（见
+        `raw_data`）。取不到就是空串——不猜、不回退到别的字段。
+        """
+        return source_player_id(raw_data(value))
+
+    def payload_of(self, value):
+        # type: (object) -> object
+        """事件里**属于协议的那部分**：摘掉引擎附的字段，其余原样。
+
+        **它是 C2S 通向 `SyncEnvelope.from_dict` 的必经之路**：那个解析器对
+        未知字段是拒收整条的，而引擎的身份字段就在同一个字典里（见
+        `ENGINE_ADDED_FIELDS`）。漏摘的表现不是报错，是每一条请求都变成
+        「坏包」——界面什么都不显示。
+
+        返回 `None` 表示「这不是可以解析的东西」，由 hub 按坏包计数：
+        与「字典里少字段」走同一条路（连信封都解不出来时不回话）。
+        """
+        data = raw_data(value)
+        if not isinstance(data, dict):
+            return None
+        clean = dict(data)
+        for field in ENGINE_ADDED_FIELDS:
+            clean.pop(field, None)
+        return clean
 
     def dimension_of(self, player_id):
         # type: (str) -> object

@@ -42,6 +42,7 @@ from .adapters.containers_engine import (
     build_stack_limit,
 )
 from .adapters.events import ServerEventBinder
+from .adapters.messages import AdapterSyncPort
 from .adapters.world import ToolDeltaWorldAdapter
 from .application import ApplicationService
 from .devices.catalog import DeviceCatalog
@@ -62,7 +63,7 @@ from .devices.registry import DeviceRegistry
 from .devices.storage_driver import DriverPolicy, StorageDriverStore
 from .network.admission import AdmissionService
 from .network.energy import EnergyPolicy, EnergyService
-from .network.runtime import RuntimeManager
+from .network.runtime import RuntimeChange, RuntimeManager
 from .network.services import (
     AssemblyProfile,
     ServiceFactory,
@@ -77,6 +78,8 @@ from .runtime.scheduler import LogicalClock, SchedulerPolicy
 from .storage.medium import MediumPolicy
 from .storage.service import StorageService
 from .storage.transfer import TransferPolicy
+from .sync.sessions import SessionContext, SessionPolicy, SessionRegistry
+from .sync.terminal import SyncPolicy, TerminalSyncHub
 
 
 def _scheduler_builder(policy):
@@ -286,8 +289,12 @@ class ServerBootstrap(object):
         container_provider=None,
         inventory_provider=None,
         player_dimension=None,
+        player_position=None,
+        sync_policy=None,
+        session_policy=None,
+        sync_events=None,
     ):
-        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object) -> None
+        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
         #: 逻辑时钟（04-01）。**它是业务时间的唯一依据**，由 `drive_once()`
         #: 每帧推进一步，经 `context["tick"]` 下传给各服务。注入自有实例即可
@@ -493,6 +500,45 @@ class ServerBootstrap(object):
                     ),
                 }
             )
+        #: 终端同步中枢（任务 11）。**它必须早于 `RuntimeManager` 构造**：
+        #: 主控的命令准入探针（`session_check`）就是它的 `accepts()`，而那个
+        #: 参数在下面那次构造里就要用。反过来先建运行时再回填，主控手里拿到的
+        #: 会是 `None`——命令于是**全部放行**，而那是「没有这道门禁」的形状，
+        #: 不是「暂时没接上」。
+        #:
+        #: 两个存储/上下文口子现在指向还不存在的东西（`self.runtimes`），
+        #: 但它们是**绑定方法**，真正被调到时运行时早就装配好了。
+        self.sync_policy = sync_policy if sync_policy is not None else SyncPolicy()
+        self.session_policy = (
+            session_policy if session_policy is not None else SessionPolicy()
+        )
+        #: 同步通道的**引擎事件模块**。注入替身即可在无引擎环境下跑通
+        #: `start(bind_engine=True)`——「真机才试得出来」这件事在 01 已经吃过
+        #: 一次亏（注册与注销必须能离线验证）。不注入时由适配器取真模块。
+        #:
+        #: 与 `player_dimension` 同一地位：都是**给适配器用的引擎口子**，
+        #: 存在的理由也一样——注册路径本身要在游戏外可测。
+        self.sync_events = sync_events
+        self.sync = TerminalSyncHub(
+            policy=self.sync_policy,
+            registry=SessionRegistry(self.session_policy),
+            storage_of=self._sync_storage_of,
+            context_of=self._sync_context_of,
+        )
+        if session_check is None:
+            # 注入值优先：离线测试与 05/08 的既有用例会自己传探针，
+            # 覆盖它属于改别人的可见行为。没传时接上会话表——这就是
+            # 计划里「组合根注入 `lambda source: hub.accepts(source)`」那一步，
+            # 写成绑定方法而不是 lambda：两者的可调用性相同，但绑定方法在
+            # 诊断里认得出是谁。
+            session_check = self.sync.accepts
+        #: `publish_budget_keys` 这类同步预算**不另开一个构造参数**：
+        #: `SyncPolicy` 已经带着它们，注入 `sync_policy` 就是唯一的旋钮。
+        #: 同一个数字有两个入口时，`unresolved_report()` 报出来的与真正
+        #: 生效的迟早不是同一个（全局约束 7 要防的正是这个）。
+        self._epochs = {}
+        self._next_epoch = 1
+
         # 运行时管理器**必须在 `AdmissionService` 之后构造**：两者都订阅
         # 拓扑发布，准入先订阅才能保证每次发布时带宽判定已按新版本刷新过，
         # 而运行时在同一帧内读到的就是刷新后的结论。
@@ -540,8 +586,29 @@ class ServerBootstrap(object):
             patterns=self.patterns,
             # 玩家维度解析同样可注入：自定义容器的玩家事件不带维度，
             # 而插槽拒收挂在那条路径上——不注入的话它只能进游戏试。
+            # 同一个解析器也交给同步端口（见下面 `AdapterSyncPort` 那一段）。
             player_dimension=player_dimension,
         )
+        # 同步端口在这里才建：它要拿 `event_binder` 去注册监听器（注册本身
+        # 发生在 `start()`，这里只组装）。**构造端口不碰引擎**——引擎 import
+        # 全在方法体内，因此离线装配照样能走到这一行。
+        #:
+        #: **维度解析与 `ServerEventBinder` 共用同一份**（同一个构造参数接两处）。
+        #: 「这个玩家在哪个维度」只有一个答案，两处各接一个的话，注入替身时
+        #: 只换其中一个，就会出现「容器事件认为他在 A、会话校验认为他在 B」——
+        #: 而两个症状都长成「有时不好使」，没法查。位置只此一处用，因此它是
+        #: 独立参数；不注入时取引擎实现。
+        self.sync_port = AdapterSyncPort(
+            self.event_binder,
+            events=self.sync_events,
+            player_dimension=player_dimension,
+            player_position=player_position,
+        )
+        self.sync.attach(self.sync_port)
+        # 运行时状态变化的消费者（任务 11）。挂在这里而不是让 sync 自己订阅：
+        # `_emit` 的订阅者顺序按注册先后走，而这一步在**装配期**完成，
+        # 与 04/05 那些消费者一样是固定的、可复现的顺序。
+        self.runtimes.add_listener(self._on_runtime_change)
         # 生命周期把变化发布到这里，这是**唯一**出口：
         # 事件处理与启动补查/手动重扫都走它，不会有一条路径绕过去。
         self.lifecycle.set_change_sink(self._emit)
@@ -580,6 +647,11 @@ class ServerBootstrap(object):
             self.event_binder.register_remove_whitelist()
             self.event_binder.bind()
             self._bind_tick_driver()
+            # 同步通道的两个监听器（任务 11）。**与上面同一批注册**：
+            # 走 `event_binder` 的账本，`stop()` 才会把它们一并注销；
+            # 另开一份账本的代价是热重载后同一个包被处理两次。
+            self.sync_port.listen(self._on_sync_request)
+            self.sync_port.on_player_leave(self._on_player_leave)
         self._backfill_generator = None
         self._backfill_finished = False
         # 启动时全量标脏：注册表里可能已有记录（重启、手动重扫），
@@ -647,6 +719,10 @@ class ServerBootstrap(object):
         if not self.started:
             return
         self.event_binder.unbind()
+        # 会话与订阅缓存一并丢掉。**监听器已经注销了，但订阅表还活着**——
+        # 留着它的症状不是报错，而是下一次 `start()` 时发布窗口以为还有人在看，
+        # 于是对着一批早已离线的玩家组包。
+        self.sync.shutdown()
         self.queue.clear()
         # 停机时把未处理的唤醒信号也丢掉：它们是「这一帧该醒醒了」，
         # 留着会在下次启动的第一帧集中投递一批早已过期的信号。
@@ -687,6 +763,13 @@ class ServerBootstrap(object):
         # → 服务推进。顺序不能倒——先在旧图上推进服务，等于让它们按已经
         # 不成立的归属动手。
         service_steps = self.runtimes.tick(self.runtime_budget, self._tick_context())
+        # 发布窗口**紧跟运行时推进**（任务 11-02）：提交发生在 `runtimes.tick`
+        # 内，取脏键放其后，窗口才看得见本帧提交。放前面会让本帧的提交等到
+        # 下一帧才发布——那不是错，只是白慢一拍；放后面则更快。位置不能挪。
+        #
+        # 没有订阅者的网络连碰都不碰（`tick()` 只遍历有会话的网络），
+        # 因此那句「无人订阅时 `take_dirty_keys()` 不会被调用」继续成立。
+        published = self.sync.tick()
         # 样板槽的重读放在最后：它读的是方块容器，与网络服务不相干。
         # **注意容器事件不走这里的队列**：它们是引擎监听器，由适配器在
         # 引擎派发时直接 `mark_dirty`，因此到达时刻与这一帧的推进无关。
@@ -711,6 +794,11 @@ class ServerBootstrap(object):
             "service_steps": service_steps,
             #: 本帧送达的唤醒信号数（04-02）。未命中不报错，见 `deliver_wakes`。
             "wakes": delivered,
+            #: 本帧同步窗口取走的脏物品键数（11-02）。恒为 0 是正常的——
+            #: 没有终端订阅、或本帧没有任何物品提交时都是 0。**它不等于
+            #: 「没发包」**：快照分片与暂存增量补发不经过窗口，走的是会话
+            #: 自己的传输进度（见 `sync.diagnostics()`）。
+            "sync_published": published,
             #: 本帧重读了几台样板提供者（07）。恒为 0 是正常的——
             #: 只有收到容器变更且过了静默期才会读。
             "pattern_reads": pattern_reads,
@@ -790,6 +878,155 @@ class ServerBootstrap(object):
         """
         return self.admission.note_device_load_changed(node_key)
 
+    # -- 终端同步的接线（任务 11） --------------------------------------
+
+    def _on_sync_request(self, event):
+        # type: (object) -> object
+        """C2S 请求的引擎入口：取身份 → hub 收发 → 把回包发回给同一个玩家。
+
+        **身份只从事件上取**（`__id__`），不从消息体里读——协议层连那个
+        字段都没定义，因此这里没有取错的机会。
+
+        **解析与编码都在 hub 里**，这里只做两件适配器做不了的事：从事件
+        上取玩家，以及把回包发回给**同一个**玩家。编码不在适配器里做，
+        是因为它要用该会话的资源描述表，而那张表按会话逐份发。
+        """
+        player_id = self.sync_port.source_player_id(event)
+        # `payload_of` 摘掉引擎附的身份字段：协议解析器对未知字段拒收整条，
+        # 不摘的话每一条请求都会在解析处变成坏包（见该方法的说明）。
+        payload = self.sync.receive(player_id, self.sync_port.payload_of(event))
+        if payload is None:
+            return None
+        # 发送失败的计数在 `AdapterSyncPort.listen` 的 `dispatch` 里
+        # （`handler_errors`）：这里是引擎回调，异常抛出去由它接住。
+        # 在这一层再包一层 try 只会让「引擎坏了」与「这条包坏了」变成
+        # 同一个样子，而两者的查法完全不同。
+        self.sync_port.send(player_id, payload)
+        return payload
+
+    def _on_player_leave(self, player_id):
+        # type: (str) -> int
+        """玩家离线：关掉他的全部会话，返回关掉的数量。
+
+        **不注册它的后果不是报错，是会话泄漏**：人走了，订阅表里还留着
+        那个会话，发布窗口从此每帧都以为有人在看，而包发给一个已经不在的
+        玩家——那正是 11-02 要防的「无人订阅时的空转」。
+        """
+        return len(self.sync.close_for_player(player_id, "player_left"))
+
+    def _sync_runtime(self, network_id):
+        # type: (str) -> object
+        """按**线上网络标识**找运行时，找不到返回 None。
+
+        `RuntimeManager` 只提供「按分量编号取」，而这里要的是反方向。线性
+        扫一遍，而不是把编号从字符串解析回来：解析要假定 `network_id_of`
+        的写法可逆，而它正是项目里唯一做这个转换的地方——反过来依赖它，
+        等于把「转换可逆」变成一条没人维护的隐含约定。网络数量是个位数，
+        这一层的代价可以忽略（同形的只读查找先例见 `application.py`）。
+        """
+        for runtime in self.runtimes.runtimes():
+            if TerminalSyncHub.network_id_of(runtime.component_id) == network_id:
+                return runtime
+        return None
+
+    def _sync_storage_of(self, network_id):
+        # type: (str) -> object
+        """某个网络的存储服务，没有就返回 None。
+
+        **只读路径：不订阅服务、不碰 `ServiceId.ALL`**（先例见
+        `application.py` 的 `debug_query`）。`ServiceRegistry.get` 在缺失时
+        返回 `None`，正好是 hub 要的「这个网络现在读不到库存」；真正的结论
+        （`RESYNC_NO_STORAGE`）由 hub 下，这里不替它判。
+        """
+        runtime = self._sync_runtime(network_id)
+        if runtime is None:
+            return None
+        return runtime.services.get(ServiceId.STORAGE)
+
+    def _sync_context_of(self, player_id, device_ref):
+        # type: (str, object) -> object
+        """把一个会话请求需要的外部事实解析成 `SessionContext`。
+
+        **全部事实都由服务端自己查**：设备还在不在（注册表）、属于哪个网络
+        与哪一任主控（运行时）、玩家在哪个维度、离得多远（端口）。客户端
+        申报的只有「我想开哪台设备的界面」，那是请求，不是依据。
+
+        任何一项查不到都不在这里拒绝，而是如实填 `None`——拒绝的判据集中在
+        `SessionRegistry.check()` 一处（各条理由还分先后）。分两处判迟早会
+        出现「这里放行、那里拒绝」的形状。
+        """
+        if device_ref is None:
+            return None
+        runtime = self.runtimes.runtime_of(device_ref.node_key)
+        if runtime is None:
+            return None
+        record = self.registry.get(device_ref.node_key)
+        master = runtime.master
+        dimension = None
+        position = None
+        if self.sync_port is not None:
+            # 查不到是常态（玩家刚离线、实体刚卸载），端口把这类归为 None，
+            # 会话校验按 `require_position` 处理——默认是拒绝。
+            dimension = self.sync_port.dimension_of(player_id)
+            position = self.sync_port.position_of(player_id)
+        return SessionContext(
+            player_id,
+            # **传 `record.ref` 而不是 `record`**：`record_ref` 的类型是
+            # `DeviceRef`（`check()` 要拿它与请求里的那个 `matches`），而
+            # `DeviceRecord` 只是持有 `ref` 的一个记录，不是 `DeviceRef` 的
+            # 子类。传错的表现不是报错——`matches` 对非 `DeviceRef` 一律返回
+            # False，于是**每一个** `session_open` 都被判成 `STALE_INSTANCE`，
+            # 症状是「终端一台都打不开」。
+            None if record is None else record.ref,
+            TerminalSyncHub.network_id_of(runtime.component_id),
+            self._epoch_of(runtime.component_id),
+            master.instance_id if master is not None else None,
+            network_workable=runtime.is_open(),
+            player_dimension=dimension,
+            player_position=position,
+        )
+
+    def _epoch_of(self, component_id):
+        # type: (object) -> str
+        """某个运行时实例的代次。**同一实例恒定，退役后作废。**
+
+        代次进会话表，也进 `ResourceDescriptions`。两者必须是同一个值，
+        否则每一条 S2C 都会因资源序号对不上而解码失败——因此它必须**在实例
+        存活期间恒定**，不能是个每帧变的计数。
+
+        **编号回收不构成复用风险**：分量退役时 `_on_runtime_change` 会丢掉
+        这个条目的映射，而计数器只增不减，于是同一编号上重建出来的新实例
+        拿到的是**新的**代次。少丢那一次正是最坏的一种——旧会话在新的网络
+        实例上被当成有效。
+        """
+        epoch = self._epochs.get(component_id)
+        if epoch is None:
+            epoch = "%s#%d" % (component_id, self._next_epoch)
+            self._next_epoch += 1
+            self._epochs[component_id] = epoch
+        return epoch
+
+    def _on_runtime_change(self, changes):
+        # type: (tuple) -> None
+        """`RuntimeManager` 的变化广播 → 注销失效会话。
+
+        **异常在这里接住。** 这条回调挂在拓扑发布路径上
+        （`topology.advance()` → `on_publication` → `_emit`），抛出去打挂的是
+        本帧后续的全部工作，远比少关一个会话严重。记进 `tick_errors` 而不是
+        静默：静默的代价是「界面为什么自己关了」在实机上无从查起。
+        """
+        import traceback
+
+        for change in changes:
+            try:
+                self.sync.on_runtime_change(change)
+            except Exception:
+                self._record_tick_error(traceback.format_exc())
+            if change.kind == RuntimeChange.RETIRED:
+                # 分量没了，它那一代的代次随之作废。**放在 try 外面**：
+                # 上面那条回调失败也不该让一个已经退役的编号继续占着旧代次。
+                self._epochs.pop(change.component_id, None)
+
     def _emit(self, changes):
         # type: (list) -> None
         for change in changes:
@@ -860,6 +1097,7 @@ class ServerBootstrap(object):
             "plan": self.plan_diagnostics(),
             "order": self.order_diagnostics(),
             "energy": self.energy_diagnostics(),
+            "sync": self.sync_diagnostics(),
             "world": self.world.diagnostics(),
             "scope_note": (
                 "已装配任务 01 的设备层、任务 02 的拓扑/负载层、任务 03 的主控/运行时、"
@@ -886,7 +1124,10 @@ class ServerBootstrap(object):
                 "也不是机器坏了，是**这条装配没有把 10 接上**"
                 "（游戏内由 `start_server()` 接上）；"
                 "装配仓执行是 07-06，它的回流入口已备好但仍无调用方。"
-                "存档后端与界面同步尚未接入（任务 12/11）。"
+                "存档后端尚未接入（任务 12）；界面同步**只接了底座**——"
+                "会话与消息协议、快照与增量、长列表模型已完成，但没有任何一面"
+                "终端界面接上它（11-03 及以后等待 UI 交接），"
+                "因此 `sync` 那一节的 `networks` 为空是正常的。"
                 "预设配方适配（07-03）与样板编辑界面（11）都未开始，"
                 "因此样板目前只能看不能用——`debug_query(\"pattern\")`"
                 "查得到 9 格里有什么。"
@@ -1041,6 +1282,33 @@ class ServerBootstrap(object):
         )
         return view
 
+    def sync_diagnostics(self):
+        # type: () -> dict
+        """终端同步诊断（11-01/11-02）。
+
+        **只有会话表、订阅表与计数，没有任何库存内容**：库存的真相在存储
+        服务里，在启动层再抄一份就是第二份真相。想看某个会话发了什么走
+        `hub.diagnostics()["networks"]`，逐条包不在这里留。
+
+        `scope_note` 要说清现在到哪一步了：**通道与底座在，界面不在**。
+        读的人该去查的是「UI 有没有交接」，不是「同步层是不是坏了」。
+        """
+        report = self.sync.diagnostics()
+        report["port"] = self.sync_port.diagnostics()
+        report["unresolved"] = (
+            self.sync_policy.unresolved_report()
+            + self.session_policy.unresolved_report()
+        )
+        report["scope_note"] = (
+            "同步通道已接线：会话与消息协议（11-01）、快照/分批/版本增量/"
+            "断档重取/订阅清理（11-02）、长列表模型（11-09）已在离线层面完成。"
+            "**没有一面终端界面接上它**（11-03～11-07、11-10～11-14 未开始），"
+            "因此现在没有任何客户端在订阅——`networks` 为空是正常的，"
+            "不是「同步挂了」。11.md 页尾的请求大小、会话过期与分页上限"
+            "仍未测量（11-14），相关字段见 `unresolved`。"
+        )
+        return report
+
     def scheduler_diagnostics(self):
         # type: () -> dict
         """调度诊断（04-01/04-07）：时钟读数、脉冲计数、跨网轮转、唤醒与各网合计。
@@ -1136,6 +1404,12 @@ class ServerBootstrap(object):
                 # 四个搜索上限）。**它与样板策略是两份，都要在**：
                 # 前者说的是「这份配方要备哪些料」，后者说的是「要几个批次」。
                 self.plan_policy,
+                # 11 的两份策略：`sync_policy` 带的是传输与缓存边界，
+                # `session_policy` 带的是会话的时效与交互距离。11.md 页尾
+                # 明写这些「由目标环境测量后确定」，因此它们现在全是
+                # **待定值**——不进这份清单就等于正式验收时整块漏网。
+                self.sync_policy,
+                self.session_policy,
             ]
         )
 

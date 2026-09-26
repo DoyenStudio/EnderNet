@@ -62,6 +62,7 @@ from ...common.protocol import (
     VIEW_ITEM,
 )
 from ...common.resource_sync import ResourceResyncRequired
+from ..network.runtime import RuntimeChange
 from ..network.ticking import RotationCursor
 from .sessions import SESSION_ACTIVE, SESSION_SNAPSHOTTING, SessionRegistry
 from .transfer import DeltaBatch, FrozenSnapshot, build_delta_packets  # noqa: F401
@@ -83,6 +84,28 @@ RESYNC_UNKNOWN_TRANSFER = "unknown_transfer"
 RESYNC_RESOURCE_TABLE_FULL = "resource_table_full"
 #: 该网络当前没有可读的存储服务。
 RESYNC_NO_STORAGE = "no_storage"
+
+# -- 运行时变化导致的注销原因 ----------------------------------------------
+#
+# 三种变化都让**整网**的会话作废，但作废的理由不同，而 `Session.close_reason`
+# 是实机上唯一能回答「这个界面为什么自己关了」的东西。合成一个字符串的代价
+# 是查的时候只能看到「网络变了」——而「主控被拆」与「网络在重建」要查的
+# 东西完全不一样（一个查方块还在不在，一个查重建为什么没结束）。
+
+#: 分量消失（合并、拆分后退役、整网被拆光）。
+CLOSE_NETWORK_RETIRED = "network_retired"
+#: 网络停止接受业务命令（重建中、恢复中）。
+CLOSE_NETWORK_CLOSED = "network_closed"
+#: 主控被移除或卸载。
+CLOSE_MASTER_LOST = "master_lost"
+
+#: `RuntimeChange.kind` → 注销原因。**只列会注销的那三种**，其余变化
+#: 在这个映射里查不到，因此它们不会顺手关掉任何会话。
+_RUNTIME_CLOSE_REASONS = {
+    RuntimeChange.RETIRED: CLOSE_NETWORK_RETIRED,
+    RuntimeChange.CLOSED: CLOSE_NETWORK_CLOSED,
+    RuntimeChange.MASTER_LOST: CLOSE_MASTER_LOST,
+}
 
 
 class SyncPolicy(object):
@@ -161,6 +184,118 @@ class SyncPolicy(object):
         #: R13：只读物品视图**不重复判定准入**。终端只是看，恰好满载不该
         #: 让界面打不开——满载的影响留在详情解释里，不在这里另立一套。
         self.require_admission = bool(require_admission)
+
+    def unresolved_report(self):
+        # type: () -> list
+        """仍带未定标签的字段。与 `BandwidthPolicy` / `MediumPolicy` 同形。
+
+        **这些不是「还没调好的常数」，是「还没定案的规则」**：11.md 页尾
+        写明请求大小、会话过期与分页上限由目标环境测量后确定，而 §5 的
+        「100～200ms 仅作为首轮合并窗口测试配置」说的正是这里没有时间字段
+        的原因（窗口由调用方每帧推一次）。逐项报出来，正式验收时才不会有人
+        把当前值当成已定案的数值。
+        """
+        measured = "11-14 实测后确定；当前值是首轮测试配置，不是验收指标"
+        return [
+            {
+                "field": "sync.publish_budget_keys",
+                "rule": "11-14",
+                "value": self.publish_budget_keys,
+                "note": "每帧跨网络轮转取走的脏键上限；" + measured,
+            },
+            {
+                "field": "sync.snapshot_chunk_items",
+                "rule": "11-14",
+                "value": self.snapshot_chunk_items,
+                "note": "快照分片的条目上限；" + measured,
+            },
+            {
+                "field": "sync.snapshot_chunk_bytes",
+                "rule": "11-14",
+                "value": self.snapshot_chunk_bytes,
+                "note": "快照分片的字节上限（按 UTF-8 JSON 量）；" + measured,
+            },
+            {
+                "field": "sync.snapshot_chunks_per_frame",
+                "rule": "11-14",
+                "value": self.snapshot_chunks_per_frame,
+                "note": "每会话每帧推进的分片数；" + measured,
+            },
+            {
+                "field": "sync.delta_items_per_packet",
+                "rule": "11-14",
+                "value": self.delta_items_per_packet,
+                "note": "增量包的条目上限；" + measured,
+            },
+            {
+                "field": "sync.delta_bytes_per_packet",
+                "rule": "11-14",
+                "value": self.delta_bytes_per_packet,
+                "note": "增量包的字节上限；" + measured,
+            },
+            {
+                "field": "sync.max_pending_delta_batches",
+                "rule": "11-14",
+                "value": self.max_pending_delta_batches,
+                "note": "快照在途时每会话暂存的批数；溢出即重取快照，" + measured,
+            },
+            {
+                "field": "sync.max_pending_delta_bytes",
+                "rule": "11-14",
+                "value": self.max_pending_delta_bytes,
+                "note": "同上，按字节计的暂存上限；" + measured,
+            },
+            {
+                "field": "sync.max_backlog_items",
+                "rule": "11-14",
+                "value": self.max_backlog_items,
+                "note": "每会话已发未确认的条目上限（慢客户端）；" + measured,
+            },
+            {
+                "field": "sync.max_backlog_bytes",
+                "rule": "11-14",
+                "value": self.max_backlog_bytes,
+                "note": "同上，按字节计；" + measured,
+            },
+            {
+                "field": "sync.history_batches",
+                "rule": "11-14",
+                "value": self.history_batches,
+                "note": "每网络保留的增量历史条数；越短越容易触发断档重取，"
+                        + measured,
+            },
+            {
+                "field": "sync.history_bytes",
+                "rule": "11-14",
+                "value": self.history_bytes,
+                "note": "同上，按字节计；" + measured,
+            },
+            {
+                "field": "sync.history_frames",
+                "rule": "11-14",
+                "value": self.history_frames,
+                "note": "同上，按帧数计（三重上限任一触顶即淘汰）；" + measured,
+            },
+            {
+                "field": "sync.max_failures",
+                "rule": "11-14",
+                "value": self.max_failures,
+                "note": "连续几次发送失败开始退避；" + measured,
+            },
+            {
+                "field": "sync.backoff_frames",
+                "rule": "11-14",
+                "value": self.backoff_frames,
+                "note": "退避多少帧；" + measured,
+            },
+            {
+                "field": "sync.require_admission",
+                "rule": "R13",
+                "value": self.require_admission,
+                "note": "只读物品视图不重复判定准入；替身取不判。R13 定案后"
+                        "要连带核对「恰好满载是否影响查看」这一条",
+            },
+        ]
 
 
 class NetworkSubscriptions(object):
@@ -421,6 +556,24 @@ class TerminalSyncHub(object):
         }
 
     # -- 装配 ----------------------------------------------------------
+
+    @staticmethod
+    def network_id_of(component_id):
+        # type: (object) -> str
+        """分量编号的**线上形态**。全项目只有这一处做这个转换。
+
+        分量编号是个整数（`TopologyService._allocate_component_id`），而
+        `SyncEnvelope` 对 S2C 消息要求 `network_id` 是**非空文本**。不转的话
+        每一条 `session_ready` 都会在编码时被判非法，症状是「界面一开就报错」
+        而错误信息说的是「network_id 必须是文本」——与「编号是整数」这件
+        事隔着好几层。
+
+        写成**一处**而不是在各调用点各转一次：`self._subs` 的键、
+        `Session.network_id`、`ResourceDescriptions(network_id, ...)` 里的
+        那个字符串必须是同一个值。转两处就有转出两种写法的余地，而它们
+        不相等时表现为「订阅表里有两个网络、其中一个永远是空的」。
+        """
+        return "%s" % (component_id,)
 
     def attach(self, port):
         # type: (object) -> None
@@ -933,6 +1086,69 @@ class TerminalSyncHub(object):
         return self._forget_all(
             self.registry.close_for_epoch(network_id, epoch, reason)
         )
+
+    def on_runtime_change(self, change):
+        # type: (object) -> int
+        """跟随一次运行时状态变化注销会话。返回受影响的会话数。
+
+        组合根把它挂到 `RuntimeManager.add_listener` 上。**运行时可以自己
+        关掉业务，但会话表不在运行时里**——不在这里跟一遍，症状是「网络已经
+        在重建了，终端还在按旧成员收增量」，而那种界面看起来只是数据不动。
+
+        三种变化关掉整网（理由见 `_RUNTIME_CLOSE_REASONS`），成员增减则
+        只关掉那些**终端已被替换**的会话（见 `_drop_stale_devices`）。
+        其余变化（建立、绑主控、开放）是空操作：它们不使任何既有会话失效。
+        """
+        network_id = self.network_id_of(change.component_id)
+        reason = _RUNTIME_CLOSE_REASONS.get(change.kind)
+        if reason is not None:
+            return len(self.close_for_network(network_id, reason))
+        if change.kind == RuntimeChange.MEMBERS_CHANGED:
+            return len(self._drop_stale_devices(network_id))
+        return 0
+
+    def _drop_stale_devices(self, network_id):
+        # type: (str) -> list
+        """关掉那些「界面指着的方块已经不是原来那一台」的会话。
+
+        **必须重新查一遍，而不是从变化里推。** `RuntimeChange` 的 `__slots__`
+        里根本没有成员键——它说的是「这个网络的成员集合变了」。要判某台
+        终端还在不在，只能拿会话里存的 `device_ref` 回到注册表问一次。
+
+        判据与开会话时**同一句**（`device_ref.matches`）：位置相同、代次
+        也相同才算同一台。拆掉又在原地放一个会让代次变大，于是这里关掉
+        旧会话——而那正是必须的：界面上的库存属于已经被拆掉的那台方块。
+
+        先收集再关：`close_session` 会改动订阅表，边遍历边关就会漏掉后面
+        那些。查不到上下文的（网络已经不在了）一并算作失效——那是
+        fail closed 的那一侧。
+        """
+        subs = self._subs.get(network_id)
+        if subs is None:
+            return []
+        doomed = []
+        for session in subs.ordered_sessions():
+            context = self._context_of(session.player_id, session.device_ref)
+            if context is None or context.record_ref is None:
+                doomed.append(session)
+                continue
+            if not session.device_ref.matches(context.record_ref):
+                doomed.append(session)
+        for session in doomed:
+            self.close_session(session.session_id, "device_replaced")
+        return doomed
+
+    def shutdown(self, reason="shutdown"):
+        # type: (str) -> int
+        """关掉全部会话并丢掉全部缓存，返回关掉的会话数。`stop()` 用。
+
+        **不只是关会话**：最后一个会话离开时订阅表会自己消失
+        （`_forget` 里的 `drop_if_empty`），因此这份调用之后 `_subs` 必然是
+        空的——不需要另外再清一次。会话 ID 序号、批次号、轮转游标都**不重置**：
+        它们是进程级计数器，重置会让停机前发出去的 `batch_id` 被下一轮复用，
+        而客户端手里可能还留着那个号。
+        """
+        return len(self._forget_all(self.registry.close_all(reason)))
 
     def resync_network(self, network_id, code=RESYNC_VERSION_GAP, detail=""):
         # type: (str, str, str) -> int

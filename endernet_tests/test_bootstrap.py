@@ -6,21 +6,26 @@
 如果这两个入口或它们引用的模块有任何导入期错误，这里会直接失败。
 """
 
+import json
 import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import DefinitionSet
-from endernet.common.identity import ChunkKey, NodeKey
+from endernet.common.identity import ChunkKey, DeviceRef, NodeKey
 from endernet.common.resource_key import ResourceKey
 from endernet.common.protocol import (
     CommandKind,
     CommandSource,
     DeviceCommand,
+    MSG_SESSION_READY,
     Reason,
+    SessionOpen,
     STATUS_BLOCKED,
     STATUS_OK,
     STATUS_REJECTED,
+    SyncEnvelope,
+    VIEW_ITEM,
 )
 from endernet.server.adapters.containers import FakeContainer
 from endernet.server.bootstrap import ServerBootstrap
@@ -28,9 +33,12 @@ from endernet.server.crafting import patterns
 from endernet.server.crafting.planner import PlanPolicy, TargetSemantics
 from endernet.server.crafting.store import PATTERN_SETTLE_FRAMES
 from endernet.server.network.controller import RunState
+from endernet.server.network.runtime import RuntimeChange
 from endernet.server.network.services import AssemblyProfile
 from endernet.server.runtime.events import EventKind, NormalizedEvent
 from endernet.server.runtime.lifecycle import ChangeKind
+from endernet.server.sync.sessions import SessionPolicy
+from endernet.server.sync.terminal import SyncPolicy, TerminalSyncHub
 
 BB8 = "endernet:network_baseband_8"
 TEMPLATE_IO = "endernet:bus_template_io"
@@ -859,7 +867,11 @@ class TestExplicitStopUnregisters(unittest.TestCase):
     def setUp(self):
         self.world = FakeWorld()
         self.api = FakeEventApi()
-        self.server = ServerBootstrap(world=self.world, event_api=self.api)
+        self.server = ServerBootstrap(
+            world=self.world,
+            event_api=self.api,
+            sync_events=testsupport.FakeEventsModule(),
+        )
         self.server.start(bind_engine=True)
 
     def test_bind_registers_listeners(self):
@@ -956,7 +968,11 @@ class TestEventDispatchThroughBinding(unittest.TestCase):
     def setUp(self):
         self.world = FakeWorld()
         self.api = FakeEventApi()
-        self.server = ServerBootstrap(world=self.world, event_api=self.api)
+        self.server = ServerBootstrap(
+            world=self.world,
+            event_api=self.api,
+            sync_events=testsupport.FakeEventsModule(),
+        )
         self.server.start(bind_engine=True)
 
     def test_place_event_registers_device(self):
@@ -1304,6 +1320,9 @@ class TestPatternContainerEvents(unittest.TestCase):
             # 引擎的 `GetPlayerDimensionId` 在离线环境不存在。**注入替身**
             # 而不是让那条路径整个走不通——插槽拒收正挂在它上面。
             player_dimension=lambda player_id: 0,
+            # 同步通道要的三个事件基类同理：`tooldelta.events` 在游戏外
+            # 导不进来，而注册发生在 `start()` 里，不注入就整个走不通。
+            sync_events=testsupport.FakeEventsModule(),
         )
         self.server.start(bind_engine=True)
 
@@ -1396,6 +1415,7 @@ class TestPatternContainerEvents(unittest.TestCase):
             event_api=self.api,
             container_provider=self.containers,
             player_dimension=lambda player_id: (_ for _ in ()).throw(ValueError("no")),
+            sync_events=testsupport.FakeEventsModule(),
         )
         server.start(bind_engine=True)
         server.event_binder._on_custom_put(
@@ -1637,6 +1657,505 @@ class TestPlannerWiring(unittest.TestCase):
         report = self.server.plan_diagnostics()
         self.assertEqual(len(report["unresolved"]), 8)
         self.assertIn("pattern_policy", report)
+
+
+class TestSyncWiring(unittest.TestCase):
+    """装配层：同步中枢真的接上了几个口子（11-01/11-02 的接线，任务 11 步骤 6）。
+
+    **这一组不测同步语义**——会话校验、发布窗口、分块传输分别由
+    `test_sync_sessions.py` / `test_sync_publish.py` 覆盖，它们直接驱动中枢。
+    这里只回答「组合根有没有把这些口子接到正确的东西上」，因为接错了不会
+    报错，而且**不同原因的症状一模一样**：身份取不到、上下文接错、设备引用
+    传错对象，三者都表现成「终端一台都打不开」。只有把每一段单独钉住，
+    实机上那个症状才查得下去。
+
+    **夹具用默认策略**（不注入 `session_policy`），并给端口接上假的维度与坐标
+    解析——于是「离线没有引擎可问坐标」这件事不再需要靠放宽策略来绕开，
+    `require_position` 的默认口径（查不到就拒）在绝大多数用例里都是**开着**的。
+    专门要验 fail closed 的那一条自己把坐标解析摘掉（见
+    `test_the_default_policy_refuses_a_session_without_a_position`）。
+    """
+
+    BB8 = BB8
+    TINY = "endernet:tiny_network_endpoint"
+    #: 建网时那台驱动器所在的位置，也是假引擎默认把玩家放在的地方。
+    DEVICE = key(0, 65)
+
+    def setUp(self):
+        self.world = FakeWorld()
+        self.api = FakeEventApi()
+        #: 留着这个实例：`_on_sync_request` 的回包发到它的 S2C `send` 上，
+        #: 断言「回给谁」靠它。真引擎那一侧另有 `AdapterSyncPort.stats` 计数，
+        #: 两者分开是「没人在收」与「发不出去」要能分开看。
+        self.events = testsupport.FakeEventsModule()
+        #: 假引擎的玩家脚部坐标。默认「谁都在设备那一格上」，需要拉开距离的
+        #: 用例自己往这里塞一项。**按玩家分开**而不是一个全局值：否则
+        #: 「只关掉离线那个人的会话」这类用例会因为两人都在同一处而失去意义。
+        self.positions = {}
+        self.server = self.build()
+
+    # -- 假的引擎位置查询 ----------------------------------------------
+
+    def player_dimension(self, player_id):
+        # type: (str) -> object
+        """假引擎：玩家在维度 0（本组用例的设备都建在那一维）。"""
+        return 0
+
+    def player_position(self, player_id):
+        # type: (str) -> object
+        """假引擎：玩家脚部坐标，默认就在设备那一格上（距离为 0）。"""
+        return self.positions.get(player_id, self.DEVICE.as_tuple())
+
+    def build(self, **kwargs):
+        # type: (...) -> object
+        """建一个已绑定引擎、带假事件模块的服务端。
+
+        **维度解析只注入一次、两处共用**（容器事件与会话校验），所以这里
+        只写一个 `player_dimension`；传 `None` 即退回引擎实现——离线拿不到
+        就返回 `None`，而那是「拒绝」，不是「放行」。
+        """
+        kwargs.setdefault("world", FakeWorld())
+        kwargs.setdefault("event_api", self.api)
+        kwargs.setdefault("sync_events", self.events)
+        kwargs.setdefault("player_dimension", self.player_dimension)
+        kwargs.setdefault("player_position", self.player_position)
+        server = ServerBootstrap(**kwargs)
+        server.start(bind_engine=True)
+        return server
+
+    def drive(self, *events):
+        for event in events:
+            self.server.push(event)
+        return self.server.tick()
+
+    def build_network(self):
+        """基带 → 控制器 → 驱动器：一套能开出运行时的最小网络。"""
+        return self.drive(
+            NormalizedEvent.place(key(0), self.BB8),
+            NormalizedEvent.place(key(1), self.BB8),
+            NormalizedEvent.place(key(1, 65), self.TINY),
+            NormalizedEvent.place(key(0, 65), DRIVER),
+        )
+
+    def device_ref(self):
+        return self.server.registry.get(key(0, 65)).ref
+
+    def open_message(self, device_ref, request_id="r1", player_id="p1"):
+        # type: (object, str, str) -> object
+        """把一条 `session_open` 装成引擎会交给监听器的样子。
+
+        **走一遍 JSON 往返**：线上就是这么走的，能顺带钉住「这些字段真的
+        可序列化」。`__id__` 与消息体**平级**，因为引擎就是这么附上去的；
+        消息体里没有玩家字段（协议层根本没定义），因此没有可伪造的余地。
+        """
+        envelope = SyncEnvelope(
+            SessionOpen(request_id, device_ref, 0), view_kind=VIEW_ITEM
+        )
+        data = json.loads(json.dumps(envelope.to_dict()))
+        data["__id__"] = player_id
+        return SimplePayload(data=data)
+
+    # -- 装配 ----------------------------------------------------------
+
+    def test_the_port_is_attached_to_the_hub(self):
+        self.assertIs(self.server.sync.port, self.server.sync_port)
+
+    def test_the_runtime_manager_uses_the_hub_as_its_session_probe(self):
+        """主控的命令准入探针必须就是 `hub.accepts`。
+
+        接不上（构造顺序反了）时主控拿到 `None`，而那等于**全部放行**——
+        一道看起来在、其实没有的门禁。
+        """
+        probe = self.server.runtimes.session_check
+        self.assertIsNotNone(probe)
+        self.assertTrue(probe(CommandSource("p1", None, 0)), "无会话的命令一律放行")
+        self.assertFalse(
+            probe(CommandSource("p1", None, 0, session_id="s-not-real")),
+            "带一个不存在的会话号必须被拒",
+        )
+
+    def test_an_injected_probe_is_not_overridden(self):
+        """05/08 的既有调用方会自己传探针，覆盖它属于改别人的可见行为。"""
+
+        def sentinel(source):
+            return False
+
+        server = self.build(session_check=sentinel)
+        self.assertIs(server.runtimes.session_check, sentinel)
+
+    def test_both_sync_listeners_are_registered_and_unregistered(self):
+        """C2S 与玩家离线两条监听器都挂在同一个注册账本上。
+
+        **必须走 `event_binder`**：自己留一份账本的话 `stop()` 会漏掉它们，
+        而热重载后回调翻倍的症状极难定位（01 已经吃过一次亏）。
+        """
+        c2s, _ = self.server.sync_port.classes()
+        self.assertGreaterEqual(self.api.listeners_for(c2s), 1)
+        self.assertGreaterEqual(
+            self.api.listeners_for(self.events.DelServerPlayerEvent), 1
+        )
+
+        self.server.stop()
+        self.assertEqual(self.api.listeners_for(c2s), 0)
+        self.assertEqual(self.api.listeners_for(self.events.DelServerPlayerEvent), 0)
+
+    # -- 请求路径 ------------------------------------------------------
+
+    def test_a_c2s_message_reaches_the_hub(self):
+        """总线 → 端口 → 中枢 → 回给**同一个**玩家。
+
+        这是整条同步通道离线能跑到的最远一处：再往后就是引擎真的发包。
+        """
+        self.build_network()
+        c2s, _ = self.server.sync_port.classes()
+
+        self.api.dispatch(c2s, self.open_message(self.device_ref()))
+
+        self.assertEqual(self.server.sync_port.stats["requests"], 1)
+        self.assertEqual(self.server.sync_port.stats["handler_errors"], 0)
+        self.assertEqual(self.server.sync.stats["sessions_opened"], 1)
+        self.assertEqual(len(self.events.sent), 1, "回包必须发出去")
+        self.assertEqual(self.events.sent[0][0], "p1", "回给发消息的那个人")
+
+    def test_the_reply_is_encoded_and_decodable(self):
+        """回包是**线上格式**：能解回来，且带着该会话的资源描述表。
+
+        编码在 hub 里做（那张表只有它拿得到），因此解码必须用**同一个**
+        会话实例上的那张表——用别的表解出来的东西看着也对，只是资源序号
+        指向了别的键。
+        """
+        self.build_network()
+        c2s, _ = self.server.sync_port.classes()
+        self.api.dispatch(c2s, self.open_message(self.device_ref()))
+
+        _, payload = self.events.sent[0]
+        session = self.server.sync.registry.get(payload["session_id"])
+        envelope = SyncEnvelope.from_dict(
+            json.loads(json.dumps(payload)), session.descriptions
+        )
+        self.assertEqual(envelope.message.kind, MSG_SESSION_READY)
+        self.assertEqual(envelope.session_id, session.session_id)
+
+    def test_a_self_declared_player_is_ignored(self):
+        """消息体里塞一个玩家 id 只会让整条消息被判非法。
+
+        **协议层没有那个字段**，于是这里没有「忘了忽略它」的机会：
+        身份只有一个来源，就是引擎附的 `__id__`。
+        """
+        self.build_network()
+        c2s, _ = self.server.sync_port.classes()
+        message = self.open_message(self.device_ref())
+        message.data["player_id"] = "p2"
+
+        self.api.dispatch(c2s, message)
+
+        self.assertEqual(self.server.sync.stats["sessions_opened"], 0)
+        self.assertEqual(self.server.sync_port.stats["requests"], 1)
+
+    def test_the_session_belongs_to_the_engine_identity(self):
+        """`__id__` 换成谁，会话就开在谁名下——消息体说了不算。"""
+        self.build_network()
+        c2s, _ = self.server.sync_port.classes()
+
+        self.api.dispatch(c2s, self.open_message(self.device_ref(), player_id="p9"))
+
+        sessions = self.server.sync.registry.sessions_for_player("p9")
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(self.server.sync.registry.count(), 1)
+
+    def test_a_message_from_an_unknown_place_is_refused_not_crashed(self):
+        """没有网络的设备：拒绝并计数，而不是抛穿引擎回调。"""
+        c2s, _ = self.server.sync_port.classes()
+        message = self.open_message(DeviceRef(key(30, 64, 30), 1))
+        self.api.dispatch(c2s, message)
+
+        self.assertEqual(self.server.sync.stats["sessions_refused"], 1)
+        self.assertEqual(self.server.sync_port.stats["handler_errors"], 0)
+
+    def test_a_player_leaving_closes_his_sessions(self):
+        """离线事件经端口到中枢。
+
+        不接它的后果不是报错，是**会话泄漏**：人走了订阅表里还留着，
+        发布窗口从此每帧都以为有人在看，而包发给一个已经不在的玩家。
+        """
+        self.build_network()
+        c2s, _ = self.server.sync_port.classes()
+        self.api.dispatch(c2s, self.open_message(self.device_ref()))
+        self.assertEqual(self.server.sync.registry.count(), 1)
+
+        self.api.dispatch(self.events.DelServerPlayerEvent, SimplePayload(id="p1"))
+
+        self.assertEqual(self.server.sync_port.stats["leaves"], 1)
+        self.assertEqual(self.server.sync.registry.count(), 0)
+
+    def test_only_the_leaving_player_loses_his_sessions(self):
+        self.build_network()
+        c2s, _ = self.server.sync_port.classes()
+        self.api.dispatch(c2s, self.open_message(self.device_ref(), player_id="p1"))
+        self.api.dispatch(c2s, self.open_message(self.device_ref(), player_id="p2"))
+
+        self.api.dispatch(self.events.DelServerPlayerEvent, SimplePayload(id="p1"))
+
+        self.assertEqual(self.server.sync.registry.sessions_for_player("p1"), [])
+        self.assertEqual(len(self.server.sync.registry.sessions_for_player("p2")), 1)
+
+    def test_the_default_policy_refuses_a_session_without_a_position(self):
+        """默认口径下「查不到玩家坐标」是**拒绝**（fail closed）。
+
+        **只摘掉坐标解析，维度照给**：两条都摘的话先撞上的是维度那条判据，
+        用例会为一个与它名字无关的理由变绿。给上维度之后，这里拒绝的唯一
+        原因就只能是位置。
+        """
+        server = self.build(player_position=None)  # 退回引擎实现 → 离线取不到
+        server.push(NormalizedEvent.place(key(0), self.BB8))
+        server.push(NormalizedEvent.place(key(1), self.BB8))
+        server.push(NormalizedEvent.place(key(1, 65), self.TINY))
+        server.push(NormalizedEvent.place(key(0, 65), DRIVER))
+        server.tick()
+
+        c2s, _ = server.sync_port.classes()
+        self.api.dispatch(
+            c2s, self.open_message(server.registry.get(key(0, 65)).ref)
+        )
+
+        self.assertEqual(server.sync.stats["sessions_opened"], 0)
+        self.assertEqual(server.sync.stats["sessions_refused"], 1)
+        self.assertEqual(server.sync.registry.count(), 0)
+
+    # -- 上下文与代次 --------------------------------------------------
+
+    def test_the_context_hands_back_a_device_ref(self):
+        """`record_ref` 是 `DeviceRef`，**不是** `DeviceRecord`。
+
+        传错的症状不是报错：`DeviceRef.matches` 对非 `DeviceRef` 一律返回
+        False，于是**每一次**开会话都被判成「设备已被替换」。这条钉的就是
+        那个「终端一台都打不开」的成因。
+        """
+        self.build_network()
+        record = self.server.registry.get(key(0, 65))
+        context = self.server._sync_context_of("p1", record.ref)
+
+        self.assertIsNotNone(context, "设备在网络里，上下文必须解析得出来")
+        self.assertTrue(
+            context.record_ref.matches(record.ref),
+            "会话存的引用与注册表当前的引用必须是同一台",
+        )
+
+    def test_the_context_carries_the_online_network_id_and_epoch(self):
+        """网络标识是**线上形态**（文本），而代次非空。
+
+        两者都要进会话表与每条 S2C；不一致的表现是「每一条包都因资源序号
+        对不上而解码失败」，离原因很远。
+        """
+        self.build_network()
+        runtime = self.server.runtimes.runtimes()[0]
+        context = self.server._sync_context_of("p1", self.device_ref())
+
+        self.assertEqual(context.network_id, TerminalSyncHub.network_id_of(runtime.component_id))
+        self.assertEqual(context.epoch, self.server._epoch_of(runtime.component_id))
+        self.assertEqual(context.master_instance_id, runtime.master.instance_id)
+        self.assertTrue(context.network_workable)
+
+    def test_the_context_is_missing_for_an_unknown_device(self):
+        """设备不在任何网络里 → 没有上下文 → 开会话被拒（fail closed）。"""
+        self.build_network()
+        self.assertIsNone(
+            self.server._sync_context_of("p1", DeviceRef(key(30, 64, 30), 1))
+        )
+        self.assertIsNone(self.server._sync_context_of("p1", None))
+
+    def test_the_epoch_is_stable_until_the_network_retires(self):
+        """代次在实例存活期间恒定：它进会话表，也进每条 S2C 的资源描述表。"""
+        self.build_network()
+        component_id = self.server.runtimes.runtimes()[0].component_id
+
+        first = self.server._epoch_of(component_id)
+        self.assertEqual(self.server._epoch_of(component_id), first)
+
+    def test_a_reused_component_id_gets_a_fresh_epoch(self):
+        """编号回收后重建的实例拿到的必须是**新**代次。
+
+        沿用旧代次是最坏的一种：旧会话在新的网络实例上被当成有效。
+        """
+        self.build_network()
+        component_id = self.server.runtimes.runtimes()[0].component_id
+        first = self.server._epoch_of(component_id)
+
+        self.server._on_runtime_change(
+            (RuntimeChange(component_id, RuntimeChange.RETIRED),)
+        )
+
+        self.assertNotEqual(self.server._epoch_of(component_id), first)
+
+    def test_a_failing_sync_callback_is_recorded_and_the_loop_goes_on(self):
+        """回调抛异常时记账并继续，而不是打挂本帧后续的全部工作。
+
+        `RuntimeChange` 的广播挂在拓扑发布路径上（`topology.advance()` →
+        `on_publication` → `_emit`），抛出去的代价远大于少关一个会话。
+
+        **同时钉住「代次清理在 `try` 外面」**：回调失败也不该让一个已经
+        退役的分量编号继续占着旧代次——那正是「旧会话在新的网络实例上被
+        当成有效」的成因。
+        """
+        self.build_network()
+        component_id = self.server.runtimes.runtimes()[0].component_id
+        first = self.server._epoch_of(component_id)
+
+        def boom(change):
+            raise RuntimeError("模拟的同步回调失败")
+
+        self.server.sync.on_runtime_change = boom
+        self.server._on_runtime_change(
+            (RuntimeChange(component_id, RuntimeChange.RETIRED),)
+        )
+
+        errors = self.server.diagnostics()["tick_errors"]
+        self.assertEqual(errors["count"], 1)
+        self.assertIn("模拟的同步回调失败", errors["samples"][0])
+        self.assertNotEqual(
+            self.server._epoch_of(component_id), first, "退役时代次必须作废"
+        )
+
+    # -- 帧与停机 ------------------------------------------------------
+
+    def test_tick_reports_how_many_packets_the_sync_layer_sent(self):
+        report = self.drive()
+        self.assertIn("sync_published", report)
+
+    def test_stop_shuts_the_sync_hub_down(self):
+        """停机必须真的清空会话表，而不是只翻一个标志位。"""
+        self.build_network()
+        c2s, _ = self.server.sync_port.classes()
+        self.api.dispatch(c2s, self.open_message(self.device_ref()))
+        self.assertEqual(self.server.sync.registry.count(), 1)
+
+        self.server.stop()
+
+        self.assertEqual(self.server.sync.registry.count(), 0)
+        self.assertEqual(self.server.sync.diagnostics()["networks"], {})
+
+    def test_diagnostics_report_the_sync_section(self):
+        """`diagnostics()["sync"]` 要能在**没有一面界面**的情况下回答
+        「同步层现在是什么形状」。
+
+        这一节是实机上唯一能自己读到的同步状态（引擎不给日志），因此逐项
+        钉住它至少带着什么：中枢自己的计数、端口的收发计数、未定规则清单，
+        以及一句说清「现在没有任何客户端在订阅」的说明。**不含任何库存
+        内容**——诊断里出现物品就是另一份真相。
+        """
+        report = self.server.diagnostics()["sync"]
+        for field in (
+            "frames",
+            "packets",
+            "sessions_opened",
+            "sessions_refused",
+            "bad_packets",
+        ):
+            self.assertIn(field, report)
+        self.assertEqual(report["frames"], 0)
+        self.assertEqual(report["networks"], {}, "还没有任何界面接上它")
+        self.assertIn("stats", report["port"])
+        self.assertTrue(report["unresolved"], "未定规则必须报得出来")
+        self.assertIn("11-14", report["scope_note"])
+
+    def test_diagnostics_do_not_leak_inventory_into_the_sync_section(self):
+        """诊断里**不能有物品**：它给实机排障看，出现库存内容就意味着这里长了
+        第二份真相（与 05 的 `debug_query` 同一条纪律）。
+
+        钉的是**每个网络那一项的字段集合**：会话数、版本、历史长度这类计数
+        可以有，`stored`/`reserved`/资源键这类内容不行。会话的资源描述表挂在
+        `Session` 上，一旦有人图省事把整个会话塞进诊断，这条会立刻红。
+        """
+        self.build_network()
+        c2s, _ = self.server.sync_port.classes()
+        self.api.dispatch(c2s, self.open_message(self.device_ref()))
+
+        networks = self.server.sync_diagnostics()["networks"]
+        self.assertTrue(networks, "开了一个会话，网络那一节不该是空的")
+        allowed = (
+            "sessions",
+            "publish_version",
+            "history",
+            "history_bytes",
+            "snapshots",
+            "batches",
+        )
+        for entry in networks.values():
+            self.assertEqual(sorted(entry), sorted(allowed))
+
+    # -- 未定规则 ------------------------------------------------------
+
+    def test_the_sync_policies_are_in_the_assembly_check(self):
+        """11 的两份策略都要在 `policy_bundle()` 里，否则正式验收时整块漏网。
+
+        **注册一份没实现 `unresolved_report()` 的策略是静默空操作**
+        （`_PolicyBundle` 会跳过它），所以这里既查字段、也查它真的报得出来。
+        """
+        report = self.server.policy_bundle().unresolved_report()
+        fields = [item["field"] for item in report]
+        for expected in (
+            "session.max_interaction_distance",
+            "session.session_ttl_frames",
+            "session.max_sessions_per_player",
+            "session.max_sessions_per_network",
+            "sync.publish_budget_keys",
+            "sync.snapshot_chunk_items",
+            "sync.snapshot_chunk_bytes",
+            "sync.max_backlog_items",
+            "sync.history_batches",
+            "sync.max_failures",
+            "sync.backoff_frames",
+            "sync.require_admission",
+        ):
+            self.assertIn(expected, fields)
+
+        rules = dict((item["field"], item["rule"]) for item in report)
+        self.assertEqual(rules["sync.require_admission"], "R13")
+        self.assertEqual(rules["session.session_ttl_frames"], "11-14")
+        self.assertEqual(rules["sync.publish_budget_keys"], "11-14")
+
+    def test_the_sync_policy_is_the_one_that_runs(self):
+        """注入的那一份必须就是诊断与生效共用的那一个对象。
+
+        两份并存时 `unresolved_report()` 报的数值与真正生效的对不上——
+        正是全局约束 7 要防的「假装检查过」。会话那份同理：`SessionRegistry`
+        必须是拿**注入的那一个**建出来的，自己新建一份的话，注入的距离上限
+        与 TTL 全都不会生效，而诊断报的还是注入值。
+        """
+        policy = SyncPolicy(publish_budget_keys=7)
+        sessions = SessionPolicy(max_interaction_distance=3.5)
+        server = ServerBootstrap(
+            world=FakeWorld(), sync_policy=policy, session_policy=sessions
+        )
+        self.assertIs(server.sync.policy, policy)
+        self.assertIs(server.sync_policy, policy)
+        self.assertIs(server.session_policy, sessions)
+        self.assertIs(server.sync.registry.policy, sessions)
+
+    def test_the_session_policy_is_the_one_that_runs(self):
+        """注入的距离上限真的进了校验，而不只是进了诊断。
+
+        对着 policy 字段断言而不是硬编码一个距离：改策略时这条跟着变，
+        写死数值的话它会在策略改掉之后继续为旧口径背书。
+        """
+        sessions = SessionPolicy(max_interaction_distance=1.0)
+        server = self.build(session_policy=sessions)
+        server.push(NormalizedEvent.place(key(0), self.BB8))
+        server.push(NormalizedEvent.place(key(1), self.BB8))
+        server.push(NormalizedEvent.place(key(1, 65), self.TINY))
+        server.push(NormalizedEvent.place(key(0, 65), DRIVER))
+        server.tick()
+
+        # 站在设备正上方一格：距离 1，刚好卡在注入的上限上（含端点）。
+        self.positions["p1"] = (self.DEVICE.x, self.DEVICE.y + 1, self.DEVICE.z)
+        c2s, _ = server.sync_port.classes()
+        self.api.dispatch(c2s, self.open_message(server.registry.get(self.DEVICE).ref))
+        self.assertEqual(server.sync.stats["sessions_opened"], 1, "边界含端点")
+
+        server.sync.registry.close_all("test")
+        self.positions["p1"] = (self.DEVICE.x, self.DEVICE.y + 2, self.DEVICE.z)
+        self.api.dispatch(c2s, self.open_message(server.registry.get(self.DEVICE).ref))
+        self.assertEqual(server.sync.stats["sessions_refused"], 1, "超出上限必须拒")
 
 
 if __name__ == "__main__":

@@ -99,6 +99,71 @@ def declared_event_class_names():
     return [target for target, _ in event_class_assignments()]
 
 
+class FakeEventsModule(object):
+    """假的 `tooldelta.events`：只提供同步通道要用的三个基类。
+
+    **它的存在理由是离线装配。** `ServerBootstrap.start(bind_engine=True)`
+    会注册同步通道的两个监听器，而真 `tooldelta.events` 在游戏外导不进来
+    （`server/adapters/messages.py` 把那个 import 放在函数体内）。注入它之后
+    「注册 → 派发 → 注销」三条路径都能离线跑——被测的是**接线**，不是引擎。
+
+    **三个基类都是空的**，只实现同步通道真正会用到的那一点点：C2S 去掉
+    `unmarshal` 后能装载原始字典，S2C 能 `marshal` 回字典、并把 `send`
+    记进 `sent`（不真的发）。名字用 `fake_*` 前缀，避免与真类名混淆。
+
+    契约的精确替身是 `test_sync_channels.FakeEventsModule`（它照搬了
+    `ServerEvent.marshal` 抛 `NotImplementedError` 那一条）——那份测的是
+    适配器的契约，这份只负责让装配跑起来，两处用途不同。
+
+    **实例本身即解析器**（`__call__` 返回自己）：`AdapterSyncPort` 收的口子
+    是「返回事件模块的可调用对象」（默认 `engine_events`），所以注入点写成
+    `sync_events=FakeEventsModule()`——构造一次、拿到的那一个实例既是模块
+    也是解析器。不做成「调用一下再产生一个新实例」：`classes()` 与
+    `on_player_leave()` 各解析一次，两次拿到不同实例的话，`sent` 就会分裂成
+    两份，而用例断言的正是「发出去的东西」。
+    """
+
+    def __call__(self):
+        # type: () -> object
+        """把自己当作「事件模块解析器」返回。理由见类 docstring。"""
+        return self
+
+    def __init__(self):
+        #: 发出去的 `(client_id, payload)`。**每个模块实例一份**：共用一份
+        #: 的话，前一个用例发出的包会漏进后一个用例的断言里。
+        self.sent = []
+        sent = self.sent
+
+        class CustomC2SEvent(object):
+            name = "fake_c2s"
+
+            def __init__(self, data=None):
+                self.data = data if isinstance(data, dict) else {}
+
+            @classmethod
+            def unmarshal(cls, data):
+                return cls(data)
+
+        class CustomS2CEvent(object):
+            name = "fake_s2c"
+
+            def __init__(self, payload=None):
+                self.payload = payload if isinstance(payload, dict) else {}
+
+            def marshal(self):
+                return self.payload
+
+            def send(self, client_id):
+                sent.append((client_id, self.payload))
+
+        class DelServerPlayerEvent(object):
+            name = "fake_player_leave"
+
+        self.CustomC2SEvent = CustomC2SEvent
+        self.CustomS2CEvent = CustomS2CEvent
+        self.DelServerPlayerEvent = DelServerPlayerEvent
+
+
 class StorageStand(object):
     """一套最小的驱动器 + 存储服务，供需要**真实库存**的用例复用。
 
