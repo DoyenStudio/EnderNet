@@ -37,6 +37,13 @@ def show_item_list_window(screen, item_ids, max_items, title="物品列表"):
 
 
 class ItemListWindow(object):
+    WINDOW_ATTRIBUTE = WINDOW_ATTRIBUTE
+    SELECT_WINDOW_ATTRIBUTE = SELECT_WINDOW_ATTRIBUTE
+    COLLECTION = COLLECTION
+    BINDING_PREFIX = BINDING_PREFIX
+    CONTROL_DEFINITION = "endernet_windows.item_list_window"
+    CONTROL_NAME = "endernet_item_list_window"
+
     def __init__(self, screen, item_ids, max_items, title):
         self.screen = screen
         self.item_ids = item_ids
@@ -49,11 +56,11 @@ class ItemListWindow(object):
         self._icons = {}
         self._bindings = []
         self._collection_flags = set()
-        screen._vars[WINDOW_ATTRIBUTE] = self
+        screen._vars[self.WINDOW_ATTRIBUTE] = self
         try:
             self._bind()
             self.root = screen.AddElement(
-                "endernet_windows.item_list_window", "endernet_item_list_window"
+                self.CONTROL_DEFINITION, self.CONTROL_NAME
             )
             # Leave room for the scroll panel's own layers below the picker (50).
             self.root.SetLayer(30)
@@ -73,7 +80,7 @@ class ItemListWindow(object):
             (Binder.BF_BindBool, "can_delete", self.can_delete),
             (Binder.BF_ButtonClickUp, "select", self.select),
         ):
-            name = BINDING_PREFIX + name
+            name = self.BINDING_PREFIX + name
             self.screen.DynaBinding(flag, name, callback)
             self._bindings.append((flag, name))
         for flag, name, callback in (
@@ -81,7 +88,7 @@ class ItemListWindow(object):
             (Binder.BF_BindBool, "has_item", self.has_item),
             (Binder.BF_BindBool, "selected", self.is_selected),
         ):
-            self.screen.DynaBindingCollection(flag, COLLECTION, BINDING_PREFIX + name, callback)
+            self.screen.DynaBindingCollection(flag, self.COLLECTION, self.BINDING_PREFIX + name, callback)
             self._collection_flags.add(flag)
 
     def get_title(self):
@@ -106,7 +113,7 @@ class ItemListWindow(object):
         return self.has_item(index) and index == self.selected_index
 
     def _picker_open(self):
-        return SELECT_WINDOW_ATTRIBUTE in self.screen._vars
+        return self.SELECT_WINDOW_ATTRIBUTE in self.screen._vars
 
     def can_add(self):
         return not self.closed and not self._picker_open() and len(self.item_ids) < self.max_items
@@ -125,8 +132,11 @@ class ItemListWindow(object):
             return
         # This API has no network snapshot argument; the picker still offers
         # its loaded catalogue and the local backpack. Its network source is empty.
-        if show_select_item_window(self.screen, [], self._on_item_selected):
-            self.picker = self.screen._vars[SELECT_WINDOW_ATTRIBUTE]
+        if self._show_picker():
+            self.picker = self.screen._vars[self.SELECT_WINDOW_ATTRIBUTE]
+
+    def _show_picker(self):
+        return show_select_item_window(self.screen, [], self._on_item_selected)
 
     def _on_item_selected(self, item_id):
         self.picker = None
@@ -155,11 +165,11 @@ class ItemListWindow(object):
         for flag, name in self._bindings:
             self.screen.DynaUnbinding(flag, name)
         for flag in self._collection_flags:
-            self.screen.DynaUnbindingCollection(flag, COLLECTION)
+            self.screen.DynaUnbindingCollection(flag, self.COLLECTION)
         if self.root is not None and self.screen._activated:
             self.root.Remove()
-        if self.screen._vars.get(WINDOW_ATTRIBUTE) is self:
-            del self.screen._vars[WINDOW_ATTRIBUTE]
+        if self.screen._vars.get(self.WINDOW_ATTRIBUTE) is self:
+            del self.screen._vars[self.WINDOW_ATTRIBUTE]
         self.root = None
         self.selected_index = None
         self._icons.clear()
