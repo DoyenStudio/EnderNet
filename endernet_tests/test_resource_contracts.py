@@ -533,10 +533,10 @@ class RecoveryTests(unittest.TestCase):
 
 
 class EngineUserDataBoxingTests(unittest.TestCase):
-    """引擎读回来的 `userData` 是**带类型标签**的，必须先解包。
+    """自有样板载荷读回后带 ModSDK NBT 类型标签，按业务协议解包。
 
     2026-09-25 游戏内实测的形状，逐条钉在这里。少了这一层，
-    任何读 `userData` 的功能都会得到「格式不对」——而写进去时明明是对的。
+    样板解码会得到「格式不对」；资源身份比较则仍应保留原始 NBT 表示。
     离线测试此前照不到它：`FakeContainer` 原样存取，而真引擎会包。
     """
 
@@ -574,9 +574,8 @@ class EngineUserDataBoxingTests(unittest.TestCase):
             self.assertEqual(unbox_engine_value(value), value)
 
     def test_a_dict_that_merely_looks_like_a_tag_is_not_unboxed(self):
-        """**这条防的是误伤。** 别的模组的数据里可能真有
-        `{"__type__": 3, "__value__": 7}` 这种形状；引擎把它包过之后，
-        外层的 `__type__` 是**字典**而不是整数，因此不该被当成标签解掉。"""
+        """外层 `__type__` 为字典时按普通字典遍历。
+        这里只验证判别条件，不断言 SDK 会把同形业务字典再次包装。"""
         boxed = {
             "__type__": self.box(3, 3),
             "__value__": self.box(3, 7),
@@ -586,8 +585,7 @@ class EngineUserDataBoxingTests(unittest.TestCase):
         )
 
     def test_an_unknown_tag_is_left_alone(self):
-        """认不出的标签**原样返回**：那说明引擎换了表示法，
-        把整棵树交回去让上层报「读不出来」，好过在这里猜一个值。"""
+        """未知标签的包装原样返回，由调用方校验；不据此推断引擎变更。"""
         odd = self.box(99, "?")
         self.assertEqual(unbox_engine_value(odd), odd)
 

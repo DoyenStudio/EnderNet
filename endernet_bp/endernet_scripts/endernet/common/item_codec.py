@@ -28,38 +28,55 @@ def _check_fields(data):
         raise ValueError("Unsupported item fields: %r" % (sorted(set(data) - _ENGINE_FIELDS),))
 
 
-#: 引擎在 `userData` 里给标量加的类型标签。**实测值**（2026-09-25，游戏内）。
+#: ModSDK NBT 类型编号；这里只列出当前解包器支持的四种类型。
 ENGINE_TAG_BYTE = 1
 ENGINE_TAG_INT = 3
 ENGINE_TAG_FLOAT = 5
 ENGINE_TAG_TEXT = 8
 
-#: Byte 这一个标签**兼表布尔与 None**，靠值区分。
+#: 本项目容器往返实测：Byte 兼表布尔与 None；不是通用 NBT 的空值定义。
 ENGINE_BYTE_NONE = 2
 
 
 def unbox_engine_value(value):
-    """把引擎 `userData` 里带类型标签的值解回普通值。**递归。**
+    """递归解包本项目载荷使用的 ModSDK NBT 表示，非完整 NBT 解码器。
 
-    2026-09-25 游戏内实测：往方块容器写 `userData` 时给的是普通值，
-    读回来**每个标量都被包成** `{"__type__": T, "__value__": V}`：
+    依据 mcdk-assistant 教程《NBT数据格式》（检索命令：
+    `netease NBT数据格式`，2026-09-28 核对）：物品 userData 与原版方块
+    实体数据以 NBT 存取，Python 接口用 `{"__type__": T, "__value__": V}`
+    表示类型和值。T 是 NBT 类型编号，不是 Python 类型编号；V 是载荷，
+    不一定是标量。教程列出的类型如下：
 
-    | T | 含义 | 值 |
+    | T | NBT 类型 | V / 本项目实测补充 |
     | --- | --- | --- |
     | 1 | Byte，**布尔与 None 共用这一个标签** | 0=False，1=True，2=None |
+    | 2 | Short | 短整数 |
     | 3 | Int | 普通整数 |
+    | 4 | Int64 | 64 位整数 |
     | 5 | Float | 浮点 |
+    | 6 | Double | 双精度浮点 |
+    | 7 | ByteArray | 整数列表 |
     | 8 | String | 文本 |
+    | 9 | List | 递归转换的列表 |
+    | 10 | Compound | 递归转换的复合结构 |
+    | 11 | IntArray | 整数列表 |
 
-    空列表与空字典**不加标签**，原样回来。
+    教程对 Byte 只写了 True/False；表中的 0/1/2 映射来自 2026-09-25
+    本项目方块容器的游戏内实测，保留此兼容约定。不能据此把任意物品的
+    Byte 数值 2 都解释成 None（例如 item_lock 的 Byte 值另有业务含义）。
+    同次实测中，写入普通值后标量带标签返回，空列表与空字典原样返回；
+    这是该路径的观测，不代表 NBT 的 List/Compound 没有类型标签。
 
-    **判别要求 `__type__` 是普通整数。** 一份内容恰好长成
-    `{"__type__": 3, "__value__": 7}` 的 `userData`（别的模组的数据）
-    被引擎包过之后是 `{"__type__": {"__type__": 3, ...}, "__value__": {...}}`
-    ——外层字典的 `__type__` 是字典而不是整数，因此不会被误当标签解掉。
+    当前仅解包 1/3/5/8，遍历未包装的 dict/list/tuple（tuple 转 list）。
+    其他编号的包装原样保留，包括教程已定义但此处未支持的 2/4/6/7/9/10/11；
+    不递归处理这些包装的载荷，也不在此抛错，由调用方按业务协议校验。
+    解包会丢失 NBT 类型信息，仅用于样板等自有载荷读取，不能用于资源身份
+    规范化或任意 NBT 的无损往返。
 
-    认不出的标签**原样返回**：那说明引擎换了表示法，把整棵树交回给调用方
-    去报「读不出来」，好过在这里猜一个值。
+    包装判别要求字典恰好有这两个键，且 `__type__` 是 int 而非 bool。
+    若 `__type__` 本身是字典，外层按普通字典遍历；但已经符合包装形状的
+    字典无法与同形业务数据区分。SDK 本就允许用该形状显式指定 NBT 类型，
+    不能假定引擎会再次包装这两个字段来自动避免冲突。
     """
     if isinstance(value, dict):
         if set(value) == set(("__type__", "__value__")):
@@ -84,7 +101,7 @@ def _unbox_scalar(tag, raw):
         return float(raw)
     if tag == ENGINE_TAG_TEXT:
         return raw
-    # 认不出的标签：把原样交回去，让上层报「读不出来」。
+    # 未支持或未知的标签：保留整个包装，由调用方按业务协议校验。
     return {"__type__": tag, "__value__": raw}
 
 

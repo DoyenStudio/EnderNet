@@ -57,10 +57,25 @@ ID 携带、行归属标记、空结构归一化、版本迁移及描述会话�
 `userData` 上不成立。** 三条都是实测，不是推断；任何读 `userData` 的功能
 （介质 Lore、样板编码、别的模组的载荷）都要按它们设计。
 
-1. **引擎给 `userData` 里的每个标量加类型标签。** 写普通值，读回来是
+1. **该容器路径中，写入的普通标量以 ModSDK NBT 表示返回。** 读回来是
    `{"__type__": T, "__value__": V}`：`1`=Byte（**兼表布尔与 None**，
-   值 0/1/2）、`3`=Int、`5`=Float、`8`=String；空列表与空字典**不加**标签。
-   解包实现见 `common/item_codec.py::unbox_engine_value`。
+   值 0=False、1=True、2=None）、`3`=Int、`5`=Float、`8`=String；本次实测
+   空列表与空字典原样返回。Byte 的 None 映射是实测补充，教程没有说明，
+   不应推广成任意 Byte 字段的语义。
+
+   2026-09-28 按 mcdk-assistant 教程《NBT数据格式》（命令
+   `netease NBT数据格式`）复核：`__type__` 是 NBT 类型编号，`__value__`
+   是对应载荷。完整教程表还包括 `2`=Short、`4`=Int64、`6`=Double、
+   `7`=ByteArray、`9`=List、`10`=Compound、`11`=IntArray；两种数组的
+   载荷为整数列表，List/Compound 的载荷递归转换。因此不能从空容器的
+   局部观测推导出「只有标量带标签」。教程 `netease:initial_user_data`
+   还展示了写入时用这两个键显式指定类型；不能假定同形业务字典会自动
+   被引擎再次包装以避免歧义。
+
+   解包实现见 `common/item_codec.py::unbox_engine_value`：当前仅支持
+   1/3/5/8，递归遍历未包装容器；其他包装连同载荷原样保留，由调用方
+   校验。它用于自有样板载荷读取，会丢失类型信息，不是完整 NBT 解码器，
+   也不能用于资源身份规范化；资源身份仍保留原始 `userData`。
 
 2. **引擎对 `userData` 里的 py2 `unicode` 是破坏性的**，与内容是不是 ASCII
    无关：
