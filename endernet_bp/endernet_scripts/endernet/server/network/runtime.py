@@ -1151,8 +1151,8 @@ class RuntimeManager(object):
             #: 进度合计：**已完成的配方数 / 计划里配方树的总配方数**。
             #: 两个数一起给，不直接给一个平均比例——平均会让
             #: 「10/10 完成」与「0/5 完成」拼成 50%，而那份一张都没做。
-            "steps_completed": 0,
-            "steps_total": 0,
+            "tasks_completed": 0,
+            "tasks_total": 0,
             "returns_absent": 0,
             #: 没有可汇总指标的**非替身**服务数。与 0 分开的理由同
             #: `scheduler_view()`：缺项不等于 0。
@@ -1182,8 +1182,8 @@ class RuntimeManager(object):
             report["slots"] += int(detail.get("slots") or 0)
             report["memory"] += int(detail.get("memory") or 0)
             progress = detail.get("progress") or {}
-            report["steps_completed"] += int(progress.get("steps_completed") or 0)
-            report["steps_total"] += int(progress.get("steps_total") or 0)
+            report["tasks_completed"] += int(progress.get("tasks_completed") or 0)
+            report["tasks_total"] += int(progress.get("tasks_total") or 0)
             if not detail.get("returns_wired"):
                 report["returns_absent"] += 1
             report["per_network"][component_id] = {

@@ -51,9 +51,10 @@ from .capacity import (
     MemoryLedger,
     OrderPolicy,
     SlotLedger,
-    capacity_blockers,
+    memory_admission_blockers,
     memory_capacity,
     slot_capacity,
+    slot_starvation_blocker,
 )
 from .jobs import (
     Order,
@@ -61,8 +62,6 @@ from .jobs import (
     OrderStep,
     OrderStore,
     RejectedRequestStore,
-    StepInput,
-    StepOutput,
     StepStatus,
     WaitingLedger,
 )
@@ -494,47 +493,55 @@ class OrderExecutor(object):
         # type: (object, int) -> bool
         """把一份**已经挂上计划**的订单推到 `QUEUED`。**可重复调用。**
 
-        重复调用是必须的：容量不足时订单停在 `BLOCKED` 等槽位，而槽位什么
-        时候空出来只有下一帧知道。重来时它自己那几项都已经成立——
-        `_reserve` 按 `claims` 逐键查一遍已有的预留、租约整份重领——因此
-        不会重复锁料，也不会留下一份谁也说不清的半份资源。
+        只有一种情况会停在这里：**材料被别的订单锁着**（`_reserve` 返回假），
+        那种情况会自己好，因此停在 `BLOCKED` 等。**内存不足不再停**——R04
+        要的是「拒绝下达，不转为自动等待内存的已接受订单」（见
+        `memory_admission_blockers`）：一张排在队列里等内存的订单，与一张
+        真的排着队的订单，在界面上长得一模一样。
+
+        **准入不看槽位。** 此刻一个执行实例都还没派；槽位的计费单位是
+        「一次配方执行」，它是**派发期**的竞争资源——派不出去就留在运行中
+        等下一帧（见 `slot_starvation_blocker`），不是拒绝下单的理由。
         """
-        # 槽位与内存。**在预留之前判**：先预留再发现没有槽位，就要把预留
-        # 全放掉，而放掉与留到之间有一段谁都可能插进来的窗口。
         self.refresh_capacity()
-        blockers = capacity_blockers(
-            self.service.slots, self.service.memory, len(order.steps)
-        )
+        need = int(order.plan.required_bytes)
+        blockers = memory_admission_blockers(self.service.memory, need)
         if blockers:
-            order.blockers = blockers
-            if order.status != OrderStatus.BLOCKED:
-                order.move_to(OrderStatus.BLOCKED, u"处理器或内存不够", tick)
-            return False
+            # **先判再领**，不留「领了又退」的窗口。
+            return self._reject_request(order, blockers, tick)
+
+        # `required_bytes` 可以是 0（叶子全被库存或外部输入覆盖），
+        # 那时仍要领一条 0 单位的租约：「每一个通过准入的订单都有一条内存
+        # 租约」是诊断与恢复要用的不变式（见 `_Ledger.claim`）。
+        memory_lease = self.service.memory.claim_order_bytes(order.order_id, need)
+        if memory_lease is None:
+            # 复核与领用之间被别的订单抢走了。**同样拒绝**：规则明确不要
+            # 「已接受但缺内存、自动等待」的那种订单。
+            return self._reject_request(
+                order,
+                [
+                    BlockReason(
+                        Reason.ORDER_NO_MEMORY,
+                        u"内存字节在这几帧里被别的订单拿走了（要 %d B，可用 %d B）"
+                        % (need, self.service.memory.available()),
+                    )
+                ],
+                tick,
+            )
 
         if not self._reserve(order, order.plan.seal.get("claims") or (), tick):
+            # 材料被锁住：**把刚领的内存退回去**再停。留着的话「一份没落地的
+            # 订单持有一份内存租约」就成了一条会长期存在的状态，而
+            # `adopted` 为假、界面上看不出它占了内存。
+            self.service.memory.release(order.order_id)
             return False
 
-        slot_lease = self.service.slots.claim_for_order(order.order_id)
-        memory_lease = self.service.memory.claim_for_order(
-            order.order_id, len(order.steps)
-        )
-        if slot_lease is None or memory_lease is None:
-            self._release_everything(order)
-            order.blockers = [
-                BlockReason(
-                    Reason.ORDER_NO_CAPACITY,
-                    u"槽位或内存在复核期间被别的订单拿走了",
-                )
-            ]
-            if order.status != OrderStatus.BLOCKED:
-                order.move_to(OrderStatus.BLOCKED, u"容量竞争", tick)
-            return False
-
-        order.slot_lease = slot_lease
+        order.memory_bytes = need
         order.memory_lease = memory_lease
+        order.tasks_total = int(order.plan.total_recipe_tasks)
         order.adopted = True
         order.blockers = []
-        order.move_to(OrderStatus.QUEUED, u"已预留材料并拿到执行槽位", tick)
+        order.move_to(OrderStatus.QUEUED, u"已预留材料并取得订单内存", tick)
         return True
 
     def _reserve(self, order, claims, tick):
@@ -644,9 +651,11 @@ class OrderExecutor(object):
         （`resource_identity.md` 第 2 节），所以那条路不走。
         """
         for step in order.steps:
-            for item in step.inputs:
-                if item.canonical == canonical:
-                    return item.key
+            for item_canonical, _per_batch in step.input_specs:
+                if item_canonical == canonical:
+                    key = step.keys.get(canonical)
+                    if key is not None:
+                        return key
         if order.canonical == canonical:
             return order.target
         return None
@@ -676,12 +685,29 @@ class OrderExecutor(object):
 
     def _release_everything(self, order):
         # type: (object) -> None
-        """释放预留与两份租约。完成、取消、失败三条路都走它。"""
+        """释放预留与两份租约。完成、取消、失败三条路都走它。
+
+        **槽位要逐个实例释放**：拥有者是执行实例 ID，不是订单 ID。
+        按订单 ID 放一次会静默地一个都放不掉（`_Ledger.release` 对未知的
+        拥有者返回 0 且不报错），而症状是「槽位再也回不来」——一张订单
+        结单之后网络凭空少几个槽位，账面上查不出少在哪。
+
+        内存仍然按订单一次放光：它的拥有者就是订单（准入时一次性定值）。
+        """
         self._release_reservations(order)
-        self.service.slots.release(order.order_id)
+        self._release_slots(order)
         self.service.memory.release(order.order_id)
-        order.slot_lease = None
         order.memory_lease = None
+
+    def _release_slots(self, order):
+        # type: (object) -> int
+        """把订单名下**全部在途实例**的槽位放掉，返回放掉的个数。"""
+        released = 0
+        for instance in order.inflight_executions():
+            self.service.slots.release_slot(instance.execution_id)
+            released += 1
+        order.inflight = {}
+        return released
 
     def _reject_request(self, order, reasons, tick):
         # type: (object, tuple, int) -> bool
@@ -706,6 +732,15 @@ class OrderExecutor(object):
 
         **预留要回滚**：它是准入前唯一可能已经拿到手的资源（`_reserve`
         逐条做，可能成功几条之后才失败）。
+
+        ## 未定案：内存不足是否也该留一条拒绝记录
+
+        09-02 明写「拒绝记录保留方式和其他失败终态**另行确认**」。本轮
+        **内存不足与缺料共用这一个入口**，因此它同样会落一条记录——但这
+        只是沿用既有形状，**不是已定案的口径**。两者是否该有区别（例如
+        内存不足只回一条即时错误、不占近期记录的名额），要等 09-02 那句
+        「另行确认」有结论之后才能写死。**不得把当前行为当成定案**
+        （全局约束 7）。
         """
         reasons = tuple(reasons or ())
         self._release_reservations(order)
@@ -736,7 +771,7 @@ class OrderExecutor(object):
 
     def _build_steps(self, order, plan, captured):
         # type: (object, object, dict) -> bool
-        """把计划里的步骤变成可执行的 `OrderStep`。
+        """把计划里的步骤变成可执行的 `OrderStep`，并推出各自的依赖边。
 
         顺序**必须**用 `execution_order()`（合法的拓扑序），
         而不是 `steps[].depth`——08 第七节第 13 条：`depth` 会被更浅的路径
@@ -749,8 +784,25 @@ class OrderExecutor(object):
         for item in plan.seal.get("dispatch") or ():
             dispatch[item.get("step")] = item
 
+        sequence = list(plan.execution_order())
+        position = {}
+        for place, index in enumerate(sequence):
+            position[index] = place
+        #: `canonical -> 生产它的步骤下标`，**按执行顺序取第一个**。
+        #:
+        #: 只认 `outputs`：`returns` 是做完之后回到网络的东西（空桶之类），
+        #: 它同样会进库存，但「因为它到了所以下游能开工」不成立——返还物是
+        #: 结果不是来源。**`external_inputs` 也不认**：那是配方外部自理的
+        #: 输入（R09），网络里根本没有它的生产步骤。
+        producer = {}
+        for index in sequence:
+            for entry in (by_index.get(index) or {}).get("outputs") or ():
+                canonical = entry.get("canonical")
+                if canonical and canonical not in producer:
+                    producer[canonical] = index
+
         steps = []
-        for index in plan.execution_order():
+        for index in sequence:
             row = by_index.get(index)
             if row is None:
                 return False
@@ -770,11 +822,25 @@ class OrderExecutor(object):
             keymap = _key_map(entry.definition)
             # 可读名从**样板定义**里取（那里有活的键），取不到就退化成
             # `canonical`——一个副产物步骤的产物未必在这块样板的输出里。
-            producer = keymap.get(step.canonical)
-            if producer is not None:
-                step.label = producer.name
+            named = keymap.get(step.canonical)
+            if named is not None:
+                step.label = named.name
             if not _fill_step(step, row, keymap, self.policy):
                 return False
+            # **依赖边只从「执行顺序在我之前」的生产者连过来。** 同一步既产出
+            # 又消耗同一个键（自循环配方）时 `producer[canonical]` 就是它自己，
+            # 那条边要丢掉——留着会让这一步永远等自己完成。
+            step.depends_on = tuple(
+                sorted(
+                    set(
+                        producer[entry.get("canonical")]
+                        for entry in (row.get("inputs") or ())
+                        if entry.get("canonical") in producer
+                        and position.get(producer[entry.get("canonical")], -1)
+                        < position.get(index, 0)
+                    )
+                )
+            )
             steps.append(step)
         order.steps = steps
         return True
@@ -809,13 +875,28 @@ class OrderExecutor(object):
         order.move_to(OrderStatus.CANCELLING, u"正在释放资源", tick)
         residue = []
         for step in order.steps:
-            if step.status != StepStatus.COMPLETED:
-                for item in step.inputs:
-                    if item.staged <= 0 and item.delivered <= 0:
+            step_residue = []
+            if not step.is_terminal_step():
+                # **逐实例报，不逐步骤报。** 同一个步骤可能同时有 4 次执行在
+                # 途、各自停在不同相位、各自压着不同的料；按步骤聚合成一行
+                # 会把「哪一次执行的那一份」丢掉，而取消之后的善后正是按
+                # 执行实例去查的（`execution_id` 是 10 那边的索引键）。
+                for instance in list(step.executions):
+                    if instance.is_terminal():
                         continue
-                    residue.append(
-                        {
+                    if instance.assembly is not None:
+                        row = {"execution_id": instance.execution_id,
+                               "assembly": instance.assembly,
+                               "note": u"R05 未定：装配实物与待产出账保留，不自动回滚"}
+                        residue.append(row)
+                        step_residue.append(row)
+                        self.service.patterns.assembly.release(instance)
+                    for item in instance.inputs:
+                        if item.staged <= 0 and item.delivered <= 0:
+                            continue
+                        row = {
                             "step": step.index,
+                            "execution_id": instance.execution_id,
                             "key": item.canonical,
                             "staged": item.staged,
                             "delivered": item.delivered,
@@ -823,17 +904,19 @@ class OrderExecutor(object):
                             "note": u"已投进外部机器的部分不能取回；"
                                     u"中转位里的余量按 R05 待定，暂不搬动",
                         }
-                    )
-                step.residue = [
-                    row for row in residue if row["step"] == step.index
-                ]
-                step.status = StepStatus.CANCELLED
-                step.blocked_from = None
+                        residue.append(row)
+                        step_residue.append(row)
+                    instance.status = StepStatus.CANCELLED
+                    instance.blocked_from = None
+                    instance.blockers = []
+                    instance.detail = u"订单取消"
+                    instance.tick = tick
+                    # 注销等待台账（10 那边按同一个 ID 索引）。
+                    self._unregister(instance.execution_id)
+                step.cancelled = True
                 step.blockers = []
                 step.detail = u"订单取消"
-            if step.execution_id is not None:
-                self._unregister(step.execution_id)
-                step.execution_id = None
+            step.residue = step_residue
         order.residue = residue
         self._release_everything(order)
         order.blockers = []
@@ -896,12 +979,15 @@ class OrderExecutor(object):
         accepted = self.waiting.observe(execution_id, key, count, op_id)
         if accepted <= 0:
             return 0
+        # **按 `inflight` 反查，不再扫步骤。** 在途表本来就以 `execution_id`
+        # 为键（它同时是槽位租约的拥有者），而逐步骤逐实例地比 ID 既慢又
+        # 少了一条信息：扫不到时无法区分「这次执行早就完成了」与
+        # 「ID 根本不属于本网络」。
         for order in self.orders.orders():
-            for step in order.steps:
-                if step.execution_id == execution_id:
-                    order.stats["outputs"] += accepted
-                    order.mark(int(getattr(self.runtime, "tick_count", 0) or 0))
-                    return accepted
+            if execution_id in order.inflight:
+                order.stats["outputs"] += accepted
+                order.mark(int(getattr(self.runtime, "tick_count", 0) or 0))
+                return accepted
         return accepted
 
     def _unregister(self, execution_id):
@@ -976,7 +1062,7 @@ class OrderExecutor(object):
                 order.move_to(OrderStatus.RUNNING, u"开始推进步骤", tick)
         if order.status != OrderStatus.RUNNING:
             return 0
-        return self._advance_step(order, tick, budget)
+        return self._dispatch_round(order, tick, budget)
 
     def _resume_adoption(self, order, tick):
         # type: (object, int) -> bool
@@ -1056,79 +1142,96 @@ class OrderExecutor(object):
 
     def _blockers_for(self, order):
         # type: (object) -> list
-        """现在到底还有什么挡着这张订单。空列表表示可以往前走。"""
+        """现在到底还有什么挡着这张订单。空列表表示可以往前走。
+
+        **按执行实例看，不按步骤看。** R04 之后同一张订单可以同时有若干次
+        执行在途（各自占一个槽、各自停在不同相位），因此「订单被什么挡着」
+        是这些实例各自障碍的汇总，而不是某一个「当前步骤」的障碍。
+        """
         out = self._order_obstacles(order)
         if out:
             return out
-        step = order.outstanding_step()
-        # **「这一步能不能自己收尾」排在「回流入口接没接上」前面。**
-        # 顺序反了会有一个很隐蔽的后果：订单一旦因为`order_returns_absent`
-        # 转成 BLOCKED，就再也不会回到 `_track_outputs` 去看产物到了没有——
-        # 而产物是真的会到的（10 一旦接上，或者有人手工把入库的资源分配过来）。
-        # 真机上就是这么撞出来的：步骤的 `received` 已经是 1/1，订单却还停在
-        # 阻塞上、进度停在 0。**离线用例照不到它**，因为假回流报
-        # `available: True`，订单一直留在 RUNNING 每帧轮询。
-        if step is not None and _ready_to_finish(step, self.waiting):
-            return out
-        # **这条提示只在「真的有步骤在等产物」时才算数。** 它是订单级的
-        # （回流入口没接线是全局事实），但它答的是「为什么这一步等不到产物」——
-        # 而一个还在 `waiting_inputs`、甚至还没落地的订单根本谈不上等产物。
+        # **「有实例能自己收尾」排在「回流入口接没接上」前面。** 顺序反了会有
+        # 一个很隐蔽的后果：订单一旦因为 `order_returns_absent` 转成 BLOCKED，
+        # 就再也不会回到 `_track_outputs` 去看产物到了没有——而产物是真的会到的
+        # （10 一旦接上，或者有人手工把入库的资源分配过来）。真机上就是这么
+        # 撞出来的：步骤的 `received` 已经是 1/1，订单却还停在阻塞上、进度停在 0。
+        # **离线用例照不到它**，因为假回流报 `available: True`，订单一直留在
+        # RUNNING 每帧轮询。
+        for instance in order.inflight_executions():
+            if _ready_to_finish(instance, self.waiting):
+                return out
+        # **这条提示只在「真的有执行在等产物」时才算数。** 它是订单级的
+        # （回流入口没接线是全局事实），但它答的是「为什么这一次执行等不到
+        # 产物」——而一次还在备料、甚至还没开出来的执行根本谈不上等产物。
         # 放宽到订单级会把别的阻塞原因**盖掉**：真机上被容量挡下的订单，
-        # 在槽位释放之后本该自己恢复，却因为这条一直卡在
-        # `order_returns_absent` 上，连 `_resume_adoption` 都走不到。
+        # 在槽位释放之后本该自己恢复，却因为这条一直卡在 `order_returns_absent`
+        # 上，连 `_resume_adoption` 都走不到。
         blocker = _sink_blocker(self.service)
-        if (
-            blocker is not None
-            and step is not None
-            and step.status == StepStatus.WAITING_OUTPUTS
-        ):
-            out.append(blocker)
-            return out
-        if step is not None and step.status == StepStatus.BLOCKED:
-            # **重新算一遍，不读 `step.blockers`。** 那份列表是**被挡住那一刻**
-            # 的快照，而挡住它的东西大多会自己消失：外部机器腾出空间、
+        if blocker is not None:
+            for instance in order.inflight_executions():
+                if instance.status == StepStatus.WAITING_OUTPUTS:
+                    out.append(blocker)
+                    break
+        for instance in order.inflight_executions():
+            if instance.status != StepStatus.BLOCKED:
+                continue
+            # **重新算一遍，不读 `instance.blockers`。** 那份列表是**被挡住
+            # 那一刻**的快照，而挡住它的东西大多会自己消失：外部机器腾出空间、
             # 另一条订单的批次投完、别的路径把料还了回来。读旧快照的表现是
-            # 「接口早就恢复了而订单永远醒不过来」——而它自己报的原因
-            # 还是对的，看起来一点都不像坏了。
-            obstacle = self._step_obstacle(order, step)
+            # 「接口早就恢复了而订单永远醒不过来」——而它自己报的原因还是对的，
+            # 看起来一点都不像坏了。
+            obstacle = self._instance_obstacle(order, instance)
             # 可重试的那一类**不把订单留在这里**：它们下一秒就可能变，
             # 而留在 BLOCKED 上等于等一次重新判定的节奏（那是别人定的）。
             if obstacle is not None and obstacle.code not in RETRYABLE_CODES:
                 out.append(obstacle)
+                break
         return out
 
-    def _step_obstacle(self, order, step):
+    def _instance_obstacle(self, order, instance):
         # type: (object, object) -> object
-        """只读地算一遍这一步现在挡在哪。返回 `BlockReason` 或 `None`。
+        """只读地算一遍**这一次执行**现在挡在哪。返回 `BlockReason` 或 `None`。
 
         **一个状态都不改。** 它调用的是执行路径上那几个判据函数本身
         （`_port_for` / `_foreign_batch` / `_stock_blocker_for_staging`），
         因此两处不会各说各话——另写一套判断才会。
         """
-        if step.status == StepStatus.WAITING_OUTPUTS:
+        if instance.step.mode == "crafting":
+            if instance.assembly and instance.assembly["uncertain"]:
+                return BlockReason(Reason.CONTAINER_UNCERTAIN, instance.assembly["uncertain"])
             return None
-        if step.execution_id is not None:
+        if instance.status == StepStatus.WAITING_OUTPUTS:
             return None
-        if not [item for item in step.inputs if item.to_stage() > 0]:
-            leftover = [item for item in step.inputs if not item.is_satisfied()]
+        # **这里曾经有一条 `if instance.op_id is not None: return None`。**
+        # 它当时的意思是「手上有批次就是在投料，没什么可报的」——串行时成立，
+        # 换成逐实例之后它是个**错误答案**：调用方只对 `BLOCKED` 的实例问这
+        # 一条，而能把它置成 `BLOCKED` 的只有**不可重试**的原因
+        # （可重试的那些连状态都不改，见 `_block_instance`），也就意味着
+        # 端口上那一批**已经不再是它的了**。此时 `op_id` 还是上一个批次的
+        # 残值，守卫会据此答「没事」，于是订单永远停在 `RUNNING` 而
+        # `blockers` 是空的——界面上一片正常，料却早就被人拿走了。
+        # 现在照直往下算：端口归属、批次的死活、库存够不够，都在下面重算一遍。
+        if not [item for item in instance.inputs if item.to_stage() > 0]:
+            leftover = [item for item in instance.inputs if not item.is_satisfied()]
             if not leftover:
                 return None
             return BlockReason(
                 Reason.ORDER_BATCH_STALLED,
                 u"中转位里还压着 %s 没进外部机器" % (leftover[0].key.name,),
             )
-        port, blocker = self._port_for(step)
+        port, blocker = self._port_for(instance)
         if blocker is not None:
             return blocker
-        foreign = _foreign_batch(port, step)
+        foreign = _foreign_batch(port, instance)
         if foreign is not None:
             return foreign
-        if _owns_live_batch(port, step):
+        if _owns_live_batch(port, instance):
             batch = port.batch
             if batch.reason:
                 return BlockReason(Reason.ORDER_BATCH_STALLED, batch.reason)
             return None
-        item = [row for row in step.inputs if row.to_stage() > 0][0]
+        item = [row for row in instance.inputs if row.to_stage() > 0][0]
         return self._stock_blocker_for_staging(order, item, item.to_stage())
 
     def _recheck_if_stale(self, order, tick):
@@ -1205,59 +1308,248 @@ class OrderExecutor(object):
 
     def _remaining_need(self, order, canonical):
         # type: (object, str) -> int
-        """这种料还要往机器里送多少（还没送进去的部分）。"""
+        """这种料还要往机器里送多少。
+
+        **两段相加，缺一不可**：
+
+        - 已经开出来的执行实例还欠的（`item.debt()`）；
+        - **还没开出来的批次**（`open_batches() * per_batch`）。
+
+        只算前一段会让重验在「第 1 次执行刚备完料」时判自己「料够了」——
+        而剩下 9 次的料早就被别人拿走了。那时候放行，后面每一批都会在
+        `_stock_blocker_for_staging` 上撞墙，而重验本该在那之前就把这件事
+        说出来。反过来只算后一段会让「已经备进机器的」被算两遍。
+        """
         total = 0
         for step in order.steps:
-            if step.status in (StepStatus.COMPLETED, StepStatus.CANCELLED):
+            if step.is_terminal_step():
                 continue
-            for item in step.inputs:
-                if item.canonical == canonical:
-                    total += item.debt()
+            per_batch = dict(step.input_specs).get(canonical)
+            if per_batch is None:
+                continue
+            for instance in step.executions:
+                if instance.is_terminal():
+                    continue
+                for item in instance.inputs:
+                    if item.canonical == canonical:
+                        total += item.debt()
+            total += per_batch * step.open_batches()
         return total
 
-    # -- 步骤推进 ------------------------------------------------------
+    # -- 执行实例推进（R04 之后派发的单位）-------------------------------
 
-    def _advance_step(self, order, tick, budget):
+    def _dispatch_round(self, order, tick, budget):
         # type: (object, int, int) -> int
-        step = order.outstanding_step()
-        if step is None:
-            return self._complete_if_done(order, tick)
-        if step.status == StepStatus.BLOCKED:
+        """派发轮：**同一次调用里推进所有依赖已满足的执行实例**。
+
+        R04 已定案：「配方执行 10 次、网络有 4 个空闲槽且任务均已就绪时，
+        可有 4 次同时在途；完成一个后可继续派发一个」。因此这里不再像从前
+        那样每帧只推「最靠前的那个未完成步骤」——那等于把并行度钉死成 1，
+        单订单永远用不满剩余槽位。
+
+        ## 顺序
+
+        1. 轮转步骤表（`order.dispatch_cursor`），让多步订单不会总是同一步
+           先拿资源；
+        2. 依赖已满足的步骤：先推进**已经开出来的**实例；
+        3. 再看槽位有没有空的，有就再开新的实例（每开一个领 1 槽）；
+        4. 收尾时判一次订单级 `BLOCKED`（见 `_settle_blockers`）。
+
+        ## 预算
+
+        **每一次推进、每开一个实例都算 1 点工作**，且每次记账前都先查一次
+        预算，因此返回值恒不超过 `budget`——04 的 `RuntimeManager` 上那条
+        「本帧总消耗不超预算」的不变量就是靠这个成立的。
+        """
+        budget = max(0, int(budget))
+        spent = 0
+        progressed = False
+        starved = {}
+        for step in self._rotated_steps(order):
+            if spent >= budget:
+                break
+            if step.is_terminal_step():
+                continue
+            if not self._dependencies_met(order, step):
+                continue
+            for instance in list(step.executions):
+                if spent >= budget:
+                    break
+                if instance.is_terminal():
+                    continue
+                cost = self._advance_instance(order, instance, tick)
+                spent += max(0, cost)
+                if cost > 0:
+                    progressed = True
+            if spent >= budget or step.open_batches() <= 0:
+                continue
+            while step.open_batches() > 0 and spent < budget:
+                if self.service.slots.available() < 1:
+                    # 槽位用满：**如实报出来，但不把订单冻住**（`ORDER_NO_CAPACITY`
+                    # 在 `RETRYABLE_CODES` 里）。R04 只说「单订单可用满剩余槽位」，
+                    # 没说过「没槽位就转阻塞」——它不是一条要玩家动作的规则，
+                    # 跑完一次执行就会空出来一个。
+                    starved[step.index] = slot_starvation_blocker(self.service.slots)
+                    break
+                instance = step.open_execution(order.order_id)
+                if instance is None:
+                    break
+                spent += 1
+                if not self._claim_slot(instance):
+                    # 理论上到不了这里（上面刚查过 `available()`）。真到了就
+                    # **撤回这次实例**——它一秒活都没干过，留着会让 `created`
+                    # 记着一次从未存在的执行，进度条永久缺一格。
+                    step.abandon_execution(instance)
+                    starved[step.index] = slot_starvation_blocker(self.service.slots)
+                    break
+                order.inflight[instance.execution_id] = instance
+                progressed = True
+                if spent < budget:
+                    # **开实例本身已经记了 1 点。** 这一帧预算不够就不再推它，
+                    # 下一帧照样会轮到——省下的这 1 点让别的步骤/订单一帧
+                    # 也能动一下。上面那条 `spent <= budget` 的不变量靠这里守住。
+                    spent += max(0, self._advance_instance(order, instance, tick))
+        order.dispatch_cursor += 1
+        # 槽位提示**每一轮重判**：空出来之后还挂着它，界面会在订单明明正跑着的
+        # 时候一直说「没有空闲的配方处理槽位」。
+        for step in order.steps:
+            reason = starved.get(step.index)
+            if reason is not None:
+                step.blockers = [reason]
+            elif step.blockers and step.blockers[0].code == Reason.ORDER_NO_CAPACITY:
+                step.blockers = []
+        self._settle_blockers(order, tick, progressed)
+        return spent
+
+    def _claim_slot(self, instance):
+        # type: (object) -> bool
+        """给一次执行领 1 个槽位。领不到返回 `False`。
+
+        **拥有者是执行实例 ID，不是订单 ID**——R04：「每次配方执行占 1 槽
+        至完成」。租约因此天然是「谁在跑」，`order.inflight` 的键与它一一对应。
+        """
+        return self.service.slots.claim_slot(instance.execution_id) is not None
+
+    def _settle_blockers(self, order, tick, progressed):
+        # type: (object, int, bool) -> None
+        """按「本帧有没有真的往前走」决定订单要不要转 `BLOCKED`。
+
+        **这是本次改动里最容易写错的一处。** 从前的口径是「哪一步撞墙就把
+        整张订单冻住」，串行时它恰好等价；并行之后它不是——同一张订单里
+        另一次执行可能正躺在 `WAITING_OUTPUTS` 等产物，而被冻住之后
+        `_track_outputs` 再也不会被调用，产物到了也没人收。那是**新引入的
+        活性缺陷**，因此判据必须换成订单级的：**一次都没推进成功、而且
+        确实有东西挡着，才算被挡住**。
+        """
+        blockers = self._blockers_for(order)
+        if blockers:
+            order.blockers = blockers
+            if not progressed and order.status == OrderStatus.RUNNING:
+                order.move_to(OrderStatus.BLOCKED, blockers[0].detail, tick)
+            return
+        order.blockers = []
+
+    def _rotated_steps(self, order):
+        # type: (object) -> list
+        """按 `dispatch_cursor` 轮转过的步骤表。
+
+        总从 `execution_order()` 的第一个开始扫，会让多步订单永远按同一个
+        顺序占资源：第一步开满槽位之后，后面的步骤一帧都轮不到。外层
+        `FactoryService.cursor` 轮的是订单，这一层轮的是同一张订单内部的步骤。
+        """
+        steps = order.steps
+        if not steps:
+            return []
+        cursor = order.dispatch_cursor % len(steps)
+        return list(steps[cursor:]) + list(steps[:cursor])
+
+    def _dependencies_met(self, order, step):
+        # type: (object, object) -> bool
+        """这一步的生产者步骤是不是都做完了。
+
+        依赖边在 `_build_steps` 里由计划的产出声明推出来（`step.depends_on`）。
+        **边是显式的，不看 `rank`**：`rank` 是拓扑深度，它答的是「至少要几步」，
+        不是「谁喂谁」——两个同 `rank` 的步骤之间本来就没有依赖，而一个
+        `rank` 更深的步骤完全可能不依赖某个更浅的。
+        """
+        for index in step.depends_on:
+            producer = order.step_at(index)
+            if producer is None or not producer.is_fulfilled():
+                return False
+        return True
+
+    def _advance_instance(self, order, instance, tick):
+        # type: (object, object, int) -> int
+        """把一次执行往前推一格，返回消耗的工作量。"""
+        if instance.step.mode == "crafting":
+            return self._advance_assembly(order, instance, tick)
+        if instance.status == StepStatus.BLOCKED:
             # 从**它自己原来的位置**继续，而不是从头再来一遍——
             # 从头再来就是「重发整批原料」，那是验收明令禁止的。
-            step.status = step.blocked_from or StepStatus.STAGING
-            step.blocked_from = None
-            step.blockers = []
-        if step.status == StepStatus.WAITING_INPUTS:
-            step.status = StepStatus.STAGING
-        if step.status == StepStatus.STAGING:
-            return self._stage_next_input(order, step, tick)
-        if step.status == StepStatus.DISPATCHED:
-            return self._track_dispatch(order, step, tick)
-        if step.status == StepStatus.WAITING_OUTPUTS:
-            return self._track_outputs(order, step, tick)
+            instance.status = instance.blocked_from or StepStatus.STAGING
+            instance.blocked_from = None
+            instance.blockers = []
+        if instance.status == StepStatus.WAITING_INPUTS:
+            instance.status = StepStatus.STAGING
+            instance.tick = tick
+        if instance.status == StepStatus.STAGING:
+            return self._stage_next_input(order, instance, tick)
+        if instance.status == StepStatus.DISPATCHED:
+            return self._track_dispatch(order, instance, tick)
+        if instance.status == StepStatus.WAITING_OUTPUTS:
+            return self._track_outputs(order, instance, tick)
         return 0
 
-    def _block_step(self, order, step, tick, reason):
-        # type: (object, object, int, object) -> int
-        """把一个步骤连同它的订单一起挡下来，并记住它原来在哪。
+    def _advance_assembly(self, order, instance, tick):
+        # type: (object, object, int) -> int
+        result = self._assembly_command(order, instance)
+        if result.reasons:
+            return self._block_instance(order, instance, tick, result.reasons[0])
+        if instance.status == StepStatus.BLOCKED:
+            instance.status = instance.blocked_from or StepStatus.STAGING
+            instance.blocked_from = None
+            instance.blockers = []
+        return int((result.payload or {}).get("work", 0))
 
-        **可重试的障碍不改变状态**（见 `RETRYABLE_CODES`）：把原因写进
-        `step.detail` 让界面看得见，下一帧执行器本来就会再试一次。
+    def _assembly_command(self, order, instance):
+        # type: (object, object) -> object
+        gateway = self.service.gateway
+        ref = self._step_ref(instance)
+        if gateway is None or not gateway.available() or ref is None:
+            return CommandResult.blocked(instance.execution_id,
+                                         [BlockReason(Reason.MASTER_ABSENT, u"装配派发网关不可用")])
+        instance.op_attempt += 1
+        return gateway.submit(DeviceCommand(
+            "assemble/%s/%d" % (instance.execution_id, instance.op_attempt),
+            CommandKind.STORAGE,
+            CommandSource(None, ref, ref.node_key.as_key()[0], distance_ok=True),
+            payload={"action": "assembly_advance", "order_id": order.order_id,
+                     "execution_id": instance.execution_id},
+            topology_version=gateway.topology_version(), device_ref=ref))
+
+    def _block_instance(self, order, instance, tick, reason):
+        # type: (object, object, int, object) -> int
+        """把**一次执行**挡下来，并记住它原来在哪。
+
+        **它不碰订单状态**：订单是不是被挡住由 `_settle_blockers` 按
+        「本帧有没有推进」统一判（同一个订单里别处可能还在跑）。
+
+        **可重试的障碍连状态都不改**（见 `RETRYABLE_CODES`）：把原因写进
+        `instance.detail` 让界面看得见，下一帧执行器本来就会再试一次。
+        返回值固定是 0——**「发现被挡住」不是工作成果**，让调用方据此判
+        「本帧有没有往前走」正是这条返回值存在的意义。
         """
         if reason.code in RETRYABLE_CODES:
-            step.detail = reason.detail
-            return 1
-        if step.status != StepStatus.BLOCKED:
-            step.blocked_from = step.status
-        step.status = StepStatus.BLOCKED
-        step.blockers = [reason]
-        order.blockers = [reason]
-        if order.status != OrderStatus.BLOCKED:
-            order.move_to(OrderStatus.BLOCKED, reason.detail, tick)
-        return 1
+            instance.detail = reason.detail
+            return 0
+        if instance.status != StepStatus.BLOCKED:
+            instance.blocked_from = instance.status
+        instance.status = StepStatus.BLOCKED
+        instance.blockers = [reason]
+        instance.tick = tick
+        return 0
 
-    def _stage_next_input(self, order, step, tick):
+    def _stage_next_input(self, order, instance, tick):
         # type: (object, object, int) -> int
         """把这一步还缺的料往样板口的中转位搬一批。
 
@@ -1281,20 +1573,20 @@ class OrderExecutor(object):
         再备下一种。抢占别人的批次的表现是那个订单的 `delivered` 被清零、
         原料被投第二遍，所以动手之前先看格子里的 `op_id` 是不是自己的。
         """
-        pending = [item for item in step.inputs if item.to_stage() > 0]
-        if not step.inputs:
+        pending = [item for item in instance.inputs if item.to_stage() > 0]
+        if not instance.inputs:
             # 配方不需要网络供给的输入。放在取接口之前判，是因为一台装配仓
             # 提供者（07-06）本来就不该被这条路碰到。
-            return self._finish_inputs(order, step, tick)
-        port, blocker = self._port_for(step)
+            return self._finish_inputs(order, instance, tick)
+        port, blocker = self._port_for(instance)
         if blocker is not None:
-            return self._block_step(order, step, tick, blocker)
+            return self._block_instance(order, instance, tick, blocker)
         # **先对齐一次读数**再决定要不要再备。接口的轮询随时可能在推进这一批，
         # 而这里若拿着几帧前的 `delivered`，就会去补一份已经在路上的料。
-        self._sync_own_batch(step, port)
-        busy = _foreign_batch(port, step)
+        self._sync_own_batch(instance, port)
+        busy = _foreign_batch(port, instance)
         if busy is not None:
-            return self._block_step(order, step, tick, busy)
+            return self._block_instance(order, instance, tick, busy)
         if not pending:
             # 没有要备的料了（都搬出去了，或者本来就不用搬）。
             # **但「搬出去了」不等于「进了机器」**：中转位里可能还压着一部分
@@ -1302,14 +1594,14 @@ class OrderExecutor(object):
             # 在那里继续推、继续读读数——**不能在这里判「都进了」**，
             # 判早了的后果是这一步在原料还没到的时候就开始等产物，
             # 而那份产物永远不会来，因为机器上根本没收到料。
-            if step.all_inputs_delivered():
-                return self._finish_inputs(order, step, tick)
-            if port.batch is not None and port.batch.op_id == step.op_id:
-                step.status = StepStatus.DISPATCHED
+            if instance.all_inputs_delivered():
+                return self._finish_inputs(order, instance, tick)
+            if port.batch is not None and port.batch.op_id == instance.op_id:
+                instance.status = StepStatus.DISPATCHED
                 return 1
-            return self._block_step(
+            return self._block_instance(
                 order,
-                step,
+                instance,
                 tick,
                 BlockReason(
                     Reason.ORDER_BATCH_STALLED,
@@ -1318,47 +1610,48 @@ class OrderExecutor(object):
                         u"、".join(
                             u"%s %d/%d"
                             % (item.key.name, item.delivered, item.required)
-                            for item in step.inputs
+                            for item in instance.inputs
                             if not item.is_satisfied()
                         ),
                     ),
                 ),
             )
-        if _owns_live_batch(port, step):
+        if _owns_live_batch(port, instance):
             # **本步上一批还在投，绝不再备一次。** 这条判据不是优化，
             # 是正确性：同一帧里 `RuntimeManager` 的余量轮会把同一个运行时
             # 访问两次，于是 `_stage_next_input` 可能对同一个 `op_id` 发第二条
             # 命令——协调器账本按 `op_id` 去重，**会把上一次的回执原样返回**，
             # 于是 `moved` 被加第二次，中转位里凭空多出一份料。
             # 靠「一帧只做一次」来防是脆的（帧号可能缺失），靠批次归属才是结构性的。
-            step.status = StepStatus.DISPATCHED
+            instance.status = StepStatus.DISPATCHED
             return 1
         item = pending[0]
         need = item.to_stage()
         blocker = self._stock_blocker_for_staging(order, item, need)
         if blocker is not None:
-            return self._block_step(order, step, tick, blocker)
+            return self._block_instance(order, instance, tick, blocker)
         # **每一批一个新 `op_id`。** 复用会命中协调器的去重账本，拿到
         # 上一批的回执，而 `state.batch` 已经是新的一批了——两个读数
         # 从此对不上，症状是 `delivered` 一帧涨一截而料根本没动。
         # 「同一次备料不备第二遍」由 `_owns_live_batch` 保证（有活批次就
         # 不再开新的），不靠复用 `op_id`。
-        step.op_attempt += 1
-        op_id = "%s/%d/%s#%d" % (
-            order.order_id, step.index, item.canonical, step.op_attempt
-        )
+        #
+        # 前缀是 `execution_id`（`订单/步骤/执行序号`），因此**同一步骤的
+        # 不同次执行天然分得开**——它们本来就会同时挂在同一台接口上排队。
+        instance.op_attempt += 1
+        op_id = "%s/%s#%d" % (instance.execution_id, item.canonical, instance.op_attempt)
         # 换批之前把上一批的终值折进基线：新批次的 `delivered` 从 0 重新数，
         # 不折基线会让这一步以为料还没投出去，然后**把整批重投一遍**。
         item.delivered_base = item.delivered
         released = self._release_for_staging(order, item, need)
-        result = self._port_stage(port, item, need, op_id)
+        result = self._port_stage(port, item.key, need, op_id)
         if result is None:
             # 网关不可用（没有主控 / 网络没开放）。预留已经放掉了，
             # 立刻补回去——下一帧再来。
             self._restore_reservation(order, item, released)
-            return self._block_step(
+            return self._block_instance(
                 order,
-                step,
+                instance,
                 tick,
                 BlockReason(Reason.MASTER_ABSENT, u"网络现在不能接收命令，备料暂停"),
             )
@@ -1368,17 +1661,17 @@ class OrderExecutor(object):
             reason = (list(result.reasons) or [
                 BlockReason(Reason.UNSUPPORTED, u"接口没有受理这次备料")
             ])[0]
-            return self._block_step(order, step, tick, reason)
+            return self._block_instance(order, instance, tick, reason)
         moved = int(batch.get("staged") or 0)
-        if op_id != step.op_id:
+        if op_id != instance.op_id:
             # **只在真的换了一条命令时累加。** 同一条 `op_id` 的第二条命令会
             # 拿到重放的原回执（数字和上次一样），累加就是重复计数。
             item.staged += moved
-        step.op_id = op_id
-        step.port_node_key = port.node_key.as_key()
+        instance.op_id = op_id
+        instance.port_node_key = port.node_key.as_key()
         if released > moved:
             self._restore_reservation(order, item, released - moved)
-        step.detail = u"已备 %d/%d" % (item.staged, item.required)
+        instance.detail = u"已备 %d/%d" % (item.staged, item.required)
         self.service.stats["stagings"] += 1
         order.stats["stagings"] += 1
         return 1
@@ -1544,18 +1837,94 @@ class OrderExecutor(object):
         node_key = _node_key_of(step)
         if node_key is None:
             return None, BlockReason(
-                Reason.PATTERN_STALE, u"第 %d 步没有可用的提供者位置" % (step.index,)
+                Reason.PATTERN_STALE,
+                u"第 %d 步没有可用的提供者位置" % (_step_index_of(step),),
+            )
+        return self._resolve_port(node_key)
+
+    def stage_inputs(self, node_key, key, count, op_id):
+        # type: (object, object, int, str) -> object
+        """把一批料备到 `node_key` 这台样板口的中转位上。**返回 `CommandResult`。**
+
+        这是 07 的 `push_inputs` 唯一的落点，也就是 `execution.py` 那句
+        「`push_inputs` 必须是 `port_stage` 的薄封装」的**实现**：它自己
+        不碰容器、不碰中转位、不写批次，只做判定然后把命令交给
+        `_port_stage`（经注入的 `PortGateway` → 主控准入链）。
+
+        **为什么不是又一份命令构造**：`port_stage` 命令只有一个构造点
+        （`_port_stage`），请求号的形状只有一个来源
+        （`_port_stage_request_id`）。多一份构造就会在 `op_id` 形状上分叉，
+        而去重账本按请求号记账——分叉之后同一批料备两遍，两侧账本各自
+        都显示正常。
+
+        它与订单那条路（`_stage_next_input`）的区别只有两点，都是**有意的**：
+        订单先放掉预留再取、取完补回来，这里没有订单可依附，因此**不动预留**；
+        订单每一步新开一个 `op_id`，这里的 `op_id` 由调用方按执行给，
+        同一个执行重投要能命中同一个批次。
+
+        四分支，**顺序即语义**：
+
+        1. 口不可用（不是样板口 / 装配仓 / 被 `port_blocker` 挡）→ 原样报出；
+        2. **自己的 `op_id` 且那一批已经备进去过料** → 用现成的批次**应答，
+           不再发命令**。这一支不是优化，是正确性：`op_id` 是确定性的，
+           而主控账本有保留期（`LedgerPolicy.retention_ticks`），过期之后
+           重放不再命中——`stage_batch` 会**真的再备一遍**；
+        3. **自己的 `op_id` 但那一批一个都没备进去**（`staged == 0`）→
+           **放行重发**。`stage_batch` 是**先**把批次写进状态槽、**再**判
+           中转位，因此一次被拒的推送会留下一个 `staged == 0` 的自家批次；
+           这一支是它唯一的解药，没有它那台口会被一个空批次永久占住；
+        4. 槽被**别的**批次占着 → `ORDER_PORT_BUSY`，让位。
+
+        返回 `None` 只有一种情况：命令网关不可用（没有主控 / 网络没开放），
+        与 `_port_stage` 的约定一致。
+        """
+        request_id = _port_stage_request_id(op_id, node_key)
+        port, blocker = self._resolve_port(node_key)
+        if blocker is not None:
+            return CommandResult.blocked(request_id, [blocker])
+        batch = getattr(port, "batch", None)
+        if (
+            batch is not None
+            and batch.op_id == op_id
+            and int(batch.staged or 0) > 0
+        ):
+            # 同一批已经备过了：把**那一个**批次的读数原样报回去，一个字节
+            # 都不再动。`moved` 因此是「这一批总共备进去多少」，
+            # 而不是「这次新搬了多少」——调用方按 `op_id` 去重，不能累加。
+            return CommandResult.ok(request_id, {"batch": batch.to_dict()})
+        foreign = _foreign_batch_for(port, op_id)
+        if foreign is not None:
+            return CommandResult.blocked(request_id, [foreign])
+        return self._port_stage(port, key, count, op_id)
+
+    def _resolve_port(self, node_key):
+        # type: (object) -> tuple
+        """按**位置**判定「这台设备能不能作为样板口接收投料」。返回 `(port, blocker)`。
+
+        与 `_port_for` 分开是因为：它只有位置这一个输入，因此订单执行器
+        （`_port_for`，位置从步骤上现取）与 `stage_inputs`（07 的契约入口
+        `push_inputs` 走这里）**共用同一套判定**。两处各写一份的代价是
+        两边会在「什么样的口能投料」上分叉，而症状是一条命令莫名其妙被拒。
+
+        **判定的顺序即语义**：装配仓的拒绝必须排在 `ports.get` **之前**。
+        `ROLE_OF`（`devices/io.py`）里没有 `assemble_chamber`，装配仓根本
+        没有对应的 `PortState`，先查口只会得到 `no_adapter`——
+        那是一个**指错方向**的诊断：它会让人去查「为什么没有接口状态」，
+        装配仓使用 assembly_advance 与实体槽，不能使用接口的单格中转批次。
+        """
+        service = self.service
+        if service.ports is None:
+            return None, BlockReason(
+                Reason.NO_ADAPTER, u"本次装配没有注入接口状态集合"
             )
         record = service.registry.get(node_key) if service.registry is not None else None
         if record is not None and service.definitions is not None:
             definition = service.definitions.get(record.device_id)
             if getattr(definition, "category", "") == CATEGORY_ASSEMBLY:
-                # 07-06：装配仓的执行半边还依赖 09 的槽位租约，而它自己也没写。
-                # **明确拒绝而不是假装能投**——一张「投了半天没人接」的订单
-                # 比一条清清楚楚的 `service_absent` 难查一百倍。
+                # 装配须带订单执行实例与槽位租约，不能从裸 push_inputs 绕过。
                 return None, BlockReason(
-                    Reason.SERVICE_ABSENT,
-                    u"装配仓执行尚未实现（07-06）：%s 不接受本次投料"
+                    Reason.UNSUPPORTED,
+                    u"装配仓须由订单经 assembly_advance 推进：%s 不接受接口备料"
                     % (record.device_id,),
                 )
         port = service.ports.get(node_key)
@@ -1577,7 +1946,7 @@ class OrderExecutor(object):
                 return None, blocker
         return port, None
 
-    def _port_stage(self, port, item, count, op_id):
+    def _port_stage(self, port, key, count, op_id):
         # type: (object, object, int, str) -> object
         """把 `port_stage` 作为一条**设备发起的存储命令**交出去。
 
@@ -1585,20 +1954,24 @@ class OrderExecutor(object):
         经主控准入、不得自己碰容器或中转位。命令形状抄 06 的
         `PortRunner._build_command`（`source.player_id` 为 None——它不是玩家，
         是设备自己），这样它照样过主控的去重账本与准入链。
+
+        **这是全项目唯一一处构造 `port_stage` 命令的地方。** 订单执行器
+        （`_stage_next_input`）与契约入口（`FactoryService.stage_inputs`，
+        即 07 的 `push_inputs`）都经由它，因此请求号的形状只有一个来源。
         """
         gateway = self.service.gateway
         if gateway is None or not gateway.available():
             return None
         ref = port.ref
         command = DeviceCommand(
-            "%s:%s" % (op_id, ref.node_key.as_key()),
+            _port_stage_request_id(op_id, ref.node_key),
             CommandKind.STORAGE,
             CommandSource(
                 None, ref, ref.node_key.as_key()[0], distance_ok=True
             ),
             payload={
                 "action": "port_stage",
-                "key": item.key.to_dict(),
+                "key": key.to_dict(),
                 "count": int(count),
                 "op_id": op_id,
             },
@@ -1607,43 +1980,48 @@ class OrderExecutor(object):
         )
         return gateway.submit(command)
 
-    def _track_dispatch(self, order, step, tick):
+    def _track_dispatch(self, order, instance, tick):
         # type: (object, object, int) -> int
         """盯着接口把中转位里的料投进机器。
 
         读数来自 06 的 `PortState.batch`（06 明确把「后续推进」交给 09）。
         **只认 `op_id` 是自己的那一个批次**：批次槽只有一个，
-        `stage_batch` 会覆盖它，而把别人的批次当自己的读会让这一步
+        `stage_batch` 会覆盖它，而把别人的批次当自己的读会让这一次执行
         以为料已经投出去了。
+
+        **批次槽只有一个，而执行可以有多个。** 同一台接口上先做第 1 次、
+        再排队等第 2、3、4 次是正常形状（`_finish_inputs` 会把 `op_id` 清掉
+        让开槽位），因此「别人的批次占着」不是错误，只是要等——它是
+        `ORDER_PORT_BUSY`，可重试，下一帧再看。
         """
         ports = self.service.ports
-        ref = self._step_ref(step)
+        ref = self._step_ref(instance)
         # **按实例引用取，不按位置取。** 位置拿到的是「现在站在那里的东西」，
-        # 而这一步要的是「当初投料的那一台」——设备被换掉之后两者不是一回事，
-        # 而拿新设备去读旧批次的表现是「读数莫名其妙地变了」。
+        # 而这一次执行要的是「当初投料的那一台」——设备被换掉之后两者不是
+        # 一回事，而拿新设备去读旧批次的表现是「读数莫名其妙地变了」。
         port = ports.get_by_ref(ref) if (ports is not None and ref is not None) else None
         if port is None:
-            return self._block_step(
+            return self._block_instance(
                 order,
-                step,
+                instance,
                 tick,
                 BlockReason(Reason.DEVICE_GONE, u"投料用的样板口已经不在这个位置了"),
             )
         batch = port.batch
-        if batch is None or batch.op_id != step.op_id:
-            busy = _foreign_batch(port, step)
+        if batch is None or batch.op_id != instance.op_id:
+            busy = _foreign_batch(port, instance)
             if busy is not None:
-                return self._block_step(order, step, tick, busy)
-            return self._block_step(
+                return self._block_instance(order, instance, tick, busy)
+            return self._block_instance(
                 order,
-                step,
+                instance,
                 tick,
                 BlockReason(
                     Reason.ORDER_BATCH_STALLED,
                     u"中转位的批次记录不见了，不知道已经投出去多少",
                 ),
             )
-        self._sync_own_batch(step, port)
+        self._sync_own_batch(instance, port)
         order.stats["dispatches"] += 1
         if not batch.is_complete():
             # **推它一把。** 接口自己也有一轮轮询在做同一件事，但那一轮的
@@ -1653,25 +2031,25 @@ class OrderExecutor(object):
             # `batch.remaining()` 夹一次，而两次调用在同一线程里是先后发生的。
             self._port_dispatch(port)
             # 推完**再读一次**：这一次可能就投完了，而多等一帧纯属浪费。
-            self._sync_own_batch(step, port)
-        if _batch_is_dead(port, step):
+            self._sync_own_batch(instance, port)
+        if _batch_is_dead(port, instance):
             # 这一批推不动了（还差一截，而中转位空了）。回 STAGING 按差额
             # 再备一批——**只备差额**，不是把整批重发一遍。
-            step.status = StepStatus.STAGING
-            step.detail = u"这一批没投完，按差额重新备料"
+            instance.status = StepStatus.STAGING
+            instance.detail = u"这一批没投完，按差额重新备料"
             return 1
         if not batch.is_complete():
             if batch.reason:
-                return self._block_step(
+                return self._block_instance(
                     order,
-                    step,
+                    instance,
                     tick,
                     BlockReason(Reason.ORDER_BATCH_STALLED, batch.reason),
                 )
             return 1
-        if step.all_inputs_delivered():
-            return self._finish_inputs(order, step, tick)
-        step.status = StepStatus.STAGING
+        if instance.all_inputs_delivered():
+            return self._finish_inputs(order, instance, tick)
+        instance.status = StepStatus.STAGING
         return 1
 
     def _port_dispatch(self, port):
@@ -1697,76 +2075,86 @@ class OrderExecutor(object):
             )
         )
 
-    def _sync_own_batch(self, step, port):
+    def _sync_own_batch(self, instance, port):
         # type: (object, object) -> int
-        """把**本步那一个批次**的真实读数同步进 `StepInput`。返回投进机器的量。
+        """把**这一次执行的那一个批次**的真实读数同步进它的 `StepInput`。
 
         **绝对量，不是最大值。** `delivered` = 本批之前已经投进去的
         （`delivered_base`）+ 本批的读数。用 `max()` 在换批时会丢读数：
         新批次的 `delivered` 从 0 重新数，而 `max` 会把它当成「没变」，
-        于是这一步以为料还没投出去，然后**把整批重投一遍**。
+        于是这次执行以为料还没投出去，然后**把整批重投一遍**。
 
         只认 `op_id` 是自己的那一个批次：批次槽只有一格，`stage_batch` 会
-        覆盖它，而把别人的批次当自己的读会让这一步以为料已经投出去了。
+        覆盖它，而把别人的批次当自己的读会让这次执行以为料已经投出去了。
         """
         batch = getattr(port, "batch", None)
-        if batch is None or step.op_id is None or batch.op_id != step.op_id:
+        if batch is None or instance.op_id is None or batch.op_id != instance.op_id:
             return 0
-        item = _input_of(step, batch.resource_key)
+        item = _input_of(instance, batch.resource_key)
         if item is None:
             return 0
         item.delivered = item.delivered_base + int(batch.delivered or 0)
         return int(batch.delivered or 0)
 
-    def _finish_inputs(self, order, step, tick):
+    def _finish_inputs(self, order, instance, tick):
         # type: (object, object, int) -> int
-        """料全进了机器：登记等待台账，然后等产物。"""
-        step.execution_id = "%s/%d" % (order.order_id, step.index)
-        expectations = step.outputs + step.returns
-        self.waiting.register(step.execution_id, expectations, tick)
-        self.service.returns.register(step.execution_id, expectations, order.order_id)
-        step.op_id = None
-        step.port_node_key = None
-        if step.outputs_satisfied():
-            return self._complete_step(order, step, tick)
-        step.status = StepStatus.WAITING_OUTPUTS
-        step.detail = u"已投料，等待产物回流"
-        blocker = _sink_blocker(self.service)
-        if blocker is not None:
-            order.blockers = [blocker]
-            if order.status != OrderStatus.BLOCKED:
-                order.move_to(OrderStatus.BLOCKED, blocker.detail, tick)
+        """这一次执行的料全进了机器：登记等待台账，然后等产物。
+
+        **登记的单位是执行实例，不是步骤**（契约 §2：一个执行实例 = 一次
+        配方执行）。`execution_id` 在实例创建那一刻就定下了（`订单/步骤/执行
+        序号`），这里只是把它交给 10——重试沿用同一个 ID，等待索引因此不会断。
+
+        **不在这里判订单级阻塞。** 回流入口没接线是订单级的事实，而此刻
+        同一张订单里别处可能还在推；由 `_settle_blockers` 按「本帧有没有真的
+        往前走」统一判。
+        """
+        expectations = instance.outputs + instance.returns
+        self.waiting.register(instance.execution_id, expectations, tick)
+        self.service.returns.register(
+            instance.execution_id, expectations, order.order_id
+        )
+        instance.op_id = None
+        instance.port_node_key = None
+        if instance.outputs_satisfied():
+            return self._complete_execution(order, instance, tick)
+        instance.status = StepStatus.WAITING_OUTPUTS
+        instance.tick = tick
+        instance.detail = u"已投料，等待产物回流"
         return 1
 
-    def _track_outputs(self, order, step, tick):
+    def _track_outputs(self, order, instance, tick):
         # type: (object, object, int) -> int
-        if _ready_to_finish(step, self.waiting):
-            return self._complete_step(order, step, tick)
-        blocker = _sink_blocker(self.service)
-        if blocker is not None:
-            order.blockers = [blocker]
-            if order.status != OrderStatus.BLOCKED:
-                order.move_to(OrderStatus.BLOCKED, blocker.detail, tick)
+        if _ready_to_finish(instance, self.waiting):
+            return self._complete_execution(order, instance, tick)
         return 0
 
-    def _complete_step(self, order, step, tick):
+    def _complete_execution(self, order, instance, tick):
         # type: (object, object, int) -> int
-        self._unregister(step.execution_id)
-        step.execution_id = None
-        step.status = StepStatus.COMPLETED
-        step.blockers = []
-        step.detail = u"已完成"
-        order.blockers = []
-        if order.status == OrderStatus.BLOCKED:
-            order.move_to(OrderStatus.RUNNING, u"阻塞已解除", tick)
-        return self._complete_if_done(order, tick)
+        """一次配方执行完成：**释放它的那 1 个槽位**，进度加 1。
+
+        R04：「每次配方执行占 1 槽**至完成**」——`WAITING_OUTPUTS` 期间仍然
+        占着，因此释放点在这里，不在投完料那一刻。释放之后下一次派发轮
+        （`_dispatch_round`）就会用这个空位开出下一个实例。
+        """
+        self._unregister(instance.execution_id)
+        instance.status = StepStatus.COMPLETED
+        instance.blockers = []
+        instance.detail = u"已完成"
+        instance.tick = tick
+        self.service.slots.release_slot(instance.execution_id)
+        order.inflight.pop(instance.execution_id, None)
+        # `finish_execution` 是**唯一**让进度加一的地方，而且幂等：
+        # 重复回执走不到这里（`waiting.observe` 已经按 `op_id` 去过重）。
+        instance.step.finish_execution(instance)
+        self._complete_if_done(order, tick)
+        return 1
 
     def _complete_if_done(self, order, tick):
         # type: (object, int) -> int
-        """全部步骤都完成了就结单。
+        """全部步骤的每一次执行都完成了就结单。
 
         **「最终产物已实际存入网络管理的存储」是结构性成立的，不在这里
-        再查一次库存。** 步骤只有收到 `receive_output()` 才算完成，而那份
+        再查一次库存。** 执行实例只有收到 `receive_output()` 才算完成，而那份
         回执按 10 的契约（10-04）只在资源**真的进入了网络管理的存储**时才发；
         零步骤的 `HOLD` 计划则由「已在库中满足」直接结单。
 
@@ -1774,13 +2162,14 @@ class OrderExecutor(object):
         把产物取走，那时订单会被判成永远完不成，而它其实早就做完了。
         """
         for step in order.steps:
-            if step.status != StepStatus.COMPLETED:
+            if not step.is_fulfilled():
                 return 0
         self._release_everything(order)
         order.blockers = []
         order.move_to(
             OrderStatus.COMPLETED,
-            u"全部 %d 个步骤完成，产物已进入网络存储" % (len(order.steps),),
+            u"全部 %d 个步骤、%d 次配方执行完成，产物已进入网络存储"
+            % (len(order.steps), order.tasks_total),
             tick,
         )
         self.orders.stats["completed"] += 1
@@ -1894,10 +2283,19 @@ def _key_map(definition):
 
 def _fill_step(step, row, keymap, policy):
     # type: (object, dict, dict, object) -> bool
-    """把计划里那一步的输入/产物/返还物填进 `OrderStep`。
+    """把计划里那一步的**配方清单**填进 `OrderStep`。
 
     对不上就返回 `False`：计划说有、样板说没有，两者说的是两件事，
     照着任何一边去做都是错的。
+
+    ## 填的是 `per_batch`，不是 `total`
+
+    `total` 是「这一步跑完全部批次要多少」，而 R04 之后**一次配方执行
+    就是一批**：每个执行实例领自己那一份（见 `ExecutionInstance.__init__`）。
+    填 `total` 会让一次执行去认领整步的量，10 个实例各要一整份——
+    实际抽取量会变成计划量的 10 倍。08 已经保证 `total == per_batch * batches`
+    （`planner.CraftStep.input_totals`），因此两种填法在整步这一层等价，
+    差别只在**谁认领**。
 
     **`external_inputs` 刻意不进 `inputs`**：那是配方「外部自理」的输入
     （R09 的无限燃料一侧），网络不该去替它备料——把它算进来会去抽一份
@@ -1906,32 +2304,39 @@ def _fill_step(step, row, keymap, policy):
     **返还物算不算完成条件由 `OrderPolicy.returns_block_completion` 决定**
     （R09），替身取 `True`：09 验收原文「所需鱼已回流但空桶未到时步骤仍工作中」
     说的正是「返还物没到齐就不算做完」。把它硬编码成 `False` 会让那条验收
-    在实现里直接反过来。
+    在实现里直接反过来。**在构建时定一次**，于是还没有任何实例时步骤视图
+    也答得出这个问题。
     """
+    inputs = {}
     for entry in row.get("inputs") or ():
-        key = keymap.get(entry.get("canonical"))
+        canonical = entry.get("canonical")
+        key = keymap.get(canonical)
         if key is None:
             return False
-        step.inputs.append(StepInput(key, entry.get("canonical"), entry.get("total")))
+        step.keys[canonical] = key
+        inputs[canonical] = int(entry.get("per_batch") or 0)
+    outputs = {}
     for entry in row.get("outputs") or ():
-        key = keymap.get(entry.get("canonical"))
+        canonical = entry.get("canonical")
+        key = keymap.get(canonical)
         if key is None:
             return False
-        step.outputs.append(
-            StepOutput(key, entry.get("canonical"), entry.get("total"), True)
-        )
+        step.keys[canonical] = key
+        outputs[canonical] = int(entry.get("per_batch") or 0)
+    returns = {}
     for entry in row.get("returns") or ():
-        key = keymap.get(entry.get("canonical"))
+        canonical = entry.get("canonical")
+        key = keymap.get(canonical)
         if key is None:
             return False
-        step.returns.append(
-            StepOutput(
-                key,
-                entry.get("canonical"),
-                entry.get("total"),
-                policy.returns_block_completion,
-            )
-        )
+        step.keys[canonical] = key
+        returns[canonical] = int(entry.get("per_batch") or 0)
+    step.input_specs = tuple(sorted(inputs.items()))
+    step.output_specs = tuple(sorted(outputs.items()))
+    step.return_specs = tuple(
+        (canonical, per_batch, policy.returns_block_completion)
+        for canonical, per_batch in sorted(returns.items())
+    )
     return True
 
 
@@ -1941,9 +2346,27 @@ def _provider_device(row):
     return provider.get("device_id") or ""
 
 
+def _step_index_of(step):
+    # type: (object) -> int
+    """**步骤**下标。
+
+    执行实例上也有一个 `index`，那是**执行序号**（这一步的第几次执行），
+    两者在诊断里是完全不同的东西。执行实例把所属步骤放在 `step` 上，
+    因此这里统一从它取。
+    """
+    inner = getattr(step, "step", None)
+    if inner is not None:
+        return int(inner.index)
+    return int(step.index)
+
+
 def _node_key_of(step):
     # type: (object) -> object
-    """步骤的提供者位置。计划里存的是元组，注册表要的是 `NodeKey`。"""
+    """步骤的提供者位置。计划里存的是元组，注册表要的是 `NodeKey`。
+
+    步骤与执行实例都答得出这一项（实例把它代理给所属步骤，
+    见 `ExecutionInstance.node_key`），因此两边共用这一条读法。
+    """
     node_key = step.node_key
     if node_key is None:
         return None
@@ -2018,15 +2441,46 @@ def _owns_live_batch(port, step):
     return _owns_batch(port, step) and not _batch_is_dead(port, step)
 
 
+def _port_stage_request_id(op_id, node_key):
+    # type: (str, object) -> str
+    """`port_stage` 命令的请求号。
+
+    **只有这一个来源。** 主控的去重账本按 `(request_id, device_ref)` 记账
+    （`network/controller.py` 的 `ledger_key`），因此请求号的形状一旦有两份
+    写法，同一条命令就会被记成两笔；而症状是「重试时又备了一遍」，
+    两侧账本各自都显示正常。位置进请求号是必需的：同一个 `op_id`
+    落到不同口上**本来就是两条不同的命令**。
+    """
+    return "%s:%s" % (op_id, node_key.as_key())
+
+
 def _foreign_batch(port, step):
     # type: (object, object) -> object
     """样板口的批次槽是不是被别人占着。返回 `BlockReason` 或 None。"""
+    return _foreign_batch_for(port, step.op_id)
+
+
+def _foreign_batch_for(port, op_id):
+    # type: (object, str) -> object
+    """样板口的批次槽是不是被**别的** `op_id` 占着。返回 `BlockReason` 或 None。
+
+    判据只有三条，**每一条都是必需的，且不得放松**：
+
+    - 槽是空的 → 随便用；
+    - 槽里那批**已投完** → 它已经完成了使命，让位；
+    - 槽里那批就是自己的 → 自己的批次，接着推。
+
+    否则就是别人的活批次，**本订单让位**。这里**刻意不看中转位里有没有料**：
+    「批次未完成 + 中转位空着」正是 `_batch_is_dead` 描述的那种局面，
+    此时冲掉记录会把一批已经搬进来、还没投出去的料变成**账外资产**——
+    批次没了，没人知道中转位里那些料是谁的。
+    """
     batch = getattr(port, "batch", None)
     if batch is None:
         return None
     if batch.is_complete():
         return None
-    if step.op_id is not None and batch.op_id == step.op_id:
+    if op_id is not None and batch.op_id == op_id:
         return None
     return BlockReason(
         Reason.ORDER_PORT_BUSY,
@@ -2207,6 +2661,17 @@ class FactoryService(NetworkService):
         """
         return False
 
+    # -- 给样板提供者的契约入口（07-05）---------------------------------
+
+    def stage_inputs(self, node_key, key, count, op_id):
+        # type: (object, object, int, str) -> object
+        """**07 的契约入口走的唯一一条路。**见
+        `OrderExecutor.stage_inputs` ——它才是判定与发命令的地方，
+        这一层只是把服务门面暴露出来（07 拿到的是 `FactoryService`，
+        不是执行器）。
+        """
+        return self.executor.stage_inputs(node_key, key, count, op_id)
+
     def status(self):
         # type: () -> dict
         return {
@@ -2259,8 +2724,14 @@ class FactoryService(NetworkService):
         """本网络**全部未完成订单**的进度合计：配方数已做 / 总数。
 
         合计而不是平均：平均会让「10/10 完成」与「0/5 完成」加起来是 50%，
-        而那份 0/5 一张都还没做。两个数（`steps_completed` / `steps_total`）
+        而那份 0/5 一张都还没做。两个数（`tasks_completed` / `tasks_total`）
         一起给，读的人自己决定怎么用——界面要比例就除，要条数就直接用。
+
+        **汇总的键是 `tasks_*`（配方执行次数），不是 `steps_*`（步骤数）。**
+        两个分母同时给出去，必然有一处被读错：把「步骤数」当成进度条的分母，
+        一条 10 批的订单会在第 1 批完成时显示 100%。`Order.progress()` 里
+        `steps_*` 仍然给（它答的是「这张订单分几种配方」），但**这里只汇总
+        `tasks_*`**。
 
         逐张订单的进度在 `query("list")` 的 `progress` 字段里，
         两边是同一个算法（`Order.progress()`），不存在第二份口径。
@@ -2269,14 +2740,14 @@ class FactoryService(NetworkService):
         total = 0
         for order in self.orders.live() if self.orders is not None else ():
             row = order.progress()
-            done += row["steps_completed"]
-            total += row["steps_total"]
+            done += row["tasks_completed"]
+            total += row["tasks_total"]
         return {
             "orders": self.orders.live_count() if self.orders is not None else 0,
-            "steps_completed": done,
-            "steps_total": total,
+            "tasks_completed": done,
+            "tasks_total": total,
             "ratio": (float(done) / total) if total > 0 else 0.0,
-            "note": "只统计未完成的订单；零步骤的订单没有分母，不计入比例",
+            "note": "只统计未完成的订单；零任务的订单没有分母，不计入比例",
         }
 
     # -- 只读查询（11 与 `debug_query("order")` 共用同一份纯数据）--------

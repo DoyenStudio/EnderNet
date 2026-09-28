@@ -594,7 +594,7 @@ class TestProcessorGroups(NetworkFixture):
         self.assertIsNotNone(group)
         self.assertEqual(group.ownership, ProcessorOwnership.UNATTACHED)
         self.assertEqual(group.slots, 2)
-        self.assertEqual(group.slot_count(), 0)
+        self.assertFalse(group.contributes_slots())
         self.assertIn(
             Reason.PROCESSOR_GROUP_UNATTACHED,
             [reason.code for reason in group.reasons],
@@ -610,7 +610,7 @@ class TestProcessorGroups(NetworkFixture):
         group = self.topology.snapshot().processor_group_of(key(0, 66))
         self.assertEqual(group.ownership, ProcessorOwnership.ATTACHED)
         self.assertEqual(group.slots, 3)
-        self.assertEqual(group.slot_count(), 3)
+        self.assertTrue(group.contributes_slots())
 
     def test_multiple_paths_to_same_domain_do_not_duplicate_slots(self):
         """一个处理器群经两条路径接进同一个域，槽位只算一次。"""
@@ -625,7 +625,7 @@ class TestProcessorGroups(NetworkFixture):
         group = snapshot.processor_group_of(key(0, 66))
         self.assertEqual(group.ownership, ProcessorOwnership.ATTACHED)
         self.assertEqual(len(group.processors), 2)
-        self.assertEqual(group.slot_count(), 2)
+        self.assertTrue(group.contributes_slots())
         self.assertEqual(
             snapshot.processor_group_of(key(1, 66)).group_id, group.group_id
         )
@@ -644,7 +644,7 @@ class TestProcessorGroups(NetworkFixture):
         group = self.topology.snapshot().processor_group_of(key(0, 65, 1))
         self.assertEqual(group.ownership, ProcessorOwnership.UNRESOLVED)
         self.assertEqual(len(group.domain_ids), 2)
-        self.assertEqual(group.slot_count(), 0)
+        self.assertFalse(group.contributes_slots())
         self.assertIn(
             Reason.PROCESSOR_GROUP_UNRESOLVED,
             [reason.code for reason in group.reasons],
@@ -858,8 +858,18 @@ class TestPublication(NetworkFixture):
         ]
         self.assertIn(MigrationKind.DETACHED, kinds)
 
-    def test_slot_source_changes_are_published(self):
-        """02-06：交给 09 的槽位来源变化。"""
+    def test_slot_sources_are_not_published_at_all(self):
+        """D-03（2026-09-28 定案）：02 不再发布「槽位来源变化」清单。
+
+        **原来这里验的是「发得对」**（连接器一拆，清单上出现一条
+        `before_slots=1 / after_slots=0`）。那条清单从发布到删除**一个消费者
+        都没有**——09 的槽位容量每帧从快照重算（`crafting/capacity.py` 的
+        `slot_capacity`），从不订阅发布。留着它，下一个人会以为槽位变更
+        「必须」被消费，于是再建一套推送与拉取并存的账。
+
+        因此这条用例改成验**清单不会回来**：发布会带 `migrations`（有人接）、
+        带 `snapshot`（唯一的槽位来源），但不带任何槽位清单。
+        """
         self.place(key(0), BB8)
         self.place(key(1), BB8)
         self.place(key(1, 65), TINY)
@@ -870,18 +880,20 @@ class TestPublication(NetworkFixture):
         del self.publications[:]
         self.remove(key(0, 65), CONNECTOR)
         self.settle()
-        changes = [
-            change
-            for publication in self.publications
-            for change in publication.slot_changes
-        ]
-        self.assertTrue(changes)
-        self.assertTrue(
-            any(
-                change.before_slots == 1 and change.after_slots == 0
-                for change in changes
-            )
-        )
+
+        publications = list(self.publications)
+        self.assertTrue(publications)
+        for publication in publications:
+            self.assertFalse(hasattr(publication, "slot_changes"))
+            self.assertNotIn("slot_changes", publication.to_dict())
+
+        # 变化本身照旧看得见，只是**从快照读**：群还在（处理器没拆），
+        # 只是失去了归属，因此贡献零槽位。
+        snapshot = self.topology.snapshot()
+        group = snapshot.processor_group_of(key(0, 66))
+        self.assertIsNotNone(group)
+        self.assertEqual(group.slots, 1)
+        self.assertFalse(group.contributes_slots())
 
     def test_snapshot_is_stable_across_rebuilds(self):
         """旧快照发布后不再变化：新的重建生成的是**新**快照对象。"""

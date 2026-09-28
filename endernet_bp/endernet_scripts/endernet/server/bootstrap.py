@@ -11,8 +11,8 @@
 而 DEV 档允许显式换成能跑得起来的那一侧。
 
 **「不是替身」不等于「能玩」。** 10 的回流分配已落地（`crafting/returns.py`），
-但**装配仓执行是 07-06**，仍未实现：那一条入口（`ReturnsPort.accept_assembled`）
-备好了却没有调用方。另外库默认装配**不给** `returns_sink`，理由是 09 的
+装配仓 07-06 已经经 06 将 9 槽产物回网，再调用 `ReturnsPort.accept_assembled`。
+库默认装配**不给** `returns_sink`，理由是 09 的
 `returns_absent` 计数与一整套用例都钉在「库默认不假装能用」上；
 游戏内由 `start_server()` 显式装配 `ReturnsService`，那时订单才真的能走完。
 
@@ -462,6 +462,9 @@ class ServerBootstrap(object):
             self.registry,
             policy=self.pattern_policy,
             containers=self.containers,
+            # 07-05 的投料入口要按位置找那一份工厂服务。**传绑定方法**，
+            # 因为 `self.runtimes` 这时还没构造（见 `_factory_of`）。
+            factory_of=self._factory_of,
         )
         #: 合成规划（08）。**它不是一个网络服务槽位**：规划是只读计算，
         #: 没有节点、没有生命周期、也不需要主控签发的许可。真正的调用方是
@@ -928,6 +931,33 @@ class ServerBootstrap(object):
             if TerminalSyncHub.network_id_of(runtime.component_id) == network_id:
                 return runtime
         return None
+
+    def _factory_of(self, node_key):
+        # type: (object) -> object
+        """某台设备所在网络的工厂服务（09），没有就返回 None。
+
+        给 07-05 的契约入口 `PatternProviderPort.push_inputs` 用：它要把料
+        备到那台设备的口上，而「哪台设备属于哪张网络、那张网络的工厂服务
+        是哪一份」是装配层才知道的事实。
+
+        **必须是绑定方法、不能在这里当场求值**：`self.patterns` 在
+        `self.runtimes` **之前**构造（`docstring` 里那句「样板装在方块容器里，
+        不能因为运行时重建而消失」正说明了这个顺序），构造那一刻
+        `self.runtimes` 还不存在。绑定方法把求值推迟到真正被调到时，
+        而那时装配早就完成了——与 `_sync_storage_of` 同一个道理。
+
+        按位置**现取**还有第二个理由：设备会被拆下来装到别的网络上，
+        而提供者状态是跟着方块容器走的。存一个服务引用就会拿着旧网络的
+        那一份去备料。
+
+        **这条门面不绕过准入**：`stage_inputs` 内部走的仍是
+        `OrderExecutor._port_stage` → 注入的 `PortGateway` → 主控的
+        去重账本与准入链。这里只是把「哪份服务」查出来。
+        """
+        runtime = self.runtimes.runtime_of(node_key)
+        if runtime is None:
+            return None
+        return runtime.services.get(ServiceId.FACTORY)
 
     def _sync_storage_of(self, network_id):
         # type: (str) -> object

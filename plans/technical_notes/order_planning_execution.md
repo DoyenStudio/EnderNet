@@ -111,22 +111,40 @@
 
 「复核」一列是 2026-09-26 的**离线盘点结论**（证据见下一节），四档：
 **已实现**（本规则这一行已经落在代码里）／**部分**（一半在这侧、一半在那侧）、
-**未动**（还是旧口径）。**除第 1 行另有游戏内实测外，「已实现」只到离线这一层**
-——其余各行拿到的都只有离线证据；**完成的一半也不等于可玩**：08 那侧已经改成
-新口径，09 那侧大多还是旧口径，读到「字节」字样时要看清是谁报的。
+**未动**（还是旧口径）。**第 1 行与 2026-09-28 那一轮另各有游戏内实测**
+（前者只到规划侧，后者是新口径下 09 侧的派发／回流／结单）；其余各行拿到的
+只有离线证据；**完成的一半也不等于可玩**：08 那侧已经改成新口径，09 那侧也已
+补齐，读到「字节」字样时仍要看清是谁报的。
+
+> **2026-09-28 补记：09 那侧的表内各项已补齐**（第 4、5、6、9 行由「未动／部分」
+> 改为「已实现」；第 3 行、第 10 行的 09 半边也到位）。逐行改动与用例见
+> `endernet_tests/test_executor.py` 的
+> `FourSlots` / `TestExecutionProgress` / `TestInstanceIdentity` /
+> `TestParallelSteps` / `MemoryBoundary` / `MemoryOneByteShort`，
+> 台账 S-08，交付说明第十节。
+>
+> **同日再补：游戏内实测也做掉了**（重启游戏进程后重跑，判别位读运行实例确认
+> 加载的是当前源码）：真机走通「下单 → 4 实例并行派发 → 回流 → 结单」，
+> 4 个实例各领 1 槽、完成一个腾出的槽位**同帧**被下一个实例接手、完成时槽位与
+> 内存全部归零、`tick_errors` 全程 0；内存不足那一组（`order_no_memory`、
+> 「等于可用值通过」、不超卖）也验到了，但**条件是改替身数值
+> `bytes_per_memory_slot`**，且**回流是经 `ReturnsPort.accept_assembled` 注入
+> 而非真实机器产出**——这两点如实记在 09 交付说明第十节。
+> **表里没被点到的行（09-08、名额拆分、订单 ID 的启动期进程标识）本轮明确没做**，
+> 不要读成"整张表都清了"。
 
 | 范围 | 复核 | 当前代码 | 新规则待办 |
 | --- | --- | --- | --- |
 | 08-04、09-02 | **已实现**（离线 + **游戏内实测**，**仅 08 侧**；证据见「复核证据」末节） | 材料库存优先（在选择候选之前就返回）、候选递归预筛（`PlanJob._screen_inputs`，排除会绕回本键的候选并继续试其他候选）、只有全部可用候选都成环才记 `RECURSIVE_CANDIDATES` 缺料；规划器**不再产出** `CYCLE` 判决。做不出计划的请求已改走 `_reject_request`：不建订单、不占名额、不持有任何执行资源 | 09 侧按新原因码（`PLAN_MISSING_MATERIALS` 而非 `PLAN_CYCLE`）处置拒绝，见「本轮改后 09 侧的期望」（09 的 `_reject_request` 已落地且**不按原因码分支**，09 侧代码里没有 `PLAN_CYCLE` 引用，因此换码不需要改它；**但这条路径本轮没有实测**） |
 | 08-05、09 规划入口 | **已实现**（离线） | `PLAN_NODES_PER_TICK = 1`；`PlanJob.step(nodes, frame)` 的预算单位就是配方节点；提交那一帧不吃预算，节点从下一帧起算；同帧重入不重复计算 | 按 tick 限制每订单 1 个逻辑配方节点，禁止同 tick 展开子树 |
-| 08-06、09-02/03 | 部分（**08 已实现，09 未动**） | 08：`required_micro_units()`／`required_bytes()`（根原料单位物 × 1 B，`ByteRounding` 取上限）与 `total_recipe_tasks()` 都在；09：仍按 `len(steps) × memory_units_per_step` 估容量，不足进 `BLOCKED` 而不是拒绝 | 根原料单位物转字节；并发准入复核并占用，内存不足拒绝下达 |
-| 09-03/04/06/07 | 未动 | `slots.claim_for_order(order.order_id)` 整单领一份；`_advance_step()` 只推 `outstanding_step()` | 每次配方执行领取／释放 1 槽，同单多个就绪任务并行派发 |
-| 09-08、12 | 未动 | `_release_everything()` 仍被完成、取消、失败三条路共用 | 完成／手动中止释放内存；异常保留及恢复边界单独处理 |
-| 09-09、10-06、11-06 | 未动 | `Order.progress()` 的公式在，但总数是 `len(steps)`；10 未接入 | 按每次执行计数，完成事件实时更新 |
+| 08-06、09-02/03 | **已实现**（离线 + **2026-09-28 游戏内实测**，内存不足那组是改替身数值造的条件） | 08：`required_micro_units()`／`required_bytes()`（根原料单位物 × 1 B，`ByteRounding` 取上限）与 `total_recipe_tasks()`；09：`_finish_adoption()` 先按 `plan.required_bytes` **判**再 `memory.claim_order_bytes()` **领**，不足即 `_reject_request`（`ORDER_NO_MEMORY`），**准入不看槽位** | 已落地。`bytes_per_memory_slot`（默认 1024）仍是替身数值，进 `unresolved_report()` |
+| 09-03/04/06/07 | **已实现**（离线 + **2026-09-28 游戏内实测**） | `SlotLedger.claim_slot(execution_id)` / `release_slot(execution_id)` 逐实例领放（`claim_for_order` 与 `slots_per_order` 已删）；`_dispatch_round()` 按 `rank` 最小的那批未终态步骤**逐实例**派发 | 已落地。`PortState.batch` 仍只有一格，备料段是串行的 |
+| 09-08、12 | 未动 | `_release_everything()` 仍被完成、取消、失败三条路共用 | 完成／手动中止释放内存；异常保留及恢复边界单独处理（**本轮明确没做**） |
+| 09-09、10-06、11-06 | **已实现**（离线 + **2026-09-28 游戏内实测**的进度数；10 侧早已接入） | `Order.progress()` 的 `tasks_total = sum(step.batches)`、完成数按**执行实例**计（**新增** `tasks_*` 一组键，`steps_*` 保留但改答「分几种配方」；`FactoryService.progress()` 只汇总 `tasks_*`）；10 的 `receive_output` 未变 | 已落地。**11 的界面侧仍等 User 交接**，不在本轮 |
 | 09-08 | 未动 | 通过准入之后仍有 `_fail()` 路径；`FAILED` 仍是玩法可见终态 | 通过准入之后一律「阻塞／需人工处理」；`FAILED` 只留给尚未通过准入的请求 |
-| 09-02 | **已实现**（离线） | `RejectedRequest`／`RejectedRequestStore`（`limit=64`，按插入序淘汰最旧）＋ `_reject_request` 唯一入口；记录含目标／数量／原因／时间／**请求 ID**，不占名额、不自动重试 | 另存一条独立的拒绝记录 |
-| 09-07 | 部分 | 游标轮转已有（`tick()` 的 `service.cursor` 每帧前移、`orders_per_tick` 限每帧碰几张）；但「每轮每单派 1 个就绪任务、单订单吃满空槽」没有——槽位仍是整单领的，与第 4 行同因 | 按订单轮转派发，轮转位置跨 tick 保留 |
-| 09-01、10 | 未动 | `step.execution_id = "%s/%d" % (order.order_id, step.index)`；`OrderStore.new_id()` 无启动期进程标识 | 执行实例 ID 加**执行序号**；订单 ID 加**启动期进程标识** |
+| 09-02 | **已实现**（离线 + **2026-09-28 游戏内实测**：真机落出带原因码与请求 ID 的拒绝记录） | `RejectedRequest`／`RejectedRequestStore`（`limit=64`，按插入序淘汰最旧）＋ `_reject_request` 唯一入口；记录含目标／数量／原因／时间／**请求 ID**，不占名额、不自动重试 | 另存一条独立的拒绝记录 |
+| 09-07 | **已实现**（离线） | 游标轮转已有（`tick()` 的 `service.cursor` 每帧前移、`orders_per_tick` 限每帧碰几张）；本轮起 `_dispatch_round()` 一轮把一张订单的**全部**就绪实例派到槽位用尽，只有 1 个就绪实例时正是「每轮每单派 1 个」 | 已落地。**R06 的产物回流公平性仍归 10**，09 不另写一套 |
+| 09-01、10 | 部分（**2026-09-28：ID 形状已改**） | `execution_id = "%s/%d/%d" % (订单ID, 步骤下标, 执行序号)`；`OrderStore.new_id()` **仍无**启动期进程标识 | 订单 ID 加**启动期进程标识**（归任务 12，**本轮明确没做**） |
 | 09-02/03 | 未动 | 一个 `max_orders` 数所有活订单（含规划中），无 `max_planning_requests` | 两个名额分开；准入时重新检查两项并一起取得资格 |
 
 ### 复核证据（2026-09-26）
@@ -148,12 +166,24 @@
   `required_micro_units()`、`required_bytes()`、`total_recipe_tasks()`、
   `class ByteRounding`；`PlanPolicy.__slots__` 共 8 项（`memory_units_per_step`
   已被 `byte_rounding` 取代）。
-- 执行租约（09 侧，仍是旧口径）：`executor.py` 的 `_finish_adoption()`
-  （`capacity_blockers(..., len(order.steps))` 与 `memory.claim_for_order(...)`）、
-  `_advance_step()`。
+- 执行租约（09 侧，**2026-09-28 已改到新口径**）：`executor.py` 的
+  `_finish_adoption()`（先 `memory_admission_blockers()` 判、再
+  `memory.claim_order_bytes(order.order_id, plan.required_bytes)` 领，**不再**
+  `capacity_blockers(..., len(order.steps))`）、`_dispatch_round()`（原
+  `_advance_step()`，逐实例派发 + `slots.claim_slot(execution_id)`）、
+  `_complete_execution()`（完成时 `slots.release_slot(execution_id)`）。
+  整单领一次的 `SlotLedger.claim_for_order` / `MemoryLedger.claim_for_order`
+  与 `slots_per_order` / `memory_units_per_step` 两个旋钮**已删**。
 - 拒绝记录：`server/crafting/jobs.py` 的 `RejectedRequest`／`RejectedRequestStore`、
   `executor.py` 的 `_reject_request()`。
-- 进度：`jobs.py` 的 `Order.progress()`（`total = len(self.steps)`）。
+- 进度（**2026-09-28 已改到新口径**）：`jobs.py` 的 `Order.progress()`
+  （`tasks_total = sum(step.batches)`，完成／阻塞／取消按执行实例计；
+  键名 `steps_*` → `tasks_*`）。旧的 `total = len(self.steps)` 已不存在。
+
+**复核证据（2026-09-28 补测）**：`python -B endernet_tests/run_tests.py`
+→ **2196 项全绿**，`py2check: 72 个文件全部通过`。上面那份 2026-09-26 的
+1792 项／60 文件是**当时的快照**，保留不删以便对照。新增用例见
+`test_executor.py` 的六个类（名单在表前那段补记里），**全部是离线证据**。
 
 ### 游戏内实测证据：候选回退（08-04，2026-09-26，MCDK）
 
@@ -204,12 +234,34 @@ slot 0/3/6/7：`iron_ingot`/`stone → iron_block`）。
 08-04 的实测范围**，本轮一次都没走到它。
 
 **一处环境坑（记下来避免重踩）**：`.mcdev.json` 开了 `auto_hot_reload_mods`，
-改 `planner.py` 期间的**中间态**被热重载加载过并停在那里——运行中的模块
-**词表是旧的**（`GapCause` 还有 `CYCLE`、`_GAP_REASONS` 没有 `recursive_candidates`）
-而**行为已经是新的**，于是缺口 `reason` 落进 `_GAP_REASONS.get(cause,
-PLAN_LIMIT_REACHED)` 的默认值、报成 `plan_limit_reached`，看起来像代码写错了。
-**改完代码必须显式 `reload_game` 再实测**，并先用判别位（`hasattr(GapCause,
-"CYCLE")`、`"recursive_candidates" in _GAP_REASONS`）确认加载的是当前源码。
+改 `planner.py` 后运行中的模块出现**词表是旧的、行为是新的**（`GapCause` 还有
+`CYCLE`、`_GAP_REASONS` 没有 `recursive_candidates`），于是缺口 `reason` 落进
+`_GAP_REASONS.get(cause, PLAN_LIMIT_REACHED)` 的默认值、报成 `plan_limit_reached`，
+看起来像代码写错了。**改完代码必须显式 `reload_game` 再实测**，并先确认服务实例
+真的重建过。
+
+**成因（2026-09-28 读引擎源码定案；先前的「中间态被加载并停在那里」是错的）**：
+网易的热重载是**增量打补丁，不是重新导入**。实现在 ModSDK 自带的
+`mod/common/utils/xupdate.py`（`framework/studio_message_handler.py` 的
+`reloadPath` → `updata_all` 就是自动热重载入口）：它先用 py2 的 `reload(module)`
+重跑新代码，再**逐键把旧对象搬回来**——模块级数据没有 handler，一律还原旧值；
+函数只换 `func_code`。由此三条，**与「存盘存到一半」无关，改完再存也一样**：
+
+- `_update_function` **不换 `func_globals`**——函数体换了，它读的仍是那份被还原过
+  旧值的模块 dict。**这才是「词表旧、行为新」的结构性来源**，不是巧合；
+- **从不删除**：删掉的模块名/类属性会原地留着（`CYCLE` 属于这一类）；
+- **新增的名字会生效，改值的不会**（`_GAP_REASONS` 属于这一类）。
+
+**判别位要挑会变的那一类（函数、方法），且必须读运行实例**：
+
+```python
+hasattr(SomeClass, "_brand_new_method")   # 新增的名字：会生效
+get_server().tick_count                   # 归零 = 实例重建过（干净重载）
+```
+
+**不能**用 `hasattr(GapCause, "CYCLE")` / `"recursive_candidates" in _GAP_REASONS`
+——前者是被删的成员、后者是改值的模块级字典，**在任何重载状态下都读到同一个值**，
+分辨不出重载成没成功。这里原先就是这么写的，已更正。
 
 **一处观察到但未定位的问题（不属 08，交回 07）**：实测中 `PatternStore.install()`
 抛过一次 `TypeError: an integer is required`，栈是 `install` → `refresh(force=True)`
@@ -220,6 +272,8 @@ PLAN_LIMIT_REACHED)` 的默认值、报成 `plan_limit_reached`，看起来像�
 而 `before = state.content_fingerprint()`（`store.py:572`）落在内层 `try` **之外**，
 它抛出的任何异常都会穿出 `refresh` 并按 `install` 的调用方冒上去，
 与那条承诺矛盾。修法很小（把它挪进受保护块或自带兜底），但那是 07 的边界，本轮不改。
+
+> **2026-09-28 更新（D-04 → S-10）**：上述异常边界已修复。两次 `content_fingerprint()` 均在保护块内，异常返回 `False` 并保留诊断；刷新帧号与计数照常更新，按既有低频节拍重试。后置指纹失败会恢复旧内容，确保恢复时版本与索引正确更新。新增前置／后置失败回归测试，完整门禁 2220 项与 75 个文件 Python 2.7 语法检查通过。未做游戏内验证，历史偶发异常的精确来源仍未定位。见 [欠账台账 S-10](../tasks/00-欠账台账.md)。
 
 ### 候选预筛：08 侧边界与 09 侧的期望（2026-09-26 落地）
 
@@ -248,11 +302,13 @@ PLAN_LIMIT_REACHED)` 的默认值、报成 `plan_limit_reached`，看起来像�
   **不进 `plan_counters()`**：那个元组会进 `content["counters"]` → 进指纹，
   而这三个是「实现怎么走的」、不是「计划是什么」的事实。
 
-**09 侧（本轮未动）的期望。** 原因码从 `PLAN_CYCLE` 变成
+**09 侧的期望（2026-09-28 核对：已落地）。** 原因码从 `PLAN_CYCLE` 变成
 `PLAN_MISSING_MATERIALS` 之后，09 的处置逻辑**不需要按原因码分支**就该是对
 ——它本来就是「规划失败 ⇒ 走 `_reject_request`，不建订单、不占名额、
-不持有任何执行资源」。要改的只有**断言与文案**：若有用例或诊断在
-`PLAN_CYCLE` 上做判断，要跟着换码；detail 里的环路路径仍然拿得到。
+不持有任何执行资源」；09 侧代码里没有 `PLAN_CYCLE` 引用，因此换码不需要改它。
+2026-09-28 的游戏内实测确认这条入口真的能落出一条带原因码与请求 ID 的拒绝记录，
+**但那一次的原因码是 `ORDER_NO_MEMORY`（内存不足），不是缺料**——
+`PLAN_MISSING_MATERIALS` 这条路径本身仍未游戏内实测。
 
 **已知限制（本轮只记录，不修）。** 同一深度上的兄弟键由 `(depth, 身份)`
 贪心定序：若成环的那一侧先被选中，好路线就没了，计划报缺料——

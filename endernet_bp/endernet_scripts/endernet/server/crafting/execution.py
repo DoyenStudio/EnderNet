@@ -1,49 +1,16 @@
 # coding=utf-8
-"""执行侧契约与尚未实现的桩（任务 07-03 / 07-05 / 07-06 / 07-07）。
+"""样板提供者能力与预设配方契约（07）。
 
-**本模块里每一个「做不了」都明确说出来，没有一个假成功。** 这是
-`script_architecture.md` 的原话：不为未来功能创建空实现，尚不支持的命令
-明确拒绝，不能返回假成功；只有类文件、没有 bootstrap 与主控调用路径的实现，
-不算脚本层完整交付。
+push_inputs 将单种工厂原料经 09 的 stage_inputs 交给 06 port_stage，
+经过主控准入与去重；moved 表示进中转位，调用方不得重复累加重放回执。
+它不创建订单或预留，多种原料由订单执行器逐种备料。
 
-四项各自卡在不同的地方，因此**拒绝理由也不一样**——玩家与下一个接手的人
-要能一眼看出「还差什么」：
+装配仓由 assembly.AssemblyChamberExecution 处理：09 持有逐实例槽位租约，
+通过 STORAGE assembly_advance 把原料投入 0～8 槽，消费确认后产物进入
+9 槽，再由 06 入库、10 分配。accept_returns 只能回收已经生成的实物，
+不能凭 entries 增加库存。工厂外部产物仍走正常输入接口。
 
-| 项 | 卡在哪 | 拒绝理由 |
-| --- | --- | --- |
-| 07-03 预设配方 | 网易引擎的工作台配方数据没有可用的读取入口（待核实） | `no_adapter` |
-| 07-05 工厂样板执行 | 09 未实现：备料与派发归订单执行器 | `service_absent` |
-| 07-06 装配仓执行 | 同上，且槽位租约的所有权明确属 09 | `service_absent` |
-| 07-07 界面 | 11 未实现（样板终端）；**只读的那半边已经在 `store.py` 里可用** | —— |
-
-## 07-05 的投料入口定为 `port_stage` 的薄封装
-
-`capabilities.PatternProvider` 声明了 `push_inputs(execution_id, entries)`，
-而 06 已经把成批备料做成了 STORAGE 命令 `port_stage`（`storage/service.py`
-的 `_cmd_port_stage` → `devices/io.py` 的 `stage_batch`），并明确交接给 09。
-**两个入口同时存在是危险的**：`io.py:1911` 记着 `stage_batch` 靠「主控账本 +
-协调器账本」双重去重，另开一条不经过账本的投料路径就会让同一批原料备两遍，
-而两侧各自的账本都显示正常。因此这里把方向钉死：
-
-    `push_inputs` **必须**是 `port_stage` 的薄封装（经主控准入），
-    不得自己碰容器、不得自己写中转位。
-
-实现它属于 07-05，本次不做，接口按 `service_absent` 拒绝。
-
-**那条路已经有一条活的实现，07-05 落地时应当复用它**：
-`executor.OrderExecutor._port_stage()` 就是「构造一条设备发起的
-`CommandKind.STORAGE` 命令（`op_id` 稳定、经注入的 `PortGateway` 交出去）」，
-订单执行器现在正是靠它备料的。`push_inputs` 要做的是**同一件事**——
-因此它应当把 `(ref, key, count, op_id)` 交给同一个门面，
-而不是在 `PatternProviderPort` 里另写一份命令构造。多出来的那一份
-一旦与这份在 `op_id` 的形状上不一致，去重就会失效，而两边的账本
-各自都显示正常。
-
-## 07-06 的槽位租约所有权属 09
-
-任务 07 原文与 09 文档都写明：执行器所有权属于 09，装配仓**不独立领取或释放
-同一槽位**。因此 `AssemblyChamberExecution` 只声明「我要接受什么样的租约」，
-不接受任何东西，也不自己找槽位。
+预设配方读取（07-03）仍明确拒绝；07-07 在本模块提供只读视图。
 """
 
 from ...common.protocol import (
@@ -52,7 +19,8 @@ from ...common.protocol import (
     TransferReceipt,
     TransferStatus,
 )
-from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
+from .assembly import AssemblyChamberExecution  # noqa: F401
+from ...common.resource_key import ResourceKey
 
 # -- 07-03 预设配方 --------------------------------------------------------
 
@@ -155,19 +123,26 @@ class PatternProviderPort(object):
     - `list_patterns()`：**这一半是能用的**——读的是 `store.py` 已经解出来的
       样板，08 的规划器要的就是它。返回的是 `patterns.py` 的纯数据对象，
       **不含任何引擎对象**（08 文档：「不向客户端暴露引擎对象」）。
-    - `push_inputs()`：归 07-05，是 `port_stage` 的薄封装，本次按
-      `service_absent` 拒绝（09 未实现）。
-    - `accept_returns()`：归 07-06/10 的回流入口，同样拒绝。
+    - `push_inputs()`：**07-05 已落地**，是 `port_stage` 的薄封装（见模块
+      docstring）。它自己不做任何判定与搬运，把活交给 09 的服务门面。
+    - `accept_returns()`：回收装配仓 9 槽已生成的实物，经 06 入库后交 10。
     """
 
     adapter_id = "endernet_pattern_provider"
 
-    def __init__(self, state, store=None):
-        # type: (object, object) -> None
+    def __init__(self, state, store=None, factory_of=None):
+        # type: (object, object, object) -> None
         self.state = state
         #: 反查用（拿产物索引、按产物找候选）。**可以为 None**：只读诊断与
         #: 离线夹具常只关心 `describe()`，不该被迫构造一整个 store。
         self.store = store
+        #: `node_key -> FactoryService | None`（09 的工厂服务门面）。
+        #: **是一个可调用对象而不是一个服务引用**：本对象在设备**放下**时
+        #: 就建好了，而那时它所在网络的运行时可能还没装配（甚至还不存在），
+        #: 设备也可能此后被拆下装到别的网络上。按位置现取，才不会拿着一个
+        #: 属于旧网络的引用去备料。**可以为 None**，此时 `push_inputs`
+        #: 明确拒绝（`service_not_ready`），而不是假装投了。
+        self.factory_of = factory_of
 
     # -- 可用的一半 ----------------------------------------------------
 
@@ -185,48 +160,203 @@ class PatternProviderPort(object):
         # type: () -> int
         return len(self.state.usable_entries())
 
-    # -- 尚未实现的两半 ------------------------------------------------
+    # -- 投料与实物回流-------------------------------
 
     def push_inputs(self, execution_id, entries):
         # type: (str, object) -> TransferReceipt
-        """把一批原料投给这台提供者。**07-05 未实现。**
+        """把一批原料备到这台提供者的**中转位**上（07-05）。
 
-        `requested` 取 `entries` 的件数（`entries` 是 `(ResourceKey, count)`
-        或 `PatternStack` 的序列），**只用于回执的对照**，不代表搬动过。
-        返回 `moved=0`，因此 `is_applied()` 为假，去重账本不会把它记成
-        「已完成」而挡掉真正的重试。
+        `entries` 是 `(ResourceKey, count)` 或 `PatternStack` 一类的序列。
+        `requested` 取整批的件数；`moved` 是**真的搬进去了多少**——
+        注意它指的是**中转位**，不是机器（见模块 docstring）。
+
+        **一次只收一种资源。** 样板口的批次槽只有一格（`BatchState` 是单个
+        字段），`dispatch_template` 又只按 `batch.resource_key` 投料，
+        因此投两种资源会有一种既不在批次记录里、也永远不会被投出去——
+        **账外资产**。这里直接按 `unsupported` 拒绝并说清原因，而不是
+        悄悄只投第一种。
+
+        **绝不吞异常、绝不返回 `None`。** 「投不了」永远是一条说得清理由的
+        回执：`moved=0` 让 `is_applied()` 为假，去重账本就不会把它记成
+        「已完成」而挡掉真正的重试（`RequestLedger` 只收 `is_applied()` 的结果）。
+        """
+        requested = _entry_total(entries)
+        groups, orphan = _group_entries(entries)
+        if requested <= 0 or orphan > 0:
+            # 读不出「投什么、投多少」就投不了。**不能只投读懂的那一部分**：
+            # 那会让调用方以为整批都进去了，而余下的原料没有任何记录。
+            return self._refuse(execution_id, requested, Reason.BAD_PARAMETER)
+        if len(groups) > 1:
+            # 一次投多种：批次槽只有一格，第二种既进不了批次记录、
+            # 也永远不会被 `dispatch_template` 投出去。要多种原料请走订单
+            # 执行器，它按步骤逐种备料。
+            return self._refuse(execution_id, requested, Reason.UNSUPPORTED)
+        key, count = groups[0]
+        if self.store is None or self.factory_of is None:
+            # 入口在，只是这一份装配没把工厂服务接进来（离线夹具、
+            # 或装配层漏了 `factory_of`）。与「这个功能没做」是两回事。
+            return self._refuse(
+                execution_id, requested, Reason.SERVICE_NOT_READY
+            )
+        factory = self.factory_of(self.state.node_key)
+        if factory is None:
+            # 这台设备现在不属于任何网络，或者那张网络没有工厂服务。
+            return self._refuse(execution_id, requested, Reason.MASTER_ABSENT)
+        # **`op_id` 必须含数量。** 只按 `(execution_id, 资源)` 派生的话，
+        # 「同一次执行、改了量再投一次」会命中去重账本的重放，拿回上一次
+        # 那份回执——数字对不上，而两边都不觉得自己错。
+        op_id = "push/%s/%s#%d" % (execution_id, key.canonical(), count)
+        result = factory.stage_inputs(self.state.node_key, key, count, op_id)
+        if result is None:
+            # 命令网关不可用（没有主控 / 网络没开放），与 `_port_stage` 的
+            # 约定一致：什么都没发出去。
+            return self._refuse(execution_id, requested, Reason.MASTER_ABSENT)
+        return self._receipt_from(execution_id, requested, key, result)
+
+    def _receipt_from(self, execution_id, requested, key, result):
+        # type: (str, int, object, object) -> TransferReceipt
+        """把 09 的 `CommandResult` 翻译成回执。
+
+        **三种载荷分别处理，而且不按数量反推状态。** 06 给的状态字照抄；
+        只有「自己那一批的现成读数」这一种没有状态字，才由 `staged` 推。
+        **不能统一按 `moved > 0` 推**——`uncertain` 的回执里 `moved` 完全
+        可能大于 0（动作已经发出去了、只是没得到确认），按「搬动了多少」
+        推就会在**不确定**上报出一个**假成功**，而 `TransferStatus.UNCERTAIN`
+        的整条纪律正是「不得据此重发整批」。
+        """
+        payload = result.payload or {}
+        replayed = Reason.DUPLICATE_REQUEST in result.reason_codes()
+        receipt = payload.get("receipt")
+        batch = payload.get("batch")
+        if isinstance(receipt, dict):
+            status = _RECEIPT_STATUS.get(receipt.get("status"))
+            if status is None:
+                # 认不出的状态字：**不猜**。宁可报「什么都没动」，
+                # 也不能把一个未知状态当成完成。
+                return self._refuse(
+                    execution_id, requested,
+                    result.reason_codes()[0] if result.reason_codes()
+                    else Reason.UNSUPPORTED,
+                    key,
+                )
+            moved = _as_count(receipt.get("moved"))
+            reason = receipt.get("reason") or ""
+            holder = receipt.get("holder") or ""
+        elif isinstance(batch, dict):
+            # 批次槽里**现成的**读数（自己那一批已经备过了，本次没发命令）。
+            moved = min(_as_count(batch.get("staged")), requested)
+            if moved >= requested:
+                status = TransferStatus.COMPLETE
+            elif moved > 0:
+                status = TransferStatus.PARTIAL
+            else:
+                # 自家那一批一件都没备进去。这不是成功，也不是「正在投」。
+                status = TransferStatus.REFUSED
+            reason = ""
+            holder = self._holder()
+        else:
+            # 没有回执也没有批次读数：09 在**动手之前**就拦下了这一次
+            # （口不是样板口、被别家占着、装配仓需要订单租约……）。
+            # 理由原样透传，一条都不吞——`moved=0` 已经诚实了，
+            # 理由再丢了就没法查。
+            codes = result.reason_codes()
+            return self._refuse(
+                execution_id, requested,
+                codes[0] if codes else Reason.UNSUPPORTED,
+                key,
+            )
+        if replayed and not reason:
+            # **重放要标出来。** 见模块 docstring 第三条：重放的回执里
+            # `moved` 是**那一次**搬的量，本次一件都没动。
+            reason = Reason.DUPLICATE_REQUEST
+        return TransferReceipt(
+            execution_id,
+            requested,
+            moved,
+            status,
+            reason,
+            key,
+            holder=holder,
+        )
+
+    def _refuse(self, execution_id, requested, reason, key=None):
+        # type: (str, int, str, object) -> TransferReceipt
+        """一条说得清理由的拒绝。`moved=0`，因此 `is_applied()` 为假，
+        去重账本不会把它记成「已完成」而挡掉真正的重试。
+
+        **回执里能查的只有 `reason`**：`TransferReceipt` 没有「说明」这个
+        字段，它是 06 的契约，加字段要动 `protocol.py` 并过那边的验收。
+        因此每一条拒绝都必须给出**准确**的码，不能一律 `unsupported`——
+        码选错了，调用方与诊断都会往错的方向查。措辞写在各自的调用点上。
         """
         return TransferReceipt(
             execution_id,
-            _entry_total(entries),
+            requested,
             0,
-            TransferStatus.UNSUPPORTED,
-            Reason.SERVICE_ABSENT,
-            None,
-            holder=self.state.node_key.as_key(),
+            TransferStatus.REFUSED,
+            reason,
+            key,
+            holder=self._holder(),
         )
+
+    def _holder(self):
+        # type: () -> str
+        """本提供者的位置描述。**必须是字符串**——契约如此，空串意为「说不清」。
+
+        这里曾经写成 `self.state.node_key.as_key()`（一个元组）：
+        `TransferReceipt` 不校验 `holder` 的类型，因此它一路躺到诊断里，
+        而按字符串读它的地方只会看到 `('%s' 之类)` 这种东西。
+        """
+        return "%s" % (self.state.node_key.as_key(),)
 
     def accept_returns(self, execution_id, entries):
         # type: (str, object) -> TransferReceipt
-        """收回一批产物/返还物。**归 10 的回流入口，尚未接线。**"""
+        """回收本次装配已在 9 槽中的实物；entries 不授予生成物品的权限。"""
+        requested = _entry_total(entries)
+        groups, orphan = _group_entries(entries)
+        if requested <= 0 or orphan or len(groups) != 1:
+            return self._refuse(execution_id, requested, Reason.BAD_PARAMETER)
+        if self.state.device_id != "endernet:assemble_chamber":
+            return self._refuse(execution_id, requested, Reason.UNSUPPORTED)
+        if self.factory_of is None:
+            return self._refuse(execution_id, requested, Reason.SERVICE_NOT_READY)
+        factory = self.factory_of(self.state.node_key)
+        if factory is None:
+            return self._refuse(execution_id, requested, Reason.MASTER_ABSENT)
+        key, count = groups[0]
+        for order in factory.orders.live():
+            instance = order.inflight.get(execution_id)
+            if instance is None or instance.assembly is None:
+                continue
+            output = instance.assembly.get("output")
+            if (instance.step.node_key != self.state.node_key.as_key()
+                    or instance.step.generation != self.state.ref.generation
+                    or not output or ResourceKey.from_dict(output["key"]) != key
+                    or output["count"] != count):
+                return self._refuse(execution_id, requested, Reason.BAD_PARAMETER)
+            result = factory.executor._assembly_command(order, instance)
+            moved = int((result.payload or {}).get("moved", 0))
+            codes = result.reason_codes()
+            status = (TransferStatus.COMPLETE if moved == requested else
+                      TransferStatus.PARTIAL if moved else TransferStatus.REFUSED)
+            if Reason.CONTAINER_UNCERTAIN in codes:
+                status = TransferStatus.UNCERTAIN
+            return TransferReceipt(execution_id, requested, moved, status,
+                                   codes[0] if codes else "", key, holder=self._holder())
         return TransferReceipt(
             execution_id,
-            _entry_total(entries),
+            requested,
             0,
-            TransferStatus.UNSUPPORTED,
-            Reason.SERVICE_ABSENT,
+            TransferStatus.REFUSED,
+            Reason.BAD_PARAMETER,
             None,
-            holder=self.state.node_key.as_key(),
+            holder=self._holder(),
         )
 
     def blocker(self):
-        # type: () -> BlockReason
-        return BlockReason(
-            Reason.SERVICE_ABSENT,
-            "样板提供者的执行半边尚未实现（07-05）：投料走 06 的 port_stage 命令、"
-            "由订单执行器驱动——订单那条路已经通了"
-            "（`crafting/executor.py` 的 `_port_stage`），本对象只提供只读的样板列表",
-        )
+        # type: () -> object
+        """功能已接入；每次请求分别校验设备类型、订单与实物。"""
+        return None
 
     def describe(self):
         # type: () -> dict
@@ -237,9 +367,9 @@ class PatternProviderPort(object):
             "patterns": self.pattern_count(),
             # **分开放**：投料与回流各自卡在自己的任务上，
             # 合成一句「不可用」会让诊断少掉一半信息。
-            "push_inputs": False,
-            "accept_returns": False,
-            "pending_task": "07-05",
+            "push_inputs": True,
+            "accept_returns": self.state.device_id == "endernet:assemble_chamber",
+            "pending_task": "",
         }
 
     def __repr__(self):
@@ -249,78 +379,111 @@ class PatternProviderPort(object):
         )
 
 
-def _entry_total(entries):
-    # type: (object) -> int
-    """数一批条目里有多少件。只用于回执的 `requested` 字段。
+#: 06 的回执状态 -> 本模块的状态。**恒等映射，不是按数量推断。**
+#: 见 `PatternProviderPort._receipt_from` 的说明。
+#: `refused` / `unsupported` 都归到 `REFUSED`：本模块只有这一个「什么都没动」
+#: 的状态，而两者的区别在 `reason` 里（06 的码原样保留）。
+_RECEIPT_STATUS = {
+    TransferStatus.COMPLETE: TransferStatus.COMPLETE,
+    TransferStatus.PARTIAL: TransferStatus.PARTIAL,
+    TransferStatus.UNCERTAIN: TransferStatus.UNCERTAIN,
+    TransferStatus.REFUSED: TransferStatus.REFUSED,
+    TransferStatus.UNSUPPORTED: TransferStatus.REFUSED,
+}
 
-    容错而不是抛错：这是一个**只为了填回执**的读数，一条读不懂的条目
-    不该让「拒绝」这件事本身失败。读不懂就按 0 计，而 `moved` 本来就是 0。
+#: `(资源键, 数量)` 之外还认这两个属性名的堆叠对象（`patterns.PatternStack`）。
+_STACK_ATTRS = ("key", "resource_key")
+
+
+def _as_count(value):
+    # type: (object) -> int
+    """把一个读数变成非负整数。读不出或为负一律按 0——`moved` 不能凭空变大。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    value = int(value)
+    return value if value > 0 else 0
+
+
+def _iter_entries(entries):
+    # type: (object) -> list
+    """把一批条目拆成 `(资源键或 None, 件数)`。只收**正整数**件数。
 
     **`(资源键, 数量)` 那一路要单独判，不能靠 `.count` 兜底。**
     元组**也有** `.count`（内置方法），`getattr(t, "count")` 拿到的是它、
-    永远不是 `None`，于是那条兜底分支根本走不到——`[(key, 3)]` 会被数成 0，
-    而回执里的 `requested` 是 09 与诊断唯一能看到「本来想投多少」的地方，
-    报 0 会让重试与余量核对全部失去依据。
+    永远不是 `None`，于是那条兜底分支根本走不到——`[(key, 3)]` 会被数成 0。
+    （字符串同样有 `.count`，所以 `"junk"` 那条路也必须靠 `callable` 挡掉。）
     """
-    total = 0
+    out = []
     for entry in entries or ():
-        if isinstance(entry, (list, tuple)) and len(entry) == 2:
-            count = entry[1]
+        if isinstance(entry, (list, tuple)):
+            if len(entry) != 2:
+                continue
+            key, count = entry[0], entry[1]
         else:
             count = getattr(entry, "count", None)
-            if callable(count):
-                # 别的对象碰巧也有个叫 `count` 的方法（元组就是）。
-                count = None
-        if isinstance(count, int) and not isinstance(count, bool) and count > 0:
-            total += count
+            if count is None or callable(count):
+                # 别的对象碰巧也有个叫 `count` 的方法（元组、字符串就是）。
+                continue
+            key = None
+            for attr in _STACK_ATTRS:
+                key = getattr(entry, attr, None)
+                if key is not None:
+                    break
+        if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+            continue
+        out.append((key, count))
+    return out
+
+
+def _entry_total(entries):
+    # type: (object) -> int
+    """数一批条目里有多少件。用于回执的 `requested` 字段。
+
+    容错而不是抛错：这是一个**为了填回执**的读数，一条读不懂的条目不该让
+    「拒绝」这件事本身失败。读不懂就按 0 计。
+
+    **它只回答「本来想投多少」，不回答「投什么」**——「投什么」由
+    `_group_entries` 回答，两者必须用同一遍拆分（`_iter_entries`），
+    否则 `requested` 与实际要投的量会对不上，而回执里没有任何东西
+    能暴露这个不一致。
+    """
+    total = 0
+    for _key, count in _iter_entries(entries):
+        total += count
     return total
 
 
-# -- 07-06 装配仓执行 ------------------------------------------------------
+def _group_entries(entries):
+    # type: (object) -> tuple
+    """按资源键归并条目。返回 `(groups, orphan)`。
 
+    `groups` 是 `[(key, 件数), ...]`，**按首次出现排序**（顺序稳定，
+    拒绝文案里的资源名不会每次不一样）；`orphan` 是**数得出件数、
+    却读不出资源键**的那些件数之和。
 
-class AssemblyChamberExecution(object):
-    """装配仓的本地执行适配（07-06）。**未实现，且不做任何事。**
-
-    目标形态（07-06 原文）：接受 09 分配的槽位租约与已备齐材料，校验配方后
-    生成**唯一产出回执**；材料、产物、返还物都经 06 管理。
-
-    **所有权归 09**：装配仓不独立领取或释放槽位（07 文档与 09 文档同一条）。
-    因此本类**没有** `claim_slot()` 之类的入口——多一个入口就会被当成
-    「装配仓自己也能领槽位」，而两处各领一次是重复占用的最常见来源。
+    `orphan > 0` 必须被当成错误，不能当没看见：那几件原料既进不了批次
+    记录、也永远不会被投出去，是标准的**账外资产**。
     """
+    groups = {}
+    order = []
+    orphan = 0
+    for entry_key, count in _iter_entries(entries):
+        canonical = None
+        if entry_key is not None and hasattr(entry_key, "canonical"):
+            canonical = entry_key.canonical()
+        if canonical is None:
+            orphan += count
+            continue
+        row = groups.get(canonical)
+        if row is None:
+            row = [entry_key, 0]
+            groups[canonical] = row
+            order.append(row)
+        row[1] += count
+    return order, orphan
 
-    pending_task = "07-06"
 
-    def __init__(self):
-        self.leases = {}
-
-    def accepts_lease(self, lease):
-        # type: (object) -> bool
-        """本装配仓收不收这份租约。**未实现，一律返回 False。**
-
-        返回 False 而不是抛错：租约是 09 按它的表分配的，一台设备说
-        「我不接」是正常答复；抛错会把 09 的分配循环整个打断。
-        """
-        return False
-
-    def execute(self, lease, materials):
-        # type: (object, object) -> object
-        """执行一次合成，产出唯一回执。**未实现，明确拒绝。**"""
-        return BlockReason(
-            Reason.SERVICE_ABSENT,
-            "装配仓执行尚未实现（07-06）：需要 09 的槽位租约与备齐材料，"
-            "而订单执行器（09）尚未落地",
-        )
-
-    def describe(self):
-        # type: () -> dict
-        return {
-            "pending_task": self.pending_task,
-            "available": False,
-            "leases": len(self.leases),
-            "note": "不自行领取或释放槽位：执行器所有权属于 09",
-        }
+# -- 07-06 装配仓执行 ------------------------------------------------------
 
 
 # -- 07-07 只读视图 --------------------------------------------------------

@@ -1346,6 +1346,7 @@ class StorageService(NetworkService):
             "port_configure": self._cmd_port_configure,
             "port_dispatch": self._cmd_port_dispatch,
             "port_stage": self._cmd_port_stage,
+            "assembly_advance": self._cmd_assembly_advance,
             "port_clear": self._cmd_port_clear,
             # 自定义背包槽（06-09，服务端半边）
             "inv_take": self._cmd_inv_take,
@@ -1996,6 +1997,28 @@ class StorageService(NetworkService):
         )
         receipt = self.transfer().commit(request, source, target)
         return self._receipt_result(command, receipt, "inv")
+
+    def _cmd_assembly_advance(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """主控准入后的装配推进；资源与槽号全部从服务器执行账取得。"""
+        factory = self.runtime.services.get(ServiceId.FACTORY)
+        order = factory.orders.get(payload.get("order_id")) if factory is not None else None
+        instance = order.inflight.get(payload.get("execution_id")) if order is not None else None
+        if (instance is None or instance.is_terminal() or order.paused
+                or instance.step.mode != "crafting"
+                or command.source is None or command.source.player_id is not None):
+            return self._reject(command, Reason.BAD_PARAMETER, u"装配推进仅接受活动订单的设备请求")
+        ref = factory.executor._step_ref(instance)
+        if ref is None or command.device_ref != ref:
+            return self._reject(command, Reason.DEVICE_GONE, u"装配请求与提供者实例不一致")
+        obstacles = factory.executor._order_obstacles(order)
+        if obstacles:
+            return CommandResult.blocked(command.request_id, obstacles)
+        tick = int(self.runtime.tick_count or 0)
+        work, blocker, moved = factory.patterns.assembly.advance(factory.executor, order, instance, tick)
+        if blocker is not None:
+            return CommandResult.blocked(command.request_id, [blocker])
+        return CommandResult.ok(command.request_id, {"work": work, "moved": moved})
 
     def _cmd_inv_take(self, command, payload):
         # type: (object, dict) -> CommandResult

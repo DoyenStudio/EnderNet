@@ -1345,6 +1345,22 @@ class CraftPlan(object):
         return self.content["estimates"]
 
     @property
+    def required_bytes(self):
+        """这份计划要占的内存**字节数**（R04 已定案的口径）。
+
+        **这是 09 准入时唯一该用的那个数**，不是 `estimates` 里的任何一项：
+        规则原文「接受后持有至完成或玩家手动中止」，因此它必须是一个
+        一次算定、此后不因进度或活跃配方数变化的量。`estimates` 明写着
+        `authoritative: False`，那是搜索用的估计。
+        """
+        return int(self.content["required_bytes"])
+
+    @property
+    def total_recipe_tasks(self):
+        """配方任务总数（各步骤批次数之和）。**进度的分母**，不是步骤数。"""
+        return int(self.content["total_recipe_tasks"])
+
+    @property
     def seal(self):
         return self.content["seal"]
 

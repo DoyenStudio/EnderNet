@@ -7,7 +7,21 @@
 `claim_slot(execution_id)` / `release_slot(execution_id)`——领用与释放按
 **执行实例**计，这本来就是网络级的语义，不是某台方块自己的属性。
 `capabilities.Memory` 的 `memory_units()` 同理：单根内存条单独看没有意义，
-「这张网络现在有多少内存单位」才是订单要问的问题。
+「这张网络现在有多少内存字节」才是订单要问的问题。
+
+## 两个台账的计费单位都是 R04 已定案的（2026-09-26）
+
+- **槽位按「一次配方执行」计**：一个执行实例领 1 槽、**完成时**释放；
+  一张订单可以同时占满网络的剩余槽位。因此槽位租约的拥有者是**执行实例 ID**
+  （`订单ID/步骤下标/执行序号`），不是订单 ID——「整单领一次」是旧口径，
+  已经删掉了。
+- **内存按字节计**：`required_bytes = 根原料总单位物 × 1 B/单位物`，准入时
+  一次性定值、原子占用，此后**不随进度、暂停、阻塞或活跃配方数重算**，
+  直到完成或玩家手动中止。不足时**拒绝下达**（`ORDER_NO_MEMORY`），
+  **不是**排进队列等内存。
+- **两者不是同一类「放不下」**：槽位不足是等待（会自己好），内存不足是拒绝
+  （要玩家重下）。因此它们各有各的原因码，见 `slot_starvation_blocker` 与
+  `memory_admission_blockers`。
 
 因此本模块的两个台账 **就是** 那两个契约的实现，由工厂服务（网络服务）
 构造并持有，经 `FactoryService.processing_slots()` / `memory_ledger()`
@@ -25,6 +39,25 @@
 - 经连接器接到多个互不相连的负载域的群是 R03 未定案 → 同样不贡献；
 - 群里的 `processors` 在 02 建群时按 `visited` 去过重，因此**同一物理处理器
   只属于一个群、只计一次**（验收「同一物理处理器不会被重复统计」）。
+
+## 「每帧重算」就是本模块存在的理由（2026-09-28，台账 D-03）
+
+02 曾经随每次发布推一份「槽位来源变化」清单（`SlotSourceChange` /
+`TopologyPublication.slot_changes`），02-06 的原文是「通知 09 更新槽位来源」。
+**本模块从不消费它，也不应该消费**——那张清单已随 D-03 定案删除，连只为它
+存在的 `ProcessorGroup.slot_count()` 一并删掉。理由是这份**拉取**口径本身：
+
+- **一份来源。** `slot_capacity()` 每次从权威快照现算，容量没有第二份账。
+  再挂一条推送，就有了「推送到达时」与「下次重算时」两个时刻的容量，
+  而两者不一致时以谁为准没有答案。
+- **能自愈。** 存档重进、服务重建、事件漏一拍，下一帧重算自己就对；
+  推送漏一次就**永久**偏，且症状是「槽位比实际少」，从账面上看不出来。
+- **与既有纪律一致。** `script_architecture.md` §3 早就写定
+  「容量从 02 的处理器群与网络成员**每帧重算**，不另建设备索引」。
+
+**推送不是一概不要**：同一批发布的 `migrations` 就有真消费者
+（`runtime.py` 的 `_apply_migration` 与 `admission.py`），因为服务迁移
+**必须**在发布那一刻被处理，下一帧自己好不了。判据是「晚一帧有没有后果」。
 
 ## 槽位减少时不夺回已经在跑的租约
 
@@ -48,16 +81,21 @@ class OrderPolicy(object):
     常数，因为这几条都还没定案（全局约束 7）。`assert_settled()`
     **只应在正式验收时调用**——开发与离线测试不应调用它。
 
-    `memory_units_per_slot` 是这里的核心替身：**定义表里没有「一根内存条多大」
-    这个配置**，R04 的「内存条规格和计费公式」至今未定。取 1 是保守的下界
-    （「一个内存槽就是一个内存单位」），而它照样会进 `unresolved_report()`，
-    因此没有任何一条正式验收能带着它盖章。
+    `bytes_per_memory_slot` 是这里的核心替身：**定义表里没有「一根内存条多大」
+    这个配置**，R04 的「内存条规格」至今未定。它的单位是**字节**——与
+    `planner.CraftPlan.required_bytes()` 同尺度，因此「内存够不够」是这两个
+    数直接比大小，中间不再有第二套换算。取 1024 B 而不是 1：1 B 会让任何
+    真实配方（两个铁锭就是 2 B）在准入时当场被拒，替身必须落在一个能开工的
+    量级上。它照样进 `unresolved_report()`，因此没有任何一条正式验收能带着
+    它盖章。
+
+    **`slots_per_order` 与 `memory_units_per_step` 已删除**：前者是「整单领一次
+    槽位」的旧口径，后者是「按聚合步骤数估内存」的旧口径，两者都被 R04 的
+    定案取代（每次配方执行各领 1 槽；内存按根原料字节计）。
     """
 
     __slots__ = (
-        "slots_per_order",
-        "memory_units_per_slot",
-        "memory_units_per_step",
+        "bytes_per_memory_slot",
         "returns_block_completion",
         "submit_plan_budget",
         "plan_budget_per_tick",
@@ -69,9 +107,7 @@ class OrderPolicy(object):
 
     def __init__(
         self,
-        slots_per_order=1,
-        memory_units_per_slot=1,
-        memory_units_per_step=1,
+        bytes_per_memory_slot=1024,
         returns_block_completion=True,
         submit_plan_budget=4096,
         plan_budget_per_tick=1024,
@@ -80,17 +116,10 @@ class OrderPolicy(object):
         op_ledger_limit=4096,
         rejected_request_limit=64,
     ):
-        # type: (int, int, int, bool, int, int, int, int, int) -> None
-        #: **R04**：一个订单要占几个配方处理槽位。
-        #: `blocks.md` 只说了「单个处理器提供 1 个配方处理槽位」，
-        #: 没说一个订单吃几个。取 1 就是文档原文的「一个订单不等于一个槽位」
-        #: 那件事**还没有定案**时的保守替身——真正要防的隐含假设是
-        #: 「订单数和槽位数相等」，因此这里刻意留成一个可以大于 1 的旋钮。
-        self.slots_per_order = int(slots_per_order)
-        #: **R04**：一个内存槽方块提供多少内存单位。定义表里没有这一项。
-        self.memory_units_per_slot = int(memory_units_per_slot)
-        #: **R04**：每个执行步骤要计多少内存单位。
-        self.memory_units_per_step = int(memory_units_per_step)
+        # type: (int, bool, int, int, int, int, int, int) -> None
+        #: **R04**：一个内存槽方块提供多少**字节**。定义表里没有这一项。
+        #: 替身取 1024（见类 docstring：取 1 会让真实配方一律被拒）。
+        self.bytes_per_memory_slot = int(bytes_per_memory_slot)
         #: **R09**：返还物没到齐算不算「这一步没做完」。
         #: 09 验收原文「所需鱼已回流但空桶未到时步骤仍工作中」是**看得到的
         #: 既定玩法**，因此替身取 `True`（返还物到齐才算完成）。R09 的另一侧
@@ -116,9 +145,7 @@ class OrderPolicy(object):
         self.op_ledger_limit = int(op_ledger_limit)
 
         for name in (
-            "slots_per_order",
-            "memory_units_per_slot",
-            "memory_units_per_step",
+            "bytes_per_memory_slot",
             "plan_budget_per_tick",
             "orders_per_tick",
             "max_orders",
@@ -134,23 +161,11 @@ class OrderPolicy(object):
         # type: () -> list
         return [
             {
-                "field": "order.slots_per_order",
+                "field": "order.bytes_per_memory_slot",
                 "rule": "R04",
-                "value": self.slots_per_order,
-                "note": "一个订单占几个配方处理槽位；替身取 1，"
-                        "「订单数 == 槽位数」这个隐含假设正是它要防的",
-            },
-            {
-                "field": "order.memory_units_per_slot",
-                "rule": "R04",
-                "value": self.memory_units_per_slot,
-                "note": "一个内存槽方块提供多少内存单位；定义表里没有这一项，替身取 1",
-            },
-            {
-                "field": "order.memory_units_per_step",
-                "rule": "R04",
-                "value": self.memory_units_per_step,
-                "note": "每个执行步骤计多少内存单位；计费公式未定，替身取 1",
+                "value": self.bytes_per_memory_slot,
+                "note": "一个内存槽方块提供多少字节；定义表里没有这一项，"
+                        "替身取 1024 B（各内存条容量仍未定）",
             },
             {
                 "field": "order.returns_block_completion",
@@ -197,9 +212,7 @@ class OrderPolicy(object):
     def describe(self):
         # type: () -> dict
         return {
-            "slots_per_order": self.slots_per_order,
-            "memory_units_per_slot": self.memory_units_per_slot,
-            "memory_units_per_step": self.memory_units_per_step,
+            "bytes_per_memory_slot": self.bytes_per_memory_slot,
             "returns_block_completion": self.returns_block_completion,
             "submit_plan_budget": self.submit_plan_budget,
             "plan_budget_per_tick": self.plan_budget_per_tick,
@@ -309,10 +322,17 @@ class _Ledger(object):
 
     def claim(self, owner_id, units, tick=0):
         # type: (str, int, int) -> object
-        """领一份租约。不足时返回 `None`，**不拆一半**。"""
+        """领一份租约。不足时返回 `None`，**不拆一半**。
+
+        **`units == 0` 是合法的**，只有负数才抛错。零字节的内存需求是真会
+        出现的：一份计划的叶子全被库存或外部输入覆盖时 `required_bytes()`
+        就是 0（见 `planner.ByteRounding`），而「每一个已通过的订单都有一条
+        内存租约」是诊断与恢复要用的不变式——放行一个没有租约的订单，会让
+        「它没占内存」与「它压根没通过准入」在账面上长得一模一样。
+        """
         units = int(units)
-        if units <= 0:
-            raise ValueError("租约单位数必须为正")
+        if units < 0:
+            raise ValueError("租约单位数不能为负")
         if self.available() < units:
             self.stats["refused"] += 1
             return None
@@ -326,11 +346,16 @@ class _Ledger(object):
         # type: (str) -> int
         """释放某个拥有者的**全部**租约，返回释放掉的单位数。
 
-        一次放光而不是「放最新那条」：订单的槽位与内存在它自己的账里是
-        一份（`claim_for_order` 一次领完），只有取消/完成时整体释放。
-        允许一个拥有者持有多条租约只是为了**不丢账**，不是为了让调用方
-        分次释放——分次释放会让「这个订单还占着几个槽位」变成一个要
-        遍历的答案。
+        一次放光而不是「放最新那条」：**槽位租约的拥有者是一个执行实例**
+        （`claim_slot(execution_id)`），它只可能持有一条；**内存租约的拥有者
+        是一张订单**，它也只可能持有一条（准入时一次性定值）。因此「全部」
+        与「那一条」在这里是同一件事，分次释放反而会让「这个拥有者还占着
+        几个单位」变成一个要遍历的答案。
+
+        允许一个拥有者持有多条租约只是为了**不丢账**（见 `_by_owner` 的
+        说明），不是为了让调用方分次释放。对未知的 `owner_id` 返回 0 且
+        不报错——**但正因如此，传错 id 的表现是「可用量平白多出来」而
+        账面上查不出多在哪**，所以释放方必须按登记过的 id 逐个调用。
         """
         lease_ids = self._by_owner.pop(owner_id, None)
         if not lease_ids:
@@ -406,20 +431,17 @@ class SlotLedger(_Ledger):
         # type: (str) -> None
         self.release(execution_id)
 
-    # -- 订单侧 --------------------------------------------------------
-
-    def claim_for_order(self, order_id, policy=None):
-        # type: (str, object) -> object
-        """按策略给一个订单领它该占的槽位。"""
-        policy = policy if policy is not None else self.policy
-        return self.claim(order_id, policy.slots_per_order)
+    # **没有 `claim_for_order` 了。** 它曾经按 `policy.slots_per_order` 给整张
+    # 订单一次领完，那是 R04 定案之前的旧口径。槽位的计费单位是**一次配方
+    # 执行**，因此唯一的入口就是上面那对契约方法——它们本来就是按
+    # `execution_id` 的形状，之前是订单侧把它用错了。
 
 
 class MemoryLedger(_Ledger):
-    """内存单位的租约台账。
+    """内存**字节**的租约台账。
 
     **它实现 `capabilities.Memory` 的 `memory_units()`**：这里答的是
-    「这张网络现在有多少内存单位」，不是某根内存条的规格（见模块 docstring）。
+    「这张网络现在有多少内存字节」，不是某根内存条的规格（见模块 docstring）。
     """
 
     __slots__ = ()
@@ -427,22 +449,24 @@ class MemoryLedger(_Ledger):
 
     def memory_units(self):
         # type: () -> int
-        """本网络当前提供的内存单位总数。**这是契约方法，不是「已用」。**"""
+        """本网络当前提供的内存**字节**总数。**这是契约方法，不是「已用」。**"""
         return self.capacity
 
-    def claim_for_order(self, order_id, steps, policy=None):
-        # type: (str, int, object) -> object
-        """按策略给一个订单领内存：每步若干单位，全留或全不留。
+    def claim_order_bytes(self, order_id, required_bytes):
+        # type: (str, int) -> object
+        """按一张订单的**字节需求**领内存：全留或全不留。
 
-        `steps <= 0` **直接抛错**，不返回 `None`：一份零步骤的计划根本不该走到
-        领租约这一步（零步骤的 `HOLD` 计划在 `_adopt_plan` 里就直接结单了），
-        而返回 `None` 会让「不该调」与「内存不够」在调用方看来一模一样——
-        后者是可恢复的业务结论，前者是代码写错了。
+        `required_bytes` 是 `planner.CraftPlan.required_bytes()`（根原料微单位
+        ÷ 50，`ByteRounding` 向上取整），**不是剩余原料、不是步骤数、不是
+        计划规模**：规则要求订单开始时一次性定值，此后不随进度、暂停、阻塞
+        或活跃配方数重算（R04 / 09-03/08）。
+
+        **零字节放行而不是抛错**：一份叶子全被库存覆盖的计划就是 0 B，它是一份
+        合法且应当通过的订单。`claim(owner, 0)` 会给出一条 0 单位的租约，
+        于是「已通过准入」这件事在内存台账上仍然看得见（见 `_Ledger.claim`）。
+        负数仍然抛错——那说明上游算错了，不是业务结论。
         """
-        policy = policy if policy is not None else self.policy
-        if int(steps) <= 0:
-            raise ValueError("零步骤的计划不该申领内存租约")
-        return self.claim(order_id, int(steps) * policy.memory_units_per_step)
+        return self.claim(order_id, int(required_bytes))
 
 
 # -- 容量来源 --------------------------------------------------------------
@@ -503,11 +527,14 @@ def slot_capacity(snapshot, component_id):
 
 def memory_capacity(members, definitions, policy):
     # type: (object, object, object) -> tuple
-    """从网络成员算出内存单位总数。返回 `(内存单位, 内存槽数量)`。
+    """从网络成员算出内存**字节**总数。返回 `(内存字节, 内存槽数量)`。
 
     `members` 是 `NetworkRuntime.members()` 的返回值（`NetworkNode` 列表）。
     **按定义表的分类筛**，不按方块 id 拼字符串——分类的真相只有定义表一处。
-    区块未加载的成员不计入：它的状态没人能确认，而内存单位是要拿去开工的。
+    区块未加载的成员不计入：它的状态没人能确认，而内存是要拿去开工的。
+
+    第二个返回值仍然给**内存槽数量**（不是字节）：诊断里要能分辨「只有一根
+    很大的内存条」与「有一堆很小的」，而两者在字节合计上可能一样。
     """
     count = 0
     for node in members or ():
@@ -516,35 +543,50 @@ def memory_capacity(members, definitions, policy):
         if not getattr(node, "loaded", False):
             continue
         count += 1
-    return count * policy.memory_units_per_slot, count
+    return count * policy.bytes_per_memory_slot, count
 
 
-def capacity_blockers(slots, memory, steps):
-    # type: (object, object, int) -> list
-    """两份台账都撑不住一个新订单时给出的原因。
+def memory_admission_blockers(memory, required_bytes):
+    # type: (object, int) -> list
+    """**准入**的内存判定：不够则拒绝下达，不是排队。
 
-    共用一个 `ORDER_NO_CAPACITY` 码，但**说明分开写、两个都报**：加处理器与
-    加内存槽是两件不同的事，只说一句「容量不足」等于让玩家去猜该加哪一个。
-    两个都不够时两条都要出现——只报前一条会让玩家加完处理器再发现还缺内存。
+    规则原文：「先按 08 分帧完成规划，再复核可用字节并原子取得内存租约；
+    不足时**拒绝下达**，不转为自动等待内存的已接受订单」，并且「**等于可用值
+    通过**内存这一项检查」。因此这里必须用 `>=` 放行、`<` 才拒绝——写成 `>`
+    会让一份恰好占满内存的计划被无谓拒掉。
+
+    零需求直接放行：一份叶子全被库存覆盖的计划不占内存，也不该被内存挡住。
     """
-    out = []
-    if slots.available() < slots.policy.slots_per_order:
-        out.append(
-            BlockReason(
-                Reason.ORDER_NO_CAPACITY,
-                u"配方处理槽位不够：本网络 %d 个，已租出 %d 个，"
-                u"一个订单要 %d 个"
-                % (slots.capacity, slots.used(), slots.policy.slots_per_order),
-            )
+    need = max(0, int(required_bytes))
+    if need <= 0 or memory.available() >= need:
+        return []
+    return [
+        BlockReason(
+            Reason.ORDER_NO_MEMORY,
+            u"内存字节不够：本网络共 %d B，已租出 %d B，可用 %d B，"
+            u"这份计划要占 %d B"
+            % (memory.capacity, memory.used(), memory.available(), need),
         )
-    need = max(0, int(steps)) * memory.policy.memory_units_per_step
-    if need > 0 and memory.available() < need:
-        out.append(
-            BlockReason(
-                Reason.ORDER_NO_CAPACITY,
-                u"内存单位不够：本网络 %d 个，已租出 %d 个，"
-                u"这份计划 %d 步要 %d 个"
-                % (memory.capacity, memory.used(), int(steps), need),
-            )
-        )
-    return out
+    ]
+
+
+def slot_starvation_blocker(slots, needed=1):
+    # type: (object, int) -> object
+    """槽位不够时给的**仅供显示**的原因。没有空闲槽就返回 `None`。
+
+    **它不是准入闸门。** 「一个订单应持续派发依赖已满足的任务，直到网络无
+    可用槽位或没有可执行任务」——槽位用尽是**正常等待**，订单留在运行中，
+    只是这一帧一个新任务都开不出来。把它做成 `BlockReason` 是为了让界面答得
+    出「它为什么不动」，而不是让玩家去猜机器坏了。
+
+    **与内存那条分开**：内存不足是拒绝下达（`ORDER_NO_MEMORY`，要玩家重下），
+    槽位不足是等待（`ORDER_NO_CAPACITY`，下一帧自己会好）。两者混用会让玩家
+    对着一个马上要动的订单反复重下。
+    """
+    if slots.available() >= int(needed):
+        return None
+    return BlockReason(
+        Reason.ORDER_NO_CAPACITY,
+        u"没有空闲的配方处理槽位：本网络 %d 个，已租出 %d 个；"
+        u"跑完一个任务就会空出来" % (slots.capacity, slots.used()),
+    )

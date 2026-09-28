@@ -283,13 +283,19 @@ class ProcessorGroup(_SortedMixin):
 
     def contributes_slots(self):
         # type: () -> bool
-        """是否真的向网络贡献槽位。归属待定时不予贡献。"""
-        return self.ownership == ProcessorOwnership.ATTACHED
+        """是否真的向网络贡献槽位。归属待定时不予贡献。
 
-    def slot_count(self):
-        # type: () -> int
-        """工厂服务应当登记的槽位数。"""
-        return self.slots if self.contributes_slots() else 0
+        **工厂服务不靠这个数开工。** 它每帧从快照重算本网络的槽位容量
+        （`crafting/capacity.py` 的 `slot_capacity`），那里读的是
+        `contributes_slots()` 与 `slots`，且**另带一层跨群去重**：02 建群
+        时按 `visited` 去过重，工厂那一层不去信这个保证（万一去重被改坏，
+        症状是槽位凭空变多，不设防的话几乎查不出来）。
+
+        2026-09-28（台账 D-03）：这里曾经还有一个 `slot_count()`——本方法的
+        `slots` 简写，唯一调用方是 02 的槽位来源清单，而那份清单没有消费者。
+        清单连同它一并删除，理由见 `crafting/capacity.py` 模块 docstring。
+        """
+        return self.ownership == ProcessorOwnership.ATTACHED
 
     def to_dict(self):
         # type: () -> dict
@@ -501,45 +507,6 @@ class MigrationNotice(_SortedMixin):
         )
 
 
-class SlotSourceChange(_SortedMixin):
-    """处理器群槽位来源的变化。02-06 交给 09 更新槽位。"""
-
-    __slots__ = ("group_id", "before_slots", "after_slots", "before_ownership", "after_ownership", "domain_ids")
-
-    def __init__(self, group_id, before_slots, after_slots, before_ownership, after_ownership, domain_ids=()):
-        self.group_id = group_id
-        self.before_slots = before_slots
-        self.after_slots = after_slots
-        self.before_ownership = before_ownership
-        self.after_ownership = after_ownership
-        self.domain_ids = tuple(domain_ids)
-
-    def changed(self):
-        # type: () -> bool
-        return (
-            self.before_slots != self.after_slots
-            or self.before_ownership != self.after_ownership
-        )
-
-    def to_dict(self):
-        # type: () -> dict
-        return {
-            "group_id": self.group_id,
-            "before_slots": self.before_slots,
-            "after_slots": self.after_slots,
-            "before_ownership": self.before_ownership,
-            "after_ownership": self.after_ownership,
-            "domain_ids": list(self.domain_ids),
-        }
-
-    def __repr__(self):
-        return "SlotSourceChange(%s, %s -> %s)" % (
-            self.group_id,
-            self.after_slots,
-            self.after_ownership,
-        )
-
-
 class TopologySnapshot(object):
     """一份稳定的图快照。
 
@@ -685,25 +652,31 @@ class TopologySnapshot(object):
 
 
 class TopologyPublication(object):
-    """一次发布的全部结果。监听者（03、09、11）按需取用。"""
+    """一次发布的全部结果。监听者（03、09、11）按需取用。
+
+    **这里只有「变化」是给人推的，容量不是。** `migrations` 有真消费者
+    （03 的 `_apply_migration` 与 `admission`），因为服务迁移**必须**在
+    发布的那一刻被处理；槽位容量不同——09 每帧从 `snapshot` 重算
+    （`crafting/capacity.py`），推一份容量增量的清单只会是第二份来源。
+    02 曾经发过这样一份清单（`slot_changes`），2026-09-28 随台账 D-03
+    删除，逐条理由见该模块 docstring。
+    """
 
     __slots__ = (
         "version",
         "tick",
         "snapshot",
         "migrations",
-        "slot_changes",
         "reasons",
         "rebuilt_components",
         "notification",
     )
 
-    def __init__(self, version, tick, snapshot, migrations, slot_changes, reasons, rebuilt_components):
+    def __init__(self, version, tick, snapshot, migrations, reasons, rebuilt_components):
         self.version = version
         self.tick = tick
         self.snapshot = snapshot
         self.migrations = tuple(migrations)
-        self.slot_changes = tuple(slot_changes)
         self.reasons = tuple(reasons)
         self.rebuilt_components = tuple(rebuilt_components)
         self.notification = TopologyChanged(
@@ -729,7 +702,6 @@ class TopologyPublication(object):
             "version": self.version,
             "rebuilt": list(self.rebuilt_components),
             "migrations": [item.to_dict() for item in self.migrations],
-            "slot_changes": [item.to_dict() for item in self.slot_changes],
             "reasons": [item.to_dict() for item in self.reasons],
         }
 
@@ -1461,7 +1433,6 @@ class TopologyService(object):
         self._pass_reasons = []
 
         migrations = self._diff_membership(touched)
-        slot_changes = self._diff_slot_sources(touched)
         for new_id, merged_ids in self._pass_merges:
             reasons.append(
                 BlockReason(
@@ -1494,7 +1465,6 @@ class TopologyService(object):
             self.tick_counter,
             snapshot,
             migrations,
-            slot_changes,
             reasons,
             finished_ids,
         )
@@ -1596,52 +1566,12 @@ class TopologyService(object):
                 out.append(domain_id)
         return tuple(sorted(out))
 
-    def _diff_slot_sources(self, touched):
-        # type: (set) -> list
-        """处理器群的槽位来源变化，交给 09（02-06）。"""
-        previous = self._snapshot
-        affected_components = set()
-        for key in touched:
-            for component_id in (
-                self._membership.get(key),
-                previous.component_id_of(key),
-            ):
-                if component_id is not None:
-                    affected_components.add(component_id)
-
-        # 先建一次「分量 -> 群」的反向索引，避免每个分量都扫一遍全部群。
-        before_by_component = {}
-        for group in previous.processor_groups.values():
-            before_by_component.setdefault(group.component_id, {})[
-                group.group_id
-            ] = group
-
-        changes = []
-        seen = set()
-        for component_id in sorted(affected_components):
-            before = before_by_component.get(component_id, {})
-            after = {}
-            for group_id in self._group_ids_by_component.get(component_id, ()):
-                group = self._groups.get(group_id)
-                if group is not None:
-                    after[group.group_id] = group
-            for group_id in sorted(set(before) | set(after)):
-                if group_id in seen:
-                    continue
-                seen.add(group_id)
-                old = before.get(group_id)
-                new = after.get(group_id)
-                changes.append(
-                    SlotSourceChange(
-                        group_id,
-                        old.slot_count() if old is not None else 0,
-                        new.slot_count() if new is not None else 0,
-                        old.ownership if old is not None else None,
-                        new.ownership if new is not None else None,
-                        new.domain_ids if new is not None else (),
-                    )
-                )
-        return [change for change in changes if change.changed()]
+    # **没有 `_diff_slot_sources` 了。** 02-06 原文「通知 09 更新槽位来源」
+    # 曾由它实现：把每个处理器群的槽位/归属前后值做成一份清单发出去。
+    # 2026-09-28 随台账 D-03 定案删除——09 不消费这份清单，它每帧从
+    # `snapshot().processor_groups` 重算容量（`crafting/capacity.py`），
+    # 那是**唯一**一份来源。保留一个没人接的推送，只会让下一个读者以为
+    # 槽位变更必须被消费。
 
     def _emit(self, publication):
         # type: (TopologyPublication) -> None

@@ -318,8 +318,9 @@ class PatternStore(object):
     也是「产物 -> 谁能做」这张索引的建造者。**索引是派生的**，见模块 docstring。
     """
 
-    def __init__(self, definitions, registry, policy=None, containers=None):
-        # type: (object, object, PatternPolicy, object) -> None
+    def __init__(self, definitions, registry, policy=None, containers=None,
+                 factory_of=None):
+        # type: (object, object, PatternPolicy, object, object) -> None
         #: 定义表。它被读三处：判定谁是提供者、查物品标识与模式、查模式对应的设备。
         self.definitions = definitions
         self.registry = registry
@@ -328,6 +329,14 @@ class PatternStore(object):
         #: `adapters/containers_engine.py`，测试传 `containers.FakeContainer`。
         #: **可为 None**，此时所有需要容器的动作明确报读不到，而不是当成空槽。
         self.containers = containers
+        #: `node_key -> FactoryService | None`，交给每个提供者能力对象的
+        #: `push_inputs`（07-05）。**是回调而不是服务引用**，理由见
+        #: `execution.PatternProviderPort.__init__`；装配层在这一层
+        #: **只传绑定方法**，因为它构造时运行时往往还没建好。
+        self.factory_of = factory_of
+        from .assembly import AssemblyChamberExecution
+
+        self.assembly = AssemblyChamberExecution()
         self._states = {}
         self.tick = 0
         #: 索引的建筑版本：`_revision` 是全部提供者的版本之和，索引记着自己
@@ -361,7 +370,9 @@ class PatternStore(object):
         if not is_pattern_provider(device_id, self.definitions):
             return None
         state = PatternProviderState(ref, device_id)
-        state.provider_port = PatternProviderPort(state, self)
+        state.provider_port = PatternProviderPort(
+            state, self, factory_of=self.factory_of
+        )
         state.capabilities.register(PATTERN_PROVIDER, state.provider_port)
         self._states[ref.node_key.as_key()] = state
         self.stats["created"] += 1
@@ -569,7 +580,8 @@ class PatternStore(object):
             return False
         if force:
             state.stats["forced_refreshes"] += 1
-        before = state.content_fingerprint()
+        previous_entries = state.entries
+        previous_invalid = state.invalid
         try:
             # **`refresh` 保证不抛。** 它是重读的唯一入口，调用方分布在
             # 三条性质完全不同的路径上：引擎事件（`observe` → `ensure`）、
@@ -582,8 +594,18 @@ class PatternStore(object):
             # 看得见，与「什么都没读到」分得开。与适配器在同一批引擎调用上的
             # 处置一致（见 `EngineContainerProvider.container_at`）。
             try:
+                before = state.content_fingerprint()
                 ok = self._read_slots(state)
+                if ok and state.content_fingerprint() != before:
+                    state.revision += 1
+                    self._revision += 1
+                    state.stats["changes"] += 1
             except Exception as error:
+                # 后置指纹失败时也保留旧内容，避免新内容绕过版本更新，
+                # 使下一次成功重读误判为未变化、一直沿用旧索引。
+                state.entries = previous_entries
+                state.invalid = previous_invalid
+                state.stats["invalid_slots"] = len(previous_invalid)
                 state.unreadable = u"重读时出错：%s: %s" % (
                     type(error).__name__,
                     error,
@@ -598,10 +620,6 @@ class PatternStore(object):
             state.refresh_tick = self.tick
             state.stats["refreshes"] += 1
             self.stats["refreshes"] += 1
-        if ok and state.content_fingerprint() != before:
-            state.revision += 1
-            self._revision += 1
-            state.stats["changes"] += 1
         return ok
 
     def refresh_all(self, force=True):

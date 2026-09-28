@@ -105,8 +105,19 @@ class TestOrderStatusMachine(unittest.TestCase):
 
 class TestStepStatusMachine(unittest.TestCase):
     def step(self, status):
+        """造一个只有 1 批的步骤，把它那**唯一一个执行实例**置成给定状态。
+
+        状态现在住在**执行实例**上，步骤那一层只有 `summary_status()`
+        这个派生读法（并行之后同一个步骤的两个执行可以停在两个相位，
+        存一份「步骤状态」必然有一处忘了同步）。
+        """
         row = jobs.OrderStep(0, BLOCK.canonical(), {}, 1)
-        row.status = status
+        instance = row.open_execution("order@1")
+        instance.status = status
+        if status == jobs.StepStatus.COMPLETED:
+            row.finish_execution(instance)
+        elif status == jobs.StepStatus.CANCELLED:
+            row.cancelled = True
         return row
 
     def test_the_chain_is_one_way(self):
@@ -157,9 +168,12 @@ class TestStepStatusMachine(unittest.TestCase):
 
     def test_a_blocked_step_remembers_where_it_was(self):
         step = self.step(jobs.StepStatus.WAITING_OUTPUTS)
-        step.blocked_from = jobs.StepStatus.WAITING_OUTPUTS
-        step.status = jobs.StepStatus.BLOCKED
-        self.assertEqual(step.blocked_from, jobs.StepStatus.WAITING_OUTPUTS)
+        instance = step.executions[0]
+        instance.blocked_from = jobs.StepStatus.WAITING_OUTPUTS
+        instance.status = jobs.StepStatus.BLOCKED
+        self.assertEqual(instance.blocked_from, jobs.StepStatus.WAITING_OUTPUTS)
+        # 步骤那一层是**派生**的：实例卡住，步骤视图才显示卡住。
+        self.assertEqual(step.summary_status(), jobs.StepStatus.BLOCKED)
 
 
 class TestStepInput(unittest.TestCase):
@@ -188,16 +202,46 @@ class TestStepInput(unittest.TestCase):
 
 
 class TestOrderProgress(unittest.TestCase):
-    """进度 = 已完成的配方数 / 计划里配方树的总配方数。"""
+    """进度 = 已完成的配方**执行次数** / 计划里配方树的总配方数。
+
+    分母是 `tasks_total`（各步骤 `batches` 之和），不是步骤数：规则原文
+    「同配方执行 10 次计 10 个任务，完成一次进度加 1」，拿 `len(steps)`
+    当分母会让一条 10 批的订单在第 1 批完成时就显示 100%。
+    """
 
     def order(self, statuses):
+        """每个给定状态造一个 **1 批** 的步骤，其唯一实例置成那个状态。"""
         row = jobs.Order("order@1/m1/1", 1, "m1", BLOCK, BLOCK.canonical(), 1)
         row.steps = []
         for index, status in enumerate(statuses):
             step = jobs.OrderStep(index, BLOCK.canonical(), {}, 1)
-            step.status = status
+            instance = step.open_execution(row.order_id)
+            instance.status = status
+            if status == jobs.StepStatus.COMPLETED:
+                # 完成的实例会被挪出 `executions`，计数交给 `completed`。
+                step.finish_execution(instance)
+            elif status == jobs.StepStatus.CANCELLED:
+                step.cancelled = True
             row.steps.append(step)
         return row
+
+    def test_a_multi_batch_step_counts_every_execution(self):
+        """一条 10 批的配方做完 3 次是 **3/10**，不是 1/1。
+
+        这正是「同配方执行 10 次计 10 个任务」那条原文的形状，也是
+        把 `steps_*` 与 `tasks_*` 分成两个键的理由。
+        """
+        row = jobs.Order("order@1/m1/1", 1, "m1", BLOCK, BLOCK.canonical(), 1)
+        step = jobs.OrderStep(0, BLOCK.canonical(), {}, 10)
+        row.steps = [step]
+        for _ in range(3):
+            step.finish_execution(step.open_execution(row.order_id))
+        view = row.progress()
+        self.assertEqual(view["tasks_total"], 10)
+        self.assertEqual(view["tasks_completed"], 3)
+        self.assertAlmostEqual(view["ratio"], 0.3)
+        self.assertEqual(view["steps_total"], 1)
+        self.assertEqual(view["steps_completed"], 0)
 
     def test_ratio_is_completed_over_total(self):
         row = self.order(
@@ -209,14 +253,16 @@ class TestOrderProgress(unittest.TestCase):
             ]
         )
         view = row.progress()
-        self.assertEqual(view["steps_total"], 4)
-        self.assertEqual(view["steps_completed"], 2)
+        self.assertEqual(view["tasks_total"], 4)
+        self.assertEqual(view["tasks_completed"], 2)
         self.assertAlmostEqual(view["ratio"], 0.5)
         self.assertEqual(view["outstanding_step"], 2)
         self.assertEqual(view["by_status"][jobs.StepStatus.COMPLETED], 2)
+        self.assertEqual(view["by_status"][jobs.StepStatus.WAITING_INPUTS], 1)
+        self.assertEqual(view["tasks_in_flight"], 1)
 
-    def test_a_zero_step_plan_has_no_denominator(self):
-        """零步骤的 `HOLD` 计划（「库里已经够了」）没有分母。
+    def test_a_zero_task_plan_has_no_denominator(self):
+        """零任务的 `HOLD` 计划（「库里已经够了」）没有分母。
 
         返回 `0/0` 或者一个凭空的 `1` 都会让界面画出一条不存在的进度条；
         这里按**订单是不是已完成**给 0.0 / 1.0，并且说明写清楚。
@@ -225,10 +271,10 @@ class TestOrderProgress(unittest.TestCase):
         self.assertEqual(row.progress()["ratio"], 0.0)
         row.status = jobs.OrderStatus.COMPLETED
         self.assertEqual(row.progress()["ratio"], 1.0)
-        self.assertEqual(row.progress()["steps_total"], 0)
+        self.assertEqual(row.progress()["tasks_total"], 0)
 
     def test_cancelled_and_blocked_are_counted_separately(self):
-        """取消的步骤**不从完成数里扣**：「8/10 完成、1 个取消」与
+        """取消的执行**不从完成数里扣**：「8/10 完成、1 个取消」与
         「7/10 完成」在界面上是两件不同的事。"""
         row = self.order(
             [
@@ -238,17 +284,17 @@ class TestOrderProgress(unittest.TestCase):
             ]
         )
         view = row.progress()
-        self.assertEqual(view["steps_completed"], 1)
-        self.assertEqual(view["steps_cancelled"], 1)
-        self.assertEqual(view["steps_blocked"], 1)
-        self.assertEqual(view["steps_total"], 3)
+        self.assertEqual(view["tasks_completed"], 1)
+        self.assertEqual(view["tasks_cancelled"], 1)
+        self.assertEqual(view["tasks_blocked"], 1)
+        self.assertEqual(view["tasks_total"], 3)
 
     def test_progress_is_part_of_the_order_view(self):
         """进度跟着订单一起给，**不另开一个查询入口**——两处各算一次迟早不一样。"""
         row = self.order([jobs.StepStatus.COMPLETED])
         self.assertIn("progress", row.to_dict())
         self.assertEqual(
-            row.to_dict()["progress"]["steps_completed"], 1
+            row.to_dict()["progress"]["tasks_completed"], 1
         )
 
 
@@ -489,10 +535,11 @@ class TestOrderPolicy(unittest.TestCase):
             item["field"] for item in capacity.OrderPolicy().unresolved_report()
         )
         for name in (
-            "order.slots_per_order",
-            "order.memory_units_per_slot",
-            "order.memory_units_per_step",
+            "order.bytes_per_memory_slot",
             "order.returns_block_completion",
+            "order.submit_plan_budget",
+            "order.plan_budget_per_tick",
+            "order.orders_per_tick",
         ):
             self.assertIn(name, fields)
 
@@ -507,12 +554,12 @@ class TestOrderPolicy(unittest.TestCase):
 
     def test_non_positive_knobs_are_refused_at_construction(self):
         for kwargs in (
-            {"slots_per_order": 0},
-            {"memory_units_per_slot": 0},
-            {"memory_units_per_step": 0},
+            {"bytes_per_memory_slot": 0},
+            {"plan_budget_per_tick": 0},
             {"orders_per_tick": 0},
             {"max_orders": 0},
             {"op_ledger_limit": 0},
+            {"rejected_request_limit": 0},
         ):
             with self.assertRaises(ValueError):
                 capacity.OrderPolicy(**kwargs)
@@ -585,17 +632,34 @@ class TestSlotLedger(unittest.TestCase):
         self.ledger.release_slot("e1")
         self.assertEqual(self.ledger.used(), 0)
 
-    def test_claim_for_order_uses_the_policy(self):
-        policy = capacity.OrderPolicy(slots_per_order=2)
-        ledger = capacity.SlotLedger(policy)
-        ledger.refresh(3)
-        self.assertIsNotNone(ledger.claim_for_order("o1"))
-        self.assertEqual(ledger.used(), 2)
-        self.assertIsNone(ledger.claim_for_order("o2"))
+    def test_each_execution_claims_exactly_one_slot(self):
+        """**槽位的计费单位是一次配方执行**（R04）。
 
-    def test_non_positive_units_are_a_programming_error(self):
+        整单领一次是定案前的旧口径，已删：`claim_for_order` 那个入口连同
+        `policy.slots_per_order` 一起消失了，唯一的入口是
+        `capabilities.ProcessingSlots` 那对按 `execution_id` 记账的方法。
+        """
+        ledger = capacity.SlotLedger()
+        ledger.refresh(2)
+        self.assertTrue(ledger.claim_slot("o1/0/0"))
+        self.assertEqual(ledger.used(), 1)
+        self.assertTrue(ledger.claim_slot("o1/0/1"))
+        self.assertEqual(ledger.used(), 2)
+        self.assertFalse(ledger.claim_slot("o1/0/2"))
+        self.assertEqual(ledger.stats["refused"], 1)
+
+    def test_zero_units_is_legal_and_negative_is_a_programming_error(self):
+        """**零是合法的**：一份叶子全被库存或外部输入覆盖的计划
+        `required_bytes()` 就是 0，而「每个已通过的订单都有一条内存租约」
+        是诊断与恢复要用的不变式——放行一个没有租约的订单，会让「它没占
+        内存」与「它压根没通过准入」在账面上长得一模一样。
+
+        负数仍然抛错：那说明上游算错了，不是业务结论。
+        """
+        self.assertIsNotNone(self.ledger.claim("o1", 0))
+        self.assertEqual(self.ledger.used(), 0)
         with self.assertRaises(ValueError):
-            self.ledger.claim("o1", 0)
+            self.ledger.claim("o2", -1)
 
     def test_describe_and_diagnostics_are_plain_data(self):
         self.ledger.claim("o1", 1)
@@ -612,22 +676,31 @@ class TestMemoryLedger(unittest.TestCase):
         ledger.refresh(6)
         self.assertEqual(ledger.memory_units(), 6)
 
-    def test_claim_for_order_scales_with_the_step_count(self):
-        policy = capacity.OrderPolicy(memory_units_per_step=2)
-        ledger = capacity.MemoryLedger(policy)
-        ledger.refresh(10)
-        self.assertIsNotNone(ledger.claim_for_order("o1", 3))
-        self.assertEqual(ledger.used(), 6)
-        self.assertIsNone(ledger.claim_for_order("o2", 3))
+    def test_claim_order_bytes_is_all_or_nothing(self):
+        """按**字节**领，不按步骤数估。**要么全留、要么不留**：给两张订单
+        各发半份内存，谁也开不了工，而两边的账都显示「拿到了」。"""
+        ledger = capacity.MemoryLedger()
+        ledger.refresh(40)
+        self.assertIsNotNone(ledger.claim_order_bytes("o1", 39))
+        self.assertEqual(ledger.used(), 39)
+        self.assertIsNone(ledger.claim_order_bytes("o2", 2))
+        # 「等于可用值通过」：恰好占满的那一份要放行。
+        self.assertIsNotNone(ledger.claim_order_bytes("o3", 1))
+        self.assertEqual(ledger.available(), 0)
 
-    def test_zero_steps_is_refused_loudly(self):
-        """零步骤的计划根本不该走到领租约这一步（它在 `_adopt_plan` 里就
-        直接结单了）。返回 `None` 会让「不该调」与「内存不够」在调用方
-        看来一模一样——后者是可恢复的业务结论，前者是代码写错了。"""
+    def test_zero_bytes_is_accepted_and_negative_is_a_programming_error(self):
+        """零字节的计划**是一份合法的订单**（叶子全被库存或外部输入覆盖），
+        因此它要拿到一条 0 单位的租约，而不是被拒或被抛错。
+
+        返回 `None` 会让「内存不够」与「这份计划不占内存」在调用方看来
+        一模一样——前者是业务结论，后者只是这份计划的样子。
+        """
         ledger = capacity.MemoryLedger()
         ledger.refresh(10)
+        self.assertIsNotNone(ledger.claim_order_bytes("o1", 0))
+        self.assertEqual(ledger.used(), 0)
         with self.assertRaises(ValueError):
-            ledger.claim_for_order("o1", 0)
+            ledger.claim_order_bytes("o2", -1)
 
 
 class TestCapacitySources(unittest.TestCase):
@@ -706,32 +779,42 @@ class TestCapacitySources(unittest.TestCase):
             FakeNode("memory", False),
             FakeNode("baseband", True),
         ]
-        policy = capacity.OrderPolicy(memory_units_per_slot=3)
+        policy = capacity.OrderPolicy(bytes_per_memory_slot=3)
         total, count = capacity.memory_capacity(members, None, policy)
         self.assertEqual(count, 2)
         self.assertEqual(total, 6)
 
-    def test_capacity_blockers_report_both_sides_separately(self):
-        """两个都不够时**两条都要出现**：只报前一条会让玩家加完处理器
-        再发现还缺内存。"""
-        slots = capacity.SlotLedger(capacity.OrderPolicy(slots_per_order=2))
-        memory = capacity.MemoryLedger(capacity.OrderPolicy(memory_units_per_step=4))
+    def test_slot_and_memory_shortfalls_are_two_different_reasons(self):
+        """槽位用尽与内存不够**是两件事，报两条不同的原因**。
+
+        槽位用尽是**等得到**的：订单留在运行中，下一帧再试（`ORDER_NO_CAPACITY`
+        在可重试集合里）；内存不够是**拒绝下达**，要玩家重下（`ORDER_NO_MEMORY`
+        不在那个集合里）。做成一条会让玩家加完处理器再发现还缺内存，
+        或者反过来一直在等一个不会变的内存。
+        """
+        slots = capacity.SlotLedger()
         slots.refresh(1)
+        slots.claim_slot("o1/0/0")
+        starve = capacity.slot_starvation_blocker(slots)
+        self.assertEqual(starve.code, Reason.ORDER_NO_CAPACITY)
+        self.assertIn(u"槽位", starve.detail)
+
+        memory = capacity.MemoryLedger()
         memory.refresh(2)
-        blockers = capacity.capacity_blockers(slots, memory, 3)
-        self.assertEqual(len(blockers), 2)
-        details = " | ".join(item.detail for item in blockers)
-        self.assertIn(u"槽位", details)
-        self.assertIn(u"内存", details)
-        for item in blockers:
-            self.assertEqual(item.code, Reason.ORDER_NO_CAPACITY)
+        blockers = capacity.memory_admission_blockers(memory, 3)
+        self.assertEqual(len(blockers), 1)
+        self.assertEqual(blockers[0].code, Reason.ORDER_NO_MEMORY)
+        self.assertIn(u"字节", blockers[0].detail)
 
     def test_no_blockers_when_both_fit(self):
+        """「**等于可用值通过**」：恰好占满内存的计划不该被内存挡掉。"""
         slots = capacity.SlotLedger()
         memory = capacity.MemoryLedger()
         slots.refresh(1)
-        memory.refresh(1)
-        self.assertEqual(capacity.capacity_blockers(slots, memory, 1), [])
+        memory.refresh(3)
+        self.assertIsNone(capacity.slot_starvation_blocker(slots))
+        self.assertEqual(capacity.memory_admission_blockers(memory, 3), [])
+        self.assertEqual(capacity.memory_admission_blockers(memory, 0), [])
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ from endernet.common.protocol import (
 )
 from endernet.common.resource_key import ResourceKey
 from endernet.server.bootstrap import ServerBootstrap
+from endernet.server.crafting.capacity import OrderPolicy
 from endernet.server.crafting.executor import AbsentReturns, ReturnsSink
 from endernet.server.crafting.jobs import OrderStatus, StepStatus
 from endernet.server.crafting import patterns as pattern_module
@@ -37,6 +38,10 @@ IRON = ResourceKey.item("minecraft:iron_ingot")
 GOLD = ResourceKey.item("minecraft:gold_ingot")
 BLOCK = ResourceKey.item("minecraft:iron_block")
 GEAR = ResourceKey.item("minecraft:iron_gear")
+#: 只出现在「同 rank 两条支路」那条用例里：它是**两个成品各出一半**的那个
+#: 目标，用来把树长成两条互不依赖的支路。它不需要是本模组真有的物品——
+#: 样板本来就是夹具造的，计划只按样板声明的产物去找步骤。
+CASING = ResourceKey.item("minecraft:iron_casing")
 
 BASEBAND = "endernet:network_baseband_8"
 CONTROLLER = "endernet:tiny_network_endpoint"
@@ -200,6 +205,9 @@ class ExecutorFixture(unittest.TestCase):
     #: 额外摆进网络的 `(位置, 方块 id)`。多级配方要更多内存单位，
     #: 子类拿它补设备——**容量是从网络成员真算出来的**，不是夹具里写死的数。
     extra_devices = ()
+    #: 订单策略。默认让 `ServerBootstrap` 造一份；要用**具体的内存字节替身
+    #: 数值**构造准入边界的用例（39 B / 40 B）拿它注入。
+    order_policy = None
 
     def setUp(self):
         self.world = FakeWorld()
@@ -218,6 +226,7 @@ class ExecutorFixture(unittest.TestCase):
             container_provider=self.containers,
             returns_sink=self.sink,
             port_policy=self.port_policy,
+            order_policy=self.order_policy,
         )
         self.server.start(bind_engine=False)
         self.build_network()
@@ -494,8 +503,8 @@ class TestSubmit(OneLevel):
         self.assertEqual(result.payload["status"], OrderStatus.PLANNING)
         view = self.settle()
         self.assert_admitted(view)
-        self.assertEqual(view["progress"]["steps_total"], 1)
-        self.assertEqual(view["progress"]["steps_completed"], 0)
+        self.assertEqual(view["progress"]["tasks_total"], 1)
+        self.assertEqual(view["progress"]["tasks_completed"], 0)
 
         # 预留真的落在 05 那侧，而且**已经被这一单自己花掉了**：落地那一帧
         # 就备了料（释放预留 → 搬走 → 把没搬走的补回来），因此这里看到的是
@@ -514,10 +523,19 @@ class TestSubmit(OneLevel):
         self.assertEqual(view["reservations"][0]["canonical"], IRON.canonical())
         self.assertEqual(view["reservations"][0]["claimed"], 2)
 
-        # 槽位与内存各拿到一份租约（09-03：一个订单不等于一个槽位）。
-        self.assertIsNotNone(view["slot_lease"])
+        # 内存租约按**订单**记一份（准入时一次性定值，此后不随进度重算）；
+        # 槽位租约按**执行实例**记，因此不在订单视图上——它在
+        # `steps[].executions[]` 里，拥有者就是 `execution_id`（R04：
+        # 每次配方执行占 1 槽至完成）。
+        self.assertIsNone(view.get("slot_lease"))
         self.assertIsNotNone(view["memory_lease"])
+        self.assertEqual(self.service.memory.used(), view["memory_bytes"])
         self.assertEqual(self.service.slots.used(), 1)
+        leases = self.service.slots.describe()["leases"]
+        self.assertEqual(
+            [lease["owner_id"] for lease in leases],
+            [view["steps"][0]["executions"][0]["execution_id"]],
+        )
 
     def test_the_order_belongs_to_the_network_not_to_the_entry_device(self):
         """订单归属该设备所在的网络，**不绑在入口设备上**。
@@ -673,6 +691,18 @@ class TestSubmit(OneLevel):
 
 
 class TestCapacity(OneLevel):
+    def assert_slot_starved(self, view):
+        """订单**在运行中报「槽位不足」**，而不是转成阻塞或拒绝。
+
+        R04 之后槽位不再是准入闸门（准入只看内存字节）：槽位用尽是**等得到**
+        的那一类——处理器装上、别的执行跑完，下一帧就轮得到。因此它写在
+        步骤的 `blockers` 上（状态是 RUNNING），不是订单级阻塞，也不进
+        拒绝记录。
+        """
+        self.assertEqual(view["status"], OrderStatus.RUNNING)
+        codes = [item["code"] for item in view["steps"][0]["blockers"]]
+        self.assertIn(Reason.ORDER_NO_CAPACITY, codes)
+
     def test_no_processor_means_no_slots(self):
         """验收：「无连接器处理器提供零槽位」。"""
         self.seed(IRON, 4)
@@ -684,9 +714,11 @@ class TestCapacity(OneLevel):
         self.submit_order()
         view = self.settle()
         self.assertIsNotNone(view)
-        self.assertEqual(view["status"], OrderStatus.BLOCKED)
-        codes = [item["code"] for item in view["blockers"]]
-        self.assertIn(Reason.ORDER_NO_CAPACITY, codes)
+        # 它照样通过了准入——准入不拿槽位当闸门。
+        self.assert_admitted(view)
+        self.assert_slot_starved(view)
+        # 一个实例都没开出来，因此一个槽也没被占。
+        self.assertEqual(self.service.slots.used(), 0)
 
     def test_an_unattached_processor_group_contributes_nothing(self):
         """处理器没经连接器接入基带 → 零槽位（02 的归属判定，09 只是读它）。"""
@@ -707,9 +739,18 @@ class TestCapacity(OneLevel):
         self.assertEqual(self.service.idle_groups, [])
         self.assertIsNotNone(storage)
 
-    def test_memory_units_come_from_memory_devices(self):
-        self.assertEqual(self.service.memory.capacity, 1)
+    def test_memory_bytes_come_from_memory_devices(self):
+        """内存容量的单位是**字节**，与 `required_bytes` 同尺度（R04）。
+
+        `memory_slots` 仍然报**内存槽的数量**（不是字节）：诊断里要能分辨
+        「只有一根很大的内存条」与「有一堆很小的」。
+        """
+        policy = self.service.policy
         self.assertEqual(self.service.memory_slots, 1)
+        self.assertEqual(
+            self.service.memory.capacity, policy.bytes_per_memory_slot
+        )
+        self.assertEqual(self.service.memory.memory_units(), self.service.memory.capacity)
 
     def test_shrinking_capacity_does_not_take_leases_back(self):
         """09-07：「拔处理器/内存时停止超额新派发，现有执行保留状态」。"""
@@ -722,23 +763,23 @@ class TestCapacity(OneLevel):
         # 已有租约仍在——料是真的投出去了，强行收回会让那个订单失去账。
         self.assertEqual(self.service.slots.used(), 1)
         self.assertEqual(self.service.slots.over_subscribed(), 1)
-        # 新的领不到。
+        # 新的领不到：第二单照样被准入（准入只看内存），但一个槽都开不出来。
         second = self.submit_order(request_id="b").payload
         view = self.settle(second["order_id"])
-        self.assertEqual(view["status"], OrderStatus.BLOCKED)
+        self.assert_admitted(view)
+        self.assert_slot_starved(view)
+        self.assertEqual(self.service.slots.used(), 1)
 
     def test_a_second_order_waits_for_the_first_slot(self):
         self.seed(IRON, 8)
         first = self.submit_order(request_id="a").payload
         self.assert_admitted(self.settle(first["order_id"]))
         second = self.submit_order(request_id="b").payload
-        # 只有一个槽位，第二单等（容量在**预留之前**判，因此它连料都没锁）。
+        # 只有一个槽位：第二单**过了准入**（内存够、料也够所以料照样锁上），
+        # 但它一个执行都开不出来——留在运行中报「槽位不足」，等第一单放槽。
         view = self.settle(second["order_id"])
-        self.assertEqual(view["status"], OrderStatus.BLOCKED)
-        self.assertFalse(view["adopted"])
-        self.assertEqual(view["reservations"], [])
-        codes = [item["code"] for item in view["blockers"]]
-        self.assertIn(Reason.ORDER_NO_CAPACITY, codes)
+        self.assert_admitted(view)
+        self.assert_slot_starved(view)
 
 
 class TestRevalidation(OneLevel):
@@ -916,13 +957,18 @@ class TestCompletion(OneLevel):
         self.drive(3)
         step = self.only_order()["steps"][0]
         self.assertEqual(step["status"], StepStatus.WAITING_OUTPUTS)
-        self.assertEqual(step["execution_id"] is not None, True)
+        # 执行实例的 ID 是 `订单ID/步骤下标/执行序号`，在实例创建那一刻就定下。
+        instance = step["executions"][0]
+        self.assertEqual(
+            instance["execution_id"], "%s/0/0" % (self.only_order()["order_id"],)
+        )
         # 假回流把产物送回来。
         self.assertEqual(self.sink.flush(self.service.executor), 1)
         self.drive(3)
         view = self.only_order()
         self.assertEqual(view["status"], OrderStatus.COMPLETED)
-        self.assertEqual(view["progress"]["steps_completed"], 1)
+        self.assertEqual(view["progress"]["tasks_completed"], 1)
+        self.assertEqual(view["progress"]["tasks_total"], 1)
         self.assertEqual(view["progress"]["ratio"], 1.0)
 
     def test_completion_releases_the_slot_and_memory(self):
@@ -966,7 +1012,13 @@ class ReturnsNotArrived(OneLevel):
         self.submit_order()
         view = self.settle()
         self.assertIsNotNone(view)
-        returns = view["steps"][0]["returns"]
+        # 静态清单在 `spec` 下（每批的量，构建时定死），逐次账在 `executions` 里。
+        spec = view["steps"][0]["spec"]["returns"]
+        self.assertEqual(len(spec), 1)
+        self.assertEqual(spec[0]["canonical"], IRON.canonical())
+        self.assertEqual(spec[0]["per_batch"], 1)
+        self.assertTrue(spec[0]["counts_for_completion"])
+        returns = view["steps"][0]["executions"][0]["returns"]
         self.assertEqual(len(returns), 1)
         self.assertEqual(returns[0]["expected"], 1)
         self.assertTrue(returns[0]["counts_for_completion"])
@@ -991,7 +1043,9 @@ class ReturnsNotArrived(OneLevel):
         self.assertEqual(step["status"], StepStatus.WAITING_OUTPUTS)
         self.assertNotEqual(view["status"], OrderStatus.COMPLETED)
         # 产物到了、返还物还欠着——两个数分开记，界面才说得清在等什么。
-        pending = self.service.waiting.pending(step["execution_id"])
+        pending = self.service.waiting.pending(
+            step["executions"][0]["execution_id"]
+        )
         self.assertEqual(list(pending), [IRON.canonical()])
 
     def test_the_step_completes_once_the_return_arrives_too(self):
@@ -1105,14 +1159,18 @@ class TestReturnsNotWired(OneLevel):
         """
         self.seed(IRON, 4)
         self.submit_order()
-        self.drive(4)
+        # **比旧的串行实现多一帧。** 订单级 `BLOCKED` 现在由「本帧有没有实例
+        # 真的往前动」判：投料完成那一帧 `_track_dispatch` 把实例推进了
+        # `waiting_outputs`（那是一次货真价实的推进），要到**下一帧**
+        # `_track_outputs` 空转、同时回流入口报缺，才收得成结论。
+        self.drive(5)
         order_id = self.only_order()["order_id"]
         step = self.order_view(order_id)["steps"][0]
         self.assertEqual(step["status"], StepStatus.WAITING_OUTPUTS)
         self.assertEqual(self.only_order()["status"], OrderStatus.BLOCKED)
         # 手工把产物分配过来（10 接上之后由它做，这里直接调它唯一的那条入口）。
         accepted = self.service.executor.receive_output(
-            step["execution_id"], BLOCK, 1, "op:manual"
+            step["executions"][0]["execution_id"], BLOCK, 1, "op:manual"
         )
         self.assertEqual(accepted, 1)
         self.drive(3)
@@ -1121,33 +1179,37 @@ class TestReturnsNotWired(OneLevel):
         self.assertEqual(view["progress"]["ratio"], 1.0)
         self.assertEqual(self.service.slots.used(), 0)
 
-    def test_a_capacity_blocked_order_still_resumes_when_a_slot_frees_up(self):
+    def test_a_slot_starved_order_still_resumes_when_a_slot_frees_up(self):
         """**回流入口没接线不该盖掉别的阻塞原因。**
 
-        这条也是真机上撞出来的：被容量挡下的订单在槽位释放之后本该自己恢复，
+        这条也是真机上撞出来的：被挡下的订单在槽位释放之后本该自己恢复，
         却一直卡在 `order_returns_absent` 上——因为那条提示原先按**订单级**
-        报，而它答的其实是「为什么这一步等不到产物」。一个还在
+        报，而它答的其实是「为什么这一次执行等不到产物」。一个还在
         `waiting_inputs`、甚至还没落地的订单根本谈不上等产物，
-        却因为这条连 `_resume_adoption` 都走不到。
+        却因为这条连派发都走不到。
+
+        R04 之后被挡的这一侧是**槽位不足**（准入只看内存），因此这里换成
+        「第二个槽位等第一个让位」——恢复的路径是同一条。
         """
         self.seed(IRON, 8)
         first = self.submit_order(request_id="a").payload
         self.assert_admitted(self.settle(first["order_id"]))
         second = self.submit_order(request_id="b").payload
         view = self.settle(second["order_id"])
-        self.assertEqual(view["status"], OrderStatus.BLOCKED)
-        self.assertFalse(view["adopted"])
+        # 过了准入（准入不拿槽位当闸门），但一个执行都开不出来。
+        self.assert_admitted(view)
         self.assertIn(
-            Reason.ORDER_NO_CAPACITY, [b["code"] for b in view["blockers"]]
+            Reason.ORDER_NO_CAPACITY,
+            [b["code"] for b in view["steps"][0]["blockers"]],
         )
+        self.assertEqual(view["steps"][0]["status"], StepStatus.WAITING_INPUTS)
         # 让位：取消第一张，槽位与内存都空出来。
         self.order("cancel", request_id="c1", order_id=first["order_id"])
         self.assertEqual(self.service.slots.used(), 0)
         self.drive(4)
         view = self.order_view(second["order_id"])
-        # **自己恢复了**：落地走完、开始推进，而且报的是真实原因而不是
+        # **自己恢复了**：开始派发、走到等产物，而且报的是真实原因而不是
         # 「回流入口没接线」。
-        self.assertTrue(view["adopted"])
         self.assertEqual(view["status"], OrderStatus.BLOCKED)
         self.assertIn(
             Reason.ORDER_RETURNS_ABSENT, [b["code"] for b in view["blockers"]]
@@ -1226,9 +1288,17 @@ class TestCancelAndPause(OneLevel):
         order_id = self.submit_order().payload["order_id"]
         self.settle(order_id)
         self.drive(3)
-        self.assertIn("%s/0" % (order_id,), self.sink.registered)
+        # 登记的键是 `execution_id`（`订单ID/步骤下标/执行序号`），
+        # 因此按订单前缀找——步骤下标与执行序号是实现细节。
+        prefix = "%s/" % (order_id,)
+        self.assertTrue(
+            [key for key in self.sink.registered if key.startswith(prefix)],
+            self.sink.registered,
+        )
         self.order("cancel", request_id="c1", order_id=order_id)
-        self.assertNotIn("%s/0" % (order_id,), self.sink.registered)
+        self.assertEqual(
+            [key for key in self.sink.registered if key.startswith(prefix)], []
+        )
         self.assertEqual(self.service.waiting.diagnostics()["instances"], 0)
 
     def test_pause_and_resume(self):
@@ -1327,12 +1397,8 @@ class TestFreezeAndRecover(OneLevel):
 
 
 class TestAssemblyChamber(OneLevel):
-    def test_an_assembly_provider_is_refused_with_the_pending_task(self):
-        """装配仓的执行半边是 07-06，**明确拒绝而不是假装能投**。
-
-        一张「投了半天没人接」的订单比一条清清楚楚的 `service_absent`
-        难查一百倍。
-        """
+    def test_assembly_refuses_template_buffer_path(self):
+        """装配仓须走订单实体槽路径，不能当作外部样板接口。"""
         blocker = None
         step = type("S", (), {})()
         step.node_key = key(0, 0, 0).as_key()
@@ -1352,8 +1418,8 @@ class TestAssemblyChamber(OneLevel):
         port, blocker = self.service.executor._port_for(step)
         self.assertIsNone(port)
         self.assertIsNotNone(blocker)
-        self.assertEqual(blocker.code, Reason.SERVICE_ABSENT)
-        self.assertIn("07-06", blocker.detail)
+        self.assertEqual(blocker.code, Reason.UNSUPPORTED)
+        self.assertIn("assembly_advance", blocker.detail)
 
 
 class TestReadOnlyQuery(OneLevel):
@@ -1434,8 +1500,8 @@ class TestOrderPolicyWiring(ExecutorFixture):
         fields = set(
             item["field"] for item in self.server.policy_bundle().unresolved_report()
         )
-        self.assertIn("order.slots_per_order", fields)
-        self.assertIn("order.memory_units_per_slot", fields)
+        self.assertIn("order.bytes_per_memory_slot", fields)
+        self.assertIn("order.returns_block_completion", fields)
 
     def test_absent_returns_is_the_library_default(self):
         """默认装配**不接受**一个什么都不做的假实现。"""
@@ -1489,7 +1555,12 @@ class PartialStaging(OneLevel):
             self.drive(2)
         view = self.order_view(order_id)
         self.assertEqual(view["steps"][0]["status"], StepStatus.WAITING_OUTPUTS)
-        self.assertEqual([item["delivered"] for item in view["steps"][0]["inputs"]], [2])
+        # 逐次账在实例上：这个实例投进机器的就是配方要的 2 件，不多不少。
+        self.assertEqual(
+            [item["delivered"]
+             for item in view["steps"][0]["executions"][0]["inputs"]],
+            [2],
+        )
         self.assertEqual(self.machine.count_of(IRON), 2)
         # 库里也正好少了 2 个，不是 4 个。
         self.assertEqual(
@@ -1513,7 +1584,12 @@ class TestMultipleOrders(OneLevel):
     def two_orders(self):
         self.seed(IRON, 8)
         self.assertEqual(self.service.slots.capacity, 2)
-        self.assertEqual(self.service.memory.capacity, 2)
+        # 两根内存槽 × 每根多少字节（R04 的替身规格）。**按字节，不按根数。**
+        self.assertEqual(self.service.memory_slots, 2)
+        self.assertEqual(
+            self.service.memory.capacity,
+            2 * self.service.policy.bytes_per_memory_slot,
+        )
         first = self.submit_order(request_id="a").payload["order_id"]
         second = self.submit_order(request_id="b").payload["order_id"]
         return first, second
@@ -1576,6 +1652,406 @@ class TestMultipleOrders(OneLevel):
         for _ in range(4):
             spent = self.server.runtimes.tick(1, self.server._tick_context())
             self.assertLessEqual(spent, 1)
+
+# -- R04（2026-09-26 定案）：逐次执行实例 -----------------------------------
+
+
+#: 三组「连接器 + 处理器」，各贴着基带串上的一格（夹具自带的那一组在 x=1）。
+#:
+#:     (0..3, 64, 0) 基带   (n, 64, 1) 连接器   (n, 64, 2) 处理器
+#:
+#: 连起来一共 **4 个处理器 = 4 个槽位**。位置不是随便挑的：连接器必须
+#: 贴着基带、处理器必须贴着连接器，否则处理器群不贡献槽位（02 的归属
+#: 判定），而那时「派不出四个」会被误读成执行器的问题。
+FOUR_SLOTS_EXTRA = tuple(
+    item
+    for index in (0, 2, 3)
+    for item in (
+        (key(index, 64, 1), CONNECTOR),
+        (key(index, 64, 2), PROCESSOR),
+    )
+)
+
+
+class FourSlots(ExecutorFixture):
+    """**4 个空闲槽**的网络，配方是「铁块 ← 1 铁锭」（一次执行只要一个铁锭）。"""
+
+    extra_devices = FOUR_SLOTS_EXTRA
+    patterns = {0: factory([stack(IRON, 1)], [stack(BLOCK, 1)])}
+
+    def setUp(self):
+        ExecutorFixture.setUp(self)
+        self.configure_port()
+        self.seed(IRON, 16)
+
+    def admit(self, amount, request_id="o1"):
+        """下一张 `amount` 次的订单并等它落地，返回它的 `order_id`。"""
+        self.submit_order(target=BLOCK, amount=amount, request_id=request_id)
+        view = self.settle()
+        self.assert_admitted(view)
+        # 先钉住「这台网络真有四个槽」——否则下面的「四个在途」可能只是
+        # 恰好没被槽位卡住，而那是另一件事。
+        self.assertEqual(self.service.slots.capacity, 4)
+        return view["order_id"]
+
+    def executions(self, order_id):
+        """那次步骤上**还挂着**的执行实例 ID（完成的已经移走了）。"""
+        return sorted(
+            instance["execution_id"]
+            for instance in self.order_view(order_id)["steps"][0]["executions"]
+        )
+
+    def deliver(self, execution_id, key_, count, op_id):
+        """交回一份产物。**先真的写进网络、再按实际接受量分配**。
+
+        与 `FakeReturns.flush` 同形，理由也一样：只通知不入库的假回流会让
+        订单的账看起来是对的，而网络里什么都没有。
+        """
+        storage = self.runtime.services.get(ServiceId.STORAGE)
+        receipt = storage.commit_insert(op_id, key_, count, owner_id="test")
+        return self.service.executor.receive_output(
+            execution_id, key_, receipt.moved, op_id
+        )
+
+    def test_a_ten_batch_order_fills_all_four_slots(self):
+        """验收原文：「配方执行 10 次、网络有 4 个空闲槽且任务均已就绪时，
+        可有 4 次同时在途」。
+
+        R04 之前这里恒为 1：`_advance_step` 每帧只推「最靠前的那个未完成
+        步骤」，于是一条订单永远只用得上一个槽——「单订单可用满剩余槽位」
+        这条规则根本没有实现，而它在界面上看起来完全正常（订单确实在跑）。
+        """
+        order_id = self.admit(10)
+        self.drive(6)
+        self.assertEqual(self.service.slots.used(), 4)
+        # 4 次在途 = 4 个执行实例，ID 是 `订单ID/步骤下标/执行序号`。
+        self.assertEqual(
+            self.executions(order_id),
+            ["%s/0/%d" % (order_id, seq) for seq in range(4)],
+        )
+        view = self.order_view(order_id)
+        self.assertEqual(view["progress"]["tasks_total"], 10)
+        self.assertEqual(view["progress"]["tasks_completed"], 0)
+        self.assertEqual(view["progress"]["tasks_in_flight"], 4)
+
+    def test_a_completed_execution_frees_its_slot_for_the_next_one(self):
+        """验收原文：「完成一个后可继续派发一个」。
+
+        第 5 次拿到的是**刚被释放的那一个槽**：在途数仍是 4，而实例集合
+        从 `0..3` 变成 `1..4`。做成「等四个全做完再开下一批」也能让这张
+        订单跑完，但那不是逐次语义，验收要的正是这个差别。
+        """
+        order_id = self.admit(10)
+        self.drive(6)
+        self.assertEqual(self.service.slots.used(), 4)
+        first = self.executions(order_id)[0]
+        self.assertEqual(self.deliver(first, BLOCK, 1, "op:first"), 1)
+        self.drive(3)
+        self.assertEqual(self.service.slots.used(), 4)
+        self.assertEqual(
+            self.executions(order_id),
+            ["%s/0/%d" % (order_id, seq) for seq in (1, 2, 3, 4)],
+        )
+        self.assertEqual(self.order_view(order_id)["progress"]["tasks_completed"], 1)
+
+    def test_each_in_flight_execution_carries_its_own_account(self):
+        """**逐次账各记一份。** 4 个实例各自欠 1 个铁锭，不是一个实例欠 4 个。
+
+        合并成一份的后果很具体：其中一次执行完成时会把整批的账一并标成
+        「已投」，剩下三次就再也备不到料——而症状是「订单卡住」，
+        与「缺料」长得一模一样。
+        """
+        order_id = self.admit(10)
+        self.drive(6)
+        rows = self.order_view(order_id)["steps"][0]["executions"]
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(
+            [
+                (row["status"], [item["required"] for item in row["inputs"]])
+                for row in rows
+            ],
+            [(StepStatus.WAITING_OUTPUTS, [1])] * 4,
+        )
+        # 预期产物也是每实例一份，不是一个实例背着 4 个。
+        self.assertEqual([item["expected"] for item in rows[0]["outputs"]], [1])
+        # 四份料**各自**进了机器：一份账被四个实例共用的话，这里会是 1。
+        self.assertEqual(self.machine.count_of(IRON), 4)
+
+    def test_the_whole_ten_batches_finish(self):
+        """跑到头：10 次执行全部完成，槽位、内存、等待台账都清空。"""
+        order_id = self.admit(10)
+        for _ in range(40):
+            self.drive(2)
+            self.sink.flush(self.service.executor)
+            if self.order_view(order_id)["status"] == OrderStatus.COMPLETED:
+                break
+        view = self.order_view(order_id)
+        self.assertEqual(view["status"], OrderStatus.COMPLETED)
+        self.assertEqual(view["progress"]["tasks_completed"], 10)
+        self.assertEqual(view["progress"]["tasks_total"], 10)
+        self.assertEqual(self.service.slots.used(), 0)
+        self.assertEqual(self.service.memory.used(), 0)
+        self.assertEqual(self.service.waiting.diagnostics()["instances"], 0)
+
+
+class TestExecutionProgress(FourSlots):
+    """进度按**执行次数**算；重复回执与多送的产物都不加数。"""
+
+    def test_three_of_ten_is_the_reported_progress(self):
+        """验收原文：「同配方执行 10 次计 10 个任务……完成一次进度加 1」。
+
+        拿 `len(steps)` 当分母会让它在第 1 批完成时就显示 100%。
+        """
+        order_id = self.admit(10)
+        self.drive(6)
+        for seq, execution_id in enumerate(self.executions(order_id)[:3]):
+            self.assertEqual(
+                self.deliver(execution_id, BLOCK, 1, "op:p%d" % (seq,)), 1
+            )
+        self.drive(3)
+        view = self.order_view(order_id)
+        self.assertEqual(view["progress"]["tasks_completed"], 3)
+        self.assertEqual(view["progress"]["tasks_total"], 10)
+        self.assertAlmostEqual(view["progress"]["ratio"], 0.3)
+        # 步骤那一层仍报「这张订单分几种配方」，它**不参与** `ratio`。
+        self.assertEqual(view["progress"]["steps_total"], 1)
+        self.assertEqual(view["progress"]["steps_completed"], 0)
+
+    def test_a_replayed_receipt_does_not_count_twice(self):
+        """同一条 `op_id` 的回执重放**不增加完成数**（10-05）。"""
+        order_id = self.admit(10)
+        self.drive(6)
+        instance_id = self.executions(order_id)[0]
+        self.assertEqual(self.deliver(instance_id, BLOCK, 1, "op:again"), 1)
+        self.drive(2)
+        self.assertEqual(self.order_view(order_id)["progress"]["tasks_completed"], 1)
+        # 同一条回执再来一遍：接受量为 0，完成数一动不动。
+        self.assertEqual(
+            self.service.executor.receive_output(instance_id, BLOCK, 1, "op:again"),
+            0,
+        )
+        self.drive(2)
+        self.assertEqual(self.order_view(order_id)["progress"]["tasks_completed"], 1)
+
+    def test_an_extra_product_beyond_the_need_is_not_counted(self):
+        """多送来的产物**留在网络里当普通库存**，不把进度顶上去（10-06）。
+
+        「不丢弃」与「不计数」是同一件事的两面：多出来的部分既不能把这一
+        次执行算成多做了一次，也不能被吞掉。
+        """
+        order_id = self.admit(10)
+        self.drive(6)
+        instance_id = self.executions(order_id)[0]
+        self.assertEqual(self.deliver(instance_id, BLOCK, 5, "op:greedy"), 1)
+        self.drive(2)
+        view = self.order_view(order_id)
+        self.assertEqual(view["progress"]["tasks_completed"], 1)
+        # 5 个都在网络里（1 个被这一次执行收下，4 个留作普通库存）。
+        self.assertEqual(self.stored(BLOCK), 5)
+
+
+class TestInstanceIdentity(OneLevel):
+    """执行实例的身份：**重试前后 ID 不变**，变的只有尝试号。
+
+    夹具补上第二组处理器与内存槽，好让**两张订单同时**进得来——「重试」
+    这件事要有第二个占用者才构造得出来（端口那一格只有一格）。
+    """
+
+    extra_devices = (
+        (key(0, 64, 1), CONNECTOR),
+        (key(0, 64, 2), PROCESSOR),
+        (key(2, 64, 1), MEMORY),
+    )
+
+    def test_a_retried_instance_keeps_its_id(self):
+        """ID 是**这件事的身份**，不是这一次尝试的身份。
+
+        样例：一台机器收不到料，第一个订单的批次就一直挂在端口上；第二个
+        订单的实例因此报 `ORDER_PORT_BUSY`，一帧一帧地重试。**从头到尾它
+        都是同一个实例**——ID 被重新生成过的话，等待台账、槽位租约、以及
+        界面上那一行会在每次重试时换一个名字，而它们指的是同一件事。
+        """
+        # 两次 `seed` 的请求号**必须不同**：主控按请求号去重，
+        # 复用同一个号会让第二次拿到第一次的缓存结果，金锭根本不会入库。
+        self.seed(IRON, 4, request_id="seed-iron")
+        self.seed(GOLD, 4, request_id="seed-gold")
+        self.containers.boxes.pop(MACHINE_KEY.as_key(), None)
+        first = self.submit_order(request_id="a").payload["order_id"]
+        second = self.submit_order(request_id="b").payload["order_id"]
+        self.assert_admitted(self.settle(first))
+        self.assert_admitted(self.settle(second))
+        self.drive(4)
+        step = self.order_view(second)["steps"][0]
+        ids = [item["execution_id"] for item in step["executions"]]
+        self.assertEqual(ids, ["%s/0/0" % (second,)], step)
+        # 端口那一格被前一张订单的批次占着（可重试的原因，不写状态）。
+        self.assertTrue(step["detail"], step)
+        # 再推进若干帧：ID 一动不动，**没有被拆掉重建**。
+        for _ in range(6):
+            self.drive(1)
+            self.assertEqual(
+                [
+                    item["execution_id"]
+                    for item in self.order_view(second)["steps"][0]["executions"]
+                ],
+                ids,
+            )
+
+
+class TestParallelSteps(OneLevel):
+    """同一 `rank` 的两个步骤**跨步骤并行**派发。
+
+    树是这样长的（`CASING ← 1 铁块 + 1 齿轮`，两条支路互不依赖）：
+    `rank` 数的是**离根原料有多远**，因此两条支路同 rank：
+
+        CASING(rank 1) ──┬── BLOCK(rank 0) ← 2 铁锭
+                         └── GEAR (rank 0) ← 2 金锭
+
+    旧口径下 `_advance_step` 每帧只推「最靠前的那个未完成步骤」，于是两条
+    支路严格串行——验收的「4 槽可有 4 次同时在途」在这种树上根本达不到。
+    """
+
+    extra_devices = FOUR_SLOTS_EXTRA
+    patterns = {
+        0: factory([stack(IRON, 2)], [stack(BLOCK, 1)]),
+        1: factory([stack(GOLD, 2)], [stack(GEAR, 1)]),
+        2: factory([stack(BLOCK, 1), stack(GEAR, 1)], [stack(CASING, 1)]),
+    }
+
+    def setUp(self):
+        ExecutorFixture.setUp(self)
+        self.configure_port(filter_keys=(IRON, GOLD, BLOCK, GEAR, CASING))
+        self.seed(IRON, 8, request_id="seed-iron")
+        self.seed(GOLD, 8, request_id="seed-gold")
+
+    def test_both_branches_get_executions_in_the_same_round(self):
+        self.submit_order(target=CASING, amount=2)
+        view = self.settle()
+        self.assert_admitted(view)
+        self.drive(6)
+        steps = self.order_view(view["order_id"])["steps"]
+        self.assertEqual(self.service.slots.capacity, 4)
+        branches = [step for step in steps if step["executions"]]
+        self.assertEqual(
+            sorted(step["rank"] for step in branches),
+            [0, 0],
+            u"两条同 rank 的支路都该有在途的执行实例",
+        )
+        self.assertEqual(self.service.slots.used(), 4)
+        # 两条支路的料**各自**进了机器：金锭不该被铁锭的路径吃掉。
+        self.assertEqual(self.machine.count_of(IRON), 4)
+        self.assertEqual(self.machine.count_of(GOLD), 4)
+
+
+class MemoryFixture(ExecutorFixture):
+    """内存准入的公共夹具：**一根内存条、配方「铁块 ← 4 铁锭」**。
+
+    一次配方执行的根原料 = 4 个铁锭 = 200 微单位物 = **4 B**
+    （1 个物品 = 50 微单位物、1 B = 1 单位物，见 `ResourceKey.micro_units`），
+    因此「下 N 次单」要的就是 N × 4 B——用例里的数都是这么来的。
+
+    只用物品、不用流体：这条验的是**准入读的那个数**，而根原料是物品还是
+    流体不影响 `required_bytes` 的算法，多加一条流体管路只会多一个可能出错
+    的环节。流体那一半在 `test_planner.py` 已有用例（20 个物品 + 1000 mB =
+    40 B），两条合起来覆盖验收原文里那个例子。
+    """
+
+    patterns = {0: factory([stack(IRON, 4)], [stack(BLOCK, 1)])}
+
+    def setUp(self):
+        ExecutorFixture.setUp(self)
+        self.configure_port()
+        # 64 个铁锭：**这张磁带在这份夹具里每种物品最多收这么多**，
+        # 而最费料的那条用例要 48 个（两单各 24），因此够用且留有余量。
+        self.seed(IRON, 64)
+
+    def submit_and_settle(self, amount, request_id="o1"):
+        """下单并等它离开「规划中」，返回 `(order_id, 视图或 None)`。
+
+        **必须把 ID 带回来**：`settle()` 不传 ID 时给的是台账里第一张已经
+        不处于规划中的订单，多订单用例里那多半是**另一张**——这一条在夹具
+        的 docstring 里写着，也让「第二张被拒了」看起来像「通过了」。
+        """
+        order_id = self.submit_order(
+            target=BLOCK, amount=amount, request_id=request_id
+        ).payload["order_id"]
+        return order_id, self.settle(order_id)
+
+    def admit_order(self, amount, request_id="o1"):
+        order_id, view = self.submit_and_settle(amount, request_id)
+        self.assert_admitted(view)
+        return order_id, view
+
+
+class MemoryBoundary(MemoryFixture):
+    """内存**恰好够**：一根 40 B 的内存条。"""
+
+    #: 一根内存条 = 40 B，也就是 10 次配方执行。
+    order_policy = OrderPolicy(bytes_per_memory_slot=40)
+
+    def test_the_order_asks_for_exactly_forty_bytes(self):
+        """先钉住这张订单要多少：10 次 × 4 个铁锭 = 40 个物品 = 40 B。"""
+        _, view = self.admit_order(10)
+        self.assertEqual(self.service.memory.capacity, 40)
+        self.assertEqual(view["memory_bytes"], 40)
+
+    def test_exactly_enough_memory_passes(self):
+        """「**等于可用值通过**」——写成 `>` 会把恰好占满的计划无谓拒掉。"""
+        _, view = self.admit_order(10)
+        self.assertEqual(view["memory_bytes"], 40)
+        self.assertEqual(self.service.memory.used(), 40)
+        self.assertEqual(self.service.memory.available(), 0)
+
+    def test_a_second_order_cannot_oversell_the_same_bytes(self):
+        """验收原文：「两个订单并发提交、内存总量只够一个 → 另一个被拒」。
+
+        两单**各要 24 B**，而内存一共 40 B：单独看每张都装得下，一起就
+        装不下。第二张因此必须在准入时被拒，而不是「先收下、排队等内存」。
+
+        不靠先来后到的时序，靠 `_Ledger.claim` 的**全有全无**：要么拿到
+        全部 24 B，要么一个字节都不占。做成「能拿多少拿多少」的话，两张
+        订单各占 20 B 都会显示「已占内存」，而两张都跑不起来。
+        """
+        self.admit_order(6, request_id="a")
+        self.assertEqual(self.service.memory.used(), 24)
+        self.assertEqual(self.service.memory.available(), 16)
+        _, second = self.submit_and_settle(6, request_id="b")
+        self.assertIsNone(second, u"第二张该被拒，不该变成订单")
+        record = self.last_rejection()
+        self.assertIn(Reason.ORDER_NO_MEMORY, record.codes())
+        self.assertEqual(record.canonical, BLOCK.canonical())
+        # **一个字节都没多占**：被拒的请求不占内存（09-02 原文）。
+        self.assertEqual(self.service.memory.used(), 24)
+        self.assertEqual(self.service.orders.live_count(), 1)
+
+
+class MemoryOneByteShort(MemoryFixture):
+    """同一份计划、同样的网络，**内存条只给 39 B** → 拒绝下达。
+
+    单独一个类而不是在用例里改策略字段：容量是每帧从网络成员重算出来的
+    （`refresh_capacity`），改一个用例中途的字段会让「这条验的是 39 B」
+    取决于重算有没有发生。
+    """
+
+    order_policy = OrderPolicy(bytes_per_memory_slot=39)
+
+    def test_one_byte_short_is_refused_not_queued(self):
+        """39 B 可用、要 40 B → **拒绝**：订单不进订单表，另有一条拒绝记录。
+
+        验收原文只说「拒绝下达」，没说拒绝之后留下什么；拒绝记录的形状
+        沿用缺料那条既有路径（见 `_reject_request` 的注释与交付说明的
+        「未定案」一栏）。
+        """
+        self.assertEqual(self.service.memory.available(), 39)
+        _, view = self.submit_and_settle(10)
+        self.assertIsNone(view, u"内存不足的请求不该变成一张订单")
+        record = self.last_rejection()
+        self.assertIn(Reason.ORDER_NO_MEMORY, record.codes())
+        self.assertEqual(record.canonical, BLOCK.canonical())
+        # **一条执行资源都没占**（规则原文：「不占内存、并行槽或活跃订单名额」）。
+        self.assertEqual(self.service.memory.used(), 0)
+        self.assertEqual(self.service.slots.used(), 0)
+        self.assertEqual(self.service.orders.live_count(), 0)
 
 
 if __name__ == "__main__":

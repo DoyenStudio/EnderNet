@@ -283,8 +283,35 @@ class StepOutput(object):
         return "StepOutput(%s, %d/%d)" % (self.canonical, self.received, self.expected)
 
 
+#: 步骤状态的「相位」序：同一个步骤的多个执行实例处于不同相位时，
+#: `summary_status()` 取**最靠前**的那一个（界面上「这一步在干什么」的答案
+#: 应当是「最慢的那次执行正在干什么」）。它是词表的序，不是玩法数值，
+#: 因此不进 `OrderPolicy`。
+STEP_PHASE_ORDER = (
+    StepStatus.WAITING_INPUTS,
+    StepStatus.STAGING,
+    StepStatus.DISPATCHED,
+    StepStatus.WAITING_OUTPUTS,
+)
+
+
 class OrderStep(object):
-    """一个执行步骤的运行时状态。"""
+    """一个配方节点在订单里的**静态清单**（配方清单 + 依赖 + 派发计数）。
+
+    **它不再持有逐次账。** 账在 `ExecutionInstance` 上逐实例记：同一条配方
+    执行 10 次就有 10 份独立的 `staged` / `delivered` / `received`。把它们
+    聚合成一份账看着更省事，但那份账必须回答「谁换的批、谁的基线」——它现在
+    之所以能自洽，只是因为串行时同一时刻只有一个批次在写；并行之后没有答案。
+
+    留下的是三样**构建后终身不变**的东西，它们不是账：
+
+    - `keys`：`canonical -> 活的 ResourceKey`。**必须留着**：08 的计划里键已经
+      降成了名字，从名字反解会经过身份归一化，因此活的键只能从复核通过的
+      样板定义来（见 `executor._build_steps`）。
+    - `*_specs`：每批的量。构造实例账的唯一依据，用的是计划里的 **`per_batch`**
+      而不是 `total`——一次执行的账就是一批的量。
+    - `depends_on`：本步依赖的生产者步骤下标，由计划的产出声明推出。
+    """
 
     __slots__ = (
         "index",
@@ -298,15 +325,15 @@ class OrderStep(object):
         "digest",
         "mode",
         "batches",
-        "status",
-        "blocked_from",
-        "inputs",
-        "outputs",
-        "returns",
-        "execution_id",
-        "op_id",
-        "op_attempt",
-        "port_node_key",
+        "created",
+        "completed",
+        "cancelled",
+        "keys",
+        "input_specs",
+        "output_specs",
+        "return_specs",
+        "depends_on",
+        "executions",
         "blockers",
         "detail",
         "residue",
@@ -333,40 +360,333 @@ class OrderStep(object):
         self.slot = provider.get("slot")
         self.digest = provider.get("digest")
         self.mode = provider.get("mode")
+        #: 计划里的批次数 == **这条配方要执行几次** == 要开几个执行实例。
         self.batches = int(batches)
-        self.status = StepStatus.WAITING_INPUTS
-        #: 被挡住之前在哪。恢复时**回到这里继续**，不是从头再来一遍——
-        #: 从头再来就是「重发整批原料」，验收明令禁止。
-        self.blocked_from = None
-        self.inputs = []
-        self.outputs = []
-        self.returns = []
-        #: 任务 10 用来认这一步的身份。**派发确认之后**才登记，
-        #: 因此它在 WAITING_INPUTS 阶段是 None。
-        self.execution_id = None
-        #: 本步当前这一批备料的 `op_id`（可与 execution_id 不同：
-        #: 一个步骤可能分几次备料）。
-        self.op_id = None
-        #: 已经开过几批。**`op_id` 必须带上它**：批次之间要能分开，
-        #: 否则第二批会命中第一批的协调器账本，拿到**旧回执**，
-        #: 而 `state.batch` 已经被新批次覆盖——两个读数从此对不上，
-        #: 表现是 `delivered` 一帧涨一截而料根本没动。
-        self.op_attempt = 0
-        #: 备料落在哪台接口上。
-        self.port_node_key = None
+        #: 已经**开出去**的实例数（单调增，不因实例完成而回收）。它与
+        #: `completed` 一起给出「还欠几次」。**实例是惰性创建的**：一条
+        #: 10 万批的配方预建全部实例会把一次下单变成内存炸弹，而
+        #: `PlanPolicy.max_batches_per_step` 的安全阀正好是 1000000。
+        self.created = 0
+        #: 已完成的实例数。**这就是进度的分子**，重复回执不会让它加两次
+        #: （只有 `finish_execution` 会加，而一个实例只走一次）。
+        self.completed = 0
+        self.cancelled = False
+        #: `canonical -> 活的 ResourceKey`（全部输入/产物/返还物）。
+        self.keys = {}
+        #: `((canonical, per_batch), ...)`，按 `canonical` 排序保证确定性。
+        self.input_specs = ()
+        self.output_specs = ()
+        #: `((canonical, per_batch, counts_for_completion), ...)`。
+        #: 算不算完成条件在**构建时**按 `OrderPolicy.returns_block_completion`
+        #: 定一次，因此步骤视图在还没有任何实例时也答得出这个问题。
+        self.return_specs = ()
+        #: 本步依赖的生产者步骤下标。
+        self.depends_on = ()
+        #: **还没完成的**实例（含被挡住与已取消的）。完成的实例从这里移除、
+        #: 计数交给 `completed`——否则一条 10 万批的订单视图会先炸掉界面。
+        self.executions = []
         self.blockers = []
         self.detail = ""
         #: 取消或让位时**说不清归属**的原料。R05 未定，替身口径是
         #: 「留在原地不动、报出来」，绝不悄悄丢弃或复制。
         self.residue = []
 
-    def is_runnable(self):
+    # -- 实例的开与关：**只有这两个写点**，别处不许改 `created` / `completed` --
+
+    def open_execution(self, order_id):
+        # type: (str) -> object
+        """开一个执行实例。批次已经开完时返回 `None`。"""
+        if self.cancelled or self.created >= self.batches:
+            return None
+        instance = ExecutionInstance(order_id, self, self.created)
+        self.created += 1
+        self.executions.append(instance)
+        return instance
+
+    def finish_execution(self, instance):
+        # type: (object) -> None
+        """把一个实例挪出在途表并让进度加一。**幂等**：重复调用只算一次。"""
+        if instance in self.executions:
+            self.executions.remove(instance)
+            self.completed += 1
+
+    def abandon_execution(self, instance):
+        # type: (object) -> None
+        """**撤回一次刚开出来的实例**：领不到槽位时用它回滚。
+
+        它与 `finish_execution` 是两件事，因此**不共用**：那个让进度加一，
+        这个只是把「开出去过」这笔账抹掉。混用会让一次**从未真的开工**的
+        执行被计成完成——进度条上凭空多一格，而且只在这一步的批次多于
+        槽位时才发作。
+
+        只有 `created` 是刚刚由 `open_execution` 加上去的，因此只有它要退。
+        `completed` 一动不动：这个实例一秒活都没干过。
+        """
+        if instance in self.executions:
+            self.executions.remove(instance)
+            self.created = max(0, self.created - 1)
+
+    # -- 读法 ----------------------------------------------------------
+
+    def open_batches(self):
+        # type: () -> int
+        """还没开出去的批次数。**它欠的料还没被任何实例认领。**"""
+        return max(0, self.batches - self.created)
+
+    def blocker_view(self):
+        # type: () -> list
+        """逐实例的障碍**去重**后的汇总（给界面与诊断读）。
+
+        步骤自己那份 `blockers` 通常为空：并行之后写它的是**实例**
+        （同一个步骤的两个执行可以一个卡在端口、一个在等产物）。
+        汇总按 `(code, detail)` 去重，否则一条 10 批的配方在界面上会
+        把同一句话重复十遍。
+        """
+        out = []
+        seen = set()
+        for reason in list(self.blockers) + [
+            item for instance in self.executions for item in instance.blockers
+        ]:
+            mark = (reason.code, reason.detail)
+            if mark in seen:
+                continue
+            seen.add(mark)
+            out.append(reason)
+        return out
+
+    def detail_view(self):
+        # type: () -> str
+        """步骤这一层的说明。**自己没写就取第一个实例写的那句。**
+
+        实例是写 `detail` 的那一层（「已备 1/2」「这一批没投完」都发生在
+        某一次执行上）。不汇总的话，界面上一个正在投料的步骤会显示成
+        一句空话——而它明明有话说。
+        """
+        if self.detail:
+            return self.detail
+        for instance in self.executions:
+            if instance.detail:
+                return instance.detail
+        return ""
+
+    def is_fulfilled(self):
         # type: () -> bool
-        return self.status not in STEP_TERMINAL_STATUSES
+        """这一步的**全部执行**都完成了。
+
+        `batches == 0` 视作已完成：没有批次就没有欠账（防御性的——正常计划
+        不会产出这种步骤，但一个永远不会完成的步骤会让订单永久挂着，
+        症状比一条明确的拒绝难查得多）。
+        """
+        return self.completed >= self.batches
 
     def is_terminal_step(self):
         # type: () -> bool
+        return self.cancelled or self.is_fulfilled()
+
+    def is_runnable(self):
+        # type: () -> bool
+        return not self.is_terminal_step()
+
+    def summary_status(self):
+        # type: () -> str
+        """派生的步骤状态，**逐实例算出来、不存**。
+
+        存一份的话，实例之间谁改了状态都要记得同步它，而漏同步的症状是
+        进度条和实际对不上——而且只在并行时才发作。
+        """
+        if self.cancelled:
+            return StepStatus.CANCELLED
+        if self.is_fulfilled():
+            return StepStatus.COMPLETED
+        for instance in self.executions:
+            if instance.status == StepStatus.BLOCKED:
+                return StepStatus.BLOCKED
+        best = len(STEP_PHASE_ORDER)
+        name = StepStatus.WAITING_INPUTS
+        for instance in self.executions:
+            try:
+                position = STEP_PHASE_ORDER.index(instance.status)
+            except ValueError:
+                continue
+            if position < best:
+                best = position
+                name = instance.status
+        return name
+
+    def to_dict(self):
+        # type: () -> dict
+        return {
+            "index": self.index,
+            "rank": self.rank,
+            #: 与 08 的 `steps[]` 同形：`key` 是可读名、`canonical` 是身份文本。
+            "key": self.label,
+            "canonical": self.canonical,
+            "status": self.summary_status(),
+            "batches": self.batches,
+            "created": self.created,
+            "completed": self.completed,
+            "slot": self.slot,
+            "mode": self.mode,
+            "digest": self.digest,
+            "device_id": self.device_id,
+            "depends_on": list(self.depends_on),
+            #: **静态配方清单（每批的量）**，不是账。逐次账在 `executions` 里。
+            "spec": {
+                "inputs": [
+                    {"canonical": canonical, "per_batch": per_batch,
+                     "total": per_batch * self.batches}
+                    for canonical, per_batch in self.input_specs
+                ],
+                "outputs": [
+                    {"canonical": canonical, "per_batch": per_batch,
+                     "total": per_batch * self.batches}
+                    for canonical, per_batch in self.output_specs
+                ],
+                "returns": [
+                    {"canonical": canonical, "per_batch": per_batch,
+                     "total": per_batch * self.batches,
+                     "counts_for_completion": counts}
+                    for canonical, per_batch, counts in self.return_specs
+                ],
+            },
+            "executions": [instance.to_dict() for instance in self.executions],
+            #: 逐实例汇总（同 code+detail 只留一条），不是步骤自己那份——
+            #: 并行之后写 `blockers` 的是实例，见 `blocker_view()`。
+            "blockers": [reason.to_dict() for reason in self.blocker_view()],
+            "detail": self.detail_view(),
+            "residue": list(self.residue),
+        }
+
+    def __repr__(self):
+        return "OrderStep(#%d, %s, %d/%d)" % (
+            self.index,
+            self.canonical,
+            self.completed,
+            self.batches,
+        )
+
+
+class ExecutionInstance(object):
+    """**一次配方执行**——R04 的计费与跟踪单位。
+
+    同一条配方执行 10 次就有 10 个实例：各自领 1 个槽位、各自跟踪自己的
+    预期产出与回流、各自在完成时让进度加 1。内部允许把重复的节点压缩保存，
+    但这三件事必须保留逐次语义——把它们并回一份聚合账就是规则原文点名
+    禁止的「整批占 1 槽、整批计 1 个任务」。
+
+    ## ID 的形状
+
+        execution_id = "<订单ID>/<步骤下标>/<执行序号>"
+
+    `订单ID` 里带着主控实例（`order@<分量>/<主控实例>/<序号>`），因此
+    「这张订单属于哪台主控」在字符串上就看得出来。**在创建那一刻定下**，
+    不是等投料完——否则重试会换一个 ID，10 那边的等待索引就断了。
+    同一次执行重试沿用原 ID，变的是 `op_attempt` 与它带出来的 `op_id`。
+
+    ## 与 `OrderStep` 的属性面刻意同名
+
+    `executor` 里有一批只读的判据函数（`_owns_batch` / `_foreign_batch_for` /
+    `_sink_blocker` / `_ready_to_finish` …）只读 `op_id` / `inputs` / `outputs` /
+    `returns` / `status` / `port_node_key` / `blocked_from` / `blockers` /
+    `detail` / `execution_id`。把这些字段按同样的名字放在这里，那些谓词
+    一个都不用改，只是实参从步骤换成实例。
+    """
+
+    __slots__ = (
+        "execution_id",
+        "order_id",
+        "step",
+        "index",
+        "status",
+        "blocked_from",
+        "inputs",
+        "assembly",
+        "outputs",
+        "returns",
+        "op_id",
+        "op_attempt",
+        "port_node_key",
+        "blockers",
+        "detail",
+        "residue",
+        "tick",
+    )
+
+    def __init__(self, order_id, step, index):
+        # type: (str, object, int) -> None
+        self.execution_id = "%s/%d/%d" % (order_id, step.index, index)
+        self.order_id = order_id
+        #: 反向引用。**只用于取位置与清单，不进任何一份账、不进视图**：
+        #: 没有它，每一处 `_port_for(step)` 都要在 `order.steps` 里线性找一遍。
+        self.step = step
+        self.index = int(index)
+        self.status = StepStatus.WAITING_INPUTS
+        #: 被挡住之前在哪。恢复时**回到这里继续**，不是从头再来一遍——
+        #: 从头再来就是「重发整批原料」，验收明令禁止。
+        self.blocked_from = None
+        self.assembly = None
+        #: 逐次账，一批的量。
+        #:
+        #: `delivered_base`（换批时把旧批次的终值折进去）在这里**天然是 0**：
+        #: 一个实例的批次序列是它自己的，不存在「另一个实例的批次覆盖了我的
+        #: 基线」这种可能。那个字段仍然留着，因为同一个实例内部仍可能分几次
+        #: 投料（`PartialStaging`）。
+        self.inputs = [
+            StepInput(step.keys[canonical], canonical, per_batch)
+            for canonical, per_batch in step.input_specs
+        ]
+        self.outputs = [
+            StepOutput(step.keys[canonical], canonical, per_batch, True)
+            for canonical, per_batch in step.output_specs
+        ]
+        self.returns = [
+            StepOutput(step.keys[canonical], canonical, per_batch, counts)
+            for canonical, per_batch, counts in step.return_specs
+        ]
+        #: 本实例当前这一批备料的 `op_id`。**必须带上 `op_attempt`**：
+        #: 批次之间要能分开，否则第二批会命中第一批的协调器账本、拿到
+        #: **旧回执**，而 `state.batch` 已经被新批次覆盖——两个读数从此对不上，
+        #: 表现是 `delivered` 一帧涨一截而料根本没动。
+        self.op_id = None
+        #: 已经开过几批。
+        self.op_attempt = 0
+        #: 备料落在哪台接口上。
+        self.port_node_key = None
+        self.blockers = []
+        self.detail = ""
+        self.residue = []
+        #: 最近一次状态变化发生在哪一帧（诊断用，不参与任何判定）。
+        self.tick = 0
+
+    @property
+    def node_key(self):
+        # type: () -> object
+        """投料落点的提供者位置。**代理给所属步骤**（构建后终身不变）。
+
+        它在这里是为了让 `executor._node_key_of` / `_port_for` / `_step_ref`
+        那几条只读判据**步骤与实例都能吃**：R04 之后它们拿到的实参是实例，
+        而位置这件事仍然属于步骤。
+        """
+        return self.step.node_key
+
+    @property
+    def step_index(self):
+        # type: () -> int
+        """所属**步骤**的下标。与 `index`（执行序号）不是一回事。"""
+        return self.step.index
+
+    def is_terminal(self):
+        # type: () -> bool
         return self.status in STEP_TERMINAL_STATUSES
+
+    def is_running(self):
+        # type: () -> bool
+        """**正占着槽位**的相位。`WAITING_OUTPUTS` 也算（R04：占 1 槽至完成）。"""
+        return self.status in (
+            StepStatus.STAGING,
+            StepStatus.DISPATCHED,
+            StepStatus.WAITING_OUTPUTS,
+        )
 
     def all_inputs_delivered(self):
         # type: () -> bool
@@ -383,18 +703,14 @@ class OrderStep(object):
     def to_dict(self):
         # type: () -> dict
         return {
-            "index": self.index,
-            "rank": self.rank,
-            #: 与 08 的 `steps[]` 同形：`key` 是可读名、`canonical` 是身份文本。
-            "key": self.label,
-            "canonical": self.canonical,
-            "status": self.status,
-            "batches": self.batches,
-            "slot": self.slot,
-            "mode": self.mode,
-            "digest": self.digest,
             "execution_id": self.execution_id,
+            "assembly": self.assembly,
+            "index": self.index,
+            "status": self.status,
             "op_id": self.op_id,
+            "op_attempt": self.op_attempt,
+            "port_node_key": self.port_node_key,
+            "tick": self.tick,
             "inputs": [item.to_dict() for item in self.inputs],
             "outputs": [item.to_dict() for item in self.outputs],
             "returns": [item.to_dict() for item in self.returns],
@@ -404,7 +720,7 @@ class OrderStep(object):
         }
 
     def __repr__(self):
-        return "OrderStep(#%d, %s, %s)" % (self.index, self.canonical, self.status)
+        return "ExecutionInstance(%s, %s)" % (self.execution_id, self.status)
 
 
 # -- 等待台账（与任务 10 的接缝，见 technical_notes/order_returns_contract.md）--
@@ -640,8 +956,11 @@ class Order(object):
         "plan_job",
         "steps",
         "reservations",
-        "slot_lease",
         "memory_lease",
+        "memory_bytes",
+        "tasks_total",
+        "dispatch_cursor",
+        "inflight",
         "blockers",
         "paused",
         "created_tick",
@@ -683,8 +1002,25 @@ class Order(object):
         #: `claimed` 是计划声明的量，`reserved` 是**现在真的锁着**的量
         #: （备料时会部分释放），两者分开才能在诊断里看出差异。
         self.reservations = {}
-        self.slot_lease = None
+        #: **没有「订单级槽位租约」这种东西。** 槽位按一次配方执行计，租约的
+        #: 拥有者是执行实例 ID（见 `capacity.SlotLedger.claim_slot`）。字段
+        #: 已经删掉：留着一个永远是 None 的 `slot_lease` 会让「这单占着几个
+        #: 槽位」看起来是一个可以在这里读到的数，而那个数只存在于台账里。
         self.memory_lease = None
+        #: **准入时定下的内存字节数**（R04）。此后不随进度、暂停、阻塞或
+        #: 活跃配方数重算，直到完成或玩家手动中止。
+        self.memory_bytes = 0
+        #: 配方任务总数（各步骤 `batches` 之和）。进度用它当分母。
+        self.tasks_total = 0
+        #: 订单内部的**派发轮转位置**，跨 tick 保留。总让
+        #: `execution_order()` 里靠前的那一步先拿槽，会让多步订单永远按
+        #: 同一个顺序开工。外层 `FactoryService.cursor` 轮的是订单，
+        #: 这一层轮的是同一张订单内部的步骤。
+        self.dispatch_cursor = 0
+        #: `execution_id -> ExecutionInstance`，当前在途的那几个。
+        #: **它就是「谁正占着槽位」的名单**：每个在途实例握着一个槽位，
+        #: 因此它的大小天然被槽位数封顶，可以放心逐帧遍历。
+        self.inflight = {}
         self.blockers = []
         #: 显式暂停（与「被挡住的阻塞」分开，见 `Reason.ORDER_PAUSED`）。
         self.paused = False
@@ -706,9 +1042,9 @@ class Order(object):
         }
         #: 说不清归属的原料（取消时留在中转位/机器里的）。
         self.residue = []
-        #: 计划是否已经**真正落地**（复核通过、步骤建好、材料锁住、租约到手）。
-        #: 它与「有没有计划」是两件事：计划先落地一半就撞上容量不足的订单，
-        #: 会停在 `BLOCKED` 上等槽位空出来，**那时它还没有租约、也没有步骤**。
+        #: 计划是否已经**真正落地**（复核通过、步骤建好、材料锁住、内存租约到手）。
+        #: 它与「有没有计划」是两件事：`_reserve` 撞上「材料被别的订单锁着」
+        #: 的订单会停在 `BLOCKED` 上等，**那时它还没有内存租约、也没有步骤**。
         #: 少了这个标志，「阻塞解除 → 排队 → 按已落地往前推」会让一个
         #: 从未落地的订单去 `revalidate` 一份还没挂上的计划。
         self.adopted = False
@@ -754,7 +1090,12 @@ class Order(object):
 
     def outstanding_step(self):
         # type: () -> object
-        """第一个还没完成的步骤（`steps` 已按执行顺序排好）。"""
+        """第一个还没完成的步骤（`steps` 已按执行顺序排好）。
+
+        **它现在只是「最靠前的那个未终态步骤」**，不再是派发的单位——
+        R04 之后派发的单位是执行实例，而且同一张订单可以同时推进多个
+        依赖已满足的步骤（见 `executor._dispatch_round`）。
+        """
         for step in self.steps:
             if not step.is_terminal_step():
                 return step
@@ -763,6 +1104,34 @@ class Order(object):
     def active_steps(self):
         # type: () -> list
         return [step for step in self.steps if step.is_runnable()]
+
+    def key_of(self, canonical):
+        # type: (str) -> object
+        """规范文本 -> 活的 `ResourceKey`。
+
+        **只查订单自己建步骤时存下的那份**（`OrderStep.keys`）。从
+        `ResourceKey` 反解 canonical 是允许的，反过来不行：那会经过身份
+        归一化，而计划里的键已经被降成名字了。查不到就退到订单的目标键
+        ——它至少是一个活的键，而不是 None。
+        """
+        for step in self.steps:
+            key = step.keys.get(canonical)
+            if key is not None:
+                return key
+        return self.target
+
+    def executions(self):
+        # type: () -> list
+        """全部**还没完成**的执行实例（含被挡住与已取消的）。"""
+        out = []
+        for step in self.steps:
+            out.extend(step.executions)
+        return out
+
+    def inflight_executions(self):
+        # type: () -> list
+        """按 `execution_id` 排序的在途实例。**顺序固定**，便于逐帧确定性。"""
+        return [self.inflight[key] for key in sorted(self.inflight)]
 
     def reservations_of(self, canonical):
         # type: (str) -> dict
@@ -776,47 +1145,69 @@ class Order(object):
         # type: () -> dict
         """订单进度：**已完成的配方数 / 计划里配方树的总配方数**。
 
-        `total` 是计划展开出来的步骤数（一棵配方树展平之后的节点数），
-        `done` 是其中 `COMPLETED` 的个数。**这一步不需要额外记账**——
-        步骤的状态就是进度的唯一依据，再维护一个计数器只会多一个会走偏的数。
+        **分母是配方任务总数**（各步骤 `batches` 之和，含同一条配方的重复
+        执行），**不是步骤数**（R04 已定案）。规则原文：「同配方执行 10 次计
+        10 个任务，每次占 1 槽、完成一次进度加 1……不得因内部批次合并变成
+        整批占 1 槽、整批计 1 个任务」。因此一条跑 3 次的 10 批订单显示的
+        是 3/10；拿 `len(steps)` 当分母会让它在第 1 批完成时就显示 100%。
 
         几个刻意的口径：
 
-        - `ratio` **只在 `total > 0` 时是除法**；零步骤的 `HOLD` 计划
+        - `ratio` **只在分母大于 0 时是除法**；零任务的 `HOLD` 计划
           （「库里已经够了」）没有分母，直接按订单是不是已完成给 0.0 / 1.0。
           返回 `0/0` 或者 `1` 这种「看起来像百分比」的假值都会让界面
           显示出一个不存在的进度条。
-        - `cancelled` / `blocked` 单独计数，**不从 `done` 里扣**：取消的步骤
-          没有完成，而「8/10 完成、1 个被取消」与「7/10 完成」在界面上
-          是两件不同的事。
+        - `tasks_cancelled` / `tasks_blocked` 单独计数，**不从 `tasks_completed`
+          里扣**：取消的执行没有完成，而「8/10 完成、1 个被取消」与
+          「7/10 完成」在界面上是两件不同的事。
         - `ratio` 是给界面用的**瞬时**读数，不参与任何判定——订单结单看的是
-          「每一步都 `COMPLETED`」，不是这个比例。
+          「每一步的每一次执行都完成」，不是这个比例。
+        - **`steps_*` 仍然给，但它答的是另一个问题**（这张订单分几种配方）。
+          它不参与 `ratio`：网络级与界面级同时提供两个分母，必然有一处被
+          读错，因此 `FactoryService.progress()` 只汇总 `tasks_*`。
         """
-        total = len(self.steps)
-        done = 0
-        blocked = 0
-        cancelled = 0
+        tasks_total = 0
+        tasks_completed = 0
+        tasks_blocked = 0
+        tasks_cancelled = 0
+        tasks_in_flight = 0
         by_status = {}
+        steps_by_status = {}
         for step in self.steps:
-            by_status[step.status] = by_status.get(step.status, 0) + 1
-            if step.status == StepStatus.COMPLETED:
-                done += 1
-            elif step.status == StepStatus.BLOCKED:
-                blocked += 1
-            elif step.status == StepStatus.CANCELLED:
-                cancelled += 1
-        if total <= 0:
+            tasks_total += step.batches
+            tasks_completed += step.completed
+            steps_by_status[step.summary_status()] = (
+                steps_by_status.get(step.summary_status(), 0) + 1
+            )
+            for instance in step.executions:
+                by_status[instance.status] = by_status.get(instance.status, 0) + 1
+                if instance.status == StepStatus.BLOCKED:
+                    tasks_blocked += 1
+                elif instance.status == StepStatus.CANCELLED:
+                    tasks_cancelled += 1
+                elif instance.is_running():
+                    tasks_in_flight += 1
+        # 完成的实例已经从 `step.executions` 里移走了，因此它们不在 `by_status`
+        # 里——补回去，否则「10 个任务完成 3 个」在状态分布上只看得到 7 个。
+        by_status[StepStatus.COMPLETED] = (
+            by_status.get(StepStatus.COMPLETED, 0) + tasks_completed
+        )
+        if tasks_total <= 0:
             ratio = 1.0 if self.status == OrderStatus.COMPLETED else 0.0
         else:
-            ratio = float(done) / total
+            ratio = float(tasks_completed) / tasks_total
         outstanding = self.outstanding_step()
         return {
-            "steps_total": total,
-            "steps_completed": done,
-            "steps_blocked": blocked,
-            "steps_cancelled": cancelled,
+            "tasks_total": tasks_total,
+            "tasks_completed": tasks_completed,
+            "tasks_in_flight": tasks_in_flight,
+            "tasks_blocked": tasks_blocked,
+            "tasks_cancelled": tasks_cancelled,
+            "steps_total": len(self.steps),
+            "steps_completed": sum(1 for step in self.steps if step.is_fulfilled()),
             "outstanding_step": outstanding.index if outstanding is not None else None,
             "by_status": by_status,
+            "steps_by_status": steps_by_status,
             "ratio": ratio,
         }
 
@@ -853,10 +1244,17 @@ class Order(object):
                 }
                 for canonical in sorted(self.reservations)
             ],
-            "slot_lease": self.slot_lease.to_dict() if self.slot_lease else None,
+            # **没有 `slot_lease` 了**：槽位租约按执行实例记，逐个在
+            # `steps[].executions[]` 里，或者从 `capacity.SlotLedger.describe()`
+            # 的 `leases[].owner_id`（就是 `execution_id`）上读。
             "memory_lease": (
                 self.memory_lease.to_dict() if self.memory_lease else None
             ),
+            #: 准入时定下的字节数（R04）。**它此后不变**，与 `memory_lease`
+            #: 并存是为了让「占了多少」与「哪条租约」能分开读。
+            "memory_bytes": self.memory_bytes,
+            "tasks_total": self.tasks_total,
+            "tasks_completed": sum(step.completed for step in self.steps),
             "blockers": [reason.to_dict() for reason in self.blockers],
             #: 进度跟着订单一起给，**不另开一个查询入口**：界面（11）与
             #: 只读诊断读的是同一份数，两处各算一次迟早会不一样。

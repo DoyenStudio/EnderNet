@@ -1802,17 +1802,26 @@ def _stone_dict(count):
 
 
 class TestTemplatePortThroughTheMaster(BootstrapFixture):
-    def test_stage_then_feed_a_batch(self):
-        """06-07：成批备料 -> 投给外部机器 -> 本地缓冲回执。"""
-        runtime = self.build_network(port_device=TEMPLATE_DEVICE)
+    def prepare_template_port(self, seed=12, port_device=TEMPLATE_DEVICE):
+        """一台通电、已配置、料也备齐的样板口。返回 `(runtime, ref)`。"""
+        runtime = self.build_network(port_device=port_device)
         self.mount_a_disk()
         self.assertEqual(runtime.state(), "runnable")
         ref = self.ref_at(key(3))
         self.submit("c1", ref, "port_configure",
                     config={"enabled": True, "filter": [STONE.to_dict()]})
         self.accrue_quota()
-        self.submit("seed", ref, "insert", key=STONE.to_dict(), count=12,
+        self.submit("seed", ref, "insert", key=STONE.to_dict(), count=seed,
                     op_id="seed-1")
+        return runtime, ref
+
+    def provider_port(self):
+        """那台样板口的**能力对象**——07 的契约入口就在这里。"""
+        return self.server.patterns.get(key(3)).provider_port
+
+    def test_stage_then_feed_a_batch(self):
+        """06-07：成批备料 -> 投给外部机器 -> 本地缓冲回执。"""
+        runtime, ref = self.prepare_template_port()
         staged = self.submit("s1", ref, "port_stage", key=STONE.to_dict(), count=10,
                              op_id="batch-1")
         self.assertEqual(staged.status, STATUS_OK)
@@ -1821,6 +1830,137 @@ class TestTemplatePortThroughTheMaster(BootstrapFixture):
         self.assertEqual(fed.status, STATUS_OK)
         self.assertEqual(fed.payload["batch"]["delivered"], 10)
         self.assertEqual(self.driver_box.count_of(STONE), 10)
+
+    # -- 07-05 的契约入口：push_inputs（D-01）----------------------------
+
+    def test_push_inputs_stages_through_the_master(self):
+        """**D-01 的验收点。** `capabilities.PatternProvider.push_inputs`
+        对**非订单**调用方现在真的能用了，而且走的是那条唯一的路：
+        `port_stage` 命令 → 主控准入 → 存储服务。
+
+        判据落在那台口的中转位上：料真的进了缓冲，批次记录也认这笔账。
+        """
+        self.prepare_template_port(seed=12)
+        port = self.server.ports.get(key(3))
+        port_state = self.server.patterns.get(key(3))
+        receipt = port_state.provider_port.push_inputs("exec-1", [(STONE, 10)])
+        self.assertEqual(receipt.reason, "")
+        self.assertEqual(receipt.moved, 10)
+        self.assertTrue(receipt.is_applied())
+        # 料真的在中转位里，批次也记着是这一批。
+        self.assertEqual(port.buffer.total_of(STONE), 10)
+        self.assertEqual(port.batch.op_id, "push/exec-1/%s#10" % (STONE.canonical(),))
+        self.assertEqual(port.batch.staged, 10)
+
+    def test_push_inputs_is_idempotent_for_the_same_execution(self):
+        """**同一个执行、同样的量 → 一个字节都不再动。**
+
+        这不是「顺手优化」：`op_id` 是确定性的，而主控账本有保留期
+        （`LedgerPolicy.retention_ticks`）。只靠账本重放挡的话，保留期一过
+        同一个请求就会**真的再备一遍**——中转位翻倍，而两侧账本各自都正常。
+        """
+        self.prepare_template_port(seed=12)
+        port = self.server.ports.get(key(3))
+        provider = self.server.patterns.get(key(3)).provider_port
+        first = provider.push_inputs("exec-1", [(STONE, 4)])
+        self.assertEqual(first.moved, 4)
+        second = provider.push_inputs("exec-1", [(STONE, 4)])
+        self.assertEqual(second.moved, 4)
+        self.assertTrue(second.is_applied())
+        # **中转位没有翻倍。**
+        self.assertEqual(port.buffer.total_of(STONE), 4)
+
+    def factory_service(self):
+        """那台网络上的 `ServiceId.FACTORY`。"""
+        from endernet.server.network.services import ServiceId
+
+        runtime = self.server.runtimes.runtimes()[0]
+        return runtime.services.get(ServiceId.FACTORY)
+
+    def test_stage_inputs_does_not_restage_without_the_ledger(self):
+        """**账本之外的那一次。** 这里直接调服务门面，因此主控的去重账本
+        完全不参与——正是保留期过了之后的样子（`LedgerPolicy.retention_ticks`
+        到期就不再重放，而 `op_id` 是确定性的）。
+
+        没有这一层保护，同一个请求会**真的再备一遍**：中转位翻倍，
+        而两侧账本各自都显示正常。
+        """
+        self.prepare_template_port(seed=12)
+        port = self.server.ports.get(key(3))
+        factory = self.factory_service()
+        op_id = "op-no-ledger"
+        first = factory.stage_inputs(key(3), STONE, 5, op_id)
+        self.assertEqual(first.payload["batch"]["staged"], 5)
+        second = factory.stage_inputs(key(3), STONE, 5, op_id)
+        # 第二次拿到的是**现成的批次读数**，没有第二条命令。
+        self.assertEqual(second.payload["batch"]["staged"], 5)
+        self.assertNotIn("receipt", second.payload)
+        self.assertEqual(port.buffer.total_of(STONE), 5)
+
+    def test_an_empty_batch_of_our_own_does_not_poison_the_slot(self):
+        """**空批次的解药。** `stage_batch` 是**先**把批次写进状态槽、
+        **再**判中转位，因此一次没备到料的推送会留下一个 `staged == 0`
+        的自家批次。没有「自家空批次放行重发」这一支，那台口会被它
+        永久占住：同一个 `op_id` 一直被当成「已经备过了」。
+        """
+        self.prepare_template_port(seed=0)
+        port = self.server.ports.get(key(3))
+        factory = self.factory_service()
+        op_id = "op-empty"
+        first = factory.stage_inputs(key(3), STONE, 5, op_id)
+        self.assertEqual(first.payload["batch"]["staged"], 0)
+        self.assertEqual(port.batch.op_id, op_id)
+        # 料来了，同一个 `op_id` 再来一次必须**真的重发**，而不是回放那个空批次。
+        self.submit("seed2", self.ref_at(key(3)), "insert",
+                    key=STONE.to_dict(), count=5, op_id="seed-2")
+        again = factory.stage_inputs(key(3), STONE, 5, op_id)
+        self.assertEqual(again.payload["batch"]["staged"], 5)
+        self.assertEqual(port.buffer.total_of(STONE), 5)
+
+    def test_push_inputs_yields_to_a_batch_that_is_still_alive(self):
+        """批次槽只有一格。**别人的活批次占着时让位**，不冲掉它的投料记录。
+
+        判据用的是 09 的 `_foreign_batch`（订单侧同一条），因此两边的
+        让位规则不会分叉——分叉的症状是订单与契约入口互相冲掉对方的批次，
+        而两边都以为自己才是正主。
+        """
+        self.prepare_template_port(seed=12)
+        port = self.server.ports.get(key(3))
+        provider = self.server.patterns.get(key(3)).provider_port
+        # 要 30 个但只有 12 个 → 批次**未完成**，槽被占住了。
+        first = provider.push_inputs("exec-a", [(STONE, 30)])
+        self.assertEqual(first.moved, 12)
+        self.assertEqual(first.status, TransferStatus.PARTIAL)
+        self.assertFalse(port.batch.is_complete())
+        other = provider.push_inputs("exec-b", [(STONE, 1)])
+        self.assertEqual(other.reason, Reason.ORDER_PORT_BUSY)
+        self.assertEqual(other.moved, 0)
+        self.assertFalse(other.is_applied())
+        # 原来那一批**原样还在**，没有被后来的请求冲掉。
+        self.assertEqual(port.batch.op_id, "push/exec-a/%s#30" % (STONE.canonical(),))
+
+    def test_push_inputs_refuses_two_resources_in_one_call(self):
+        """批次槽一格放不下两种资源。第二种既不在批次记录里、也永远不会
+        被投出去——**账外资产**。宁可整批拒绝。"""
+        self.prepare_template_port(seed=4)
+        port = self.server.ports.get(key(3))
+        provider = self.server.patterns.get(key(3)).provider_port
+        receipt = provider.push_inputs("exec-1", [(STONE, 2), (DIRT, 2)])
+        self.assertEqual(receipt.reason, Reason.UNSUPPORTED)
+        self.assertEqual(receipt.requested, 4)
+        self.assertEqual(port.buffer.total_of(STONE), 0)
+        self.assertIsNone(port.batch)
+
+    def test_push_inputs_to_assembly_requires_order_path(self):
+        """装配仓必须由带租约的订单推进，裸投料不能绕过租约。"""
+        self.build_network(port_device="endernet:assemble_chamber")
+        state = self.server.patterns.get(key(3))
+        self.assertIsNotNone(state, "装配仓也是样板提供者")
+        receipt = state.provider_port.push_inputs("exec-1", [(STONE, 1)])
+        self.assertFalse(receipt.is_applied())
+        self.assertEqual(receipt.reason, Reason.UNSUPPORTED)
+        # **不是 `no_adapter`**：那会把人引去查「为什么没有接口状态」。
+        self.assertNotIn(Reason.NO_ADAPTER, (receipt.reason,))
 
 
 class TestInventoryCommands(BootstrapFixture):

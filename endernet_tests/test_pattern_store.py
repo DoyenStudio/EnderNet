@@ -24,7 +24,14 @@ import testsupport  # noqa: F401  设置 sys.path
 from endernet.common.definitions import DefinitionSet
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.item_codec import item_dict_from_key
-from endernet.common.protocol import Reason
+from endernet.common.protocol import (
+    STATUS_BLOCKED,
+    STATUS_OK,
+    BlockReason,
+    CommandResult,
+    Reason,
+    TransferStatus,
+)
 from endernet.common.resource_key import ResourceKey
 from endernet.server.adapters.containers import FakeContainer
 from endernet.server.crafting import patterns
@@ -974,28 +981,267 @@ class TestProviderPort(StoreCase):
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0], simple_pattern())
 
-    def test_push_inputs_refuses_loudly(self):
-        """07-05 未实现。**不能假成功**：`moved=0` 因此 `is_applied()` 为假，
-        去重账本不会把它记成「已完成」而挡掉真正的重试。"""
+    def test_push_inputs_without_wiring_refuses_loudly(self):
+        """07-05 已落地，但**没接线时照样拒绝，且不能假成功**：`moved=0`
+        因此 `is_applied()` 为假，去重账本不会把它记成「已完成」而挡掉
+        真正的重试。
+
+        这里的 `service_not_ready` 与「这个功能没做」是两回事：入口在，
+        只是这一份夹具没给它工厂服务。所以文案与诊断必须能分辨。
+        """
         receipt = self.state.provider_port.push_inputs(
             "op-1", [patterns.PatternStack(IRON, 3)]
         )
         self.assertEqual(receipt.moved, 0)
         self.assertEqual(receipt.requested, 3)
-        self.assertEqual(receipt.reason, Reason.SERVICE_ABSENT)
+        self.assertEqual(receipt.reason, Reason.SERVICE_NOT_READY)
         self.assertFalse(receipt.is_applied())
 
     def test_accept_returns_refuses_loudly(self):
         receipt = self.state.provider_port.accept_returns("op-1", [])
         self.assertFalse(receipt.is_applied())
-        self.assertEqual(receipt.reason, Reason.SERVICE_ABSENT)
+        self.assertEqual(receipt.reason, Reason.BAD_PARAMETER)
 
     def test_push_inputs_survives_entries_it_cannot_read(self):
         """回执里的 `requested` 只是个对照读数，一条读不懂的条目不该让
-        「拒绝」这件事本身失败。"""
+        「拒绝」这件事本身**抛异常**。
+
+        但「不抛」不等于「放过」：读不懂就是投不了，理由如实报
+        `bad_parameter`，`moved` 仍是 0。**不做成假成功**——把读不懂的
+        条目当成 0 件然后报成功，会让调用方以为料已经备好了。
+        """
         receipt = self.state.provider_port.push_inputs("op-1", ["junk", None])
         self.assertEqual(receipt.requested, 0)
+        self.assertEqual(receipt.moved, 0)
+        self.assertEqual(receipt.reason, Reason.BAD_PARAMETER)
         self.assertFalse(receipt.is_applied())
+
+
+class _FakeFactory(object):
+    """只记账、不干活的工厂服务门面（`FactoryService.stage_inputs` 的替身）。"""
+
+    def __init__(self, result=None):
+        self.calls = []
+        self.result = result
+
+    def stage_inputs(self, node_key, key, count, op_id):
+        self.calls.append((node_key, key, count, op_id))
+        return self.result
+
+
+def receipt_dict(status, moved, requested, reason="", holder="p"):
+    """`TransferReceipt.to_dict()` 的形状。"""
+    return {
+        "op_id": "x",
+        "requested": requested,
+        "moved": moved,
+        "status": status,
+        "reason": reason,
+        "holder": holder,
+        "resource_key": None,
+    }
+
+
+def result(status, payload=None, reasons=()):
+    """造一个 `CommandResult`。
+
+    **用原始构造器而不是 `CommandResult.blocked`**：那几个快捷方式把
+    `payload` 写死成 `None`（`ok`/`partial` 才有），因此造不出
+    「blocked **且带着回执**」那一种——而 `uncertain` 恰恰就是那一种。
+    """
+    return CommandResult("r", status, dict(payload or {}), tuple(reasons))
+
+
+class TestProviderPortPushInputs(StoreCase):
+    """07-05 的执行半边。**全部离线**：假工厂喂造好的 `CommandResult`。
+
+    这一套守的是「薄封装」这四个字：本对象**一个判断都不该自己下**，
+    只把活交给 09 的门面，再把回来的结果如实翻译成回执。
+    """
+
+    def setUp(self):
+        StoreCase.setUp(self)
+        self.factory = _FakeFactory()
+        self.state.provider_port.factory_of = lambda node_key: self.factory
+
+    def push(self, entries, execution_id="exec-1"):
+        return self.state.provider_port.push_inputs(execution_id, entries)
+
+    def one_call(self):
+        self.assertEqual(len(self.factory.calls), 1)
+        return self.factory.calls[0]
+
+    def test_a_complete_result_becomes_an_applied_receipt(self):
+        self.factory.result = result(
+            STATUS_OK, {"receipt": receipt_dict("complete", 3, 3)}
+        )
+        receipt = self.push([patterns.PatternStack(IRON, 3)])
+        self.assertEqual(receipt.status, TransferStatus.COMPLETE)
+        self.assertEqual(receipt.moved, 3)
+        self.assertEqual(receipt.requested, 3)
+        self.assertTrue(receipt.is_applied())
+        self.assertEqual(receipt.resource_key, IRON)
+
+    def test_the_command_goes_out_through_the_factory_facade(self):
+        """**一个判断都不自己下**：位置、资源、数量、`op_id` 原样交出去，
+        由 09 的门面判定与发命令。"""
+        self.factory.result = result(
+            STATUS_OK, {"receipt": receipt_dict("complete", 2, 2)}
+        )
+        self.push([(IRON, 2)])
+        node_key, key, count, op_id = self.one_call()
+        self.assertEqual(node_key, self.state.node_key)
+        self.assertEqual(key, IRON)
+        self.assertEqual(count, 2)
+        self.assertIn(IRON.canonical(), op_id)
+
+    def test_the_holder_is_a_string_not_a_tuple(self):
+        """`holder` 的契约是 `str`（空串意为「说不清」）。元组不报错，
+        只会一路躺进诊断里，而按字符串读它的地方看到的是一串 repr。"""
+        self.factory.result = result(
+            STATUS_BLOCKED, reasons=[BlockReason(Reason.ORDER_PORT_BUSY, u"占着")]
+        )
+        receipt = self.push([(IRON, 1)])
+        self.assertIsInstance(receipt.holder, str)
+
+    def test_the_op_id_is_stable_for_the_same_request(self):
+        """同一次执行、同样的量与资源 → 同一个 `op_id`。去重账本按它记账，
+        这是「同一次备料不备第二遍」的全部依据。"""
+        self.factory.result = result(
+            STATUS_OK, {"receipt": receipt_dict("complete", 1, 1)}
+        )
+        self.push([(IRON, 1)])
+        self.push([(IRON, 1)])
+        self.assertEqual(self.factory.calls[0][3], self.factory.calls[1][3])
+
+    def test_the_op_id_changes_when_the_amount_changes(self):
+        """**改了量就是另一次备料。** 若 `op_id` 只按 `(执行, 资源)` 派生，
+        改量重投会命中去重账本的重放、拿回上一次那份回执：数字对不上，
+        而两边都不觉得自己错。"""
+        self.factory.result = result(
+            STATUS_OK, {"receipt": receipt_dict("complete", 1, 1)}
+        )
+        self.push([(IRON, 1)])
+        self.push([(IRON, 5)])
+        self.assertNotEqual(self.factory.calls[0][3], self.factory.calls[1][3])
+
+    def test_two_resources_are_refused_before_anything_is_sent(self):
+        """样板口的批次槽只有一格。投两种资源会有一种既不在批次记录里、
+        也永远不会被投出去——**账外资产**。宁可拒绝。
+
+        `requested` 报的是**整批**的件数（本来想投多少），不是被采纳的那
+        一部分：报小了会让调用方以为少投的那部分是别的原因。
+        """
+        receipt = self.push([(IRON, 3), (STONE, 4)])
+        self.assertEqual(receipt.reason, Reason.UNSUPPORTED)
+        self.assertEqual(receipt.requested, 7)
+        self.assertEqual(receipt.moved, 0)
+        self.assertFalse(receipt.is_applied())
+        self.assertEqual(self.factory.calls, [])
+
+    def test_an_entry_without_a_readable_key_is_not_silently_dropped(self):
+        """数得出件数、却读不出资源键的条目**必须报错**。当成没看见的话，
+        那几件原料既进不了批次记录也永远不会被投出去。"""
+        receipt = self.push([(IRON, 3), ("junk", 2)])
+        self.assertEqual(receipt.requested, 5)
+        self.assertEqual(receipt.reason, Reason.BAD_PARAMETER)
+        self.assertFalse(receipt.is_applied())
+        self.assertEqual(self.factory.calls, [])
+
+    def test_an_uncertain_receipt_is_never_reported_as_partial(self):
+        """**假成功的最短路径。** `uncertain` 的回执里 `moved` 可能大于 0
+        （动作发出去了、只是没得到确认）。按「搬动了多少」推断就会在
+        **不确定**上报成功，而 `uncertain` 的整条纪律是「不得据此重发整批」。
+
+        注意它是 `blocked` **且带着回执**——`CommandResult.blocked()`
+        那个快捷方式丢 payload，所以这一种只能由 06 的 `receipt_result`
+        用原始构造器造出来，本用例照那个形状还原。
+        """
+        self.factory.result = result(
+            STATUS_BLOCKED,
+            {"receipt": receipt_dict("uncertain", 3, 3)},
+            [BlockReason(Reason.CONTAINER_UNCERTAIN, u"不确定")],
+        )
+        receipt = self.push([(IRON, 3)])
+        self.assertEqual(receipt.status, TransferStatus.UNCERTAIN)
+        self.assertFalse(receipt.is_applied())
+
+    def test_a_result_without_a_receipt_carries_its_reason(self):
+        self.factory.result = result(
+            STATUS_BLOCKED, reasons=[BlockReason(Reason.ORDER_PORT_BUSY, u"占着")]
+        )
+        receipt = self.push([(IRON, 3)])
+        self.assertEqual(receipt.reason, Reason.ORDER_PORT_BUSY)
+        self.assertEqual(receipt.moved, 0)
+        self.assertFalse(receipt.is_applied())
+
+    def test_a_replayed_result_is_marked_as_such(self):
+        """重放的回执里 `moved` 是**那一次**搬的量，本次一件都没动。
+        不标出来的话，按 `moved` 累加的调用方会重复计数。"""
+        self.factory.result = result(
+            STATUS_OK,
+            {"receipt": receipt_dict("complete", 3, 3)},
+            [BlockReason(Reason.DUPLICATE_REQUEST, u"同一条请求已处理过")],
+        )
+        receipt = self.push([(IRON, 3)])
+        self.assertEqual(receipt.reason, Reason.DUPLICATE_REQUEST)
+        self.assertTrue(receipt.is_applied())
+
+    def test_an_existing_batch_is_read_back_without_sending_again(self):
+        """自家那一批已经备进去过了 → 门面只把批次读数报回来（没发命令）。
+        此时回执按**批次**推状态：备了一半就是 `partial`。"""
+        self.factory.result = result(
+            STATUS_OK, {"batch": {"staged": 2, "requested": 5, "op_id": "x"}}
+        )
+        receipt = self.push([(IRON, 5)])
+        self.assertEqual(receipt.moved, 2)
+        self.assertEqual(receipt.status, TransferStatus.PARTIAL)
+        self.assertTrue(receipt.is_applied())
+
+    def test_a_returned_batch_reads_back_as_complete_only_when_it_is(self):
+        self.factory.result = result(
+            STATUS_OK, {"batch": {"staged": 5, "requested": 5, "op_id": "x"}}
+        )
+        receipt = self.push([(IRON, 5)])
+        self.assertEqual(receipt.status, TransferStatus.COMPLETE)
+        self.assertEqual(receipt.moved, 5)
+
+    def test_a_missing_gateway_is_reported_not_swallowed(self):
+        """门面返回 `None`＝命令网关不可用（没有主控 / 网络没开放）。
+        与 `_port_stage` 的约定一致，这里也必须如实报出来。"""
+        self.factory.result = None
+        receipt = self.push([(IRON, 3)])
+        self.assertEqual(receipt.reason, Reason.MASTER_ABSENT)
+        self.assertFalse(receipt.is_applied())
+
+    def test_a_device_on_no_network_is_refused(self):
+        self.state.provider_port.factory_of = lambda node_key: None
+        receipt = self.push([(IRON, 3)])
+        self.assertEqual(receipt.reason, Reason.MASTER_ABSENT)
+        self.assertEqual(receipt.requested, 3)
+        self.assertFalse(receipt.is_applied())
+
+    def test_the_store_hands_the_factory_lookup_to_the_port(self):
+        """装配层的注入落在能力对象上——**不是只落在 store 上**。
+        两处分开存的话，诊断里写着「已接线」而 `push_inputs` 仍报
+        `service_not_ready`。"""
+        def lookup(node_key):
+            return None
+
+        store = PatternStore(
+            self.definitions,
+            self.registry,
+            containers=self.containers,
+            factory_of=lookup,
+        )
+        state = store.ensure(self.ref, TEMPLATE_DEVICE)
+        self.assertIs(state.provider_port.factory_of, lookup)
+
+    def test_describe_admits_the_push_half_is_available(self):
+        described = self.state.provider_port.describe()
+        self.assertTrue(described["push_inputs"])
+        self.assertFalse(described["accept_returns"])
+        self.assertEqual(described["pending_task"], "")
 
     def test_populated_capability_list_is_exposed(self):
         self.assertIn("pattern_provider", self.state.to_dict()["capabilities"])
@@ -1045,7 +1291,7 @@ class TestWriteVerification(StoreCase):
         """执行器所有权属 09：装配仓不独立领取或释放同一槽位。"""
         chamber = AssemblyChamberExecution()
         self.assertFalse(chamber.accepts_lease(object()))
-        self.assertFalse(chamber.describe()["available"])
+        self.assertTrue(chamber.describe()["available"])
         self.assertFalse(hasattr(chamber, "claim_slot"))
 
 
@@ -1057,6 +1303,63 @@ class TestDegenerateContainers(StoreCase):
     本帧剩余的事件批次作废，而那台设备下一帧还会再崩一次。
     在游戏里表现为「有时候同步、有时候不同步」，最难查。
     """
+
+    def _assert_fingerprint_failure_recovers(self, fail_at):
+        self.put_pattern(3, simple_pattern())
+        self.store.candidates(IRON_BLOCK)
+        old_entries = self.state.entries
+        old_invalid = self.state.invalid
+        revision = self.state.revision
+        store_revision = self.store._revision
+        changes = self.state.stats["changes"]
+        refreshes = self.state.stats["refreshes"]
+        store_refreshes = self.store.stats["refreshes"]
+        errors = self.state.stats.get("errors", 0)
+        self.put_item(3, None, refresh=False)
+        self.put_pattern(4, simple_pattern(2), refresh=False)
+        state_class = type(self.state)
+        original = state_class.content_fingerprint
+        calls = []
+
+        def flaky_fingerprint(state):
+            calls.append(state)
+            if len(calls) == fail_at:
+                raise TypeError("fingerprint failed")
+            return original(state)
+
+        state_class.content_fingerprint = flaky_fingerprint
+        try:
+            self.store.tick += 1
+            self.assertFalse(self.store.refresh(self.ref, force=True))
+        finally:
+            state_class.content_fingerprint = original
+        self.assertEqual(len(calls), fail_at)
+        self.assertIn("TypeError: fingerprint failed", self.state.unreadable)
+        self.assertEqual(self.state.stats["errors"], errors + 1)
+        self.assertEqual(self.state.refresh_tick, self.store.tick)
+        self.assertEqual(self.state.stats["refreshes"], refreshes + 1)
+        self.assertEqual(self.store.stats["refreshes"], store_refreshes + 1)
+        self.assertEqual(self.state.revision, revision)
+        self.assertEqual(self.store._revision, store_revision)
+        self.assertEqual(self.state.stats["changes"], changes)
+        self.assertIs(self.state.entries, old_entries)
+        self.assertIs(self.state.invalid, old_invalid)
+        self.assertEqual(self.store.candidates(IRON_BLOCK), [])
+        self.store.advance(self.state.refresh_tick + PATTERN_MAX_STALE_FRAMES - 1)
+        self.assertEqual(self.state.stats["refreshes"], refreshes + 1)
+        self.store.advance(self.state.refresh_tick + PATTERN_MAX_STALE_FRAMES)
+        self.assertEqual(self.state.unreadable, "")
+        self.assertEqual(self.state.revision, revision + 1)
+        self.assertEqual(self.store._revision, store_revision + 1)
+        self.assertEqual(self.state.stats["changes"], changes + 1)
+        candidates = self.store.candidates(IRON_BLOCK)
+        self.assertEqual([item["entry"].slot for item in candidates], [4])
+
+    def test_before_fingerprint_failure_is_contained_and_retried(self):
+        self._assert_fingerprint_failure_recovers(1)
+
+    def test_after_fingerprint_failure_is_contained_and_retried(self):
+        self._assert_fingerprint_failure_recovers(2)
 
     def test_a_container_that_answers_none_for_its_size_is_tolerated(self):
         """`slots_count() -> None` 是 13-01 文档允许的答案。

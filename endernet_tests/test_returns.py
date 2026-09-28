@@ -1091,6 +1091,14 @@ class ReturnsFixture(unittest.TestCase):
         view = view if view is not None else self.only_order()
         return view["steps"][index]
 
+    def waiting_execution(self, view=None, index=0, seq=0):
+        """那一步的**第 `seq` 次配方执行**。
+
+        登记、注销、逐次账都在执行实例上（`execution_id` 是
+        `订单ID/步骤下标/执行序号`）；步骤那一层只有静态清单与汇总。
+        """
+        return self.waiting_step(view, index)["executions"][seq]
+
 
 def stack(key_, count, **kwargs):
     return pattern_module.PatternStack(key_, count, **kwargs)
@@ -1116,7 +1124,7 @@ class OneLevel(ReturnsFixture):
         self.drive(3)
         #: 走到这里订单应当停在**等产物**——不是失败，也不是做完了。
         self.step = self.waiting_step()
-        self.execution_id = self.step["execution_id"]
+        self.execution_id = self.waiting_execution()["execution_id"]
 
     def flush(self, key_, count=1, op_id=None, origin=ORIGIN_EXTERNAL):
         op_id = op_id if op_id is not None else "flush:%s" % (key_.name,)
@@ -1500,7 +1508,7 @@ class TestDebugQueryShape(OneLevel):
         self.assertEqual(entry["expected"], 1)
         self.assertEqual(entry["remaining"], 1)
         self.assertEqual(
-            entry["execution_id"], self.waiting_step()["execution_id"]
+            entry["execution_id"], self.waiting_execution()["execution_id"]
         )
         self.assertEqual(payload["summary"]["policy"]["priority"], Priority.FIFO)
 

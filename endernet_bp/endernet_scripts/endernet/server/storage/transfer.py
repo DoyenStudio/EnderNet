@@ -784,11 +784,8 @@ def slot_insert(adapter, op_id, slot, resource_key, count):
             resource_key,
         )
     data = item_dict_from_key(resource_key, view["count"] + take)
-    if not adapter.write_slot(slot, data):
-        return TransferReceipt(
-            op_id, count, 0, TransferStatus.REFUSED, Reason.CONTAINER_REFUSED,
-            resource_key,
-        )
+    # 引擎可能写入成功却返回 False；必须读回，否则协调器会补偿出第二份。
+    adapter.write_slot(slot, data)
     after = slot_read(adapter, slot)
     if after["key"] != resource_key:
         return TransferReceipt(
@@ -823,11 +820,8 @@ def slot_extract(adapter, op_id, slot, resource_key, count):
         )
     left = view["count"] - take
     data = item_dict_from_key(resource_key, left) if left > 0 else None
-    if not adapter.write_slot(slot, data):
-        return TransferReceipt(
-            op_id, count, 0, TransferStatus.REFUSED, Reason.CONTAINER_REFUSED,
-            resource_key,
-        )
+    # 同插入：以读回的实际变化为准，不把布尔失败当作没有发生过取出。
+    adapter.write_slot(slot, data)
     after = slot_read(adapter, slot)
     if after["key"] is not None and after["key"] != resource_key:
         return TransferReceipt(
