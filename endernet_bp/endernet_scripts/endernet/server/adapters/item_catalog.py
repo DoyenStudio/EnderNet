@@ -23,7 +23,15 @@ def filter_item_ids(item_ids, item_factory):
     # type: (list[str], object) -> list[str]
     result = []
     for item_id in sorted(set(item_ids)):
-        category = item_factory(item_id).GetBasicInfo().itemCategory
+        try:
+            category = item_factory(item_id).GetBasicInfo().itemCategory
+        except ValueError:
+            # `GetLoadItems(True)` 会把 `minecraft:air` 这类**没有物品定义**的
+            # 条目也报上来，而 `Item.GetBasicInfo()` 对它们抛 ValueError
+            # （`tooldelta/define/item.py:127-128`）。它们本来就选不中，跳过即可。
+            # **不能让异常穿出去**：那样症状不是「少一条」，而是整张目录为空——
+            # `ItemCatalogService.receive()` 在发包之前就断了，客户端只能一直等。
+            continue
         if category not in ("", "command", "none"):
             result.append(item_id)
     return result
@@ -37,7 +45,12 @@ class ItemCatalogService(object):
         self.catalog = None
 
     def start(self):
-        self.bus.ListenEvent(self.request, 0, static=True)(self.receive)
+        # 不带 `static=True`：它会给 listener 挂 `_td_static`，而 Python 2 的
+        # **绑定方法**不能挂属性（`AttributeError: 'instancemethod' object has
+        # no attribute '_td_static'`），真机上会让整个模组在 `OnServerInited`
+        # 里断掉。那个标记本来也只对同一个函数对象重复装饰有意义，绑定方法
+        # 每次访问都是新对象，去重由 `stop()` 的注销负责。
+        self.bus.ListenEvent(self.request, 0)(self.receive)
 
     def receive(self, event):
         if not event.player_id:

@@ -1,5 +1,4 @@
 {
-    "namespace": "assemble_chamber_ui",
     "content": {
         "type": "panel",
         "layer": 1,
@@ -59,11 +58,11 @@
                                                         "anchor_from": "top_left",
                                                         "anchor_to": "top_left",
                                                         "size": [
-                                                            74.0,
+                                                            50.0,
                                                             16.0
                                                         ],
                                                         "layer": 1,
-                                                        "texture": "textures/ui/endernet/background_panel_2_flat",
+                                                        "texture": "textures/ui/endernet/device_title_background",
                                                         "controls": [
                                                             {
                                                                 "title_text": {
@@ -95,6 +94,79 @@
                                                             1
                                                         ]
                                                     }
+                                                },
+                                                {
+                                                    "source_items_grid": {
+                                                        "type": "grid",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            32.0,
+                                                            24.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "collection_name": "source_items",
+                                                        "grid_dimensions": [
+                                                            3,
+                                                            3
+                                                        ],
+                                                        "grid_item_template": "endernet_container_common.container_grid_item"
+                                                    }
+                                                },
+                                                {
+                                                    "output_item": {
+                                                        "type": "stack_panel",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            118.0,
+                                                            42.0
+                                                        ],
+                                                        "size": [
+                                                            "100%cm+0px",
+                                                            "100%cm+0px"
+                                                        ],
+                                                        "collection_index": 9,
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "slot@endernet_container_common.container_grid_item": {}
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "progress": {
+                                                        "type": "panel",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            88.0,
+                                                            40.0
+                                                        ],
+                                                        "size": [
+                                                            26.0,
+                                                            20.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "bg": {
+                                                                    "type": "image",
+                                                                    "layer": 1,
+                                                                    "texture": "textures/ui/arrow_inactive"
+                                                                }
+                                                            },
+                                                            {
+                                                                "mask": {
+                                                                    "type": "image",
+                                                                    "layer": 1,
+                                                                    "clip_direction": "left",
+                                                                    "texture": "textures/ui/arrow_active"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
                                                 }
                                             ]
                                         }
@@ -113,6 +185,218 @@
                                 "layer": 0,
                                 "texture": "textures/ui/endernet/background_panel_opaque"
                             }
+                        },
+                        {
+                            "templates": {
+                                "type": "panel",
+                                "anchor_from": "top_middle",
+                                "anchor_to": "top_middle",
+                                "offset": [
+                                    0.0,
+                                    86.0
+                                ],
+                                "size": [
+                                    162.0,
+                                    18.0
+                                ],
+                                "layer": 1,
+                                "controls": [
+                                    {
+                                        "slot10": {
+                                            "type": "stack_panel",
+                                            "anchor_from": "top_left",
+                                            "anchor_to": "top_left",
+                                            "size": [
+                                                "100%cm+0px",
+                                                "100%cm+0px"
+                                            ],
+                                            "collection_index": 10,
+                                            "layer": 1,
+                                            "controls": [
+                                                {
+                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "slot11": {
+                                            "type": "stack_panel",
+                                            "anchor_from": "top_left",
+                                            "anchor_to": "top_left",
+                                            "offset": [
+                                                18.0,
+                                                0.0
+                                            ],
+                                            "size": [
+                                                "100%cm+0px",
+                                                "100%cm+0px"
+                                            ],
+                                            "collection_index": 11,
+                                            "layer": 1,
+                                            "controls": [
+                                                {
+                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "slot12": {
+                                            "type": "stack_panel",
+                                            "anchor_from": "top_left",
+                                            "anchor_to": "top_left",
+                                            "offset": [
+                                                36.0,
+                                                0.0
+                                            ],
+                                            "size": [
+                                                "100%cm+0px",
+                                                "100%cm+0px"
+                                            ],
+                                            "collection_index": 12,
+                                            "layer": 1,
+                                            "controls": [
+                                                {
+                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "slot13": {
+                                            "type": "stack_panel",
+                                            "anchor_from": "top_left",
+                                            "anchor_to": "top_left",
+                                            "offset": [
+                                                54.0,
+                                                0.0
+                                            ],
+                                            "size": [
+                                                "100%cm+0px",
+                                                "100%cm+0px"
+                                            ],
+                                            "collection_index": 13,
+                                            "layer": 1,
+                                            "controls": [
+                                                {
+                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "slot14": {
+                                            "type": "stack_panel",
+                                            "anchor_from": "top_left",
+                                            "anchor_to": "top_left",
+                                            "offset": [
+                                                72.0,
+                                                0.0
+                                            ],
+                                            "size": [
+                                                "100%cm+0px",
+                                                "100%cm+0px"
+                                            ],
+                                            "collection_index": 14,
+                                            "layer": 1,
+                                            "controls": [
+                                                {
+                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "slot15": {
+                                            "type": "stack_panel",
+                                            "anchor_from": "top_left",
+                                            "anchor_to": "top_left",
+                                            "offset": [
+                                                90.0,
+                                                0.0
+                                            ],
+                                            "size": [
+                                                "100%cm+0px",
+                                                "100%cm+0px"
+                                            ],
+                                            "collection_index": 15,
+                                            "layer": 1,
+                                            "controls": [
+                                                {
+                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "slot16": {
+                                            "type": "stack_panel",
+                                            "anchor_from": "top_left",
+                                            "anchor_to": "top_left",
+                                            "offset": [
+                                                108.0,
+                                                0.0
+                                            ],
+                                            "size": [
+                                                "100%cm+0px",
+                                                "100%cm+0px"
+                                            ],
+                                            "collection_index": 16,
+                                            "layer": 1,
+                                            "controls": [
+                                                {
+                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "slot17": {
+                                            "type": "stack_panel",
+                                            "anchor_from": "top_left",
+                                            "anchor_to": "top_left",
+                                            "offset": [
+                                                126.0,
+                                                0.0
+                                            ],
+                                            "size": [
+                                                "100%cm+0px",
+                                                "100%cm+0px"
+                                            ],
+                                            "collection_index": 17,
+                                            "layer": 1,
+                                            "controls": [
+                                                {
+                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "slot18": {
+                                            "type": "stack_panel",
+                                            "anchor_from": "top_left",
+                                            "anchor_to": "top_left",
+                                            "offset": [
+                                                144.0,
+                                                0.0
+                                            ],
+                                            "size": [
+                                                "100%cm+0px",
+                                                "100%cm+0px"
+                                            ],
+                                            "collection_index": 18,
+                                            "layer": 1,
+                                            "controls": [
+                                                {
+                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
                         }
                     ],
                     "layer": 0,
@@ -126,5 +410,6 @@
     },
     "main@common.inventory_screen_common": {
         "$screen_content": "assemble_chamber_ui.content"
-    }
+    },
+    "namespace": "assemble_chamber_ui"
 }

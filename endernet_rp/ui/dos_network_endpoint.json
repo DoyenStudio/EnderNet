@@ -1,5 +1,4 @@
 {
-    "namespace": "dos_network_endpoint_ui",
     "content": {
         "type": "panel",
         "layer": 1,
@@ -59,11 +58,11 @@
                                                         "anchor_from": "top_left",
                                                         "anchor_to": "top_left",
                                                         "size": [
-                                                            74.0,
+                                                            80.0,
                                                             16.0
                                                         ],
                                                         "layer": 1,
-                                                        "texture": "textures/ui/endernet/background_panel_2_flat",
+                                                        "texture": "textures/ui/endernet/device_title_background",
                                                         "controls": [
                                                             {
                                                                 "title_text": {
@@ -108,5 +107,6 @@
     },
     "main@common.inventory_screen_common": {
         "$screen_content": "dos_network_endpoint_ui.content"
-    }
+    },
+    "namespace": "dos_network_endpoint_ui"
 }

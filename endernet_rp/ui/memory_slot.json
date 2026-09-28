@@ -1,5 +1,4 @@
 {
-    "namespace": "memory_slot_ui",
     "content": {
         "type": "panel",
         "layer": 1,
@@ -59,11 +58,11 @@
                                                         "anchor_from": "top_left",
                                                         "anchor_to": "top_left",
                                                         "size": [
-                                                            74.0,
+                                                            46.0,
                                                             16.0
                                                         ],
                                                         "layer": 1,
-                                                        "texture": "textures/ui/endernet/background_panel_2_flat",
+                                                        "texture": "textures/ui/endernet/device_title_background",
                                                         "controls": [
                                                             {
                                                                 "title_text": {
@@ -93,6 +92,25 @@
                                                         "offset": [
                                                             84,
                                                             1
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "container_items@endernet_container_common.container_grid_items": {
+                                                        "anchor_from": "center",
+                                                        "anchor_to": "center",
+                                                        "grid_dimensions": [
+                                                            5,
+                                                            2
+                                                        ],
+                                                        "maximum_grid_items": 10,
+                                                        "offset": [
+                                                            0,
+                                                            -40
+                                                        ],
+                                                        "size": [
+                                                            "default",
+                                                            "100.0%c"
                                                         ]
                                                     }
                                                 }
@@ -126,5 +144,6 @@
     },
     "main@common.inventory_screen_common": {
         "$screen_content": "memory_slot_ui.content"
-    }
+    },
+    "namespace": "memory_slot_ui"
 }

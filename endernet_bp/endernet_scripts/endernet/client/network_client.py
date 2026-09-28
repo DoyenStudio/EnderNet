@@ -207,7 +207,9 @@ class ClientEventPort(object):
                 self.stats["handler_errors"] += 1
                 return None
 
-        self.bus().ListenEvent(s2c, priority, static=True)(dispatch)
+        # 不带 `static=True`：`dispatch` 是每次调用新建的闭包，那个去重标记
+        # 不会命中；重复注册本来就由上面的 `self._handles` 挡掉。
+        self.bus().ListenEvent(s2c, priority)(dispatch)
         self._handles.append((s2c, dispatch, priority))
         return 1
 

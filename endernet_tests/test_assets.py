@@ -273,6 +273,106 @@ def declared_containers():
     return gen_blocks.CONTAINERS
 
 
+#: 引擎的容器集合名。**只写死在公共模板 `container_grid_items` 里**
+#: （`endernet_container_common.json:128`），各设备界面靠继承拿到它。
+ENGINE_CONTAINER_COLLECTION = "netease_container"
+
+#: 渲染该集合的两种模板名：网格模板与逐槽模板。逐槽那种**连模板都不写集合名**，
+#: 靠 `$item_collection_name` 的默认值绑定（同文件 `:118`）。
+#:
+#: 短名与全名都收：控件键写成 `X@ns.template`，两侧各自可能被省略。
+ENGINE_CONTAINER_TEMPLATES = frozenset(
+    [
+        "container_grid_items",
+        "container_grid_item",
+        "endernet_container_common.container_grid_items",
+        "endernet_container_common.container_grid_item",
+    ]
+)
+
+
+def _iter_dicts(node, out):
+    """收集 payload 中全部 dict 节点（键与列表都下探）。"""
+    if isinstance(node, dict):
+        out.append(node)
+        for value in node.values():
+            _iter_dicts(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _iter_dicts(value, out)
+
+
+def _instantiates_engine_container_template(key):
+    """`X@ns.template` 形式的控件键是否指向引擎容器集合的模板。"""
+    local, _, template = key.partition("@")
+    return (
+        local in ENGINE_CONTAINER_TEMPLATES or template in ENGINE_CONTAINER_TEMPLATES
+    )
+
+
+def screens_rendering_the_engine_container():
+    """`命名空间 -> 界面文件名`：哪些界面画了引擎的 `netease_container` 集合。
+
+    **不能靠 grep `collection_name`。** 集合名全仓只出现在公共模板
+    `endernet_container_common.json:128` 一处，设备界面一律继承它；逐槽写法
+    更是连模板都不写集合名。全仓只有 2 个界面自己写了 `collection_name`
+    （`bus_item_io.json:146` 的编辑器残留 `test_grid` 与
+    `assemble_chamber.json:108` 的 `source_items`），**两个都不是**这个集合——
+    只看字面量会得出与事实相反的结论。
+
+    只算「界面」：公共模板文件没有 `main` 屏幕，不计入。
+    """
+    drawn = {}
+    for name in sorted(os.listdir(RP_UI)):
+        if not name.endswith(".json"):
+            continue
+        payload = read_json(os.path.join(RP_UI, name))
+        namespace = payload.get("namespace")
+        if not namespace:
+            continue
+        if not any(key == "main" or key.startswith("main@") for key in payload):
+            continue
+        nodes = []
+        _iter_dicts(payload, nodes)
+        for node in nodes:
+            if node.get("collection_name") == ENGINE_CONTAINER_COLLECTION:
+                drawn[namespace] = name
+                break
+            if any(_instantiates_engine_container_template(key) for key in node):
+                drawn[namespace] = name
+                break
+    return drawn
+
+
+#: 声明了容器组件、但界面上**刻意不画**引擎集合的设备。
+#:
+#: 只有两个流体口。它们挂的是 User 2026-09-29 指定的**占位**容器：
+#: 1 格，装的是**物品**，与流体无关（引擎根本没有流体容器，真实流体适配属
+#: 13-03）。界面上不画那个集合是刻意的——画出来玩家会看见一个和流体毫无
+#: 关系的物品格，比不画更糟。由
+#: `test_fluid_port_containers_stay_hidden_from_the_screen` 单独钉住。
+UI_HIDDEN_CONTAINERS = frozenset(
+    ["endernet:bus_fluid_input_io", "endernet:bus_fluid_output_io"]
+)
+
+
+def declared_container_namespaces():
+    """声明了容器组件的设备所用**全部**界面的命名空间（含刻意隐藏的两个）。"""
+    return set(screen.partition(".")[0] for screen, _ in declared_containers().values())
+
+
+def visible_container_namespaces():
+    """声明了容器组件、且界面上**应该**画出集合的那些界面命名空间。
+
+    即从 `declared_container_namespaces()` 里去掉 `UI_HIDDEN_CONTAINERS`。
+    """
+    return set(
+        screen.partition(".")[0]
+        for device_id, (screen, _) in declared_containers().items()
+        if device_id not in UI_HIDDEN_CONTAINERS
+    )
+
+
 class TestBlockContainers(AssetFixture):
     """声明了 `netease:block_container` 的方块：组件、槽数与屏幕名三者必须对得上。
 
@@ -388,6 +488,72 @@ class TestBlockContainers(AssetFixture):
                     ", ".join(sorted(n for n in names if not n.startswith("_"))[:8]),
                 ),
             )
+
+    def test_container_screens_actually_render_the_engine_collection(self):
+        """声明了容器组件的方块，其界面必须真的画了 `netease_container` 集合。
+
+        这条是**真不变量**：容器组件让引擎把方块实体的数据填进那个集合，
+        界面不画它，这批数据在界面上就没有出口——表现是「箱子里有东西，
+        打开却是空界面」，而离线门禁本来对此毫无征兆。上面几条只比对
+        组件与领域层的数字，管不到界面画了什么。
+
+        **例外只有两个流体口**（`UI_HIDDEN_CONTAINERS`）：它们的容器是占位，
+        界面上刻意不画；那两台由下面那条**反向**断言单独管，不在这里放行后
+        就不管了。
+
+        注意本断言**只查画没画，不查格数**。2026-09-29 修掉的那次分叉
+        （存货口界面 5 格／文档 9 格）正是从这个缺口漏过去的。
+        """
+        missing = visible_container_namespaces() - set(
+            screens_rendering_the_engine_container()
+        )
+        self.assertEqual(
+            missing,
+            set(),
+            "以下界面声明了容器组件却没画 %s 集合：%s"
+            % (ENGINE_CONTAINER_COLLECTION, sorted(missing)),
+        )
+
+    def test_fluid_port_containers_stay_hidden_from_the_screen(self):
+        """两个流体口的占位容器**必须不出现在界面上**。
+
+        这是 User 2026-09-29 明确要求的「界面内隐藏」。理由不是审美：那 1 格
+        是**物品**容器（引擎没有流体容器），真画到流体界面上，玩家会看见一个
+        与流体毫无关系、又能真放东西的物品格——比没有更糟。
+
+        与上一条相反，这里钉的是**反向**不变量：谁把那两台界面的
+        `netease_container` 集合画上去，都会在此被拦下，去面对「流体口的容器
+        到底该不该可见」这个仍属 13-03 的问题。
+        """
+        drawn = screens_rendering_the_engine_container()
+        self.assertTrue(UI_HIDDEN_CONTAINERS.issubset(set(declared_containers())))
+        for device_id in sorted(UI_HIDDEN_CONTAINERS):
+            screen_name, _ = declared_containers()[device_id]
+            namespace = screen_name.partition(".")[0]
+            self.assertNotIn(
+                namespace,
+                drawn,
+                "%s 的容器是刻意隐藏的，界面 %s 不该画 %s 集合"
+                % (device_id, namespace, ENGINE_CONTAINER_COLLECTION),
+            )
+
+    def test_screens_rendering_the_engine_collection_without_a_container_block(self):
+        """**画了引擎集合却没有容器方块**的界面：今天必须是空的。
+
+        2026-09-29 之前这里钉着三个界面（存货口／取货口／内存槽）——它们画了
+        `netease_container` 集合却没有容器组件，那些格子（5／5／10 格）因此
+        没有任何权威数据源。User 当天定案「不是终端类方块且能存储物品且有 UI
+        有物品槽的都要有网易容器」，三台都补上了组件，差异清零。
+
+        断言留在 `== set()` 而不是删掉：**下一次**再出现「界面画了集合、方块
+        没有容器」时，这里会立刻拦下。给方块加容器会一并改变 06/12 的语义
+        （方块实体从此有 `Items`、外部模组可存取），属玩法定案，不由测试替选。
+        """
+        self.assertEqual(
+            set(screens_rendering_the_engine_container())
+            - declared_container_namespaces(),
+            set(),
+        )
 
 
 class TestItemResources(AssetFixture):

@@ -22,6 +22,11 @@
             "netease:listen_block_remove": {
                 "value": true
             },
+            "netease:block_container": {
+                "custom_description": "总线物品存货口",
+                "screen_name": "bus_item_input_io_ui.main",
+                "container_size": 5
+            },
             "netease:custom_tips": {
                 "value": "\n§7持续从朝向的容器取出物品并存入网络。"
             }
@@ -29,6 +34,7 @@
         "description": {
             "category": "endernet",
             "identifier": "endernet:bus_item_input_io",
+            "base_block": "netease_container",
             "traits": {
                 "minecraft:placement_direction": {
                     "enabled_states": [

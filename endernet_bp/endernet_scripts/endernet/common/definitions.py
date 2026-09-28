@@ -527,6 +527,94 @@ TEMPLATE_PATTERN_SLOT_COUNT = Value(
     note="样板接口的工厂样板专用槽数；也是方块容器格数（blocks.md 已确定）",
 )
 
+#: 装配仓的槽数：**19**，槽号从 0 开始（`blocks.md` 2026-09-27 确认）。
+#: 0～8 合成原料、9 输出、10～18 合成样板。
+#:
+#: 与上面两条同理，`scripts/gen_blocks.py` 从这一条读作方块的
+#: `netease:block_container.container_size`。**格数只写一处**：界面画 19 格、
+#: 方块容器开 19 格、领域层认 19 格，三者同源才不会分叉成「界面上能放、
+#: 领域层不认」——而那种错误在离线测试里没有任何征兆。
+ASSEMBLE_CHAMBER_SLOT_COUNT = Value(
+    19,
+    note="装配仓容器槽数（0～8 原料 / 9 输出 / 10～18 样板）；也是方块容器格数",
+)
+
+# -- 存货口／取货口／内存槽／流体口的容器格数（2026-09-29 User 定案）---------
+#
+# 背景：底下这几台设备的界面**本来就画了**引擎的 `netease_container` 集合
+# （靠继承 `endernet_container_common.container_grid_items`），但方块上
+# **没有**容器组件，于是那些格子没有任何权威数据源——表现是「方块里有东西，
+# 打开界面却看不见」，而离线断言只查「界面画没画这个集合」，查不到这一层。
+#
+# User 2026-09-29 定案的原话：「不是终端类方块且能存储物品且有 UI 有物品槽的
+# 都要有网易容器」。四条格数由此而来。
+#
+# **终端类（`CATEGORY_TERMINAL` 那四台）不在此列**：它们的槽位物品数量可以
+# 超限，一律走自定义槽位控件与自定义渲染，不能由 `NeteaseContainer` 打开。
+#
+# 声明了容器组件就**必须**同时把 `description.base_block` 设为
+# `netease_container`（`scripts/gen_blocks.py` 的 `build_block_json` 负责）。
+
+#: 物品存货口的缓冲槽数。
+#:
+#: **2026-09-29 由 9 改为 5。** 改前三处不一致：`blocks.md` 写 9、
+#: `plans/ui/bus_item_input_io.md` 写「9×1」「业务槽号 0–8」，
+#: 而界面 JSON 的 `cached_slots/container_grid` 是 `grid_dimensions = [5, 1]`。
+#: User 定**以界面为准**，两份文档随之改成 5。
+#:
+#: 这个分叉当时在门禁里**没有任何征兆**：`test_assets.py` 只比对「界面画没画
+#: 这个集合」，不比对格数。改完之后它也不会被自动拦住——见 11-07 的 B 组。
+ITEM_INTAKE_PORT_SLOT_COUNT = Value(
+    5,
+    note="物品存货口的缓冲槽数；也是方块容器格数（User 2026-09-29 定，以界面为准）",
+)
+
+#: 物品取货口的缓存槽数。**三处本来就一致**（`blocks.md`「5 个内部真实物品
+#: 缓存槽」、`plans/ui/bus_item_output_io.md`「业务槽号 0–4」、
+#: 界面 JSON `grid_dimensions = [5, 1]`），这条只是把它收进单一来源表。
+#:
+#: **它只管方块容器。** 领域层里取货口**仍然没有缓冲**：`server/devices/io.py`
+#: 的 `BUFFERED_ROLES` 不含 `OUTPUT`，`PortStore.ensure` 给它 `buffer=None`。
+#: 那半边是 11-07 的 C1、**尚未实现**——所以「方块上有 5 格」与「服务端不认
+#: 这 5 格」在两边对齐之前是并存的，不要读成已经打通。
+ITEM_OUTPUT_PORT_SLOT_COUNT = Value(
+    5,
+    note="物品取货口的缓存槽数；也是方块容器格数（blocks.md 已确定）",
+)
+
+#: 内存槽的内存条槽数：**10**。
+#:
+#: User 2026-09-29 定案，口径是**照界面**：界面 JSON 是
+#: `grid_dimensions = [5, 2]` 配 `maximum_grid_items = 10`。
+#: `blocks.md` 的内存槽一节原先**完全没写槽数**，这次一并补上。
+MEMORY_SLOT_COUNT = Value(
+    10,
+    note="内存槽可插的内存条数；也是方块容器格数（User 2026-09-29 定，照界面）",
+)
+
+#: 两个流体口的方块容器格数：**各 1 格**。
+#:
+#: **这是标注过的占位，不是玩法定案。** User 2026-09-29 的原话是「这些不是
+#: 物品容器，所以**先设置**为仅有 1 个槽位（界面内隐藏）的网易容器」。
+#: 真实流体适配属 13-03、尚未实现；而引擎**根本没有流体容器**
+#: （`netease:block_container` 只装物品，整个 ModSDK 里 "fluid" 与容器无关），
+#: 也就是说这 1 格现在装的是**物品**、与流体无关。之所以仍然要挂，是因为
+#: 一台有界面、界面里又有格子的设备空着容器，是另一种不一致。
+#:
+#: 界面上**刻意不画**这个集合——免得玩家看见一个和流体毫无关系的物品格。
+#: 那条「刻意不画」由 `endernet_tests/test_assets.py` 里的独立断言钉住，
+#: 不是靠这条注释自觉。
+#:
+#: 归入 R07（「接口流体存取」写在它的影响栏里），因此会出现在
+#: `DefinitionSet.unresolved_report()` 里，不会被当成已定案。
+FLUID_PORT_SLOT_COUNT = Value(
+    1,
+    unresolved="R07",
+    is_test_value=True,
+    note="流体口的方块容器格数；占位值，真实流体适配属 13-03（User 2026-09-29 指定）",
+)
+
+
 #: 取货（被动接口的取货与主动取货口）**最多能配置多少种资源**。
 #: `blocks.md`：「对于取货，允许设定 9 种物品/流体」/「只能设定至多 9 种待取物」。
 #:
@@ -881,6 +969,11 @@ class DefinitionSet(object):
         "storage_driver.slot_count": STORAGE_DRIVER_SLOT_COUNT,
         "port.passive_slot_count": PASSIVE_PORT_SLOT_COUNT,
         "port.template_pattern_slot_count": TEMPLATE_PATTERN_SLOT_COUNT,
+        "assemble_chamber.slot_count": ASSEMBLE_CHAMBER_SLOT_COUNT,
+        "port.item_intake_slot_count": ITEM_INTAKE_PORT_SLOT_COUNT,
+        "port.item_output_slot_count": ITEM_OUTPUT_PORT_SLOT_COUNT,
+        "port.fluid_slot_count": FLUID_PORT_SLOT_COUNT,
+        "memory_slot.slot_count": MEMORY_SLOT_COUNT,
         "port.pickup_filter_limit": PICKUP_FILTER_LIMIT,
     }
 

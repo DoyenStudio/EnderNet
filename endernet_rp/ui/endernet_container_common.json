@@ -430,6 +430,78 @@
             }
         ]
     },
+    "fluid_displayer": {
+        "type": "panel",
+        "size": [
+            122.0,
+            42.0
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "bg": {
+                    "type": "image",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "layer": 1,
+                    "texture": "textures/ui/endernet/container_fluid_slot_background"
+                }
+            },
+            {
+                "clip_panel": {
+                    "type": "panel",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0.0,
+                        1.0
+                    ],
+                    "size": [
+                        "100%+-2px",
+                        "100%+-2px"
+                    ],
+                    "layer": 1,
+                    "clip_offset": [
+                        0.0,
+                        0.0
+                    ],
+                    "clips_children": true,
+                    "controls": [
+                        {
+                            "grid": {
+                                "type": "grid",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "layer": 1,
+                                "clip_offset": [
+                                    0.0,
+                                    0.0
+                                ],
+                                "collection_name": "test_grid",
+                                "grid_dimensions": [
+                                    6,
+                                    2
+                                ],
+                                "grid_item_template": "endernet_container_common.fluid_renderer"
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "fluid_renderer": {
+        "type": "custom",
+        "renderer": "inventory_item_renderer",
+        "size": [
+            20.0,
+            20.0
+        ],
+        "layer": 1,
+        "property_bag": {
+            "#item_id_aux": 131072
+        }
+    },
     "grid_item_for_hotbar@endernet_container_common.container_item": {
         "$item_collection_name": "hotbar_items"
     },

@@ -25,6 +25,12 @@ class ItemStub(object):
         self.count = count
 
     def GetBasicInfo(self):
+        if self.newItemName == "minecraft:air":
+            # 照真 `Item.GetBasicInfo`（`tooldelta/define/item.py:127-128`）：引擎
+            # 的 `GetItemBasicInfo` 取不到时它抛 ValueError。**必须复现**——真机上
+            # `GetLoadItems(True)` 正是会把 `minecraft:air` 报上来，替身若给它编一份
+            # 分类，这个「整张目录永远为空」的缺陷在离线就永远测不出来。
+            raise ValueError("Can't get basic info of " + self.newItemName)
         return types.SimpleNamespace(itemName="石头" if self.newItemName == "minecraft:stone"
                                      else self.newItemName, itemCategory=self.newItemName)
 
@@ -99,7 +105,17 @@ class Bus(object):
 
     def ListenEvent(self, event, priority, static=False):
         def bind(callback):
+            # `static` 照真总线（`event_bus.py:37-41`）复现：它会拿这个标记去给
+            # listener 挂 `_td_static`，而**绑定方法挂不住属性**。替身以前只收下
+            # 不作声，于是 `ItemCatalogClient.start()` / `ItemCatalogService.start()`
+            # 里 `static=True` + `self.receive` 这个组合在离线一路绿灯，真机上
+            # 却抛 AttributeError，把整个模组断在 `OnServerInited`。
+            if static:
+                if hasattr(callback, "_td_static"):
+                    return callback
+                callback._td_static = True
             self.handles.append((event, callback, priority))
+            return callback
         return bind
 
     def _dyn_unlisten(self, event, callback, priority):
@@ -259,6 +275,19 @@ class SelectorTests(unittest.TestCase):
 
 
 class CatalogTests(unittest.TestCase):
+    def test_items_without_basic_info_are_dropped_not_fatal(self):
+        """`minecraft:air` 这类没有物品定义的条目要跳过，不能让整张目录失败。
+
+        真机上 `GetLoadItems(True)` 会把它报上来，`GetBasicInfo()` 抛 ValueError；
+        这个异常一旦穿出 `load_catalog()`，后果不是「少一条」而是**客户端永远
+        拿到空目录**——`receive()` 在发包之前就断了。
+        """
+        ids = filter_item_ids(
+            ["minecraft:air", "", "command", "none", "items", "construction"],
+            ItemStub,
+        )
+        self.assertEqual(ids, ["construction", "items"])
+
     def test_categories_roundtrip_once_and_cleanup(self):
         Event.sent = []
         client_bus, server_bus = Bus(), Bus()

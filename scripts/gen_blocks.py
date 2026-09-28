@@ -33,6 +33,7 @@ if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
 from _console import use_utf8_stdout  # noqa: E402
 
 from endernet.common.definitions import (  # noqa: E402
+    ASSEMBLE_CHAMBER_SLOT_COUNT,
     CATEGORY_ASSEMBLY,
     CATEGORY_BASEBAND,
     CATEGORY_BUS,
@@ -43,6 +44,10 @@ from endernet.common.definitions import (  # noqa: E402
     CATEGORY_PROCESSOR_CONNECTOR,
     CATEGORY_STORAGE,
     CATEGORY_TERMINAL,
+    FLUID_PORT_SLOT_COUNT,
+    ITEM_INTAKE_PORT_SLOT_COUNT,
+    ITEM_OUTPUT_PORT_SLOT_COUNT,
+    MEMORY_SLOT_COUNT,
     PASSIVE_PORT_SLOT_COUNT,
     STORAGE_DRIVER_SLOT_COUNT,
     TEMPLATE_PATTERN_SLOT_COUNT,
@@ -100,28 +105,63 @@ TICKING = {
 #: 声明了容器组件就必须同时把 `description.base_block` 设为 `netease_container`，
 #: 否则引擎不会按自定义容器处理它（见 build_block_json）。
 #:
-#: **槽数不在这里写**，取自 `endernet.common.definitions` 里那条 Value：
-#: 领域层读同一份，两处各写一个数字迟早会分叉成「界面上 10 格、
-#: 领域层只认 8 格」。三条接口槽数已经定案，驱动器槽数仍是 R10 的测试替身。
+#: **槽数不在这里写**，取自 `endernet.common.definitions` 里那条 Value。
+#: 写在一处是为了防「界面上 10 格、领域层只认 8 格」那种分叉——
+#: 但**别把这句话读成「领域层一定在读同一份」**：今天真正两侧都读的只有
+#: 驱动器与三条接口；2026-09-29 新增的四条（存货口／取货口／内存槽／流体口）
+#: **只有方块容器在读**，领域层的缓冲尚未实现（11-07 的 C1）。
+#: 其中驱动器槽数仍是 R10 的测试替身，两个流体口是 R07 的占位。
 #:
 #: 屏幕名形如 `namespace.screenName`，指向资源包里已存在的 `main` 屏幕。
 #:
-#: **为什么只有这三台。**
+#: **为什么是这几台。**
 #: - `storage_driver`：介质要能放进去（05）。
 #: - `bus_item_io`：它的 9 格是**存取共用的真实库存**，外部物流要能直接
 #:   存取（06-04）。没有容器组件，方块实体数据里就没有 `Items`，
 #:   别的模组/漏斗没有地方放东西，那条通路只能停留在契约上。
 #: - `bus_template_io`：它的 9 格**专用于工厂样板**（06-07 之后的规格），
 #:   容器由任务 07 使用；**任务 06 的原料缓冲不再挂在这个容器上**。
-#: - **流体总线不在内**：它的缓冲是 mB 流体，而真实流体适配属 13-03、
-#:   尚未实现。给它挂一个**物品**容器会得到一个「看起来能用、实际存错东西」
-#:   的方块，比没有更糟。
-#: - **存货口/取货口不在内**：blocks.md 说它们「自动从/向朝向的容器」
-#:   搬运，动的是**邻居**，不是自身缓冲。
+#: - `bus_item_input_io` / `bus_item_output_io` / `memory_slot`：界面**本来就
+#:   画了**引擎集合（继承 `container_grid_items`）而方块没有容器，那些格子
+#:   因而没有数据源。2026-09-29 User 定案：「不是终端类方块且能存储物品且有
+#:   UI 有物品槽的都要有网易容器」。终端那四台仍然不在此列。
+#: - `bus_fluid_input_io` / `bus_fluid_output_io`：同上，但格数是 **1 格占位**、
+#:   且界面上**刻意不画**那个集合（免得玩家看见一个与流体无关的物品格）。
+#:   这是 User 明说的「**先设置**为」，值本身带 `unresolved="R07"`，
+#:   真实流体适配属 13-03。
+#:
+#: **仍然不在内的两台，理由不同，别合并读：**
+#: - `bus_fluid_io`（合并式流体总线）：缓冲是 mB 流体，真实流体适配属 13-03、
+#:   尚未实现；给它挂一个**物品**容器会得到一个「看起来能用、实际存错东西」
+#:   的方块，比没有更糟。它的物品侧对照 `bus_item_io` 也**没做完**，
+#:   User 2026-09-29 明确把它与 `bus_item_io` 一并搁置。
+#:   **这与上面两个流体口不矛盾**：那两台是 User 单独点名的占位，这台不是。
+#:   不要因为「都是流体」就顺手补齐。
 CONTAINERS = {
     "endernet:storage_driver": ("storage_driver_ui.main", STORAGE_DRIVER_SLOT_COUNT),
     "endernet:bus_item_io": ("bus_item_io_ui.main", PASSIVE_PORT_SLOT_COUNT),
     "endernet:bus_template_io": ("bus_template_io_ui.main", TEMPLATE_PATTERN_SLOT_COUNT),
+    "endernet:assemble_chamber": (
+        "assemble_chamber_ui.main",
+        ASSEMBLE_CHAMBER_SLOT_COUNT,
+    ),
+    "endernet:bus_item_input_io": (
+        "bus_item_input_io_ui.main",
+        ITEM_INTAKE_PORT_SLOT_COUNT,
+    ),
+    "endernet:bus_item_output_io": (
+        "bus_item_output_io_ui.main",
+        ITEM_OUTPUT_PORT_SLOT_COUNT,
+    ),
+    "endernet:memory_slot": ("memory_slot_ui.main", MEMORY_SLOT_COUNT),
+    "endernet:bus_fluid_input_io": (
+        "bus_fluid_input_io_ui.main",
+        FLUID_PORT_SLOT_COUNT,
+    ),
+    "endernet:bus_fluid_output_io": (
+        "bus_fluid_output_io_ui.main",
+        FLUID_PORT_SLOT_COUNT,
+    ),
 }
 
 #: 需要朝向状态的设备（放置方向决定端口朝向）。

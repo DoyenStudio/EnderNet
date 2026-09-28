@@ -505,6 +505,14 @@ class FakeBus(object):
 
     def ListenEvent(self, event_cls, priority, static=False):
         def wrapper(func):
+            # `static` 必须**照真总线（`event_bus.py:37-41`）复现**，不能只收下
+            # 不作声：真总线会拿它给 listener 挂 `_td_static`，而绑定方法挂不住
+            # 属性，真机上直接抛 AttributeError。替身放行过一次，模组就带着
+            # 「`item_catalog` 起不来」的缺陷通过了整个离线门禁。
+            if static:
+                if hasattr(func, "_td_static"):
+                    return func
+                func._td_static = True
             self.registrations.append((event_cls, func, priority, static))
             self._handlers.setdefault(event_cls, []).append(func)
             return func
@@ -599,11 +607,13 @@ class TestTheClientUsesTheSameConstants(unittest.TestCase):
 
 
 class TestClientPortRegistration(ClientPortFixture):
-    def test_listen_registers_the_sync_class_statically(self):
-        """`static=True`：同一个函数对象重复注册会被总线自己挡掉。
+    def test_listen_does_not_ask_the_bus_to_dedup_statically(self):
+        """**不传 `static=True`**。
 
-        事件类与回调都是每次新建的，因此这里断言的是**我们传了 static**
-        （这一条决定了热重载时的行为），而不是它今天挡没挡住。
+        真总线会拿它给 listener 挂 `_td_static`，而绑定方法挂不住属性——真机上
+        正是这个 AttributeError 让模组断在 `OnServerInited`，`item_catalog`
+        整条服务起不来。而且那个标记从来挡不住重复注册：回调是每次新建的闭包，
+        `hasattr` 永远为假。去重由 `self._handles` 负责（见下一条用例）。
         """
         port = self.port()
         self.assertEqual(port.listen(lambda event: None), 1)
@@ -611,7 +621,7 @@ class TestClientPortRegistration(ClientPortFixture):
         _, s2c = port.classes()
         self.assertIs(event_cls, s2c)
         self.assertEqual(priority, 0)
-        self.assertTrue(static)
+        self.assertFalse(static)
 
     def test_the_port_builds_its_classes_only_once(self):
         port = self.port()

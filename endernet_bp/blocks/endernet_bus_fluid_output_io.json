@@ -22,6 +22,11 @@
             "netease:listen_block_remove": {
                 "value": true
             },
+            "netease:block_container": {
+                "custom_description": "总线流体取货口",
+                "screen_name": "bus_fluid_output_io_ui.main",
+                "container_size": 1
+            },
             "netease:custom_tips": {
                 "value": "\n§7持续从网络中取出指定流体，自动输入朝向的容器。"
             }
@@ -29,6 +34,7 @@
         "description": {
             "category": "endernet",
             "identifier": "endernet:bus_fluid_output_io",
+            "base_block": "netease_container",
             "traits": {
                 "minecraft:placement_direction": {
                     "enabled_states": [

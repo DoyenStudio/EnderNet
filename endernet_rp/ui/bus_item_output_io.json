@@ -1,5 +1,4 @@
 {
-    "namespace": "bus_item_output_io_ui",
     "content": {
         "type": "panel",
         "layer": 1,
@@ -59,11 +58,11 @@
                                                         "anchor_from": "top_left",
                                                         "anchor_to": "top_left",
                                                         "size": [
-                                                            74.0,
+                                                            82.0,
                                                             16.0
                                                         ],
                                                         "layer": 1,
-                                                        "texture": "textures/ui/endernet/background_panel_2_flat",
+                                                        "texture": "textures/ui/endernet/device_title_background",
                                                         "controls": [
                                                             {
                                                                 "title_text": {
@@ -93,6 +92,367 @@
                                                         "offset": [
                                                             84,
                                                             1
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "baseband_img": {
+                                                        "type": "panel",
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            0.0,
+                                                            90.0
+                                                        ],
+                                                        "size": [
+                                                            100.0,
+                                                            10.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "bg": {
+                                                                    "type": "image",
+                                                                    "texture": "textures/endernet/devices/network_baseband_8",
+                                                                    "tiled": true
+                                                                }
+                                                            },
+                                                            {
+                                                                "frame": {
+                                                                    "type": "image",
+                                                                    "layer": 1,
+                                                                    "texture": "textures/ui/endernet/frame_rise_light"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "conn_band_img": {
+                                                        "type": "image",
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            0.0,
+                                                            42.0
+                                                        ],
+                                                        "size": [
+                                                            40.0,
+                                                            50.0
+                                                        ],
+                                                        "color": [
+                                                            0.6941176470588235,
+                                                            0.6941176470588235,
+                                                            0.6941176470588235
+                                                        ],
+                                                        "texture": "textures/ui/white_background",
+                                                        "tiled": true,
+                                                        "controls": [
+                                                            {
+                                                                "arrow_img": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "offset": [
+                                                                        1.0,
+                                                                        3.0
+                                                                    ],
+                                                                    "size": [
+                                                                        34.0,
+                                                                        48.0
+                                                                    ],
+                                                                    "clip_direction": "left",
+                                                                    "clip_ratio": 0.0,
+                                                                    "texture": "textures/ui/endernet/sign_flatted_up_simple",
+                                                                    "tiled": true
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "outer_container_panel": {
+                                                        "type": "panel",
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            0.0,
+                                                            24.0
+                                                        ],
+                                                        "size": [
+                                                            100,
+                                                            20.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "bg_frame": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "layer": 1,
+                                                                    "color": [
+                                                                        1.0,
+                                                                        1.0,
+                                                                        1.0
+                                                                    ],
+                                                                    "texture": "textures/ui/endernet/dark_frame_with_shadow"
+                                                                }
+                                                            },
+                                                            {
+                                                                "stat_text": {
+                                                                    "type": "label",
+                                                                    "color": [
+                                                                        0.2588235294117647,
+                                                                        0.2588235294117647,
+                                                                        0.2588235294117647
+                                                                    ],
+                                                                    "font_type": "default",
+                                                                    "text": "外部容器： 未接入",
+                                                                    "text_alignment": "center"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "settings_btn@common.button": {
+                                                        "type": "button",
+                                                        "$control_alpha": 1.0,
+                                                        "$default_texture": "textures/ui/endernet/button_light_default",
+                                                        "$hover_texture": "textures/ui/endernet/button_hovered",
+                                                        "$is_new_nine_slice": false,
+                                                        "$label_color": [
+                                                            1,
+                                                            1,
+                                                            1
+                                                        ],
+                                                        "$label_font_scale_factor": 1.0,
+                                                        "$label_font_size": "large",
+                                                        "$label_layer": 3,
+                                                        "$label_offset": [
+                                                            0,
+                                                            0
+                                                        ],
+                                                        "$label_text": "Button",
+                                                        "$nine_slice_buttom": 0,
+                                                        "$nine_slice_left": 0,
+                                                        "$nine_slice_right": 0,
+                                                        "$nine_slice_top": 0,
+                                                        "$nineslice_size": [
+                                                            0,
+                                                            0,
+                                                            0,
+                                                            0
+                                                        ],
+                                                        "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                                        "$pressed_texture": "textures/ui/endernet/button_pressed",
+                                                        "$texture_layer": 2,
+                                                        "anchor_from": "top_right",
+                                                        "anchor_to": "top_right",
+                                                        "offset": [
+                                                            -8.0,
+                                                            86.0
+                                                        ],
+                                                        "size": [
+                                                            20.0,
+                                                            20.0
+                                                        ],
+                                                        "button_mappings": [],
+                                                        "default_control": "default",
+                                                        "hover_control": "hover",
+                                                        "is_handle_button_move_event": true,
+                                                        "pressed_control": "pressed",
+                                                        "bindings": [
+                                                            {
+                                                                "binding_type": "collection_details",
+                                                                "binding_collection_name": "",
+                                                                "binding_condition": "always_when_visible"
+                                                            }
+                                                        ],
+                                                        "controls": [
+                                                            {
+                                                                "default@netease_editor_template_namespace.default": {}
+                                                            },
+                                                            {
+                                                                "hover@netease_editor_template_namespace.hover": {}
+                                                            },
+                                                            {
+                                                                "pressed@netease_editor_template_namespace.pressed": {}
+                                                            },
+                                                            {
+                                                                "icon": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "offset": [
+                                                                        0.0,
+                                                                        1.0
+                                                                    ],
+                                                                    "size": [
+                                                                        "100%+-4px",
+                                                                        "100%+-4px"
+                                                                    ],
+                                                                    "layer": 4,
+                                                                    "texture": "textures/ui/endernet/settings_icon_light"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "cached_slots": {
+                                                        "type": "panel",
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            0.0,
+                                                            56.0
+                                                        ],
+                                                        "size": [
+                                                            100,
+                                                            22.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "bg": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "layer": 1,
+                                                                    "texture": "textures/ui/endernet/background_gray_rise"
+                                                                }
+                                                            },
+                                                            {
+                                                                "container_grid@endernet_container_common.container_grid_items": {
+                                                                    "anchor_from": "center",
+                                                                    "anchor_to": "center",
+                                                                    "grid_dimensions": [
+                                                                        5,
+                                                                        1
+                                                                    ],
+                                                                    "size": [
+                                                                        "default",
+                                                                        "100.0%c"
+                                                                    ]
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "item_set_panel": {
+                                                        "type": "panel",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            8.0,
+                                                            57.0
+                                                        ],
+                                                        "size": [
+                                                            20.0,
+                                                            20.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "bg": {
+                                                                    "type": "image",
+                                                                    "layer": 1,
+                                                                    "texture": "textures/ui/endernet/background_gray_rise"
+                                                                }
+                                                            },
+                                                            {
+                                                                "selected_item_renderer": {
+                                                                    "type": "custom",
+                                                                    "renderer": "inventory_item_renderer",
+                                                                    "size": [
+                                                                        "100%+-4px",
+                                                                        "100%+-4px"
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "property_bag": {
+                                                                        "#item_id_aux": 131072
+                                                                    }
+                                                                }
+                                                            },
+                                                            {
+                                                                "item_set_tip_text": {
+                                                                    "type": "label",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "bottom_middle",
+                                                                    "color": [
+                                                                        0.2588235294117647,
+                                                                        0.2588235294117647,
+                                                                        0.2588235294117647
+                                                                    ],
+                                                                    "font_scale_factor": 1.2,
+                                                                    "font_size": "small",
+                                                                    "font_type": "default",
+                                                                    "text": "未设定物品",
+                                                                    "text_alignment": "center"
+                                                                }
+                                                            },
+                                                            {
+                                                                "interact_btn@common.button": {
+                                                                    "type": "button",
+                                                                    "$control_alpha": 1.0,
+                                                                    "$default_texture": "",
+                                                                    "$hover_texture": "",
+                                                                    "$is_new_nine_slice": false,
+                                                                    "$label_color": [
+                                                                        1,
+                                                                        1,
+                                                                        1
+                                                                    ],
+                                                                    "$label_font_scale_factor": 1.0,
+                                                                    "$label_font_size": "large",
+                                                                    "$label_layer": 3,
+                                                                    "$label_offset": [
+                                                                        0,
+                                                                        0
+                                                                    ],
+                                                                    "$label_text": "Button",
+                                                                    "$nine_slice_buttom": 0,
+                                                                    "$nine_slice_left": 0,
+                                                                    "$nine_slice_right": 0,
+                                                                    "$nine_slice_top": 0,
+                                                                    "$nineslice_size": [
+                                                                        0,
+                                                                        0,
+                                                                        0,
+                                                                        0
+                                                                    ],
+                                                                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                                                    "$pressed_texture": "",
+                                                                    "$texture_layer": 2,
+                                                                    "layer": 2,
+                                                                    "button_mappings": [],
+                                                                    "default_control": "default",
+                                                                    "hover_control": "hover",
+                                                                    "is_handle_button_move_event": true,
+                                                                    "pressed_control": "pressed",
+                                                                    "bindings": [
+                                                                        {
+                                                                            "binding_type": "collection_details",
+                                                                            "binding_collection_name": "",
+                                                                            "binding_condition": "always_when_visible"
+                                                                        }
+                                                                    ],
+                                                                    "controls": [
+                                                                        {
+                                                                            "default@netease_editor_template_namespace.default": {}
+                                                                        },
+                                                                        {
+                                                                            "hover@netease_editor_template_namespace.hover": {}
+                                                                        },
+                                                                        {
+                                                                            "pressed@netease_editor_template_namespace.pressed": {}
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            }
                                                         ]
                                                     }
                                                 }
@@ -126,5 +486,106 @@
     },
     "main@common.inventory_screen_common": {
         "$screen_content": "bus_item_output_io_ui.content"
+    },
+    "namespace": "bus_item_output_io_ui",
+    "settings_window": {
+        "type": "panel",
+        "size": [
+            160.0,
+            100
+        ],
+        "controls": [
+            {
+                "bg": {
+                    "type": "image",
+                    "texture": "textures/ui/endernet/background_panel_opaque"
+                }
+            },
+            {
+                "title": {
+                    "type": "image",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "size": [
+                        "default",
+                        16.0
+                    ],
+                    "layer": 1,
+                    "texture": "textures/ui/endernet/background_panel_2_flat",
+                    "controls": [
+                        {
+                            "device_status_tip": {
+                                "type": "label",
+                                "font_type": "default",
+                                "shadow": true,
+                                "text": "取货口设置",
+                                "text_alignment": "center"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "close@endernet_ui_common.close_btn": {
+                    "anchor_from": "top_right",
+                    "anchor_to": "top_right",
+                    "size": [
+                        16,
+                        16
+                    ]
+                }
+            },
+            {
+                "cache_slots_enable_mode_tip_text": {
+                    "type": "label",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        8.0,
+                        24.0
+                    ],
+                    "layer": 1,
+                    "color": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "font_type": "default",
+                    "shadow": true,
+                    "text": "是否启用缓存槽"
+                }
+            },
+            {
+                "cache_slots_enable_mode_switch@common_toggles.switch_toggle_collection": {
+                    "type": "panel",
+                    "$checked_locked_texture": "textures/ui/endernet/switch_on_default",
+                    "$default_texture": "textures/ui/endernet/switch_off_default",
+                    "$hover_texture": "textures/ui/endernet/switch_on_default",
+                    "$pressed_no_hover_texture": "textures/ui/endernet/switch_on_hovered",
+                    "$pressed_texture": "textures/ui/endernet/switch_off_hovered",
+                    "$toggle_name": "#netease_editor_template_namespace.toggle_name",
+                    "$toggle_state_binding_name": "#netease_editor_template_namespace.toggle_state",
+                    "$unchecked_locked_texture": "textures/ui/endernet/switch_off_default",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        74.0,
+                        19.0
+                    ],
+                    "size": [
+                        20.0,
+                        20.0
+                    ],
+                    "layer": 1,
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ]
+                }
+            }
+        ]
     }
 }

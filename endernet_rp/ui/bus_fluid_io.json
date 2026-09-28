@@ -62,7 +62,7 @@
                                                             16.0
                                                         ],
                                                         "layer": 1,
-                                                        "texture": "textures/ui/endernet/background_panel_2_flat",
+                                                        "texture": "textures/ui/endernet/device_title_background",
                                                         "controls": [
                                                             {
                                                                 "title_text": {

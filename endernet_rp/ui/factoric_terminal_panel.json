@@ -3,7 +3,7 @@
         "type": "panel",
         "size": [
             180.0,
-            200.0
+            210.0
         ],
         "layer": 1,
         "controls": [
@@ -157,6 +157,68 @@
                     "size": [
                         162,
                         152
+                    ]
+                }
+            },
+            {
+                "memory_left_bar": {
+                    "type": "panel",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0.0,
+                        188.0
+                    ],
+                    "size": [
+                        "100%+-18px",
+                        12.0
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "bg": {
+                                "type": "image",
+                                "anchor_from": "top_right",
+                                "anchor_to": "top_right",
+                                "texture": "textures/ui/endernet/background_panel_2_flat"
+                            }
+                        },
+                        {
+                            "mask": {
+                                "type": "image",
+                                "anchor_from": "left_middle",
+                                "anchor_to": "left_middle",
+                                "offset": [
+                                    2.0,
+                                    0.0
+                                ],
+                                "size": [
+                                    "50%+-4px",
+                                    "100%+-4px"
+                                ],
+                                "layer": 1,
+                                "color": [
+                                    0.0,
+                                    1.0,
+                                    0.0
+                                ],
+                                "texture": "textures/ui/white_background",
+                                "tiled": true
+                            }
+                        },
+                        {
+                            "memory_left_label": {
+                                "type": "label",
+                                "layer": 2,
+                                "color": [
+                                    0.2588235294117647,
+                                    0.2588235294117647,
+                                    0.2588235294117647
+                                ],
+                                "font_type": "default",
+                                "text": "剩余可用内存 0KB"
+                            }
+                        }
                     ]
                 }
             }

@@ -20,8 +20,10 @@ class ItemCatalogClient(object):
         self.windows = WeakSet()
 
     def start(self):
-        self.bus.ListenEvent(self.response, 0, static=True)(self.receive)
-        self.bus.ListenEvent(self.ready_event, 0, static=True)(self.on_ready)
+        # 不带 `static=True`，理由同 `server/adapters/item_catalog.py`：
+        # 绑定方法上挂不住 `_td_static`，py2 会直接抛 AttributeError。
+        self.bus.ListenEvent(self.response, 0)(self.receive)
+        self.bus.ListenEvent(self.ready_event, 0)(self.on_ready)
 
     def on_ready(self, event):
         if not self.requested:
