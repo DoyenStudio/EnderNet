@@ -1353,6 +1353,7 @@ class StorageService(NetworkService):
             "inv_put": self._cmd_inv_put,
             "inv_split": self._cmd_inv_split,
             "inv_merge": self._cmd_inv_merge,
+            "inv_swap": self._cmd_inv_swap,
             "inv_quick_move": self._cmd_inv_quick_move,
         }
         handler = handlers.get(action)
@@ -2123,6 +2124,58 @@ class StorageService(NetworkService):
                 Reason.CONTAINER_PARTIAL, taken.resource_key, endpoint.endpoint_id(),
             )
         )
+
+    def _cmd_inv_swap(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """交换：把 `slot` 与 `into_slot` 的内容对调。**背包内部，不经过网络。**
+
+        与 `inv_merge` 是同一族的第五个动作（2026-09-30 由 User 补定，见
+        `plans/blocks.md` 的「背包槽之间的拆分、合并与交换」）。仍然要服务端
+        做，理由与合并一样：客户端看到的两个槽可能已经过期。
+
+        **与 `inv_merge` 的一处差别是有意的**：合并遇上空目标槽要把目标锚
+        那一关跳过，而交换**天然**允许目标为空——与空槽交换就是移动。
+        因此这里不用 `inv_merge` 那个 `target_view["key"] is not None` 的
+        旁路判断，两个锚直接交给 `anchored_swap`，由它的 `allow_empty`
+        区分严格程度（源槽严格、目标槽只核版本）。**别把这一条「补」成
+        两个锚都严格**，那会把移动到空格判死。
+        """
+        cursor = self._cursor_refusal(command, payload)
+        if cursor is not None:
+            return cursor
+        endpoint, refusal = self._inventory_endpoint_for(command, payload)
+        if refusal is not None:
+            return refusal
+        from_slot = payload.get("slot")
+        into_slot = payload.get("into_slot")
+        if from_slot is None or into_slot is None:
+            return self._reject(
+                command, Reason.BAD_PARAMETER, "交换需要 slot 与 into_slot"
+            )
+        if from_slot == into_slot:
+            return self._reject(command, Reason.BAD_PARAMETER, "两个槽不能是同一个")
+        try:
+            source_anchor = SlotAnchor(
+                from_slot, self._key_from(payload), payload.get("slot_version")
+            )
+            # 目标槽为空时没有指纹可取，沿用源指纹占位——`anchor_verdict`
+            # 会按 `allow_empty` 只核版本，不看这个占位值。做法与
+            # `_cmd_inv_merge` 一致，但那一边是在服务层做判断，这边不是。
+            target_view = endpoint.slot_view(into_slot)
+            target_key = (
+                ResourceKey.from_dict(target_view["key"])
+                if target_view["key"] is not None
+                else source_anchor.expected_key
+            )
+            target_anchor = SlotAnchor(
+                into_slot, target_key, payload.get("into_slot_version")
+            )
+        except (TypeError, ValueError, KeyError) as error:
+            return self._reject(command, Reason.BAD_PARAMETER, "槽锚不合法：%s" % (error,))
+
+        op_id = payload.get("op_id") or command.request_id
+        receipt = endpoint.anchored_swap(op_id, source_anchor, target_anchor)
+        return self._receipt_result(command, receipt)
 
     @staticmethod
     def _key_from(payload):

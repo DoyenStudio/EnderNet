@@ -329,6 +329,46 @@ class fake_modules(object):
         return False
 
 
+#: 2026-09-25 游戏内实测：引擎对一个**原版箱子**里的石头返回 16 个字段。
+#: `test_containers_engine.py` 与 `test_resource_contracts.py` 各有一份冻结的
+#: 逐字段副本（那两份是同源的、刻意不合并）；本函数是**可参数化**的那一份，
+#: 给「要造好几件不同物品」的用例用（背包界面就是这种）。
+ENGINE_ITEM_SHAPE = {
+    "isDiggerItem": False,
+    "enchantData": [],
+    "durability": 0,
+    "itemId": 1,
+    "customTips": "",
+    "extraId": "",
+    "newAuxValue": 0,
+    "modEnchantData": [],
+    "modId": "",
+    "userData": None,
+    "modItemId": "",
+    "auxValue": 0,
+    "showInHand": True,
+}
+
+
+def engine_item(name, count, **identity):
+    # type: (str, int, object) -> dict
+    """一份**引擎读回来**的物品字典。`identity` 覆盖上面那几个字段。
+
+    **为什么测试要照抄引擎的 16 个字段**：客户端算身份走的是
+    `engine_item_key`，它读 `Item._orig` 里这份原始字典；而
+    `tooldelta.define.item.Item.from_dict` 把缺席的 `durability` 补成 `0`，
+    服务端却把 `0` 归一成 `None`，`ResourceKey` 又认为两者是不同身份。少写
+    几个字段、或者用属性拼一份「看起来一样」的，算出来的指纹都与服务端不同
+    ——带槽请求会全部被判 `SLOT_CHANGED`，而离线测试照样是绿的。
+    """
+    data = dict(ENGINE_ITEM_SHAPE)
+    data["newItemName"] = name
+    data["itemName"] = name
+    data["count"] = count
+    data.update(identity)
+    return data
+
+
 def load_dotted_module(real_name, path, fake=None):
     # type: (str, str, object) -> object
     """按 `path` 加载源码，并**以 `real_name` 注册进 `sys.modules`**。

@@ -19,6 +19,8 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import (
+    ITEM_INTAKE_PORT_SLOT_COUNT,
+    ITEM_OUTPUT_PORT_SLOT_COUNT,
     PASSIVE_PORT_SLOT_COUNT,
     PICKUP_FILTER_LIMIT,
     TEMPLATE_PATTERN_SLOT_COUNT,
@@ -42,9 +44,14 @@ from endernet.server.adapters.containers import (
     NoSimulateContainer,
 )
 from endernet.server.devices.io import (
+    BUFFER_AS_EXTERNAL_SIDE,
     BUFFER_CONTAINER,
     BUFFER_MEMORY,
-    BUFFERED_ROLES,
+    CACHE_DROP,
+    CACHE_KEEP,
+    CACHE_ON_DISABLE,
+    CACHE_RETURN_TO_NETWORK,
+    DEFAULT_STACK_LIMIT,
     EMPTY_MEANS_EVERYTHING,
     MODE_BLACKLIST,
     MODE_WHITELIST,
@@ -55,6 +62,7 @@ from endernet.server.devices.io import (
     FACING_ROLES,
     FLUID_DEVICES,
     INTAKE,
+    INTERNAL_BUFFER_ROLES,
     OUTPUT,
     PASSIVE,
     ROLE_OF,
@@ -62,6 +70,7 @@ from endernet.server.devices.io import (
     BatchState,
     PortConfig,
     PortDispatcher,
+    PortItemPort,
     PortGateway,
     PortPolicy,
     PortRunner,
@@ -266,10 +275,28 @@ class TestRoleTables(unittest.TestCase):
             self.assertTrue(is_fluid_port(device_id))
         self.assertFalse(is_fluid_port(BUS))
 
-    def test_only_the_passive_and_template_roles_own_a_buffer(self):
-        """缓冲归「自己和外部交换」的两类：被动总线与样板口。
-        存货口/取货口动的是**邻居**，它们的余量回原地，不需要中转位。"""
-        self.assertEqual(sorted(BUFFERED_ROLES), sorted([PASSIVE, TEMPLATE]))
+    def test_buffer_roles_and_external_side_are_two_questions(self):
+        """**两个问题，两个集合。**
+
+        2026-09-29 之前它们共用一个名字 `BUFFERED_ROLES`，于是「取货口有没有
+        缓冲」这个问题有两个互相矛盾的答案，而代码只实现了其中一个——那 5 格
+        缓存因此一直没有权威来源（11-07 的 C1）。
+
+        本用例钉住的是**两者不同**：四台都有内部缓冲，但只有两台「对外那一侧
+        就是本地缓冲」。取货口正是那个把两者分开的角色。
+        """
+        self.assertEqual(
+            sorted(INTERNAL_BUFFER_ROLES),
+            sorted([PASSIVE, INTAKE, OUTPUT, TEMPLATE]),
+        )
+        self.assertEqual(
+            sorted(BUFFER_AS_EXTERNAL_SIDE), sorted([PASSIVE, TEMPLATE])
+        )
+        # 取货口只进前者、不进后者。这一条就是那个坑的回归：
+        # 把它加进后者，`external_endpoint` 会把外部物流的手引到缓存格里。
+        self.assertIn(OUTPUT, INTERNAL_BUFFER_ROLES)
+        self.assertNotIn(OUTPUT, BUFFER_AS_EXTERNAL_SIDE)
+
         self.assertEqual(sorted(FACING_ROLES), sorted([INTAKE, OUTPUT, TEMPLATE]))
         self.assertNotIn(PASSIVE, FACING_ROLES)
 
@@ -369,6 +396,32 @@ class TestPortConfig(unittest.TestCase):
         self.assertTrue(restored.enabled)
         self.assertTrue(restored.is_ready_for(OUTPUT))
 
+    def test_the_cache_switch_defaults_on_and_a_stored_off_survives(self):
+        """**两句话要同时成立**（`blocks.md` 2026-09-28）：
+        「新设备缓存默认启用」与「保存过的关闭状态重开／重载不得被默认值覆盖」。
+
+        只做前者会得到一个关不掉的开关；只做后者会让所有旧存档读成关闭。
+        两者其实是同一个 `data.get(..., True)` 的两面，所以放在一条用例里钉。
+        """
+        # 字段缺失（旧存档，以及界面只发 `filter` 的载荷）→ 默认启用
+        self.assertTrue(PortConfig.from_dict({"filter": []}).cache_enabled)
+        self.assertTrue(PortConfig().cache_enabled)
+
+        # 存过的「关」读回来还是「关」，不被默认值顶掉
+        off = PortConfig.from_dict(PortConfig(cache_enabled=False).to_dict())
+        self.assertFalse(off.cache_enabled)
+
+        # 并且在完整往返里活着
+        config = PortConfig(
+            True, DIRECTION_BOTH, (STONE,), 0, MODE_WHITELIST, (), False
+        )
+        self.assertFalse(
+            PortConfig.from_dict(config.to_dict()).cache_enabled
+        )
+        self.assertEqual(
+            PortConfig.from_dict(config.to_dict()).to_dict(), config.to_dict()
+        )
+
     def test_bad_values_are_rejected(self):
         with self.assertRaises(ValueError):
             PortConfig(direction="sideways")
@@ -429,11 +482,53 @@ class TestPortStore(unittest.TestCase):
         second = self.store.ensure(self.ref, BUS)
         self.assertIs(first, second)
 
-    def test_only_buffered_roles_get_a_buffer(self):
-        self.assertIsNotNone(self.store.ensure(self.ref, BUS).buffer)
-        intake_ref = DeviceRef(key(1), 0)
-        self.registry.add(intake_ref, INPUT)
-        self.assertIsNone(self.store.ensure(intake_ref, INPUT).buffer)
+    def test_every_interface_role_gets_a_buffer_and_the_kind_says_which(self):
+        """**四台接口都有内部缓冲**，形态各不相同。
+
+        本用例的前身是 `test_only_buffered_roles_get_a_buffer`，它断言
+        `ensure(intake_ref).buffer is None`——那编码的是 2026-09-25 的旧规格
+        「主动存取口无内部库存槽」。`blocks.md` 2026-09-28/29 给了存货口与
+        取货口各 5 个真实槽位，两个断言因此都作废。**换成新断言而不是删掉**：
+        「哪台有缓冲」是会被规格反复改的那类事实，留一个用例钉住它。
+        """
+        cases = [
+            (key(0), BUS, BUFFER_CONTAINER, PASSIVE_PORT_SLOT_COUNT.value),
+            (key(1), INPUT, BUFFER_CONTAINER, ITEM_INTAKE_PORT_SLOT_COUNT.value),
+            (key(2), OUTPUT_DEVICE, BUFFER_CONTAINER, ITEM_OUTPUT_PORT_SLOT_COUNT.value),
+            (key(3), TEMPLATE_DEVICE, BUFFER_MEMORY, None),
+        ]
+        for node, device_id, kind, slots in cases:
+            ref = DeviceRef(node, 0)
+            self.registry.add(ref, device_id)
+            state = self.store.ensure(ref, device_id)
+            with self.subTest(device=device_id):
+                self.assertIsNotNone(state.buffer, device_id)
+                self.assertEqual(state.buffer_kind, kind, device_id)
+                # 槽数已定案的那三台，件数上界由定义表的槽数推出。
+                # 样板口的容量归 R05，因此这里不比对它的数。
+                if slots is not None:
+                    self.assertEqual(
+                        state.buffer.capacity, slots * DEFAULT_STACK_LIMIT
+                    )
+        self.assertEqual(self.store.stats["buffers_created"], 4)
+
+    def test_the_two_item_facing_ports_keep_the_facing_side_external(self):
+        """**存货口与取货口的对外那一侧都是朝向的容器，不是缓冲。**
+
+        两台的理由相反却落到同一个结论：取货口**往**外送，缓存只是中转站；
+        存货口**从**外吸，那件事发生在朝向容器上。把任一台加进
+        `BUFFER_AS_EXTERNAL_SIDE` 都会让 `external_endpoint` 把外部物流
+        引到缓冲格里——取货口会变成「外部取到的是缓存而不是投递结果」，
+        存货口会变成「外部往缓冲里塞、而它该去读朝向容器」。
+        """
+        for node, device_id in ((key(1), INPUT), (key(2), OUTPUT_DEVICE)):
+            ref = DeviceRef(node, 0)
+            self.registry.add(ref, device_id)
+            state = self.store.ensure(ref, device_id)
+            port = PortItemPort(state, self.store)
+            with self.subTest(device=device_id):
+                self.assertNotIn(state.role, BUFFER_AS_EXTERNAL_SIDE)
+                self.assertEqual(port.describe()["external_side"], "facing")
 
     def test_an_unknown_device_yields_no_state(self):
         other = DeviceRef(key(9), 0)
@@ -640,8 +735,27 @@ class TestFacingSideExternalPort(unittest.TestCase):
         )
         self.state = self.ports.ensure(self.ref, OUTPUT_DEVICE, "east")
 
-    def test_there_is_no_local_buffer_to_talk_about(self):
-        self.assertIsNone(self.state.buffer)
+    def test_the_cache_exists_and_the_external_side_is_still_the_facing_one(self):
+        """**缓冲有了，但对外的口子没变。** 这正是取货口要单独讲的原因。
+
+        原来这条叫 `test_there_is_no_local_buffer_to_talk_about`，断言
+        `buffer is None`——它编码的是 2026-09-25 的旧规格「主动存取口无内部
+        库存槽」。2026-09-28/29 的规格推翻了那一半（`blocks.md`：取货口有 5 个
+        内部真实物品缓存槽），于是那条断言**必须换**，不能删——它守的那个位置
+        现在由下面这几条守：缓存有、形态是方块容器、上界由定案的槽数推出，
+        而 `external_side` 仍然是 `facing`（下一条用例继续钉住行为）。
+        """
+        self.assertIsNotNone(self.state.buffer)
+        self.assertEqual(self.state.buffer_kind, BUFFER_CONTAINER)
+        self.assertEqual(
+            self.state.buffer.capacity,
+            ITEM_OUTPUT_PORT_SLOT_COUNT.value * DEFAULT_STACK_LIMIT,
+        )
+        self.assertNotIn(OUTPUT, BUFFER_AS_EXTERNAL_SIDE)
+        self.assertEqual(
+            self.state.buffer.capacity,
+            PortPolicy().output_cache_capacity,
+        )
 
     def test_the_external_side_is_the_facing_container(self):
         self.assertEqual(
@@ -680,6 +794,41 @@ class TestPortPolicy(unittest.TestCase):
         self.assertEqual(
             PortPolicy().filter_limit_for(PASSIVE), PICKUP_FILTER_LIMIT.value
         )
+
+    def test_the_cache_disable_disposition_is_named_and_unsettled(self):
+        """**未定案的东西要有一个确切的名字，而不是一个空的 TODO。**
+
+        `blocks.md` 只说到「已有缓存物品的关闭处置仍待定，不得直接清空」，
+        没有给出该怎么做。因此这里两件事一起钉：替身取保守的那一侧（保留），
+        而另外两种口径**有名字、在清单里、代码里没实现**。
+        """
+        policy = PortPolicy()
+        fields = dict((item["field"], item) for item in policy.unresolved_report())
+        self.assertIn("port.cached_items_on_disable", fields)
+        self.assertEqual(policy.cached_items_on_disable, CACHE_KEEP)
+        self.assertEqual(
+            sorted(CACHE_ON_DISABLE),
+            sorted([CACHE_KEEP, CACHE_RETURN_TO_NETWORK, CACHE_DROP]),
+        )
+        with self.assertRaises(ValueError):
+            PortPolicy(cached_items_on_disable="sell_it_to_a_villager")
+
+    def test_the_output_cache_capacity_is_derived_not_unsettled(self):
+        """**它不进未定案清单。**
+
+        槽数是定案值（定义表里不带 unresolved 标签），乘数用的是「适配器答不出
+        时的通用堆叠上限」。把一个派生出来的护栏列进未定案清单，会让正式验收
+        为一条并不存在的规则盖章——正是本类的类文档警告的那件事。
+        """
+        policy = PortPolicy()
+        fields = set(item["field"] for item in policy.unresolved_report())
+        self.assertNotIn("port.output_cache_capacity", fields)
+        self.assertEqual(
+            policy.output_cache_capacity,
+            ITEM_OUTPUT_PORT_SLOT_COUNT.value * DEFAULT_STACK_LIMIT,
+        )
+        with self.assertRaises(ValueError):
+            PortPolicy(output_cache_capacity=0)
 
     def test_the_intake_limit_is_not_derived_from_the_pickup_one(self):
         """**文档明写不得从取货的 9 种推导存货过滤上限**，替身因此刻意
@@ -1498,6 +1647,11 @@ class _PlayerPrimitives(object):
             self.slots[slot] = dict(data)
         return True
 
+    def swap_player_items(self, player_id, slot_a, slot_b):
+        """交换两个槽。**一次调用、一个布尔值**，与引擎同形。"""
+        self.slots[slot_a], self.slots[slot_b] = self.slots[slot_b], self.slots[slot_a]
+        return True
+
     def stack_limit(self, name, aux):
         return 64
 
@@ -1637,6 +1791,41 @@ class TestPortCommandsThroughTheMaster(BootstrapFixture):
         self.assertEqual(stored["direction"], "export", "没提到的字段不该被重置")
         self.assertEqual(len(stored["filter"]), 1)
         self.assertTrue(stored["enabled"])
+
+    def test_port_configure_can_turn_the_output_cache_off(self):
+        """**11-07 的 C2**：`settings_window` 的缓存开关此前**没有可提交的目标**。
+
+        落点是 `PortConfig.cache_enabled`，走的是通用的合并路径，因此不必为它
+        单开一条命令：界面发 `{"cache_enabled": false}` 即可，其余字段不受影响。
+        """
+        self.build_network()
+        ref = self.ref_at(key(3))
+        result = self.submit(
+            "c1", ref, "port_configure", config={"cache_enabled": False}
+        )
+        self.assertEqual(result.status, STATUS_OK)
+        self.assertFalse(
+            self.server.registry.get(key(3)).config["port"]["cache_enabled"]
+        )
+
+    def test_turning_the_cache_off_does_not_drop_the_buffer(self):
+        """**关掉开关不撤缓冲。**
+
+        `blocks.md`：已有缓存物品的关闭处置仍待定，**不得直接清空**。
+        若「关闭」被实现成把 `buffer` 摘掉，那 5 格里已经存在的东西会一次性
+        从账上消失——那正是这句话禁止的形态。开关只该改「走不走缓存这条路」，
+        不该改「那 5 格存不存在」。
+        """
+        self.build_network()
+        ref = self.ref_at(key(3))
+        self.assertIsNotNone(self.server.ports.get_by_ref(ref).buffer)
+
+        self.submit("c1", ref, "port_configure", config={"cache_enabled": False})
+
+        state = self.server.ports.get_by_ref(ref)
+        self.assertIsNotNone(state.buffer, "关缓存不该把缓冲本身撤掉")
+        self.assertEqual(state.buffer_kind, BUFFER_CONTAINER)
+        self.assertFalse(state.config.cache_enabled)
 
     def test_the_tenth_pickup_filter_entry_is_refused_by_the_server(self):
         """11-07 的验收：**非法第 10 种取货配置被服务端拒绝**。
@@ -2071,6 +2260,71 @@ class TestInventoryCommands(BootstrapFixture):
         )
         self.assertEqual(result.status, "rejected")
         self.assertIn(Reason.BAD_PARAMETER, result.reason_codes())
+
+    # -- 交换（第五个动作，2026-09-30 补）-----------------------------------
+
+    def test_swap_needs_two_distinct_slots(self):
+        result = self.submit(
+            "t1", self.ref, "inv_swap", slot=0, into_slot=0, key=STONE.to_dict()
+        )
+        self.assertEqual(result.status, "rejected")
+        self.assertIn(Reason.BAD_PARAMETER, result.reason_codes())
+
+    def test_swap_requires_a_target_slot(self):
+        result = self.submit("t1", self.ref, "inv_swap", slot=0, key=STONE.to_dict())
+        self.assertEqual(result.status, "rejected")
+        self.assertIn(Reason.BAD_PARAMETER, result.reason_codes())
+
+    def test_swap_exchanges_the_two_slots(self):
+        """**两边都换**，不是把 A 复制到 B——那正是「读两格写两格」会有的错。"""
+        endpoint = self.inventories.endpoint_of("p1")
+        endpoint.adapter.insert("seed", STONE, 5)
+        endpoint.adapter.insert("seed", DIRT, 3)
+        result = self.submit(
+            "t1", self.ref, "inv_swap", key=STONE.to_dict(), slot=0, into_slot=1
+        )
+        self.assertEqual(result.status, STATUS_OK, result.to_dict())
+        self.assertEqual(result.payload["receipt"]["moved"], 5)
+        self.assertEqual(endpoint.adapter.read_slot(0)["newItemName"], DIRT.name)
+        self.assertEqual(endpoint.adapter.read_slot(1)["newItemName"], STONE.name)
+        self.assertEqual(endpoint.adapter.count_of(STONE), 5, "没有凭空多出来")
+        self.assertEqual(endpoint.adapter.count_of(DIRT), 3)
+
+    def test_swap_with_an_empty_target_moves_instead_of_refusing(self):
+        """**目标为空是合法的**——与空槽交换就是移动。
+
+        这一条盯的是命令层不要照抄 `inv_merge` 那个
+        `target_view["key"] is not None` 的旁路判断：交换天然允许空目标，
+        把目标锚做成严格的就会在这里被拒。
+        """
+        endpoint = self.inventories.endpoint_of("p1")
+        endpoint.adapter.insert("seed", STONE, 5)
+        result = self.submit(
+            "t1", self.ref, "inv_swap", key=STONE.to_dict(), slot=0, into_slot=20
+        )
+        self.assertEqual(result.status, STATUS_OK, result.to_dict())
+        self.assertIsNone(endpoint.adapter.read_slot(0))
+        self.assertEqual(endpoint.adapter.read_slot(20)["count"], 5)
+
+    def test_swap_refuses_a_cursor_payload_because_r12_has_no_holder_rules(self):
+        """新动作也要过 `_cursor_refusal`。漏掉它，R12 的替身口径就有了个缺口。"""
+        result = self.submit(
+            "t1", self.ref, "inv_swap", slot=0, into_slot=1,
+            key=STONE.to_dict(), cursor={"key": STONE.to_dict(), "count": 1},
+        )
+        self.assertEqual(result.status, "rejected")
+        self.assertIn(Reason.CURSOR_UNRESOLVED, result.reason_codes())
+
+    def test_swap_refuses_a_source_holding_something_else(self):
+        """归宿是 `stale` 而不是 `rejected`：玩家该做的是刷新界面再发。"""
+        endpoint = self.inventories.endpoint_of("p1")
+        endpoint.adapter.insert("seed", DIRT, 3)
+        result = self.submit(
+            "t1", self.ref, "inv_swap", key=STONE.to_dict(), slot=0, into_slot=1
+        )
+        self.assertEqual(result.status, "stale", result.to_dict())
+        self.assertIn(Reason.SLOT_CHANGED, result.reason_codes())
+        self.assertEqual(endpoint.adapter.count_of(DIRT), 3, "一个都没动")
 
     def test_an_anchored_take_moves_both_legs(self):
         """**回归**：锚定路径曾经是一条旁路，只动背包、不动网络——

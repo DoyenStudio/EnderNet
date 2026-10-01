@@ -231,6 +231,35 @@ class TransferEndpoint(object):
         return "%s(%s)" % (type(self).__name__, self.endpoint_id())
 
 
+def _probe_answer(plan):
+    # type: (dict) -> object
+    """把存储服务的预演结果翻成 `probe_supply` / `probe_space` 的答案。
+
+    **「额度用尽」必须回 `None`（不知道），不能回 0。** 协调器把 0 读成
+    「来源端点没有可动的」并报 `insufficient_stock` —— 而玩家看到的是
+    「网络里没有这件东西」，真相却是 `rate_limited`（这一秒的读写额度用完了，
+    下一帧就有）。方向指错，界面就会把人往「去别处找货源」上引。
+
+    回 `None` 之后协调器会照常发起转移，由 `commit_*` 给出真实的
+    `rate_limited` 回执——这正是 `probe_*` 的既有契约：「`None` = 不知道，
+    调用方按请求量去试，由 `commit` 的核对给实际值」。
+
+    2026-10-01 真机实测到的那条：一次「取一组」正好抽干该秒的读取额度
+    （磁带 `read_units_per_second` 是 64，桶容量 1 秒 = 64 件），同一秒内
+    第二条命令必然失败——而它报的是 `insufficient_stock`。连点 4 行，
+    第 1 行成功、后 3 行都是这条错码。
+
+    **只有 `RATE_LIMITED` 这一种原因改判。** 真没货（`INSUFFICIENT_STOCK`）
+    与真放不下（`NO_CAPACITY`）照旧回 0：那些答案是对的，回 `None` 只会让
+    协调器白跑一趟再去核对一遍。
+    """
+    if plan.get("accepted", 0) > 0:
+        return plan["accepted"]
+    if plan.get("reason") == Reason.RATE_LIMITED:
+        return None
+    return 0
+
+
 class NetworkEndpoint(TransferEndpoint):
     """网络这一端。包一个 `StorageService`。
 
@@ -269,13 +298,15 @@ class NetworkEndpoint(TransferEndpoint):
         # type: (ResourceKey, int) -> object
         if not self.can_read():
             return None
-        return self.storage.simulate_extract(resource_key, count)["accepted"]
+        plan = self.storage.simulate_extract(resource_key, count)
+        return _probe_answer(plan)
 
     def probe_space(self, resource_key, count):
         # type: (ResourceKey, int) -> object
         if not self.can_write():
             return None
-        return self.storage.simulate_insert(resource_key, count)["accepted"]
+        plan = self.storage.simulate_insert(resource_key, count)
+        return _probe_answer(plan)
 
     def commit_extract(self, op_id, resource_key, count, owner_id=""):
         # type: (str, ResourceKey, int, str) -> TransferReceipt
@@ -388,11 +419,12 @@ class SlotAnchor(object):
 
     - 只看槽号：槽里换了东西照样照单全收；
     - 只看指纹：玩家背包里另一种槽位也有同一件物品时，会从别处扣；
-    - 加槽版本：客户端基于旧快照发来的请求能被明确拒绝（`slot_changed`），
+    - 加槽版本：客户端基于旧快照发来的请求能被明确拒绝（`stale_version`），
       而不是取错东西。
 
     `expected_version` 允许为 `None`，表示「不校验版本」——那是有意的选项，
-    不是省略；调用方要么给一个从 `slot_view()` 取来的真实版本，要么显式说不校验。
+    不是省略；旧调用方可显式不校验。终端按槽存入使用服务端同步的真实版本，
+    没有对应快照时不发送，不再通过 None 绕过。
     """
 
     __slots__ = ("slot", "expected_key", "expected_version")
@@ -435,6 +467,7 @@ class InventoryEndpoint(ContainerEndpoint):
         self.player_id = player_id
         #: `slot -> [last_key_canonical, version]`
         self._versions = {}
+        self._revision = 0
 
     def endpoint_id(self):
         # type: () -> str
@@ -471,12 +504,25 @@ class InventoryEndpoint(ContainerEndpoint):
         跨会话比较没有意义。
         """
         entry = self._entry_at(slot)
+        return self._observe_slot(slot, entry)
+
+    def inventory_view(self):
+        # type: () -> dict
+        """一次读取整个背包，供同步与命令共用同一份版本台账。"""
+        entries = dict(self.adapter.entries())
+        slots = [self._observe_slot(slot, entries.get(slot))
+                 for slot in range(self.adapter.slot_count())]
+        return {"revision": self._revision, "slots": slots}
+
+    def _observe_slot(self, slot, entry):
+        # type: (int, object) -> dict
         key = entry.resource_key if entry is not None else None
         canonical = key.canonical() if key is not None else ""
         record = self._versions.get(slot)
         if record is None or record[0] != canonical:
             record = [canonical, (record[1] + 1) if record is not None else 1]
             self._versions[slot] = record
+            self._revision += 1
         return {
             "slot": slot,
             "key": key.to_dict() if key is not None else None,
@@ -620,6 +666,101 @@ class InventoryEndpoint(ContainerEndpoint):
         if not receipt.holder:
             receipt.holder = self.holder_id()
         return receipt
+
+    def anchored_swap(self, op_id, source_anchor, target_anchor):
+        # type: (str, SlotAnchor, SlotAnchor) -> TransferReceipt
+        """交换两个槽锚指定的槽——**一次动两格**，与取/放那两个单格原语不同。
+
+        **两个锚的严格程度不一样，这是有意的：**
+
+        - **源槽一律严格**（`allow_empty=False`）。源槽空着就没有可交换的
+          东西，拒绝。
+        - **目标槽允许为空**（`allow_empty=True`）。与空槽交换**就是移动**，
+          这是定案的行为（`plans/blocks.md` 的「背包槽之间的拆分、合并与交换」），
+          不是特例。这一支只核版本、不要求指纹——空槽本来就没有指纹。
+
+        `inv_merge` 在服务层用 `if not ok and target_view["key"] is not None`
+        表达同一件事；交换把它放回端点这一层，因为判定本来就属于这里。
+        **不要把这一条「补」成两个锚都严格**：那会把「移动到空格」判死。
+
+        引擎侧是一个真正的交换原语（`SetInvItemExchange`），**不是**
+        「读两格再写两格」——后者第二次写入失败会把源物品同时留在两处，
+        而总量守恒查不出复制。
+        """
+        source_key = source_anchor.expected_key
+        if source_anchor.slot == target_anchor.slot:
+            return TransferReceipt(
+                op_id, 0, 0, TransferStatus.REFUSED, Reason.BAD_PARAMETER,
+                source_key, self.holder_id(),
+            )
+        ok, reason, detail = self.anchor_verdict(source_anchor)
+        if not ok:
+            return TransferReceipt(
+                op_id, 0, 0, TransferStatus.REFUSED, reason,
+                source_key, self.holder_id(),
+            )
+        # 数量取自**刚刚核对过的那一次读**，不另外再读一遍：两次读之间
+        # 若发生变动，复核那一关会把它降级成 `UNCERTAIN`，而不是拿一个
+        # 从没被核对过的数量去记账。
+        count = int(self.slot_view(source_anchor.slot)["count"] or 0)
+        if count <= 0:
+            return TransferReceipt(
+                op_id, 0, 0, TransferStatus.REFUSED,
+                Reason.INSUFFICIENT_STOCK, source_key, self.holder_id(),
+            )
+        ok, reason, detail = self.anchor_verdict(target_anchor, allow_empty=True)
+        if not ok:
+            return TransferReceipt(
+                op_id, count, 0, TransferStatus.REFUSED, reason,
+                source_key, self.holder_id(),
+            )
+        primitive = self._slot_primitive("swap_slots")
+        if primitive is None:
+            # 容器没有这个原语（基类刻意不提供会复制物品的默认实现）。
+            return TransferReceipt(
+                op_id, count, 0, TransferStatus.UNSUPPORTED,
+                Reason.UNSUPPORTED, source_key, self.holder_id(),
+            )
+        if not primitive(source_anchor.slot, target_anchor.slot):
+            return TransferReceipt(
+                op_id, count, 0, TransferStatus.REFUSED,
+                Reason.CONTAINER_REFUSED, source_key, self.holder_id(),
+            )
+        return self._recheck_swap(op_id, count, source_anchor, target_anchor)
+
+    def _recheck_swap(self, op_id, count, source_anchor, target_anchor):
+        # type: (str, int, SlotAnchor, SlotAnchor) -> TransferReceipt
+        """交换之后复核。**复核不过一律降级为 `UNCERTAIN`。**
+
+        判据与 `_recheck_after` 不同，不能复用：那边问的是「源槽空了没有」，
+        而交换之后源槽里装着**对方的东西**，问「空没空」必然答错、每次都
+        报不确定。这里换成正着问——**源物品现在是不是真的在目标槽里、
+        数量对不对**，那正是这次操作声称做成的事。
+
+        只查目标那一格：交换是双向的，目标对上了就说明两边都换了；
+        再查源槽等于把同一个判据说两遍，而两遍里任何一遍的读取失败都会
+        把一条成功的交换打成不确定。
+        """
+        if not self.can_read():
+            return TransferReceipt(
+                op_id, count, 0, TransferStatus.UNCERTAIN,
+                Reason.CONTAINER_UNCERTAIN, source_anchor.expected_key,
+                self.holder_id(),
+            )
+        expected = (
+            source_anchor.expected_key.canonical()
+            if source_anchor.expected_key is not None else ""
+        )
+        view = self.slot_view(target_anchor.slot)
+        if view["canonical"] != expected or int(view["count"] or 0) != count:
+            return TransferReceipt(
+                op_id, count, 0, TransferStatus.UNCERTAIN, Reason.SLOT_CHANGED,
+                source_anchor.expected_key, self.holder_id(),
+            )
+        return TransferReceipt(
+            op_id, count, count, TransferStatus.COMPLETE, "",
+            source_anchor.expected_key, self.holder_id(),
+        )
 
 
 class AnchoredInventoryView(TransferEndpoint):

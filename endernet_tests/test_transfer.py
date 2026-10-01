@@ -27,6 +27,7 @@ from endernet.common.protocol import (
     TransferStatus,
 )
 from endernet.common.resource_key import ResourceKey
+from endernet.server.adapters.containers_engine import SlotBackedContainer
 from endernet.server.adapters.containers import (
     ContainerEntry,
     FakeContainer,
@@ -48,6 +49,8 @@ from endernet.server.storage.transfer import (
     TransferBuffer,
     TransferCoordinator,
     TransferPolicy,
+    TransferReceipt,
+    TransferStatus,
 )
 
 STONE = ResourceKey.item("minecraft:stone")
@@ -766,6 +769,127 @@ class TestSlotAnchor(unittest.TestCase):
         self.assertEqual(receipt.reason, Reason.SLOT_CHANGED)
         self.assertEqual(self.inventory.count_of(STONE), stone_before)
 
+    # -- 交换（06-09 的第五个动作，2026-09-30 补）---------------------------
+
+    def _two_slots(self, endpoint):
+        """槽 0 放 5 个石头、槽 1 放 3 个泥土。"""
+        self.inventory.insert("seed", STONE, 5)
+        self.inventory.insert("seed", DIRT, 3)
+        return endpoint, endpoint.slot_view(0), endpoint.slot_view(1)
+
+    def test_anchored_swap_exchanges_both_slots(self):
+        """**一次动两格**，与取/放那两个单格原语不同。
+
+        `moved` 报的是**源物品落到对面几个**（与 `inv_merge` 报「并进去几个」
+        同一口径），不是两格之和——交换没有「总量」可言，报和会随对调反转。
+        """
+        endpoint = self.endpoint()
+        endpoint, _, _ = self._two_slots(endpoint)
+        receipt = endpoint.anchored_swap(
+            "op", SlotAnchor(0, STONE), SlotAnchor(1, DIRT)
+        )
+        self.assertEqual(receipt.status, TransferStatus.COMPLETE)
+        self.assertEqual(receipt.moved, 5)
+        self.assertEqual(receipt.resource_key, STONE)
+        # **两边都换了**，不是把 A 复制到 B。
+        self.assertEqual(self.inventory.read_slot(0)["newItemName"], DIRT.name)
+        self.assertEqual(self.inventory.read_slot(1)["newItemName"], STONE.name)
+        self.assertEqual(self.inventory.count_of(STONE), 5)
+        self.assertEqual(self.inventory.count_of(DIRT), 3)
+
+    def test_anchored_swap_with_an_empty_target_is_a_move(self):
+        """**目标槽为空是合法的**——与空槽交换就是移动，是定案的行为。
+
+        这条是端点层最容易写错的地方：把两个锚都做成严格的，第一次
+        「把石头挪到空格」就会被拒。目标锚因此在空槽上只核版本。
+        载荷里那个占位指纹（这里传的 `STONE`）**不被读取**。
+        """
+        endpoint = self.endpoint()
+        self.inventory.insert("seed", STONE, 5)
+        receipt = endpoint.anchored_swap(
+            "op", SlotAnchor(0, STONE), SlotAnchor(20, STONE)
+        )
+        self.assertEqual(receipt.status, TransferStatus.COMPLETE, receipt.to_dict())
+        self.assertIsNone(self.inventory.read_slot(0))
+        self.assertEqual(self.inventory.read_slot(20)["newItemName"], STONE.name)
+        self.assertEqual(self.inventory.read_slot(20)["count"], 5)
+
+    def test_anchored_swap_refuses_an_empty_source(self):
+        """源槽空着就没有可交换的东西。**目标允许为空，源槽不允许**——
+        这一条不对称是判据本身，不是遗漏。"""
+        endpoint = self.endpoint()
+        receipt = endpoint.anchored_swap(
+            "op", SlotAnchor(0, STONE), SlotAnchor(1, DIRT)
+        )
+        self.assertEqual(receipt.status, TransferStatus.REFUSED)
+        self.assertEqual(receipt.reason, Reason.SLOT_CHANGED)
+
+    def test_anchored_swap_refuses_a_source_holding_something_else(self):
+        endpoint = self.endpoint()
+        self.inventory.insert("seed", DIRT, 3)
+        before = self.inventory.count_of(DIRT)
+        receipt = endpoint.anchored_swap(
+            "op", SlotAnchor(0, STONE), SlotAnchor(1, DIRT)
+        )
+        self.assertEqual(receipt.status, TransferStatus.REFUSED)
+        self.assertEqual(receipt.reason, Reason.SLOT_CHANGED)
+        self.assertEqual(self.inventory.count_of(DIRT), before, "一个都没动")
+
+    def test_anchored_swap_refuses_a_stale_target_version(self):
+        """**目标槽的版本也要核**：依据旧快照去换一个已经变过的槽是同类过期请求。"""
+        endpoint = self.endpoint()
+        endpoint, _, target = self._two_slots(endpoint)
+        receipt = endpoint.anchored_swap(
+            "op", SlotAnchor(0, STONE),
+            SlotAnchor(1, DIRT, target["version"] + 99),
+        )
+        self.assertEqual(receipt.status, TransferStatus.REFUSED)
+        self.assertEqual(receipt.reason, Reason.STALE_VERSION)
+
+    def test_anchored_swap_is_unsupported_without_the_primitive(self):
+        """**容器没有交换原语**——基类刻意不给默认实现（会复制物品）。
+
+        取不到原语时必须明确答 `unsupported`，而不是退化成「读两格写两格」：
+        后者第二次写入失败会把源物品同时留在两处，而总量守恒查不出来。
+        """
+        adapter = _NoSwapInventory([
+            {"newItemName": STONE.name, "newAuxValue": 0, "count": 5, "showInHand": True},
+            {"newItemName": DIRT.name, "newAuxValue": 0, "count": 3, "showInHand": True},
+        ])
+        from endernet.server.storage.transfer import InventoryEndpoint
+
+        receipt = InventoryEndpoint(adapter, "steve").anchored_swap(
+            "op", SlotAnchor(0, STONE), SlotAnchor(1, DIRT)
+        )
+        self.assertEqual(receipt.status, TransferStatus.UNSUPPORTED)
+        self.assertEqual(receipt.moved, 0)
+
+    def test_anchored_swap_reports_uncertain_when_the_engine_did_nothing(self):
+        """**引擎说成功不算数，复核才算。**（架构 §6.3 / 06 验收首条）
+
+        复核判据与 `_recheck_after` 不同：那边问「源槽空了没有」，而交换后
+        源槽里装着对方的东西，问「空没空」必然答错，每次都会误报不确定。
+        这里问的是「源物品现在在对面没有」。
+        """
+        from endernet.server.adapters.containers_engine import (
+            EnginePlayerInventory,
+            build_stack_limit,
+        )
+
+        primitives = _LyingSwapPrimitives()
+        inventory = EnginePlayerInventory(
+            primitives, "steve", build_stack_limit(primitives)
+        )
+        inventory.insert("seed", STONE, 5)
+        inventory.insert("seed", DIRT, 3)
+        from endernet.server.storage.transfer import InventoryEndpoint
+
+        receipt = InventoryEndpoint(inventory, "steve").anchored_swap(
+            "op", SlotAnchor(0, STONE), SlotAnchor(1, DIRT)
+        )
+        self.assertEqual(receipt.status, TransferStatus.UNCERTAIN)
+        self.assertEqual(receipt.reason, Reason.SLOT_CHANGED)
+
 
 def _dirt_dict(count):
     return {"newItemName": "minecraft:dirt", "newAuxValue": 0, "count": count,
@@ -799,8 +923,47 @@ class _FakePlayerPrimitives(object):
             self.slots[slot] = dict(data)
         return True
 
+    def swap_player_items(self, player_id, slot_a, slot_b):
+        """交换两个槽。**一次调用、一个布尔值**，与引擎同形（见
+        `test_containers_engine.py` 同名方法的说明）。"""
+        self.slots[slot_a], self.slots[slot_b] = self.slots[slot_b], self.slots[slot_a]
+        return True
+
     def stack_limit(self, name, aux):
         return 64
+
+
+class _LyingSwapPrimitives(_FakePlayerPrimitives):
+    """引擎**说成功、其实没动**。复核那一关就是为它存在的。"""
+
+    def swap_player_items(self, player_id, slot_a, slot_b):
+        return True
+
+
+class _NoSwapInventory(SlotBackedContainer):
+    """一个**没有交换原语**的按槽容器。
+
+    它继承 `SlotBackedContainer` 而不实现 `swap_slots`——这正是容器那一侧
+    的真实形态（基类刻意不提供，理由见 `test_containers_engine.py` 的
+    `test_the_backpack_is_the_only_thing_that_can_swap`）。用来看端点
+    是否老实答 `unsupported`。
+    """
+
+    adapter_id = "no_swap_inventory"
+
+    def __init__(self, slots):
+        SlotBackedContainer.__init__(self, lambda key: 64)
+        self._slots = list(slots)
+
+    def slot_count(self):
+        return len(self._slots)
+
+    def read_slot(self, slot):
+        data = self._slots[slot]
+        return dict(data) if data else None
+
+    def _write_slot(self, slot, data):
+        return True
 
 
 # -- 策略 ------------------------------------------------------------------
@@ -898,6 +1061,80 @@ class TestNetworkEndpoint(unittest.TestCase):
         self.assertFalse(endpoint.can_read())
         self.assertFalse(endpoint.can_write())
         self.assertIsNone(endpoint.probe_space(STONE, 1))
+
+    def test_a_quota_shortage_is_unknown_not_empty(self):
+        """**额度用尽回 `None`，不回 0。**
+
+        2026-10-01 真机实测：一次「取一组」正好抽干该秒的读取额度（磁带
+        `read_units_per_second` 是 64，桶容量 1 秒 = 64 件），同一秒内的
+        第二条命令必然失败——而它报的是 **`insufficient_stock`**，玩家看到
+        「网络里没有这件东西」。真相是 `rate_limited`：下一帧就有。
+
+        回 `None`（不知道）之后，协调器会照常发起转移，由 `commit_*` 给出
+        真实的 `rate_limited`——`probe_*` 的契约本来就是这么写的。
+        """
+        class QuotaOut(TestNetworkEndpoint._Storage):
+            def simulate_insert(self, key, count):
+                return {"accepted": 0, "reason": Reason.RATE_LIMITED}
+
+            def simulate_extract(self, key, count):
+                return {"accepted": 0, "reason": Reason.RATE_LIMITED}
+
+        endpoint = NetworkEndpoint(QuotaOut(), "c1")
+        self.assertIsNone(endpoint.probe_supply(STONE, 2))
+        self.assertIsNone(endpoint.probe_space(STONE, 2))
+
+    def test_a_genuinely_empty_side_still_answers_zero(self):
+        """真没货 / 真放不下照旧回 0——那些答案是对的，不该被改成 `None`。"""
+        class Empty(TestNetworkEndpoint._Storage):
+            def simulate_insert(self, key, count):
+                return {"accepted": 0, "reason": Reason.NO_CAPACITY}
+
+            def simulate_extract(self, key, count):
+                return {"accepted": 0, "reason": Reason.INSUFFICIENT_STOCK}
+
+        endpoint = NetworkEndpoint(Empty(), "c1")
+        self.assertEqual(endpoint.probe_supply(STONE, 2), 0)
+        self.assertEqual(endpoint.probe_space(STONE, 2), 0)
+
+
+class TestRateLimitedTransfer(unittest.TestCase):
+    """额度用尽时报 `rate_limited`，**不是 `insufficient_stock`**。
+
+    这是 2026-10-01 真机实测那条的端到端回归：网络里有货、只是这一帧的
+    额度用完了，而玩家看到的是「网络里没有这件东西」。判据落在**回执的
+    原因码**上——`probe_supply` 回 `None`（不知道）之后由 `commit_extract`
+    给出真实原因，正是 `probe_*` 的契约。
+    """
+
+    class _Storage(object):
+        """有货，但这一帧的额度是 0：预演说 `rate_limited`，提交也这么说。"""
+
+        def is_ready(self):
+            return True
+
+        def simulate_extract(self, key, count):
+            return {"accepted": 0, "reason": Reason.RATE_LIMITED}
+
+        def commit_extract(self, op_id, key, count, owner_id=""):
+            return TransferReceipt(
+                op_id, count, 0, TransferStatus.REFUSED, Reason.RATE_LIMITED, key
+            )
+
+        def commit_insert(self, op_id, key, count, owner_id="", origin=None):
+            raise AssertionError("这一条不该写进网络")
+
+    def test_the_real_reason_survives_to_the_receipt(self):
+        source = NetworkEndpoint(self._Storage(), "c1")
+        target = ContainerEndpoint(FakeContainer(slots=1, max_stack=64), "player")
+        receipt = TransferCoordinator().commit(
+            TransferRequest("op-rl", source.endpoint_id(), target.endpoint_id(),
+                            STONE, 2),
+            source, target,
+        )
+        self.assertEqual(receipt.moved, 0)
+        self.assertEqual(receipt.reason, Reason.RATE_LIMITED)
+        self.assertNotEqual(receipt.reason, Reason.INSUFFICIENT_STOCK)
 
 
 if __name__ == "__main__":

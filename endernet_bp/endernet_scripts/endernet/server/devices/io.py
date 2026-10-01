@@ -28,6 +28,8 @@
 """
 
 from ...common.definitions import (
+    ITEM_INTAKE_PORT_SLOT_COUNT,
+    ITEM_OUTPUT_PORT_SLOT_COUNT,
     PASSIVE_PORT_SLOT_COUNT,
     PICKUP_FILTER_LIMIT,
     TEMPLATE_PATTERN_SLOT_COUNT,
@@ -97,8 +99,22 @@ FLUID_DEVICES = frozenset(
 #: 需要朝向邻居才能工作的角色。被动总线**不在此列**：它交换的是自己的容器。
 FACING_ROLES = frozenset([INTAKE, OUTPUT, TEMPLATE])
 
-#: 自身带方块容器（因而是缓冲的实际存放处）的角色。
-BUFFERED_ROLES = frozenset([PASSIVE, TEMPLATE])
+#: **有内部缓冲**的角色。四台都有，但存放形态不同（见 `BUFFER_*`）：
+#: 被动接口的 9 格、存货口的 5 格与取货口的 5 格都是**方块容器**（真实槽位，
+#: `blocks.md`），样板口的原料缓冲是**内存结构**（容量归 R05）。
+INTERNAL_BUFFER_ROLES = frozenset([PASSIVE, INTAKE, OUTPUT, TEMPLATE])
+
+#: **对外那一侧就是本地缓冲**（而不是朝向的容器）的角色。
+#:
+#: 这个集合与 `INTERNAL_BUFFER_ROLES` **回答的不是同一个问题**，2026-09-29
+#: 之前它们共用一个名字 `BUFFERED_ROLES`，于是「取货口有没有缓存」这个问题
+#: 一直答不上来——它对该集合的答案是「没有」（所以 `external_endpoint` 给它
+#: 朝向容器，这是对的），对内部缓冲的答案却是「有 5 格」（所以它的 `buffer`
+#: 一直是 `None`，这是错的）。取货口正是把两者分开的那台：缓存只是
+#: 「网络 → 缓存 → 朝向的容器」这条路上的中间站，**外部物流的存取不该打到
+#: 缓存格上**。把 OUTPUT 加进本集合会让 `PortItemPort.external_endpoint`
+#: 把外部那双的手引到缓存里，而不是引到它真正该投递的容器里。
+BUFFER_AS_EXTERNAL_SIDE = frozenset([PASSIVE, TEMPLATE])
 
 # -- 配置方向 --------------------------------------------------------------
 
@@ -138,12 +154,27 @@ DEFAULT_STACK_LIMIT = 64
 PORT_STATE_SCHEMA_VERSION = 2
 
 #: 缓冲的存放形态。**「没有内部槽」与「有槽但是空的」必须分得开**——
-#: 前者是主动存取口的规格（无内部库存槽），后者只是当前恰好为空。
+#: 前者是还没有内部存放处，后者只是当前恰好为空。
+#:
+#: 2026-09-29：`BUFFER_NONE` **不再是任何角色的常态**。2026-09-25 的规格曾写
+#: 「主动存取口无内部库存槽」，但 `blocks.md` 在 2026-09-28/29 给了存货口与
+#: 取货口各 5 个真实槽位，四台接口现在都有内部缓冲，区别只在形态。
+#: 保留这个取值，是因为它仍然要表达「这台设备的缓冲还没有存放处」。
 BUFFER_NONE = None
-#: 缓冲的实际存放处是方块自己的容器（被动接口的 9 格）。
+#: 缓冲的实际存放处是方块自己的容器（被动接口 9 格、存货口 5 格、取货口 5 格）。
 BUFFER_CONTAINER = "container"
-#: 缓冲是独立的内存结构（样板接口的原料缓冲，R05 定容量）。
+#: 缓冲是独立的内存结构（样板接口的原料缓冲，容量归 R05）。
 BUFFER_MEMORY = "memory"
+
+#: 关掉缓存开关时，**已经在缓存格里的东西**怎么办。**未定案**。
+#:
+#: `blocks.md` 只说到「已有缓存物品的关闭处置仍待定，**不得直接清空**」，
+#: 因此替身取保守的那一侧（`CACHE_KEEP`）。另外两种口径列在这里，是为了让
+#: 「待定」有一个确切的名字，而不是一个空的 TODO——它们**没有实现**。
+CACHE_KEEP = "keep"
+CACHE_RETURN_TO_NETWORK = "return_to_network"
+CACHE_DROP = "drop"
+CACHE_ON_DISABLE = frozenset([CACHE_KEEP, CACHE_RETURN_TO_NETWORK, CACHE_DROP])
 
 
 def role_of(device_id):
@@ -201,11 +232,14 @@ class PortPolicy(object):
 
     __slots__ = (
         "template_buffer_capacity",
+        "output_cache_capacity",
+        "intake_buffer_capacity",
         "intake_filter_limit",
         "default_filter_mode",
         "empty_filter_means",
         "max_batch",
         "probe_unit",
+        "cached_items_on_disable",
     )
 
     def __init__(
@@ -216,8 +250,11 @@ class PortPolicy(object):
         empty_filter_means=EMPTY_MEANS_NOTHING,
         max_batch=64,
         probe_unit=1,
+        output_cache_capacity=None,
+        intake_buffer_capacity=None,
+        cached_items_on_disable=CACHE_KEEP,
     ):
-        # type: (int, int, str, str, int, int) -> None
+        # type: (int, int, str, str, int, int, int, int, str) -> None
         #: **R05**：样板接口的**原料缓冲**能装多少件。
         #: 与它那 9 个样板槽无关——规格明写「不能用 9 个样板槽推算」。
         #: 替身按「若干格 × 一个通用堆叠上限」估；真实值定案前不落进交付。
@@ -225,6 +262,36 @@ class PortPolicy(object):
             template_buffer_capacity
             if template_buffer_capacity is not None
             else TEMPLATE_PATTERN_SLOT_COUNT.value * DEFAULT_STACK_LIMIT
+        )
+        #: 取货口 5 格缓存的**件数**上界。
+        #:
+        #: **这个数不是玩法数值，是从已定案的槽数推出来的护栏**：槽数是定案值
+        #: （`blocks.md` 的 5 格，进定义表且不带 unresolved 标签），乘数用的是
+        #: 「适配器答不出时的通用堆叠上限」。真实上界由容器与每件物品的
+        #: `maxStackSize` 决定，与被动接口那条同口径：台账宣称的件数上限
+        #: 只是保守护栏，不是容量规则。
+        #:
+        #: **刻意不复用 `template_buffer_capacity`**：那个值挂的是 R05，
+        #: 拿它给一台槽数已定案的设备定容量，等于把 R05 的替身口径扩散到
+        #: 一个不归它管的地方。
+        self.output_cache_capacity = int(
+            output_cache_capacity
+            if output_cache_capacity is not None
+            else ITEM_OUTPUT_PORT_SLOT_COUNT.value * DEFAULT_STACK_LIMIT
+        )
+        #: 存货口 5 格缓冲的**件数**上界。与 `output_cache_capacity` 同一条
+        #: 口径（定案槽数 × 适配器答不出时的通用堆叠上限，是保守护栏而非
+        #: 容量规则），**但刻意分成两个字段**：两台设备的槽数各自独立定案，
+        #: 共用一个字段会让以后改其中一台时另一台跟着动，而那种联动在
+        #: 诊断里看不出来。
+        #:
+        #: **不要与 `intake_filter_limit` 混起来**：那个是过滤条目数（R05
+        #: 未定），这个是真实槽位的件数上界（已定案），两者恰好都在
+        #: 「存货口」名下，但一个待定一个定案。
+        self.intake_buffer_capacity = int(
+            intake_buffer_capacity
+            if intake_buffer_capacity is not None
+            else ITEM_INTAKE_PORT_SLOT_COUNT.value * DEFAULT_STACK_LIMIT
         )
         #: **待确认**：存货口的过滤条目上限。`blocks.md` 只说了取货最多 9 种，
         #: 并明写**不得从取货的 9 种推导存货过滤上限**，因此这里的替身
@@ -244,6 +311,12 @@ class PortPolicy(object):
         #: R05：目标端不支持模拟时，第一次试探搬多少。
         #: 取 1 是保守的：多搬的部分要回滚，而回滚本身可能失败。
         self.probe_unit = int(probe_unit)
+        #: **未定案**：关掉取货口的缓存开关后，**已经在缓存格里的东西**怎么办。
+        #:
+        #: `blocks.md` 的原话是「已有缓存物品的关闭处置仍待定，**不得直接清空**」，
+        #: 因此替身取 `CACHE_KEEP`——唯一一个不会造成损失的选项。
+        #: 另两种口径（回网 / 掉落）**没有实现**，只留名字。
+        self.cached_items_on_disable = cached_items_on_disable
 
         if self.template_buffer_capacity <= 0:
             raise ValueError(
@@ -262,6 +335,20 @@ class PortPolicy(object):
             raise ValueError("max_batch 必须为正，得到 %r" % (self.max_batch,))
         if self.probe_unit <= 0:
             raise ValueError("probe_unit 必须为正，得到 %r" % (self.probe_unit,))
+        if self.output_cache_capacity <= 0:
+            raise ValueError(
+                "output_cache_capacity 必须为正，得到 %r"
+                % (self.output_cache_capacity,)
+            )
+        if self.intake_buffer_capacity <= 0:
+            raise ValueError(
+                "intake_buffer_capacity 必须为正，得到 %r"
+                % (self.intake_buffer_capacity,)
+            )
+        if self.cached_items_on_disable not in CACHE_ON_DISABLE:
+            raise ValueError(
+                "未知的关闭缓存处置口径: %r" % (self.cached_items_on_disable,)
+            )
 
     def filter_limit_for(self, role):
         # type: (str) -> int
@@ -318,6 +405,17 @@ class PortPolicy(object):
                 "value": self.probe_unit,
                 "note": "目标不支持模拟时的试探量；替身取 1",
             },
+            {
+                "field": "port.cached_items_on_disable",
+                "rule": "R05",
+                "value": self.cached_items_on_disable,
+                "note": (
+                    "关掉取货口缓存开关后，已在缓存格里的东西怎么处置；"
+                    "`blocks.md` 明写「仍待定，不得直接清空」，替身取保留。"
+                    "归 00 的「接口尚待确认的细则：配置变化后的余料处置」，"
+                    "由 06 联合 11/12 明确"
+                ),
+            },
         ]
 
     def assert_settled(self):
@@ -339,9 +437,12 @@ class PortPolicy(object):
         # type: () -> dict
         return {
             "template_buffer_capacity": self.template_buffer_capacity,
+            "output_cache_capacity": self.output_cache_capacity,
+            "intake_buffer_capacity": self.intake_buffer_capacity,
             "intake_filter_limit": self.intake_filter_limit,
             "default_filter_mode": self.default_filter_mode,
             "empty_filter_means": self.empty_filter_means,
+            "cached_items_on_disable": self.cached_items_on_disable,
             "max_batch": self.max_batch,
             "probe_unit": self.probe_unit,
         }
@@ -385,6 +486,7 @@ class PortConfig(object):
         "filter",
         "supply_slots",
         "limit",
+        "cache_enabled",
     )
 
     def __init__(
@@ -395,8 +497,9 @@ class PortConfig(object):
         limit=0,
         filter_mode=MODE_WHITELIST,
         supply_slots=(),
+        cache_enabled=True,
     ):
-        # type: (bool, str, tuple, int, str, tuple) -> None
+        # type: (bool, str, tuple, int, str, tuple, bool) -> None
         if direction not in DIRECTIONS:
             raise ValueError("未知方向: %r" % (direction,))
         if filter_mode not in FILTER_MODES:
@@ -412,6 +515,22 @@ class PortConfig(object):
         self.limit = int(limit)
         if self.limit < 0:
             raise ValueError("limit 不能为负，得到 %r" % (self.limit,))
+        #: 取货口的**缓存开关**（11-07 的 C2 把它叫「缓存模式」，界面语义是
+        #: `settings_window` 里的一个开关）。
+        #:
+        #: `blocks.md`：启用时经缓存中转（网络 → 缓存 → 朝向容器），
+        #: **关闭后关闭缓存槽，改由网络直接向朝向容器输入物品**。
+        #: **默认启用**，而且「保存过的关闭状态重开/重载不得被默认值覆盖」——
+        #: `from_dict` 因此是 `data.get(..., True)`：字段缺失取 True（旧存档
+        #: 与新建都走这一支），字段存在则**原样读出**，`False` 不会被顶掉。
+        #:
+        #: **只有取货口读它**，其余角色拿到什么值都不影响行为（它们各自的中转
+        #: 语义是别的东西，不由这个开关管）。**本字段目前只被记录与展示**——
+        #: 「网络 → 缓存 → 朝向容器」这条中转路由尚未实现（06-06/11-07）。
+        #:
+        #: **它与「有没有缓冲」是两件事**：关掉开关不撤缓冲，
+        #: 见 `PortPolicy.cached_items_on_disable`。
+        self.cache_enabled = bool(cache_enabled)
 
     # -- 判定 ----------------------------------------------------------
 
@@ -473,6 +592,7 @@ class PortConfig(object):
             "filter": [key.to_dict() for key in self.filter],
             "supply_slots": list(self.supply_slots),
             "limit": self.limit,
+            "cache_enabled": self.cache_enabled,
         }
 
     @classmethod
@@ -494,6 +614,8 @@ class PortConfig(object):
             data.get("limit", 0),
             data.get("filter_mode", default_mode),
             tuple(data.get("supply_slots", ())),
+            # 缓存开关：缺失即默认启用，存在则原样读出（`False` 不被顶掉）。
+            data.get("cache_enabled", True),
         )
 
     def __repr__(self):
@@ -602,7 +724,7 @@ class PortItemPort(object):
     def external_endpoint(self, op_id):
         # type: (str) -> tuple
         """对外那一侧的端点。返回 `(endpoint, detail)`，失败时端点为 None。"""
-        if self.state.role in BUFFERED_ROLES:
+        if self.state.role in BUFFER_AS_EXTERNAL_SIDE:
             endpoint = self.ports.buffer_endpoint(self.state, op_id, ORIGIN_EXTERNAL)
             if endpoint is None:
                 return None, "该接口没有可用的本地缓冲"
@@ -640,7 +762,7 @@ class PortItemPort(object):
             "adapter_id": self.adapter_id,
             "role": self.state.role,
             "external_side": (
-                "buffer" if self.state.role in BUFFERED_ROLES else "facing"
+                "buffer" if self.state.role in BUFFER_AS_EXTERNAL_SIDE else "facing"
             ),
             "node_key": self.state.node_key.as_key(),
         }
@@ -902,6 +1024,46 @@ class PortStore(object):
                 self.policy.template_buffer_capacity, ref.node_key.as_key()
             )
             state.buffer_kind = BUFFER_MEMORY
+            self.stats["buffers_created"] += 1
+        elif role == INTAKE:
+            # 存货口：5 格**内部真实物品缓冲槽**（`blocks.md` 2026-09-29 由 9
+            # 更正为 5；方块侧同日挂上 `container_size=5` 的网易容器）。
+            # 与取货口那 5 格是**对称的同一个缺口**，也在 11-07 的 C1 名下，
+            # 于 2026-09-29 与取货口一并补上。
+            #
+            # 存放形态同取货口：**方块容器**，因此外部模组直接动那 5 格时
+            # 记账看得见。规格要求的流向是「朝向容器 → 缓冲 → 网络」，
+            # 而 `dispatch_intake` 目前走的是**朝向容器 → 网络直输**
+            # （06-05 尚未实现中转），所以本分支同样只立权威、不改行为。
+            #
+            # **对外那一侧仍是朝向的容器**：存货口从外面**吸**东西，
+            # 那件事发生在朝向容器上，不该打到缓冲格——因此本角色不在
+            # `BUFFER_AS_EXTERNAL_SIDE` 里（与取货口同理，理由相反）。
+            state.buffer = TransferBuffer(
+                self.policy.intake_buffer_capacity, ref.node_key.as_key()
+            )
+            state.buffer_kind = BUFFER_CONTAINER
+            self.stats["buffers_created"] += 1
+        elif role == OUTPUT:
+            # 取货口：5 格**内部真实物品缓存槽**（`blocks.md`；方块侧已于
+            # 2026-09-29 挂上 `container_size=5` 的网易容器）。这 5 格此前在
+            # 领域层**没有任何权威来源**（11-07 的 C1），这里把它补上。
+            #
+            # 存放形态是**方块容器**（不是内存），因此 `buffer_endpoint` 会把
+            # 方块自己的容器惰性挂成实际存放处——外部物流与外部模组直接存取
+            # 那 5 格时，记账看得见，两端从此是同一份数据。
+            #
+            # **建缓冲与「缓存启不启用」是两件事**，见 `PortConfig.cache_enabled`：
+            # 关掉开关不该让这 5 格里的东西从账上消失，那正是 `blocks.md` 的
+            # 「已有缓存物品的关闭处置仍待定，不得直接清空」。
+            #
+            # **对外那一侧仍是朝向的容器**，缓存只是中转站——因此本角色不在
+            # `BUFFER_AS_EXTERNAL_SIDE` 里。「网络 → 缓存 → 朝向容器」这条
+            # 中转路由本身**尚未实现**（属 06-06/11-07），本分支只立权威。
+            state.buffer = TransferBuffer(
+                self.policy.output_cache_capacity, ref.node_key.as_key()
+            )
+            state.buffer_kind = BUFFER_CONTAINER
             self.stats["buffers_created"] += 1
         self._register_capabilities(state)
         self._states[ref.node_key.as_key()] = state

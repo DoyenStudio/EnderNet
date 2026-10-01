@@ -48,6 +48,7 @@ from ...common.item_codec import (
     item_dict_from_key,
     item_key_from_dict,
 )
+from ...common.item_codec import normalize_engine_item  # noqa: F401 (转出给服务端调用点)
 from ...common.protocol import (
     ContainerCapabilities,
     Reason,
@@ -84,99 +85,10 @@ def _is_empty(data):
     return is_empty_item(data)
 
 
-#: 引擎返回、但**不属于身份**的派生字段。2026-09-25 游戏内实测：
-#: `GetContainerItem` 对一个**原版箱子**返回 16 个字段，比
-#: `common/item_codec.py` 认识的 10 个多出这 6 个。它们都是引擎自己
-#: 从名称/附加值算出来的镜像（`itemName`/`auxValue` 就是 `newItemName`/
-#: `newAuxValue` 的另一份写法；`itemId`/`isDiggerItem`/`modId`/`modItemId`
-#: 是引擎内部的检索与分类字段）。
-#:
-#: **只放行这 6 个已知派生字段。** 再出现别的未知字段仍然让
-#: `item_codec` 抛错——那条严格性是「不静默丢弃潜在身份数据」的守卫，
-#: 不能因为「引擎字段多」就整体放开。
-_DERIVED_FIELDS = (
-    "itemId",
-    "itemName",
-    "auxValue",
-    "isDiggerItem",
-    "modId",
-    "modItemId",
-)
-
-#: 参与身份的六个字段（引擎里的名字）。与 `item_codec.ITEM_FIELDS` 的
-#: 右侧一一对应；不 import 那张表是为了让「哪些字段要归一化」在本模块
-#: 一眼可见——归一化是引擎边界的职责。
-_IDENTITY_FIELDS = (
-    "enchantData",
-    "modEnchantData",
-    "customTips",
-    "extraId",
-    "userData",
-    "durability",
-)
-
-#: 归一化允许出现的字段全集：4 个核心 + 6 个身份 + 6 个已知派生。
-#: **多一个都不行**——见 `normalize_engine_item` 里的说明。
-_KNOWN_FIELDS = frozenset(
-    ("newItemName", "newAuxValue", "count", "showInHand")
-    + _IDENTITY_FIELDS
-    + _DERIVED_FIELDS
-)
-
-#: 身份的六个字段在引擎里的「空值」写法。实测：引擎读回来时不是 `None`，
-#: 而是 `[]` / `""` / `0`。**必须归一成 `None`**，否则同一件物品
-#: 「从网络写进去」与「从箱子读出来」会得到两个不同的 `ResourceKey`
-#: （`item_codec` 按「空值与缺省是不同身份」处理），守恒核对立刻失效。
-_EMPTY_IDENTITY = {
-    "enchantData": (None, [], ()),
-    "modEnchantData": (None, [], ()),
-    "customTips": (None, ""),
-    "extraId": (None, ""),
-    "userData": (None,),
-    # `durability` 的 0 与 None 在引擎里表达不了差别（`tooldelta` 自己的
-    # `Item.from_dict` 也默认成 0）。真正的工具损伤记在 `newAuxValue` 里，
-    # 那一位已经参与身份，因此这里把 0 归一成 None 是安全的。
-    "durability": (None, 0),
-}
-
-
-def normalize_engine_item(data):
-    # type: (object) -> object
-    """把引擎读回来的物品字典**归一成 `item_codec` 认的形状**。
-
-    两件事，都在**引擎边界**做（`common/item_codec.py` 保持严格不变）：
-
-    1. 丢掉 6 个已知派生字段（见 `_DERIVED_FIELDS`）；
-    2. 把身份的「空值」从引擎写法（`[]` / `""` / `0`）归一到 `None`。
-
-    空槽（`None` 或 count≤0）原样返回，交给调用方判空。
-
-    **这是实测出来的，不是推断的**：上面两条都来自 2026-09-25 的游戏内读数。
-    `item_codec` 的模块 docstring 早就写明「引擎默认值归一化必须经实测后
-    在转换边界统一处理」——这里就是那个转换边界。
-    """
-    if not data or _is_empty(data):
-        return data
-    # **认不出的字段要炸，不能丢。** 「只保留我认识的」听起来温和，
-    # 实际效果是把新出现的身份字段静默抹掉——那正是 `item_codec` 的
-    # `_check_fields` 存在的理由。因此这里只放行**已知**的两类额外字段
-    # （引擎派生），其余一律拒绝。
-    unknown = set(data) - _KNOWN_FIELDS
-    if unknown:
-        raise ValueError(
-            "引擎返回了未登记的物品字段 %r；不确定它是否参与身份，"
-            "请先实测再决定放行还是保留" % (sorted(unknown),)
-        )
-    out = {}
-    for field in ("newItemName", "newAuxValue", "count", "showInHand"):
-        if field in data:
-            out[field] = data[field]
-    for engine_name in _IDENTITY_FIELDS:
-        value = data.get(engine_name)
-        if value in _EMPTY_IDENTITY[engine_name]:
-            value = None
-        out[engine_name] = value
-    return out
+# 引擎物品的归一化（`normalize_engine_item` 及其四张表）已移到
+# `common/item_codec.py`——**服务端与客户端必须走同一个入口**，
+# 否则两边算出的 `ResourceKey` 不同，带槽请求会全部被判 `SLOT_CHANGED`。
+# `_is_empty` / `normalize_engine_item` 仍从本模块名字可用（见上方 import）。
 
 
 # -- 按槽读写的容器基类 ----------------------------------------------------
@@ -476,6 +388,24 @@ class EngineItemPrimitives(object):
             return bool(comp.SpawnItemToPlayerInv(dict(data), player_id, slot))
         return bool(comp.SetInvItemNum(slot, 0))
 
+    def swap_player_items(self, player_id, slot_a, slot_b):
+        # type: (str, int, int) -> bool
+        """交换玩家背包的两个槽。
+
+        引擎自带这个原语（`SetInvItemExchange`），因此**不要用「读两格再
+        写两格」实现**：那是两次非原子写入，第二次失败会把 A 的内容同时留在
+        两处——**复制**比丢失更难收拾，而总量守恒正好查不出来。引擎这一条
+        是一次调用，成败就是一个布尔值。
+
+        它也是本模块唯一一个「一次动两格」的原语，因此没有对应的容器版本：
+        `SpawnItemToContainer` 只有单槽写入，容器上要做同样的事就得回到
+        那两次写入。**要支持容器交换时另说，别顺手拿它拼一个。**
+
+        `slot_a` / `slot_b` 与 `set_player_item` 的 `slot` 同一口径
+        （物品栏槽位），不是客户端那两段界面槽号。
+        """
+        return bool(self._player_comp(player_id).SetInvItemExchange(slot_a, slot_b))
+
     def stack_limit(self, name, aux):
         # type: (str, int) -> int
         info = self._container_comp().GetItemBasicInfo(name, aux)
@@ -564,6 +494,19 @@ class EnginePlayerInventory(SlotBackedContainer):
             return False
         return self.primitives.set_player_item(self.player_id, slot, data)
 
+    def swap_slots(self, slot_a, slot_b):
+        # type: (int, int) -> bool
+        """交换两个槽（06-09 的第五个动作）。
+
+        **只有背包有它。** 基类 `SlotBackedContainer` 刻意**不**提供一个
+        「读两格写两格」的默认实现：那会把复制风险铺到每个容器上，而
+        `_slot_primitive("swap_slots")` 取不到时端点本来就会答
+        `unsupported`——**明确说不支持，好过悄悄给一个会复制物品的实现**。
+        """
+        if not self.valid:
+            return False
+        return self.primitives.swap_player_items(self.player_id, slot_a, slot_b)
+
 
 # -- 提供者 -----------------------------------------------------------------
 
@@ -644,6 +587,7 @@ class EngineInventoryProvider(object):
         self.primitives = primitives
         self._stack_limit = stack_limit
         self._cache = {}
+        self._endpoints = {}
 
     def inventory_of(self, player_id):
         # type: (str) -> object
@@ -663,12 +607,17 @@ class EngineInventoryProvider(object):
         adapter = self.inventory_of(player_id)
         if adapter is None:
             return None
-        return InventoryEndpoint(adapter, player_id)
+        endpoint = self._endpoints.get(player_id)
+        if endpoint is None:
+            endpoint = InventoryEndpoint(adapter, player_id)
+            self._endpoints[player_id] = endpoint
+        return endpoint
 
     def forget(self, player_id):
         # type: (str) -> bool
         """玩家退出时丢弃缓存。**不写盘**（退出恢复规则属 R12/12）。"""
         adapter = self._cache.pop(player_id, None)
+        self._endpoints.pop(player_id, None)
         if adapter is None:
             return False
         adapter.invalidate()

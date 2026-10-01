@@ -133,8 +133,137 @@ def item_key_from_dict(data):
                                   "aux": data["newAuxValue"], "identity": identity})
 
 
+#: 引擎返回、但**不属于身份**的派生字段。2026-09-25 游戏内实测：
+#: `GetContainerItem` 对一个**原版箱子**返回 16 个字段，比本模块认识的
+#: 10 个多出这 6 个。它们都是引擎自己从名称/附加值算出来的镜像
+#: （`itemName`/`auxValue` 就是 `newItemName`/`newAuxValue` 的另一份写法；
+#: `itemId`/`isDiggerItem`/`modId`/`modItemId` 是引擎内部的检索与分类字段）。
+#:
+#: **只放行这 6 个已知派生字段。** 再出现别的未知字段仍然让 `_check_fields`
+#: 抛错——那条严格性是「不静默丢弃潜在身份数据」的守卫，不能因为
+#: 「引擎字段多」就整体放开。
+_DERIVED_FIELDS = (
+    "itemId",
+    "itemName",
+    "auxValue",
+    "isDiggerItem",
+    "modId",
+    "modItemId",
+)
+
+#: 参与身份的六个字段（引擎里的名字）。与 `ITEM_FIELDS` 的右侧一一对应；
+#: 这里再列一遍是为了让「哪些字段要归一化」一眼可见。
+_IDENTITY_FIELDS = (
+    "enchantData",
+    "modEnchantData",
+    "customTips",
+    "extraId",
+    "userData",
+    "durability",
+)
+
+#: 归一化允许出现的字段全集：4 个核心 + 6 个身份 + 6 个已知派生。
+#: **多一个都不行**——见 `normalize_engine_item` 里的说明。
+_KNOWN_FIELDS = frozenset(
+    ("newItemName", "newAuxValue", "count", "showInHand")
+    + _IDENTITY_FIELDS
+    + _DERIVED_FIELDS
+)
+
+#: 身份的六个字段在引擎里的「空值」写法。实测：引擎读回来时不是 `None`，
+#: 而是 `[]` / `""` / `0`。**必须归一成 `None`**，否则同一件物品
+#: 「从网络写进去」与「从箱子读出来」会得到两个不同的 `ResourceKey`
+#: （本模块按「空值与缺省是不同身份」处理），守恒核对立刻失效。
+_EMPTY_IDENTITY = {
+    "enchantData": (None, [], ()),
+    "modEnchantData": (None, [], ()),
+    "customTips": (None, ""),
+    "extraId": (None, ""),
+    "userData": (None,),
+    # `durability` 的 0 与 None 在引擎里表达不了差别（`tooldelta` 自己的
+    # `Item.from_dict` 也默认成 0）。真正的工具损伤记在 `newAuxValue` 里，
+    # 那一位已经参与身份，因此这里把 0 归一成 None 是安全的。
+    "durability": (None, 0),
+}
+
+
+def normalize_engine_item(data):
+    # type: (object) -> object
+    """把引擎读回来的物品字典**归一成 `item_codec` 认的形状**。
+
+    两件事，都在**引擎边界**做（本模块其余部分保持严格不变）：
+
+    1. 丢掉 6 个已知派生字段（见 `_DERIVED_FIELDS`）；
+    2. 把身份的「空值」从引擎写法（`[]` / `""` / `0`）归一到 `None`。
+
+    空槽（`None` 或 count≤0）原样返回，交给调用方判空。
+
+    **这是实测出来的，不是推断的**：上面两条都来自 2026-09-25 的游戏内读数。
+
+    **为什么在本模块而不是适配器里**：这条边界**服务端与客户端都要走**。
+    客户端界面渲染玩家背包时读的是引擎给的那一份，而它必须与服务端算出
+    同一个 `ResourceKey`——两处各归一一份的代价是「客户端算的指纹永远
+    对不上服务端的」，表现是每次按槽取放都被判成 `SLOT_CHANGED`，而日志里
+    只有一条回执。适配器 `containers_engine` 仍然从本模块转出这个名字。
+    """
+    if not data or is_empty_item(data):
+        return data
+    # **认不出的字段要炸，不能丢。** 「只保留我认识的」听起来温和，
+    # 实际效果是把新出现的身份字段静默抹掉——那正是 `_check_fields`
+    # 存在的理由。因此这里只放行**已知**的两类额外字段（引擎派生），
+    # 其余一律拒绝。
+    unknown = set(data) - _KNOWN_FIELDS
+    if unknown:
+        raise ValueError(
+            "引擎返回了未登记的物品字段 %r；不确定它是否参与身份，"
+            "请先实测再决定放行还是保留" % (sorted(unknown),)
+        )
+    out = {}
+    for field in ("newItemName", "newAuxValue", "count", "showInHand"):
+        if field in data:
+            out[field] = data[field]
+    for engine_name in _IDENTITY_FIELDS:
+        value = data.get(engine_name)
+        if value in _EMPTY_IDENTITY[engine_name]:
+            value = None
+        out[engine_name] = value
+    return out
+
+
+def engine_item_key(item):
+    # type: (object) -> ResourceKey
+    """**引擎读回来的** `Item` → `ResourceKey`。按槽取放的身份只能走这条。
+
+    与 `item_key()` 的区别是**必须的一步**，不是风格差异：`item_key` 按
+    `Item` 的**属性**取身份，而 `tooldelta` 的 `Item.from_dict` 把缺席的
+    `durability` 补成 `0`（`define/item.py`：`data.get("durability", 0)`），
+    永远给不出 `None`。服务端那条路却把 `0` 归一成 `None`，而
+    `ResourceKey` 把「缺省」与「值为 0」当成**两个身份**——于是客户端算的
+    指纹恒不等于服务端的，带槽请求全部被判 `SLOT_CHANGED`。
+
+    因此这里回到**引擎给的原始字典**（`_orig`，`Item.from_dict` 原样存下）
+    再走 `normalize_engine_item`，与服务端同一个入口。**不用 `marshal()`**：
+    本模块开头就写明不使用它——它把 `_orig` 与属性混在一起，物品被就地
+    改过之后算出来的就不是引擎说过的那个身份了。
+
+    `_orig` 为空说明这个 `Item` 是手工构造的，那种情况请用 `item_key()`。
+    """
+    raw = getattr(item, "_orig", None)
+    if not raw:
+        raise ValueError(
+            "该物品没有原始字典，不是从引擎读回来的；"
+            "手工构造的物品请用 item_key()"
+        )
+    return item_key_from_dict(normalize_engine_item(dict(raw)))
+
+
 def item_key(item):
-    """从 ToolDelta Item 或具有相同字段的对象提取身份。"""
+    """从 ToolDelta Item 或具有相同字段的对象提取身份。
+
+    **只适用于手工构造的物品**（`item_from_key` 造出来的、或端侧直接
+    `Item(...)` 出来的）。**引擎读回来的一律用 `engine_item_key()`**：
+    这个函数的属性路径给不出引擎的空值写法，见那里的说明。
+    """
     if item is None:
         return None
     # _orig 中未建模的字段可能影响还原，不能绕过字典入口的拒绝规则。

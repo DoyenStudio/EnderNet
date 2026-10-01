@@ -21,7 +21,7 @@ import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
 
-from endernet.common.protocol import TransferStatus
+from endernet.common.protocol import Reason, TransferStatus
 from endernet.common.resource_key import ResourceKey
 from endernet.server.adapters.containers_engine import (
     EMPTY_ITEM,
@@ -128,6 +128,17 @@ class FakePlayerPrimitives(object):
             self.slots[slot] = None
         else:
             self.slots[slot] = dict(data)
+        return True
+
+    def swap_player_items(self, player_id, slot_a, slot_b):
+        """交换两个槽。**一次调用、一个布尔值**，与引擎的 `SetInvItemExchange` 同形。
+
+        替身刻意**不用「读两格再写两格」**实现：那正是真实实现要避开的写法
+        （第二次写入失败会把源物品同时留在两处，而总量守恒查不出复制）。
+        替身照那个写，就把这条取舍从测试里抹掉了。
+        """
+        self.player_ids.append(player_id)
+        self.slots[slot_a], self.slots[slot_b] = self.slots[slot_b], self.slots[slot_a]
         return True
 
     def stack_limit(self, name, aux):
@@ -320,6 +331,57 @@ class TestPlayerInventory(unittest.TestCase):
         self.inventory.insert("op1", STONE, 1)
         self.assertTrue(self.primitives.player_ids)
         self.assertEqual(set(self.primitives.player_ids), set(["steve"]))
+
+
+class TestPlayerInventorySwap(unittest.TestCase):
+    """背包槽的交换原语（06-09 的第五个动作，2026-09-30 补）。
+
+    **它是本模块唯一一个「一次动两格」的原语**，因此也是唯一一个不能用
+    「读一格写一格」那套理解的原语。这两条用例守的就是那件事。
+    """
+
+    def setUp(self):
+        self.primitives = FakePlayerPrimitives(stack_limit=10)
+        self.limit = build_stack_limit(self.primitives)
+        self.inventory = EnginePlayerInventory(self.primitives, "steve", self.limit)
+
+    def test_swap_exchanges_the_two_slots(self):
+        self.inventory.insert("op1", STONE, 5)
+        self.inventory.insert("op2", DIRT, 3)
+        self.assertTrue(self.inventory.swap_slots(0, 1))
+        self.assertEqual(self.primitives.slots[0]["newItemName"], DIRT.name)
+        self.assertEqual(self.primitives.slots[0]["count"], 3)
+        self.assertEqual(self.primitives.slots[1]["newItemName"], STONE.name)
+        self.assertEqual(self.primitives.slots[1]["count"], 5)
+
+    def test_swapping_with_an_empty_slot_is_a_move(self):
+        """**与空槽交换就是移动**——这是定案的行为，不是特例。
+
+        因此调用方（`InventoryEndpoint.anchored_swap`）对目标槽只核版本、
+        不要求指纹；把这一条「补」成两个锚都严格，就会把这条路径判死。
+        """
+        self.inventory.insert("op1", STONE, 4)
+        self.assertTrue(self.inventory.swap_slots(0, 20))
+        self.assertIsNone(self.primitives.slots[0])
+        self.assertEqual(self.primitives.slots[20]["count"], 4)
+
+    def test_an_invalidated_inventory_refuses_to_swap(self):
+        self.inventory.insert("op1", STONE, 4)
+        self.inventory.invalidate()
+        self.assertFalse(self.inventory.swap_slots(0, 1))
+
+    def test_the_backpack_is_the_only_thing_that_can_swap(self):
+        """**基类刻意没有 `swap_slots`**，容器因此拿不到它。
+
+        这条不是漏写：容器上要做交换就得回到「读两格再写两格」，而那是
+        两次非原子写入——第二次失败会把源物品同时留在两处，**复制**比丢失
+        更难收拾，总量守恒还查不出来。端点取不到原语时会答 `unsupported`，
+        那比悄悄给一个会复制物品的实现好。**要用之前先想清楚。**
+        """
+        self.assertFalse(
+            hasattr(SlotBackedContainer, "swap_slots"),
+            "基类长出交换原语了——先读这条用例的说明再决定要不要留它",
+        )
 
 
 class TestStackLimitResolution(unittest.TestCase):
@@ -544,6 +606,52 @@ class TestInventoryProvider(unittest.TestCase):
         first = self.provider.endpoint_of("steve").adapter
         second = self.provider.endpoint_of("steve").adapter
         self.assertIs(first, second)
+
+    def test_observed_aba_rejects_old_anchor_across_endpoint_lookups(self):
+        first = self.provider.endpoint_of("steve")
+        first.adapter.insert("seed", STONE, 4)
+        version = first.slot_view(0)["version"]
+        self.primitives.slots[0] = None
+        second = self.provider.endpoint_of("steve")
+        self.assertIs(first, second)
+        self.assertGreater(second.inventory_view()["slots"][0]["version"], version)
+        second.adapter.insert("restore", STONE, 4)
+        endpoint = self.provider.endpoint_of("steve")
+        refused = endpoint.anchored_extract("stale", SlotAnchor(0, STONE, version), 1)
+        self.assertEqual(refused.moved, 0)
+        self.assertEqual(refused.reason, Reason.STALE_VERSION)
+        current = endpoint.slot_view(0)
+        self.assertEqual(current["count"], 4)
+        accepted = endpoint.anchored_extract(
+            "fresh", SlotAnchor(0, STONE, current["version"]), 1)
+        self.assertEqual(accepted.moved, 1)
+
+    def test_players_have_independent_endpoints_and_leave_invalidates_old_one(self):
+        first = self.provider.endpoint_of("steve")
+        other = self.provider.endpoint_of("alex")
+        first.slot_view(0)
+        self.assertIsNot(first, other)
+        self.provider.forget("steve")
+        self.assertFalse(first.can_read())
+        self.assertTrue(other.can_read())
+        replacement = self.provider.endpoint_of("steve")
+        self.assertIsNot(first, replacement)
+        self.assertEqual(replacement.slot_view(0)["version"], 1)
+
+    def test_bootstrap_leave_forgets_endpoint_even_without_open_terminal(self):
+        from endernet.server.bootstrap import ServerBootstrap
+
+        class SyncStub(object):
+            def close_for_player(self, player_id, reason):
+                return []
+
+        endpoint = self.provider.endpoint_of("steve")
+        server = object.__new__(ServerBootstrap)
+        server.inventories = self.provider
+        server.sync = SyncStub()
+        self.assertEqual(server._on_player_leave("steve"), 0)
+        self.assertFalse(endpoint.can_read())
+        self.assertIsNot(self.provider.endpoint_of("steve"), endpoint)
 
 
 class _MissingEngine(object):
