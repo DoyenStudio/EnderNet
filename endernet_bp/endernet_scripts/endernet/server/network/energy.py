@@ -33,8 +33,8 @@
    都没有 → `True`。
 
 **库默认下真实网络的判定几乎总是 `None`**：基带（每张网络都少不了）的耗能
-blocks.md 没列（R10），`per_unit` 的装置数量与工作态也还没接线。这不是保守得
-可笑，而是如实回答「算不出需求」。R10 补齐、05/08/09 接上输入之后**不需要改
+blocks.md 没列（R10），内存条数量也还没接线；驱动器数量、处理器与装配仓
+工作态已由组合根接入。这是如实回答「算不出需求」。其余输入接上之后**不需要改
 这里的代码**，判定会自己变成 `True`。DEV 档要的是「现在就能跑起来」，
 因此显式选择替身口径（`EnergyPolicy.dev_stand_in()`），并把被忽略的需求
 逐个报在 `diagnostics()["ignored_demand"]` 里。
@@ -262,13 +262,15 @@ class EnergyService(NetworkService):
     is_stand_in = False
     pending_task = ""
 
-    def __init__(self, runtime=None, policy=None):
-        # type: (object, object) -> None
+    def __init__(self, runtime=None, policy=None, inputs_of=None):
+        # type: (object, object, object) -> None
         #: **裸构造是合法的**（`default_stand_ins()` 会用 `None` 构造每个槽位），
         #: 此时 `is_ready()` 为假、`power_ok()` 为 `None`——那是「装了但还没接上
         #: 运行时」，不是「没有需求」。
         self.runtime = runtime
         self.policy = policy if policy is not None else EnergyPolicy()
+        # 组合根提供权威输入；重挂网络时重读，不能继承另一实例的缓存。
+        self.inputs_of = inputs_of
         #: 位置 -> `EnergyMember`。**只含本网络的成员**。
         self._members = {}
         #: 判定缓存。成员或输入变化时立刻重算，读取只取它。
@@ -397,9 +399,9 @@ class EnergyService(NetworkService):
         内存槽）要有人告诉它装了几块盘/几根条，工作态可变的设备（装配仓、
         并行处理器）要有人告诉它在不在加工，它们的耗能才算得出来。
 
-        **本次没有消费者**（05 的驱动器槽位、08/09 的加工状态都还没接过来），
-        因此现在传与不传只影响诊断明细，不影响判定——这一点写在交付说明的
-        已知限制里，不假装它已经在工作。
+        驱动器槽位、处理器租约与装配仓使用权变化由组合根同步调用；
+        初次挂载或网络迁移由 `inputs_of` 重读。内存条数量仍待接入。
+        更新立即参与供需判定，不只是改变诊断明细。
 
         只接受**当前这一代**的引用：换过实例的设备，旧的调用方不该还能改它。
         """
@@ -477,7 +479,7 @@ class EnergyService(NetworkService):
                 "scope_note": (
                     "固定耗能结算与供能判定已实现；RF 计量（04-05/13-02）、"
                     "断电暂停与逐步恢复（04-06）、设备级能源状态与变化通知（04-08）"
-                    "未实现。装置数量与工作态还没有来源（见 unwired_inputs），"
+                    "未实现。驱动器数量、处理器与装配仓工作态已接入；内存条数量仍待接入，"
                     "负载跟随的耗能折算口径未定（R08）。"
                 ),
             }
@@ -505,14 +507,20 @@ class EnergyService(NetworkService):
         """算出这一行。
 
         工作态与装置数量**从旧行继承**（同位置同一代才是同一台设备）：它们
-        不属于定义表，是别人告诉本服务的，重建一次不该把它们抹掉。换了代次
-        就是换了台设备，从头开始——它还没被任何人告知过任何事。
+        不属于定义表，是别人告诉本服务的。已注入 `inputs_of` 的字段以
+        当前权威值覆盖；没有来源的字段才继承。换代次后不继承旧设备缓存。
         """
         state = None
         unit_count = None
         if previous is not None and previous.ref.matches(node.ref):
             state = previous.state
             unit_count = previous.unit_count
+        if self.inputs_of is not None:
+            inputs = self.inputs_of(node.ref, node.device_id)
+            if "state" in inputs:
+                state = inputs["state"]
+            if "unit_count" in inputs:
+                unit_count = inputs["unit_count"]
         demand, gap = self._demand_of(definition, state, unit_count)
         return EnergyMember(
             node.node_key,

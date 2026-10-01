@@ -36,6 +36,8 @@
 要等 10 把 `crafting/returns.py` 写出来并接上同一个 `receive_output`。
 """
 
+from functools import wraps
+
 from ...common.identity import NodeKey
 from ...common.protocol import (
     BlockReason,
@@ -54,6 +56,7 @@ from .capacity import (
     memory_admission_blockers,
     memory_capacity,
     slot_capacity,
+    slot_sources,
     slot_starvation_blocker,
 )
 from .jobs import (
@@ -71,6 +74,24 @@ from .jobs import (
 #: `check_dispatch` 做成鸭子类型是同一条：少一个反向依赖，
 #: 离线夹具就能只造它需要的那一小块。
 DEFAULT_TEMPLATE_ROLE = "template"
+
+
+def _returns_submission(method):
+    """最外层命令／推进完成后才分配同步回执，异常也必须解除冻结。"""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        service = getattr(self, "service", self)
+        sink = service.returns
+        begin = getattr(sink, "begin_submission", None)
+        end = getattr(sink, "end_submission", None)
+        if not callable(begin) or not callable(end):
+            return method(self, *args, **kwargs)
+        begin()
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            end()
+    return wrapped
 
 #: 装配仓的分类名（`definitions.CATEGORY_ASSEMBLY`）。它的执行半边是 07-06。
 CATEGORY_ASSEMBLY = "assembly"
@@ -997,6 +1018,7 @@ class OrderExecutor(object):
 
     # -- 分帧推进（09-04 / 09-07）---------------------------------------
 
+    @_returns_submission
     def tick(self, context, budget):
         # type: (dict, int) -> int
         """推进一步。返回本帧消耗的工作量。
@@ -1842,6 +1864,7 @@ class OrderExecutor(object):
             )
         return self._resolve_port(node_key)
 
+    @_returns_submission
     def stage_inputs(self, node_key, key, count, op_id):
         # type: (object, object, int, str) -> object
         """把一批料备到 `node_key` 这台样板口的中转位上。**返回 `CommandResult`。**
@@ -2298,8 +2321,8 @@ def _fill_step(step, row, keymap, policy):
     差别只在**谁认领**。
 
     **`external_inputs` 刻意不进 `inputs`**：那是配方「外部自理」的输入
-    （R09 的无限燃料一侧），网络不该去替它备料——把它算进来会去抽一份
-    真实库存里根本没有、也不该有的东西。
+    （R09 的无限燃料一侧，2026-09-30 已定案），网络不该去替它备料——把它算
+    进来会去抽一份真实库存里根本没有、也不该有的东西。
 
     **返还物算不算完成条件由 `OrderPolicy.returns_block_completion` 决定**
     （R09），替身取 `True`：09 验收原文「所需鱼已回流但空桶未到时步骤仍工作中」
@@ -2531,8 +2554,9 @@ class FactoryService(NetworkService):
         template_role=DEFAULT_TEMPLATE_ROLE,
         registry=None,
         definitions=None,
+        on_slots_changed=None,
     ):
-        # type: (object, object, object, object, object, object, object, object, str, object, object) -> None
+        # type: (object, object, object, object, object, object, object, object, str, object, object, object) -> None
         self.service_id = ServiceId.FACTORY
         self.policy = policy if policy is not None else OrderPolicy()
         #: 08 的规划器门面。**同一个对象**：诊断报出来的策略就是实际生效的那份。
@@ -2554,7 +2578,9 @@ class FactoryService(NetworkService):
         self.runtime = None
         #: 槽位与内存台账。它们**就是** `capabilities.ProcessingSlots` 与
         #: `capabilities.Memory` 的实现（见 `capacity.py` 的 docstring）。
-        self.slots = SlotLedger(self.policy)
+        self.slots = SlotLedger(self.policy, on_changed=on_slots_changed)
+        self._energy_signature = None
+        self._working_processors = frozenset()
         self.memory = MemoryLedger(self.policy)
         #: 每网络的订单集合。**在 attach 时按 component_id 建**，
         #: 因此它不可能串到别的网络上。
@@ -2600,6 +2626,7 @@ class FactoryService(NetworkService):
         # type: () -> bool
         return self.planner is not None and self.patterns is not None
 
+    @_returns_submission
     def handle(self, grant, command):
         # type: (object, object) -> CommandResult
         """订单命令。`order` 是**写命令**：它一条都走主控准入与去重账本。"""
@@ -2808,6 +2835,23 @@ class FactoryService(NetworkService):
         memory, memory_slots = memory_capacity(members, self.definitions, self.policy)
         self.memory.refresh(memory)
         self.memory_slots = memory_slots
+
+    def working_processors(self):
+        # type: () -> frozenset
+        """租约数量的能源投影，不建立物理处理器租约或另一份设备注册表。
+
+        同类处理器耗能相同，按位置稳定投影即可；容量缩水保留租约，
+        但只对仍在本网络贡献槽位的处理器计费。派生缓存随快照和占用数失效。
+        """
+        snapshot = self.runtime.topology.snapshot()
+        used = self.slots.used()
+        signature = (snapshot.version, used)
+        if signature != self._energy_signature:
+            sources, _idle = slot_sources(snapshot, self.runtime.component_id)
+            ordered = sorted(sources, key=lambda key: key.as_key())
+            self._working_processors = frozenset(ordered[:used])
+            self._energy_signature = signature
+        return self._working_processors
 
 
 def _with_request(request_id, result):

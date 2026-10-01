@@ -248,6 +248,73 @@ class SyntheticFixture(unittest.TestCase):
 # -- 策略 ------------------------------------------------------------------
 
 
+class TestSubmissionQueue(SyntheticFixture):
+    def test_nested_submission_registers_before_fifo_allocation(self):
+        self.port.begin_submission()
+        self.port.begin_submission()
+        self.assertEqual(self.arrive(2, op_id="first"), 0)
+        self.assertEqual(self.arrive(2, op_id="second"), 0)
+        self.register("e1", [expect(BLOCK, 3)], "o1")
+        self.port.end_submission()
+        self.assertEqual(self.runtime.storage.reserved_total(), 0)
+        self.port.end_submission()
+        self.assertEqual(self.item("e1").received, 3)
+        self.assertEqual([row[3] for row in self.runtime.executor.calls],
+                         ["first", "second"])
+        self.assertEqual(self.runtime.storage.reserved_total(), 3)
+        self.assertEqual(self.port.describe()["pending_receipts"], 0)
+
+    def test_queued_duplicates_and_internal_moves_are_not_allocated_twice(self):
+        self.register("e1", [expect(BLOCK, 4)], "o1")
+        self.port.begin_submission()
+        self.arrive(1, origin=ORIGIN_INTERNAL)
+        self.arrive(1)
+        self.arrive(1)
+        self.port.accept_assembled("assembly", BLOCK, 1)
+        self.port.end_submission()
+        self.assertEqual(self.item("e1").received, 2)
+        self.assertEqual(self.runtime.storage.reserved_total(), 2)
+        self.assertEqual(self.service.stats["duplicate"], 1)
+        self.assertEqual(self.service.stats["rejected_origin"], 1)
+
+    def test_cancelled_waiter_leaves_queued_product_unreserved(self):
+        self.register("e1", [expect(BLOCK, 1)], "o1")
+        self.port.begin_submission()
+        self.arrive(1)
+        self.port.unregister("e1")
+        self.port.end_submission()
+        self.assertEqual(self.runtime.storage.reserved_total(), 0)
+        self.assertEqual(self.service.stats["orphan"], 1)
+
+    def test_reentry_during_reservation_waits_for_dedup_commit(self):
+        self.register("e1", [expect(BLOCK, 3)], "o1")
+        reserve = self.runtime.storage.reserve
+
+        def callback(*args):
+            self.arrive(1, op_id="same")
+            return reserve(*args)
+
+        self.runtime.storage.reserve = callback
+        self.assertEqual(self.arrive(1, op_id="same"), 1)
+        self.assertEqual(self.item("e1").received, 1)
+        self.assertEqual(self.runtime.storage.reserved_total(), 1)
+        self.assertEqual(self.service.stats["reentrant"], 1)
+        self.assertEqual(self.service.stats["duplicate"], 1)
+
+    def test_busy_component_does_not_freeze_another_component(self):
+        other = FakeRuntime("other")
+        port = self.service.port_for(other)
+        item = expect(BLOCK, 1)
+        other.executor.items["e2"] = [item]
+        port.register("e2", [item], "o2")
+        self.port.begin_submission()
+        self.arrive(1)
+        self.assertEqual(port(FakeRequest(), 1), 1)
+        self.assertEqual(item.received, 1)
+        self.assertEqual(self.port.describe()["pending_receipts"], 1)
+        self.port.end_submission()
+
+
 class TestPolicy(unittest.TestCase):
     """R06 的两条未定项按既有形态挂着，且**默认是能用的替身**。"""
 
@@ -1132,6 +1199,62 @@ class OneLevel(ReturnsFixture):
 
 
 # -- 接线（10-01 的前置）---------------------------------------------------
+
+
+class TestSynchronousDispatch(ReturnsFixture):
+    patterns = {0: factory([stack(IRON, 2)], [stack(BLOCK, 1)])}
+
+    def test_actual_deposit_inside_dispatch_waits_until_registration(self):
+        self.configure_port()
+        self.seed(IRON, 4)
+        executor = self.service.executor
+        dispatch = executor._port_dispatch
+        deposits = []
+
+        def dispatch_with_product(port):
+            result = dispatch(port)
+            if port.batch.is_complete() and not deposits:
+                deposits.append(self.deposit(BLOCK, 1, "sync-product"))
+                self.assertEqual(self.port.describe()["pending_receipts"], 1)
+                self.assertEqual(self.returns.stats["allocated"], 0)
+            return result
+
+        executor._port_dispatch = dispatch_with_product
+        self.submit_order()
+        self.settle()
+        self.drive(8)
+        self.assertEqual(len(deposits), 1)
+        self.assertEqual(deposits[0].moved, 1)
+        self.assertEqual(self.only_order()["status"], OrderStatus.COMPLETED)
+        self.assertEqual(self.returns.stats["allocated"], 1)
+        self.assertEqual(self.returns.stats["orphan"], 0)
+        self.assertEqual(self.port.describe()["pending_receipts"], 0)
+
+    def test_handle_exception_unfreezes_receipts(self):
+        def failing_submit(command, payload):
+            self.port(FakeRequest(), 1)
+            raise ValueError("submission failed")
+
+        self.service.executor.submit_order = failing_submit
+        with self.assertRaises(ValueError):
+            self.service.handle(None, self.order_command("submit"))
+        self.assertEqual(self.port._depth, 0)
+        self.assertEqual(self.port.describe()["pending_receipts"], 0)
+        self.assertEqual(self.returns.stats["orphan"], 1)
+
+    def test_stage_inputs_waits_until_gateway_returns(self):
+        self.configure_port()
+        executor = self.service.executor
+
+        def stage(port, resource, count, op_id):
+            self.port(FakeRequest(), 1)
+            self.assertEqual(self.port.describe()["pending_receipts"], 1)
+            return None
+
+        executor._port_stage = stage
+        self.service.stage_inputs(PORT_KEY, IRON, 1, "stage-sync")
+        self.assertEqual(self.port.describe()["pending_receipts"], 0)
+        self.assertEqual(self.returns.stats["orphan"], 1)
 
 
 class TestWiring(ReturnsFixture):

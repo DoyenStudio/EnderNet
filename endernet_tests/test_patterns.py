@@ -724,29 +724,48 @@ class TestDigest(ValidationCase):
 
 
 class TestPolicy(ValidationCase):
-    """三条未定规则（R09）。**它们进 `unresolved_report()`，不进交付值。**"""
+    """R09 的三条取值。**未定的进 `unresolved_report()`，已定案的留成字段。**"""
 
     def setUp(self):
         self.policy = PatternPolicy()
 
-    def test_defaults_are_the_conservative_side(self):
+    def test_defaults_are_the_settled_side(self):
+        """三条的默认值就是定案值/替身值：两条**已定案**（无限燃料 2026-09-30、
+        返还物显式声明同日），只剩 `kind_scope` 仍是替身。"""
         self.assertEqual(self.policy.unlimited_fuel, UnlimitedFuel.EXTERNAL_SUPPLY)
         self.assertEqual(self.policy.return_rule, ReturnRule.DECLARED_ONLY)
         self.assertEqual(self.policy.kind_scope, KindScope.STRICT)
 
-    def test_all_three_are_reported_as_unresolved(self):
+    def test_the_one_open_item_is_reported_as_unresolved(self):
+        """R09 三条里**只剩 `kind_scope`** 一条未定。
+
+        另外两条的收口见下一条用例；这里的条数从 3 → 2 → 1 走过两轮，
+        每次都是「定案了哪一条」而不是「谁忘了报」。
+        """
         fields = sorted(item["field"] for item in self.policy.unresolved_report())
         self.assertEqual(
             fields,
             [
                 "pattern.kind_scope",
-                "pattern.return_rule",
-                "pattern.unlimited_fuel",
             ],
         )
         for item in self.policy.unresolved_report():
             self.assertEqual(item["rule"], "R09")
             self.assertTrue(item["note"])
+
+    def test_the_settled_fields_keep_their_names_but_leave_the_report(self):
+        """**无限燃料与返还物显式声明都已于 2026-09-30 定案**（照
+        `ReturnPolicy.exclusive` 的先例）：取值留着给诊断与测试，但不再进
+        `unresolved_report()`——正式档不再为它们拦，也不该有人把它们当成
+        「还没定」的替身去翻。
+        """
+        fields = [item["field"] for item in self.policy.unresolved_report()]
+        self.assertNotIn("pattern.unlimited_fuel", fields)
+        self.assertNotIn("pattern.return_rule", fields)
+        self.assertEqual(self.policy.unlimited_fuel, UnlimitedFuel.EXTERNAL_SUPPLY)
+        self.assertEqual(self.policy.return_rule, ReturnRule.DECLARED_ONLY)
+        self.assertIn("unlimited_fuel", self.policy.describe())
+        self.assertIn("return_rule", self.policy.describe())
 
     def test_assert_settled_refuses_while_r09_is_open(self):
         with self.assertRaises(AssertionError):
@@ -755,21 +774,31 @@ class TestPolicy(ValidationCase):
     def test_plain_inputs_are_always_supplied(self):
         self.assertTrue(self.policy.supplies(item(RAW_IRON, 1)))
 
-    def test_unlimited_input_is_not_supplied_by_default(self):
-        """替身口径：「不自动供给未授权燃料」。"""
+    def test_unlimited_input_is_not_supplied(self):
+        """定案口径：「不自动供给未授权燃料」——标记的那条由外部自理。"""
         self.assertFalse(self.policy.supplies(item(COAL, 1, unlimited=True)))
 
-    def test_the_other_side_of_r09_does_supply_it(self):
-        policy = PatternPolicy(unlimited_fuel=UnlimitedFuel.MODELING_ONLY)
-        self.assertTrue(policy.supplies(item(COAL, 1, unlimited=True)))
+    def test_the_excluded_side_is_refused_at_construction(self):
+        """另一侧（标记只是说明、网络照常备料）**不再可选**。
 
-    def test_required_inputs_follows_the_policy(self):
+        「要网络供给」的落点是**不标记**那条输入、把它写成样板的显式输入，
+        而不是把这个开关翻过去。另一端在装配期就报错——它看起来完全合理，
+        一旦生效就是另一套玩法。
+        """
+        with self.assertRaises(ValueError):
+            PatternPolicy(unlimited_fuel=UnlimitedFuel.MODELING_ONLY)
+
+    def test_required_inputs_skip_the_externally_supplied_ones(self):
+        """网络投的料 = 样板声明的输入里、没被标成外部自理的那些。
+
+        「要不要燃料由玩家在样板里设定」的代码落点就是这里：标记了的那条
+        不进需求，其余照常。
+        """
         pattern = factory(
             [item(RAW_IRON, 1), item(COAL, 1, unlimited=True)], [item(IRON, 1)]
         )
-        self.assertEqual(len(self.policy.required_inputs(pattern)), 1)
-        other = PatternPolicy(unlimited_fuel=UnlimitedFuel.MODELING_ONLY)
-        self.assertEqual(len(other.required_inputs(pattern)), 2)
+        required = self.policy.required_inputs(pattern)
+        self.assertEqual([stack.key.name for stack in required], [RAW_IRON])
 
     def test_expected_returns_is_the_declared_set(self):
         pattern = factory(
@@ -780,8 +809,11 @@ class TestPolicy(ValidationCase):
         self.assertEqual(len(self.policy.expected_returns(pattern)), 1)
 
     def test_deriving_returns_is_refused_loudly_at_construction(self):
-        """推导那一侧尚未实现。**在装配期就报错**——一个「装作能用」的
-        空表会让 10 的完成判定永远满足（「空桶未到就完成了」）。"""
+        """**2026-09-30 定案**：返还物一律由样板显式声明，这一侧**不会实现**。
+
+        **在装配期就报错**——一个「装作能用」的推导（返回空表）会让 10 的
+        完成判定永远满足，而「空桶未到就完成了」正是 09 文档点名要防的那件事。
+        """
         with self.assertRaises(ValueError):
             PatternPolicy(return_rule=ReturnRule.DERIVE_CONTAINERS)
 

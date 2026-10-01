@@ -256,7 +256,11 @@ class TestIronPickaxe(unittest.TestCase):
         self.assertEqual(self.plan.to_dict()["semantics"], Targets.HOLD)
 
     def test_unlimited_input_is_reported_but_not_demanded(self):
-        """R09 替身口径：煤标了不限量，于是不进需求，只报成「外部自理」。"""
+        """R09 定案口径：煤标了不限量，于是不进需求，只报成「外部自理」。
+
+        「要不要燃料由玩家在样板里设定」——写了这一行、标上 `unlimited`，
+        就等于说「这条我自己管」。
+        """
         step = step_of(self.plan, INGOT)
         self.assertEqual(
             [(entry["key"], entry["total"]) for entry in step["external_inputs"]],
@@ -265,17 +269,16 @@ class TestIronPickaxe(unittest.TestCase):
         self.assertIsNone(row_of(self.plan, COAL))
         self.assertIsNone(gap_of(self.plan, COAL))
 
-    def test_unlimited_input_is_demanded_in_the_other_convention(self):
-        """另一侧：`MODELING_ONLY` 下它与普通输入一样要备料。"""
-        plan = solve(
-            PICKAXE, 1, pickaxe_tree(), {RAW_IRON: 2},
-            pattern_policy=patterns.PatternPolicy(
+    def test_the_excluded_convention_is_refused_before_planning(self):
+        """另一侧不再可选：想让网络供燃料，就把煤写成**普通输入**。
+
+        构造期报错意味着规划器根本看不到那种口径——不会出现「同一张样板、
+        两种开局」的存档差异。
+        """
+        with self.assertRaises(ValueError):
+            patterns.PatternPolicy(
                 unlimited_fuel=patterns.UnlimitedFuel.MODELING_ONLY
-            ),
-        )
-        self.assertEqual(row_of(plan, COAL)["demand"], 3)
-        self.assertEqual(gap_of(plan, COAL)["cause"], Cause.NO_RECIPE)
-        self.assertEqual(step_of(plan, INGOT)["external_inputs"], [])
+            )
 
     def test_the_plan_is_plain_data(self):
         """08-07：不向客户端暴露引擎对象——整份计划必须能直接序列化。"""

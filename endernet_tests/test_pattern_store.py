@@ -1479,7 +1479,13 @@ class TestViews(StoreCase):
         self.assertIn("07-03", note)
         report = self.store.diagnostics()
         self.assertEqual(report["providers"], 1)
-        self.assertEqual(len(report["unresolved"]), 3)
+        # R09 只剩一条（两类样板适用范围）。「无限燃料」（2026-09-30 定案：
+        # 外部自理）与「返还物显式声明」（同日定案）都不再出现在这份报告里。
+        self.assertEqual(len(report["unresolved"]), 1)
+        fields = [item["field"] for item in report["unresolved"]]
+        self.assertNotIn("pattern.unlimited_fuel", fields)
+        self.assertNotIn("pattern.return_rule", fields)
+        self.assertIn("pattern.kind_scope", fields)
 
 
 if __name__ == "__main__":

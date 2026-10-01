@@ -586,6 +586,90 @@ class TestAssembly(unittest.TestCase):
 class TestBootstrappedEnergy(unittest.TestCase):
     """接进启动层之后的判定（仍不碰引擎）。"""
 
+    def test_driver_mount_and_unmount_update_energy_without_a_tick(self):
+        server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
+        state = server.drivers.get(key(0, 65))
+        energy = server.runtimes.runtime_of(state.node_key).services.get(ServiceId.ENERGY)
+        before = energy.diagnostics()["totals"]["demand_total"]
+        medium, reason, detail = server.drivers.create_medium("endernet:harddisk_1k")
+        self.assertIsNotNone(medium, (reason, detail))
+        self.assertTrue(state.provider.mount(0, medium.medium_id)[0])
+        self.assertEqual(energy.diagnostics()["totals"]["demand_total"], before + 1)
+        self.assertTrue(state.provider.unmount(0)[0])
+        self.assertEqual(energy.diagnostics()["totals"]["demand_total"], before)
+
+    def test_energy_rebuild_reads_slots_not_the_config_projection(self):
+        server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
+        state = server.drivers.get(key(0, 65))
+        medium, _, _ = server.drivers.create_medium("endernet:harddisk_1k")
+        self.assertTrue(state.provider.mount(0, medium.medium_id)[0])
+        runtime = server.runtimes.runtime_of(state.node_key)
+        energy = runtime.services.get(ServiceId.ENERGY)
+        record = server.registry.get(state.node_key)
+        record.config["disk_count"] = 999
+        node = NetworkNode.from_record(server.definitions, record)
+        energy.remove_node(node)
+        energy.add_node(node)
+        row = energy._members[state.node_key]
+        self.assertEqual(row.unit_count, 1)
+        self.assertEqual(row.demand, 1)
+        self.assertEqual(row.gap, "")
+
+    def test_driver_count_changes_the_power_verdict_immediately(self):
+        server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
+        state = server.drivers.get(key(0, 65))
+        runtime = server.runtimes.runtime_of(state.node_key)
+        energy = runtime.services.get(ServiceId.ENERGY)
+        # 仅本用例把电源降为 0，隔离数量回填对真实供需判定的影响。
+        source = server.definitions.get(CREATIVE)
+        self.addCleanup(setattr, source, "supply", source.supply)
+        source.supply = Value(0)
+        energy.add_node(NetworkNode.from_record(server.definitions, server.registry.get(key(2))))
+        self.assertIs(energy.power_ok(state.node_key), True)
+        medium, _, _ = server.drivers.create_medium("endernet:harddisk_1k")
+        self.assertTrue(state.provider.mount(0, medium.medium_id)[0])
+        self.assertIs(energy.power_ok(state.node_key), False)
+        self.assertEqual(power_blocker(runtime.services, state.node_key).code, Reason.BROWNOUT)
+        self.assertTrue(state.provider.unmount(0)[0])
+        self.assertIs(energy.power_ok(state.node_key), True)
+
+    def test_replaced_driver_does_not_inherit_the_old_count(self):
+        server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
+        state = server.drivers.get(key(0, 65))
+        medium, _, _ = server.drivers.create_medium("endernet:harddisk_1k")
+        self.assertTrue(state.provider.mount(0, medium.medium_id)[0])
+        old_ref = state.ref
+        server.push(NormalizedEvent.remove(state.node_key, DRIVER))
+        server.tick()
+        server.push(NormalizedEvent.place(state.node_key, DRIVER))
+        server.tick()
+        energy = server.runtimes.runtime_of(state.node_key).services.get(ServiceId.ENERGY)
+        self.assertEqual(energy._members[state.node_key].unit_count, 0)
+        self.assertFalse(energy.set_device_state(old_ref, unit_count=5))
+        self.assertEqual(energy._members[state.node_key].unit_count, 0)
+
+    def test_unchanged_driver_and_diagnostics_do_not_resettle_energy(self):
+        server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
+        energy = server.runtimes.runtime_of(key(0, 65)).services.get(ServiceId.ENERGY)
+        before = energy.stats["settles"]
+        for _ in range(3):
+            server.tick()
+            energy.diagnostics()
+            energy.power_ok(key(0, 65))
+        self.assertEqual(energy.stats["settles"], before)
+
+    def test_initial_empty_driver_is_known_zero_but_memory_is_still_unknown(self):
+        server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
+        server.push(NormalizedEvent.place(key(1, 63), MEMORY_SLOT))
+        server.tick()
+        runtime = server.runtimes.runtime_of(key(0, 65))
+        energy = runtime.services.get(ServiceId.ENERGY)
+        self.assertEqual(energy._members[key(0, 65)].unit_count, 0)
+        self.assertEqual(energy._members[key(0, 65)].gap, "")
+        memory = energy._members[key(1, 63)]
+        self.assertIsNone(memory.unit_count)
+        self.assertEqual(memory.gap, GAP_UNWIRED_INPUTS)
+
     def build(self, policy, *extra):
         # type: (object, tuple) -> object
         """基带 + 控制器 + 驱动器，外加若干台设备。"""

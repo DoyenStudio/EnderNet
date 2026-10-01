@@ -261,14 +261,15 @@ class _Ledger(object):
     时的正确动作是「这单先排队」，不是「那我少占一点」。
     """
 
-    __slots__ = ("policy", "leases", "_by_owner", "capacity", "_seq", "stats")
+    __slots__ = ("policy", "leases", "_by_owner", "capacity", "_seq", "stats", "on_changed")
 
     #: 诊断里用的名字，子类覆盖。
     kind = ""
 
-    def __init__(self, policy=None):
-        # type: (object) -> None
+    def __init__(self, policy=None, on_changed=None):
+        # type: (object, object) -> None
         self.policy = policy if policy is not None else OrderPolicy()
+        self.on_changed = on_changed
         self.leases = {}
         #: `owner_id -> [lease_id]`。**必须是列表。** 存单个 id 时，
         #: 同一个拥有者领第二次会把第一条的 id 覆盖掉——那条租约还躺在
@@ -340,6 +341,8 @@ class _Ledger(object):
         self.leases[lease.lease_id] = lease
         self._by_owner.setdefault(owner_id, []).append(lease.lease_id)
         self.stats["claimed"] += 1
+        if self.on_changed is not None:
+            self.on_changed()
         return lease
 
     def release(self, owner_id):
@@ -368,6 +371,8 @@ class _Ledger(object):
             lease.active = False
             total += lease.units
         self.stats["released"] += total
+        if total and self.on_changed is not None:
+            self.on_changed()
         return total
 
     def lease_of(self, owner_id):
@@ -474,7 +479,14 @@ class MemoryLedger(_Ledger):
 
 def slot_capacity(snapshot, component_id):
     # type: (object, int) -> tuple
-    """从拓扑快照算出这张网络的槽位数。返回 `(槽位数, 不贡献的群说明)`。
+    """返回去重后的处理槽位数及不贡献的群说明。"""
+    sources, idle = slot_sources(snapshot, component_id)
+    return len(sources), idle
+
+
+def slot_sources(snapshot, component_id):
+    # type: (object, int) -> tuple
+    """返回 `(有效处理器位置集合, 不贡献的群说明)`，容量与能源共用。
 
     **只读 02 已经算好的结论**，不自己遍历邻居。第二个返回值是给诊断与
     验收用的：它把「有处理器但不贡献槽位」的群逐条列出来，否则一张
@@ -484,7 +496,6 @@ def slot_capacity(snapshot, component_id):
     （`PROCESSOR_GROUP_UNATTACHED` / `R03` 的 `PROCESSOR_GROUP_UNRESOLVED`），
     这里只把群引用与原因带出去。
     """
-    total = 0
     idle = []
     seen = set()
     for group_id in sorted(getattr(snapshot, "processor_groups", {}) or {}):
@@ -511,7 +522,6 @@ def slot_capacity(snapshot, component_id):
         fresh = set(group.processors) - seen
         overlap = len(group.processors) - len(fresh)
         seen |= fresh
-        total += len(fresh)
         if overlap:
             idle.append(
                 {
@@ -522,7 +532,7 @@ def slot_capacity(snapshot, component_id):
                     "reasons": [],
                 }
             )
-    return total, idle
+    return seen, idle
 
 
 def memory_capacity(members, definitions, policy):

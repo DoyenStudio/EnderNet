@@ -1655,10 +1655,10 @@ class PlanJob(object):
         self.inventory = inventory
         self.patterns = patterns
         self.policy = policy if policy is not None else PlanPolicy()
-        #: R09 的口径（`unlimited` 输入要不要向网络要）。**默认取保守侧**：
-        #: `PatternPolicy()` 的 `unlimited_fuel` 是「外部机器自理」，
-        #: 因此标了不限量的输入不会变成需求——宁可少报一份要备的料，
-        #: 也不要让玩家去准备一份根本不会被消耗的燃料。
+        #: R09 的口径（`unlimited` 输入要不要向网络要）。**已于 2026-09-30
+        #: 定案**：`PatternPolicy.unlimited_fuel` 只有「外部机器自理」一侧，
+        #: 因此标了不限量的输入**不会**变成需求——它不是「宁可少报一份要备的
+        #: 料」，而是规则本身：那条由外界环境供应，要网络供给就别标记它。
         self.pattern_policy = (
             pattern_policy if pattern_policy is not None else PatternPolicy()
         )

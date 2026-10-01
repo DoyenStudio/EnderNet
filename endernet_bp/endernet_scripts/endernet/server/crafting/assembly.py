@@ -9,15 +9,21 @@ from ...common.item_codec import item_dict_from_key, item_key_from_dict
 from ...common.protocol import BlockReason, Reason, TransferRequest, TransferStatus
 from ...common.resource_key import ResourceKey
 from ..storage.transfer import NetworkEndpoint, SlotView, slot_read, slot_limit_of
+from ..network.controller import power_blocker
 from .patterns import MODE_CRAFTING
 from .jobs import StepStatus
 
 
 class AssemblyChamberExecution(object):
-    def __init__(self):
-        # type: () -> None
+    def __init__(self, on_changed=None):
+        # type: (object) -> None
         # 跨网络共用 PatternStore 上的这份所有权，防止拓扑迁移后混用槽位。
         self.leases = {}
+        self.on_changed = on_changed
+
+    def is_working(self, ref):
+        # type: (object) -> bool
+        return "%s" % (ref.as_key(),) in self.leases
 
     def accepts_lease(self, lease):
         # type: (object) -> bool
@@ -39,6 +45,8 @@ class AssemblyChamberExecution(object):
         state = instance.assembly
         if state and self.leases.get(state["holder"]) == instance.execution_id:
             self.leases.pop(state["holder"], None)
+            if self.on_changed is not None:
+                self.on_changed(state["holder"])
 
     def advance(self, executor, order, instance, tick):
         # type: (object, object, object, int) -> tuple
@@ -90,10 +98,16 @@ class AssemblyChamberExecution(object):
             instance.assembly = state
             self.leases[holder] = instance.execution_id
             instance.status = StepStatus.STAGING
+            if self.on_changed is not None:
+                self.on_changed(holder)
         if state["uncertain"]:
             return self._blocked(Reason.CONTAINER_UNCERTAIN, state["uncertain"])
         if state["phase"] == "done":
             return executor._track_outputs(order, instance, tick), None, 0
+        # 取得使用权会从空闲切为工作；必须按新需求再检查，不能用旧准入投料。
+        blocker = power_blocker(executor.runtime.services, ref.node_key)
+        if blocker is not None:
+            return 0, blocker, 0
         return self._advance(executor, order, instance, adapter, tick)
 
     def _prepare(self, adapter, definition, holder):

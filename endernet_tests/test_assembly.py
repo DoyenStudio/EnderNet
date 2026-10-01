@@ -13,9 +13,125 @@ from endernet.server.storage.transfer import slot_read
 from endernet.common.item_codec import item_dict_from_key
 from endernet.common.protocol import Reason, DeviceCommand, CommandKind, CommandSource
 from endernet.server.runtime.events import NormalizedEvent
+from endernet.server.network.services import ServiceId
+from endernet.server.network.node import NetworkNode
+from endernet.common.definitions import Value
 
 
 class TestAssembly(ReturnsFixture):
+    def energy_member(self, node_key):
+        runtime = self.server.runtimes.runtime_of(node_key)
+        return runtime.services.get(ServiceId.ENERGY)._members[node_key]
+
+    def test_energy_work_interval_ends_on_completion(self):
+        self.assertEqual(self.energy_member(PROCESSOR_KEY).state, "idle")
+        self.assertEqual(self.energy_member(PORT_KEY).state, "idle")
+        self.seed(IRON, 2)
+        self.submit_order()
+        self.drive_until(lambda: bool(self.server.patterns.assembly.leases))
+        self.assertEqual(self.energy_member(PROCESSOR_KEY).state, "work")
+        self.assertEqual(self.energy_member(PROCESSOR_KEY).demand, 32)
+        self.assertEqual(self.energy_member(PORT_KEY).state, "work")
+        self.assertEqual(self.energy_member(PORT_KEY).demand, 8)
+        self.drive_until(lambda: self.current().status == "completed")
+        self.assertEqual(self.energy_member(PROCESSOR_KEY).state, "idle")
+        self.assertEqual(self.energy_member(PORT_KEY).state, "idle")
+
+    def test_waiting_for_output_space_remains_work_and_cancel_clears_immediately(self):
+        self.seed(IRON, 2)
+        self.submit_order()
+        self.drive_until(lambda: bool(self.server.patterns.assembly.leases))
+        self.port_box.write_slot(9, item_dict_from_key(GOLD, 1))
+        self.ticks()
+        self.assertEqual(self.energy_member(PORT_KEY).state, "work")
+        self.assertEqual(self.energy_member(PROCESSOR_KEY).state, "work")
+        result = self.server.submit_command(
+            self.order_command("cancel", "cancel-energy", order_id=self.current().order_id))
+        self.assertFalse(result.reasons, result.to_dict())
+        self.assertEqual(self.energy_member(PORT_KEY).state, "idle")
+        self.assertEqual(self.energy_member(PROCESSOR_KEY).state, "idle")
+        self.assertEqual(slot_read(self.port_box, 9)["count"], 1)
+
+    def test_work_energy_shortfall_blocks_before_first_material_move(self):
+        energy = self.runtime.services.get(ServiceId.ENERGY)
+        source = self.server.definitions.get("endernet:creative_energy_source")
+        original_supply = source.supply
+        self.addCleanup(setattr, source, "supply", source.supply)
+        # 刚好够处理器工作，但不够装配仓从空闲切到工作。
+        source.supply = Value(energy.totals()["demand_total"] +
+                              32 - self.energy_member(PROCESSOR_KEY).demand)
+        energy.add_node(NetworkNode.from_record(
+            self.server.definitions, self.server.registry.get(ENERGY_KEY)))
+        self.server.tick()
+        self.seed(IRON, 2)
+        self.submit_order()
+        self.drive_until(lambda: bool(self.server.patterns.assembly.leases))
+        self.assertIs(energy.power_ok(PORT_KEY), False)
+        self.assertEqual(slot_read(self.port_box, 4)["count"], 0)
+        storage = self.runtime.services.get(ServiceId.STORAGE)
+        self.assertEqual(storage.query(IRON)["stored"], 2)
+        self.assertEqual(storage.query(BLOCK)["stored"], 0)
+        source.supply = original_supply
+        energy.add_node(NetworkNode.from_record(
+            self.server.definitions, self.server.registry.get(ENERGY_KEY)))
+        self.drive_until(lambda: self.current().status == "completed")
+        self.assertEqual(storage.query(BLOCK)["stored"], 1)
+        self.assertEqual(self.energy_member(PORT_KEY).state, "idle")
+
+    def test_parallel_leases_count_processors_once_and_shrink_keeps_existing_leases(self):
+        for index in (0, 2, 3):
+            self.place(key(index, 64, 1), CONNECTOR)
+            self.place(key(index, 64, 2), PROCESSOR)
+        self.server.tick()
+        self.seed(IRON, 8)
+        self.submit_order(amount=4)
+        self.drive_until(lambda: self.service.slots.used() == 4)
+        energy = self.runtime.services.get(ServiceId.ENERGY)
+        rows = [row for row in energy.member_view() if row["device_id"] == PROCESSOR]
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(sum(row["demand"] for row in rows), 4 * 32)
+        self.assertEqual(len(self.server.patterns.assembly.leases), 1)
+        self.assertEqual(self.energy_member(PORT_KEY).demand, 8)
+        # 暂停不释放租约；移除一台后只向当前网络里的三台计费。
+        self.service.executor.pause(self.current().order_id)
+        self.server.push(NormalizedEvent.remove(key(3, 64, 2), PROCESSOR))
+        self.server.tick()
+        rows = [row for row in energy.member_view() if row["device_id"] == PROCESSOR]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(sum(row["demand"] for row in rows), 3 * 32)
+        self.assertEqual(self.service.slots.used(), 4)
+        self.service.executor.cancel(self.current().order_id)
+        rows = [row for row in energy.member_view() if row["device_id"] == PROCESSOR]
+        self.assertTrue(all(row["state"] == "idle" for row in rows))
+
+    def test_old_assembly_release_does_not_change_replacement_state(self):
+        self.seed(IRON, 2)
+        self.submit_order()
+        self.drive_until(lambda: bool(self.server.patterns.assembly.leases))
+        self.service.executor.pause(self.current().order_id)
+        previous = self.ref_at(PORT_KEY)
+        self.server.push(NormalizedEvent.remove(PORT_KEY, "endernet:assemble_chamber"))
+        self.server.tick()
+        self.place(PORT_KEY, "endernet:assemble_chamber")
+        self.server.tick()
+        self.assertFalse(previous.matches(self.ref_at(PORT_KEY)))
+        self.assertEqual(self.energy_member(PORT_KEY).state, "idle")
+        self.service.executor.cancel(self.current().order_id)
+        self.assertEqual(self.energy_member(PORT_KEY).state, "idle")
+
+    def test_processor_energy_is_scoped_to_its_network(self):
+        # 第二张独立网络只提供槽位，不接订单；第一张的租约不能点亮它。
+        self.place(key(30), "endernet:network_baseband_8")
+        self.place(key(30, 65), "endernet:tiny_network_endpoint")
+        self.place(key(30, 64, 1), CONNECTOR)
+        self.place(key(30, 64, 2), PROCESSOR)
+        self.server.tick()
+        self.seed(IRON, 2)
+        self.submit_order()
+        self.drive_until(lambda: bool(self.server.patterns.assembly.leases))
+        self.assertEqual(self.energy_member(PROCESSOR_KEY).state, "work")
+        self.assertEqual(self.energy_member(key(30, 64, 2)).state, "idle")
+
     def place(self, node_key, device_id):
         if device_id == TEMPLATE_DEVICE:
             device_id = "endernet:assemble_chamber"
@@ -154,6 +270,8 @@ class TestAssembly(ReturnsFixture):
         self.port_box.write_slot = write
         self.ticks()
         self.assertTrue(self.instance().assembly["uncertain"])
+        self.assertEqual(self.energy_member(PORT_KEY).state, "work")
+        self.assertEqual(self.energy_member(PROCESSOR_KEY).state, "work")
         self.assertEqual(slot_read(self.port_box, 9)["count"], 1)
         self.assertEqual(self.stored(BLOCK), 0)
 
@@ -163,6 +281,8 @@ class TestAssembly(ReturnsFixture):
         self.drive_until(lambda: slot_read(self.port_box, 4)["count"] == 2)
         self.server.push(NormalizedEvent.remove(ENERGY_KEY, "endernet:creative_energy_source"))
         self.ticks()
+        self.assertEqual(self.energy_member(PORT_KEY).state, "work")
+        self.assertEqual(self.energy_member(PROCESSOR_KEY).state, "work")
         self.assertEqual(slot_read(self.port_box, 4)["count"], 2)
         self.assertEqual(slot_read(self.port_box, 9)["count"], 0)
         self.place(ENERGY_KEY, "endernet:creative_energy_source")

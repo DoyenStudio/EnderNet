@@ -332,7 +332,11 @@ class ReturnsService(object):
         self._ops = {}
         self._op_order = []
         self._last_receipt = None
+        self._pending = []
+        self._processing = False
         self.stats = {
+            "queued": 0,
+            "reentrant": 0,
             "registered": 0,
             "replaced": 0,
             "unregistered": 0,
@@ -455,6 +459,42 @@ class ReturnsService(object):
     # -- 到达（两条接缝共用）-------------------------------------------
 
     def _arrive(self, port, op_id, key, count, now, origin, gated):
+        # type: (object, str, object, int, int, str, bool) -> int
+        """忙期只保存回执，返回 0 表示尚未分配，不代表入库失败。"""
+        if int(count) <= 0:
+            return 0
+        receipt = (port, op_id, key, count, now, origin, gated)
+        if port._depth or self._processing:
+            self._pending.append(receipt)
+            self.stats["queued"] += 1
+            if self._processing:
+                self.stats["reentrant"] += 1
+            return 0
+        self._processing = True
+        try:
+            return self._process_receipt(*receipt)
+        finally:
+            self._processing = False
+            self._drain()
+
+    def _drain(self):
+        # type: () -> None
+        if self._processing:
+            return
+        self._processing = True
+        try:
+            while self._pending:
+                # 忙碌分量保持 FIFO，其他分量不必等它结束。
+                ready = next((i for i, row in enumerate(self._pending)
+                              if not row[0]._depth), None)
+                if ready is None:
+                    break
+                receipt = self._pending.pop(ready)
+                self._process_receipt(*receipt)
+        finally:
+            self._processing = False
+
+    def _process_receipt(self, port, op_id, key, count, now, origin, gated):
         # type: (object, str, object, int, int, str, bool) -> int
         """一条到达通知。返回**本次实际分配出去**的件数。
 
@@ -619,6 +659,9 @@ class ReturnsService(object):
             "waiting_entries": len(entries),
             "waiting_by_key": self._count_by_key(entries),
             "stats": dict(self.stats),
+            "pending_receipts": sum(1 for row in self._pending
+                                    if component_id is None or
+                                    row[0].component_id == component_id),
             "last_receipt": (
                 dict(self._last_receipt) if self._last_receipt is not None else None
             ),
@@ -684,6 +727,19 @@ class ReturnsPort(object):
         self.service = service
         self.runtime = runtime
         self.component_id = _component_of(runtime)
+        self._depth = 0
+
+    def begin_submission(self):
+        # type: () -> None
+        self._depth += 1
+
+    def end_submission(self):
+        # type: () -> None
+        if self._depth <= 0:
+            raise RuntimeError("unbalanced returns submission")
+        self._depth -= 1
+        if not self._depth:
+            self.service._drain()
 
     # -- 09 的 ReturnsSink 契约 ----------------------------------------
 

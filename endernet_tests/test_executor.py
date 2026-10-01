@@ -918,6 +918,55 @@ class StaleMirror(OneLevel):
         self.port_policy = PortPolicy(template_buffer_capacity=1)
         OneLevel.setUp(self)
 
+    def test_unmount_revalidates_remaining_inputs_before_staging(self):
+        """真实卸载命令撤销预留，库存版本驱动重验，不再备剩余原料。"""
+        self.seed(IRON, 4)
+        order_id = self.submit_order().payload["order_id"]
+        self.settle(order_id)
+        row = self.service.orders.get(order_id)
+        storage = self.runtime.services.get(ServiceId.STORAGE)
+        self.assertEqual(row.reservations[IRON.canonical()]["reserved"], 1)
+        version = storage.index_version
+        revalidations = row.stats["revalidations"]
+        stagings = row.stats["stagings"]
+        result = self.storage("unmount", "unmount", slot=0)
+        self.assertEqual(result.status, STATUS_OK, result.to_dict())
+        self.assertGreater(storage.index_version, version)
+        self.assertEqual(storage.medium_ids(), ())
+        self.assertEqual(list(storage.reservations_of(order_id)), [])
+        self.assertEqual(storage.query(IRON)["stored"], 0)
+        # 同步之前镜像仍非零，确保测到的是跨服务接缝。
+        self.assertEqual(row.reservations[IRON.canonical()]["reserved"], 1)
+        self.drive(3)
+        self.assertEqual(row.status, OrderStatus.BLOCKED)
+        self.assertIn(Reason.ORDER_STOCK_TAKEN, [r.code for r in row.blockers])
+        self.assertGreater(row.stats["revalidations"], revalidations)
+        self.assertEqual(row.reservations[IRON.canonical()]["reserved"], 0)
+        self.drive(3)
+        self.assertEqual(row.stats["stagings"], stagings)
+
+    def test_unmount_does_not_reclaim_inputs_already_delivered(self):
+        """原料已全部投出时，卸载不虚报缺料，也不重发原料。"""
+        self.seed(IRON, 4)
+        order_id = self.submit_order().payload["order_id"]
+        self.settle(order_id)
+        self.drive(8)
+        row = self.service.orders.get(order_id)
+        self.assertEqual(
+            self.order_view(order_id)["steps"][0]["status"], StepStatus.WAITING_OUTPUTS
+        )
+        revalidations = row.stats["revalidations"]
+        stagings = row.stats["stagings"]
+        result = self.storage("unmount", "unmount", slot=0)
+        self.assertEqual(result.status, STATUS_OK, result.to_dict())
+        self.drive(3)
+        self.assertGreater(row.stats["revalidations"], revalidations)
+        self.assertEqual(row.status, OrderStatus.RUNNING)
+        self.assertEqual(
+            self.order_view(order_id)["steps"][0]["status"], StepStatus.WAITING_OUTPUTS
+        )
+        self.assertEqual(row.stats["stagings"], stagings)
+
     def test_a_released_reservation_is_not_trusted_from_the_local_mirror(self):
         """**预留的真相在 05，不在订单的镜像里。**
 
