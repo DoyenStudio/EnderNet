@@ -52,19 +52,26 @@ COLUMNS = 9
 #: 背包网格里有几格（9x3）。界面槽号到段的换算靠它。
 BACKPACK_CELLS = 27
 
-#: 滚动区的候选路径。`terminal_items_scroll` 自己是面板，`scroll_view` 在它
-#: 下面，而**那一层的名字随输入方式分叉**：鼠标端 `scroll_mouse`、触控端
-#: `scroll_touch`（原版模板 `common.scrolling_panel` 里两边靠 `ignored`
-#: 互斥）。写死一条就会在另一种设备上取不到控件——**那不报错**，只表现为
-#: 「动画不动」，而动画不动看起来和「没触发」一模一样。
+#: 滚动控件相对**滚动面板**的三条候选后缀。`terminal_items_scroll` 自己是
+#: 面板，`scroll_view` 在它下面，而**那一层的名字随输入方式分叉**：鼠标端
+#: `scroll_mouse`、触控端 `scroll_touch`（原版模板 `common.scrolling_panel`
+#: 里两边靠 `ignored` 互斥）。写死一条就会在另一种设备上取不到控件——**那不
+#: 报错**，只表现为「动画不动」，而动画不动看起来和「没触发」一模一样。
 #:
-#: 第一条是既有代码的假设（把 `terminal_items_scroll` 直接当 `scroll_view`），
-#: 留着它是因为它到底成不成立**还没在游戏里验过**：成功了就不必再往下试。
-SCROLL_VIEW_PATHS = (
-    SCROLL_PATH,
-    SCROLL_PATH + "/scroll_mouse/scroll_view",
-    SCROLL_PATH + "/scroll_touch/scroll_view",
+#: 空串是既有代码的假设（把滚动面板直接当 `scroll_view`），留着它是因为它
+#: 到底成不成立**还没在游戏里验过**：成功了就不必再往下试。
+#:
+#: **后缀而不是整条路径**：合成终端还有一个同样是 `common.scrolling_panel`
+#: 的候选配方窗口（`client/ui/crafting_panel.py`），它的分叉方式一模一样而
+#: 前缀不同。把三条候选写成后缀，两边共用一套，免得新界面上又抄一遍、
+#: 抄漏一条。
+SCROLL_VIEW_SUFFIXES = (
+    "",
+    "/scroll_mouse/scroll_view",
+    "/scroll_touch/scroll_view",
 )
+
+SCROLL_VIEW_PATHS = tuple(SCROLL_PATH + suffix for suffix in SCROLL_VIEW_SUFFIXES)
 
 
 def _control(screen, path):
@@ -95,11 +102,16 @@ def _rect(control):
         return None
 
 
-def scroll_view(screen):
-    # type: (object) -> object
-    """滚动控件（`ScrollViewUIControl`）；取不到返回 `None`。"""
-    for path in SCROLL_VIEW_PATHS:
-        control = _control(screen, path)
+def scroll_view_at(screen, panel_path):
+    # type: (object, str) -> object
+    """**任意**滚动面板下面的滚动控件（`ScrollViewUIControl`）；取不到返回 `None`。
+
+    `panel_path` 是这个滚动面板的完整路径（如 `/terminal/terminal_items_scroll`）。
+    **不给默认值**：默认值会让调用方以为「不传就是本界面的那一个」，
+    而本模块里唯一知道自己是哪个面板的地方是调用点。
+    """
+    for suffix in SCROLL_VIEW_SUFFIXES:
+        control = _control(screen, panel_path + suffix)
         if control is None:
             continue
         try:
@@ -109,6 +121,18 @@ def scroll_view(screen):
         if view is not None:
             return view
     return None
+
+
+def scroll_view(screen):
+    # type: (object) -> object
+    """本终端列表的滚动控件。"""
+    return scroll_view_at(screen, SCROLL_PATH)
+
+
+def scroll_content_at(screen, panel_path):
+    # type: (object, str) -> object
+    """**任意**滚动面板里那一层内容控件；取不到返回 `None`。"""
+    return _content_of(scroll_view_at(screen, panel_path))
 
 
 def scroll_content(screen):
@@ -124,7 +148,12 @@ def scroll_content(screen):
     两个调用口都试：运行版本里百分比接口要从 `.base` 上拿（既有代码就是
     这么调的），而文档把内容接口写在控件本身，两者对不上，因此都试一次。
     """
-    view = scroll_view(screen)
+    return _content_of(scroll_view(screen))
+
+
+def _content_of(view):
+    # type: (object) -> object
+    """从一个滚动控件上问出它的内容控件；取不到返回 `None`。"""
     if view is None:
         return None
     base = getattr(view, "base", None)

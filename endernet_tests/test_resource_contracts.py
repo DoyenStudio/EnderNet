@@ -372,6 +372,13 @@ class SyncMessageTests(unittest.TestCase):
                 11,
                 reasons=[{"code": "ok", "detail": ""}],
             ),
+            protocol.CraftStateMessage(
+                4,
+                [{"slot": slot, "canonical": "", "count": 0, "name": "", "aux": 0}
+                 for slot in range(protocol.CRAFT_SLOT_COUNT)],
+                "deadbeef",
+                {"name": "minecraft:stick", "aux": 0, "count": 4},
+            ),
         )
 
     def test_every_registered_kind_is_covered_here(self):
@@ -802,6 +809,130 @@ class EngineUserDataBoxingTests(unittest.TestCase):
         `{"__type__": True, "__value__": ...}` 会被当成 Byte 解掉。"""
         odd = {"__type__": True, "__value__": "x"}
         self.assertEqual(unbox_engine_value(odd), odd)
+
+
+def craft_slots():
+    return [{"slot": slot, "canonical": "", "count": 0, "name": "", "aux": 0}
+            for slot in range(protocol.CRAFT_SLOT_COUNT)]
+
+
+class CraftStateTests(unittest.TestCase):
+    """11-04 的工作台状态消息与命令上的 `recipe` 字段。
+
+    这一条消息**不能复用 `InventorySnapshot`**（那个钉 36 格），因此它的
+    边界检查要自己钉一遍：格数、槽号连续、空位写法、预览的形状。
+    """
+
+    def test_it_pins_nine_slots_not_thirty_six(self):
+        with self.assertRaises(ValueError):
+            protocol.CraftStateMessage(1, craft_slots()[:8])
+        with self.assertRaises(ValueError):
+            protocol.CraftStateMessage(1, craft_slots() + [
+                {"slot": 9, "canonical": "", "count": 0, "name": "", "aux": 0}])
+        self.assertEqual(9, protocol.CRAFT_SLOT_COUNT)
+
+    def test_the_slot_indices_must_be_in_order(self):
+        rows = craft_slots()
+        rows[3] = {"slot": 7, "canonical": "", "count": 0, "name": "", "aux": 0}
+        with self.assertRaises(ValueError):
+            protocol.CraftStateMessage(1, rows)
+
+    def test_an_empty_slot_is_an_empty_canonical(self):
+        rows = craft_slots()
+        rows[0] = {"slot": 0, "canonical": "item|minecraft:oak_planks|0|...",
+                   "count": 3, "name": "minecraft:oak_planks", "aux": 0}
+        message = protocol.CraftStateMessage(2, rows)
+        self.assertEqual(3, message.slots[0]["count"])
+        self.assertEqual("", message.slots[1]["canonical"])
+
+    def test_a_bad_count_is_refused(self):
+        for bad in (True, -1, "3"):
+            rows = craft_slots()
+            rows[0] = {"slot": 0, "canonical": "", "count": bad,
+                       "name": "", "aux": 0}
+            with self.assertRaises((ValueError, TypeError)):
+                protocol.CraftStateMessage(1, rows)
+
+    def test_the_recipe_note_must_be_text(self):
+        with self.assertRaises(TypeError):
+            protocol.CraftStateMessage(1, craft_slots(), recipe=None)
+
+    def test_a_preview_carries_name_aux_and_count(self):
+        message = protocol.CraftStateMessage(
+            1, craft_slots(), "deadbeef", {"name": "minecraft:stick", "aux": 0, "count": 4})
+        self.assertEqual(4, message.preview["count"])
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.CraftStateMessage(
+                1, craft_slots(), "", {"name": "minecraft:stick", "count": 4})
+
+    def test_no_preview_is_none_and_survives_the_round_trip(self):
+        message = protocol.CraftStateMessage(3, craft_slots(), "cafebabe", None)
+        envelope = protocol.SyncEnvelope(message, "s1", "net", "epoch-1")
+        restored = protocol.SyncEnvelope.from_dict(envelope.to_dict(), None)
+        self.assertIsNone(restored.message.preview)
+        self.assertEqual("cafebabe", restored.message.recipe)
+
+    def test_the_envelope_needs_a_session_like_every_other_push(self):
+        # 它是 S2C 消息，路由字段一个都不能少。
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.SyncEnvelope(
+                protocol.CraftStateMessage(1, craft_slots()), "", "net", "epoch-1")
+
+    def test_unknown_fields_are_refused_outright(self):
+        payload = protocol.CraftStateMessage(1, craft_slots()).to_dict()
+        payload["extra"] = 1
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.decode_sync_message(payload)
+
+
+class TerminalCommandRecipeField(unittest.TestCase):
+    """`recipe` 是 11-04 加到命令上的**唯一**新字段。
+
+    加它的代价要说清楚：`TerminalCommand.FIELDS` 是**无条件严格**的
+    （缺字段与多字段都拒），所以老客户端发的命令会被整个拒掉，
+    而不是「少一个可选项」。客户端与服务端同批发布，因此这里要钉的是
+    **往返不丢**，而不是兼容旧版。
+    """
+
+    def command(self, recipe=None):
+        return protocol.TerminalCommand(
+            "r1", "craft_import", None, {"kind": "item", "name": "minecraft:stick"},
+            1, None, None, None, None, None, recipe,
+        )
+
+    def test_the_field_is_on_the_declared_list(self):
+        self.assertIn("recipe", protocol.TerminalCommand.FIELDS)
+
+    def test_it_survives_the_round_trip(self):
+        envelope = protocol.SyncEnvelope(self.command("deadbeef"), "s1")
+        restored = protocol.SyncEnvelope.from_dict(envelope.to_dict(), None)
+        self.assertEqual("deadbeef", restored.message.recipe)
+
+    def test_absent_is_none_and_still_serialised(self):
+        envelope = protocol.SyncEnvelope(self.command(), "s1")
+        payload = envelope.to_dict()
+        self.assertIn("recipe", payload["message"])
+        self.assertIsNone(payload["message"]["recipe"])
+        restored = protocol.SyncEnvelope.from_dict(payload, None)
+        self.assertIsNone(restored.message.recipe)
+
+    def test_a_missing_field_is_refused_not_defaulted(self):
+        # 严格是**有意的**：悄悄补一个缺席字段会让「客户端发的是新协议还是
+        # 旧协议」在服务端看不出来。
+        payload = protocol.SyncEnvelope(self.command(), "s1").to_dict()
+        del payload["message"]["recipe"]
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.SyncEnvelope.from_dict(payload, None)
+
+    def test_a_non_text_recipe_is_refused(self):
+        payload = protocol.SyncEnvelope(self.command(), "s1").to_dict()
+        payload["message"]["recipe"] = 7
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.SyncEnvelope.from_dict(payload, None)
+
+    def test_it_reaches_the_service_payload(self):
+        self.assertEqual("deadbeef", self.command("deadbeef").payload()["recipe"])
+        self.assertNotIn("recipe", self.command().payload())
 
 
 if __name__ == "__main__":

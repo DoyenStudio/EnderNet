@@ -51,6 +51,7 @@ from ...common.protocol import (
     CommandResultMessage,
     CommandSource,
     CommandKind,
+    CraftStateMessage,
     DeviceCommand,
     ItemDelta,
     InventorySnapshot,
@@ -111,6 +112,9 @@ CLOSE_NETWORK_RETIRED = "network_retired"
 CLOSE_NETWORK_CLOSED = "network_closed"
 #: 主控被移除或卸载。
 CLOSE_MASTER_LOST = "master_lost"
+#: 界面指着的方块已经被拆掉或换了一台（同坐标、代次变大）。**不属于上面那
+#: 三种**：那三种关的是整网，这一条只关掉这一台设备上的会话。
+CLOSE_DEVICE_REPLACED = "device_replaced"
 
 #: `RuntimeChange.kind` → 注销原因。**只列会注销的那三种**，其余变化
 #: 在这个映射里查不到，因此它们不会顺手关掉任何会话。
@@ -118,6 +122,19 @@ _RUNTIME_CLOSE_REASONS = {
     RuntimeChange.RETIRED: CLOSE_NETWORK_RETIRED,
     RuntimeChange.CLOSED: CLOSE_NETWORK_CLOSED,
     RuntimeChange.MASTER_LOST: CLOSE_MASTER_LOST,
+}
+
+#: 注销原因 → 推给客户端的那句话。**与 `close_reason` 分开**：那个是给服务端
+#: 诊断看的短标识（`master_lost`），这一句会原样落到玩家眼前，所以写成完整的
+#: 中文。文本的唯一真源在服务端（`zh_CN.lang` 只管标识符 → 显示名），与
+#: `device_status` 的原因文本同一条口径。
+_GONE_DETAILS = {
+    CLOSE_NETWORK_RETIRED: "所属网络已退役，请重新打开界面",
+    CLOSE_NETWORK_CLOSED: "网络已关闭，请重新打开界面",
+    CLOSE_MASTER_LOST: "网络主控已失去，请重新打开界面",
+    #: `_drop_stale_devices` 专用。它不走 `_RUNTIME_CLOSE_REASONS`（那条路
+    #: 关的是**整网**），所以单独列在这里。
+    CLOSE_DEVICE_REPLACED: "终端已被替换，请重新打开界面",
 }
 
 
@@ -542,6 +559,7 @@ class TerminalSyncHub(object):
         port=None,
         submit=None,
         status_of=None,
+        craft_of=None,
     ):
         self.registry = registry if registry is not None else SessionRegistry()
         self.policy = policy if policy is not None else SyncPolicy()
@@ -549,9 +567,16 @@ class TerminalSyncHub(object):
         self._context_of = context_of if context_of is not None else _no_context
         self._submit = submit if submit is not None else _no_submit
         self._status_of = status_of if status_of is not None else _no_status
+        #: 合成终端的工作台（11-04）。**只有合成终端才会有值**——
+        #: 装配层按方块型号决定，其它终端一律拿到 `None`，
+        #: 因此这里不需要再判一次「这是不是合成终端」。
+        self._craft_of = craft_of if craft_of is not None else _no_craft
         self.port = port
         self._subs = {}
         self._inventory_sent = {}
+        #: 每会话上一次发出去的工作台状态，用来做变化去重。与
+        #: `_inventory_sent` 一样在 `_forget` 里清。
+        self._craft_sent = {}
         #: 设备总体状态（11-08/11-13）。订阅表就是 `registry`，这里只记
         #: 「每会话上一次发出去的是什么」，用来做变化去重。
         self.status = DeviceStatusSubscriptions()
@@ -580,6 +605,13 @@ class TerminalSyncHub(object):
             #: `expired == expired_notices + expired_notices_skipped + 发失败的`。
             "expired_notices": 0,
             "expired_notices_skipped": 0,
+            #: 除空闲超时之外那几条**服务端单方面注销**的通知
+            #: （设备被替换、网络退役/关闭/换主控），见 `_notify_gone`。
+            #: 与 `expired_notices` 分开计：这两类在实机上要查的东西不同
+            #: （「这个人走开了」vs「这台方块/这条网络没了」）。条数分母是
+            #: `registry.stats["closed"]`，但那个数还含玩家主动关闭与停机。
+            "gone_notices": 0,
+            "gone_notices_skipped": 0,
             #: 其中有多少条是**开着之后**复核不过而关掉的（走开、传走、
             #: 设备被换、网络不可用）。与开会话被拒分开计：前者是「这个人
             #: 现在离得远」，后者是「这条请求本来就开不了」——查的东西不同。
@@ -601,6 +633,9 @@ class TerminalSyncHub(object):
             #: 执行路径抛异常的次数。**必须回一条结果**：客户端没有时钟也
             #: 没有超时，不回则它在途记录永不释放（见 `_on_command`）。
             "command_errors": 0,
+            #: 推出去的工作台状态条数（11-04）。**只数真的发出去的**：
+            #: 去重命中不算，因此这个数涨就说明格子或预览真的变了。
+            "craft_states": 0,
         }
 
     # -- 装配 ----------------------------------------------------------
@@ -993,6 +1028,7 @@ class TerminalSyncHub(object):
             if session.is_open():
                 self._publish_inventory(session)
                 self._publish_device_status(session)
+                self._publish_craft_state(session)
                 self._advance_transfer(session, subs, frame)
         return self._publish_network(subs, frame)
 
@@ -1019,6 +1055,40 @@ class TerminalSyncHub(object):
             return
         if self._send(session, message):
             self._inventory_sent[session.session_id] = payload
+
+    def _publish_craft_state(self, session):
+        # type: (object) -> None
+        """把**这台设备自己的九宫格**推给客户端（11-04）。
+
+        与 `_publish_inventory` 同一形状：内容没变就不发（按整个载荷去重）。
+        区别在数据来源——背包是**玩家**的，九宫格是**这台设备**的，
+        因此问的是 `craft_of(session.device_ref)` 而不是存储服务的
+        `inventories`。装配层对非合成终端返回 `None`，这里直接返回。
+
+        预览（`preview`）由装配层算好一并给出：它要查引擎配方表，
+        而本模块不许 import 引擎。
+        """
+        try:
+            state = self._craft_of(session.device_ref)
+        except Exception:
+            # 读取失败不伪造一个空工作台——空工作台会被客户端读成
+            # 「我的原料没了」。宁可不发。
+            return
+        if state is None:
+            return
+        try:
+            message = CraftStateMessage(
+                state["revision"], state["slots"],
+                state.get("recipe") or "", state.get("preview"),
+            )
+        except (KeyError, TypeError, ValueError):
+            return
+        payload = message.to_dict()
+        if self._craft_sent.get(session.session_id) == payload:
+            return
+        if self._send(session, message):
+            self._craft_sent[session.session_id] = payload
+            self.stats["craft_states"] += 1
 
     def _publish_device_status(self, session):
         # type: (object) -> None
@@ -1278,6 +1348,11 @@ class TerminalSyncHub(object):
             )
 
     # -- 会话注销 ------------------------------------------------------
+    #
+    # **这一组方法只负责关，不负责说。** 「服务端单方面注销」要推一条通知
+    # （`_notify_gone`），而「玩家自己关了、玩家走了、服务停机」**不该推**——
+    # 因此通知挂在**具体调用点**上，不放进 `_forget_all`，否则那三种情形会
+    # 跟着发，而它们的包没有任何收件人。新增调用点前先想清楚属于哪一类。
 
     def close_session(self, session_id, reason="closed"):
         # type: (str, str) -> object
@@ -1290,7 +1365,7 @@ class TerminalSyncHub(object):
         # type: (str, str) -> list
         return self._forget_all(self.registry.close_for_player(player_id, reason))
 
-    def close_for_device(self, ref, reason="device_replaced"):
+    def close_for_device(self, ref, reason=CLOSE_DEVICE_REPLACED):
         # type: (object, str) -> list
         return self._forget_all(self.registry.close_for_device(ref, reason))
 
@@ -1315,13 +1390,24 @@ class TerminalSyncHub(object):
         三种变化关掉整网（理由见 `_RUNTIME_CLOSE_REASONS`），成员增减则
         只关掉那些**终端已被替换**的会话（见 `_drop_stale_devices`）。
         其余变化（建立、绑主控、开放）是空操作：它们不使任何既有会话失效。
+
+        **两条路都要在关掉之后告诉客户端**（`_notify_gone`）。会话没了却
+        不吭声，客户端会拿着一个死会话继续显示库存，直到下一次点击被拒
+        ——与空闲超时那条一模一样（`_notify_abandoned` 的说明、欠账台账
+        **D-08**）。这里不能用 `_forget_all` 顺手带上：`close_for_player`
+        （玩家离开）与 `shutdown`（停机）走的也是它，而那两个时候**不该
+        发**——收件人已经不在了，或者整台服务正要停。
         """
         network_id = self.network_id_of(change.component_id)
         reason = _RUNTIME_CLOSE_REASONS.get(change.kind)
         if reason is not None:
-            return len(self.close_for_network(network_id, reason))
+            closed = self.close_for_network(network_id, reason)
+            self._notify_gone(closed, _GONE_DETAILS[reason])
+            return len(closed)
         if change.kind == RuntimeChange.MEMBERS_CHANGED:
-            return len(self._drop_stale_devices(network_id))
+            doomed = self._drop_stale_devices(network_id)
+            self._notify_gone(doomed, _GONE_DETAILS[CLOSE_DEVICE_REPLACED])
+            return len(doomed)
         return 0
 
     def _drop_stale_devices(self, network_id):
@@ -1352,7 +1438,7 @@ class TerminalSyncHub(object):
             if not session.device_ref.matches(context.record_ref):
                 doomed.append(session)
         for session in doomed:
-            self.close_session(session.session_id, "device_replaced")
+            self.close_session(session.session_id, CLOSE_DEVICE_REPLACED)
         return doomed
 
     def shutdown(self, reason="shutdown"):
@@ -1392,6 +1478,7 @@ class TerminalSyncHub(object):
     def _forget(self, session):
         # type: (object) -> None
         self._inventory_sent.pop(session.session_id, None)
+        self._craft_sent.pop(session.session_id, None)
         self.status.drop(session.session_id)
         subs = self._subs.get(session.network_id)
         if subs is None:
@@ -1401,11 +1488,27 @@ class TerminalSyncHub(object):
             del self._subs[session.network_id]
             self.stats["networks_dropped"] += 1
 
-    # -- 时效回收的通知 ------------------------------------------------
+    # -- 服务端单方面注销的通知 ----------------------------------------
 
     def _notify_abandoned(self, sessions):
         # type: (list) -> int
         """空闲超时回收时**告诉客户端一声**，返回实际发出的条数。
+
+        只是 `_notify_gone` 的一个具名调用点：文本与**计数桶**都与那几条
+        「服务端单方面注销」的路径分开（实机上要查的东西不同——「这个人走开
+        了」vs「这台方块/这条网络没了」）。
+        """
+        return self._notify_gone(
+            sessions,
+            "会话空闲超时，请重新打开界面",
+            "expired_notices",
+            "expired_notices_skipped",
+        )
+
+    def _notify_gone(self, sessions, detail, sent_key="gone_notices",
+                     skipped_key="gone_notices_skipped"):
+        # type: (list, str, str, str) -> int
+        """**服务端单方面注销**一批会话之后，告诉客户端一声。
 
         **不发这一条的后果是「静默的尸体」。** `evict_expired` 只清服务端
         自己的账（`_forget` 一条包都不发），客户端于是继续以为会话还在：
@@ -1416,8 +1519,11 @@ class TerminalSyncHub(object):
         而中间那段时间界面看起来一切正常。
 
         补上这一条之后，界面在会话死掉的那一刻就起遮罩。**会话照样会被
-        回收**（TTL 是故意的，它是客户端崩溃或断线时的兜底），变的是它
-        不再无声无息。客户端**零改动**：空会话号的 `error` 它早就会处理。
+        回收**（超时那条是故意的，它是客户端崩溃或断线时的兜底），变的
+        是它不再无声无息。客户端**零改动**：空会话号的 `error` 它早就会
+        处理，因此**四条路径共用这一段**——`evict_expired`（超时）、
+        `_drop_stale_devices`（设备被替换）、以及 `on_runtime_change` 的
+        整网注销（退役/关闭/丢主控）。
 
         **一个玩家最多一条。** 同一玩家可以并存多个会话
         （`max_sessions_per_player` 是 4），一次回收可能同时丢掉其中几条；
@@ -1431,10 +1537,15 @@ class TerminalSyncHub(object):
         「清完之后这个玩家还有没有活会话」，与 `_drop_stale_devices` 的
         「必须重新查一遍，不要从变化里推」是同一条理由。
 
-        两条**同类但本轮没接**的路径：设备被替换（`_drop_stale_devices`）
-        与网络换代次（`on_runtime_change`）同样是服务端单方面注销、同样
-        静默，客户端要到下一次命令被拒才知道。它们记在
-        `plans/tasks/00-欠账台账.md`，别把本节读成「服务端注销都会通知」。
+        **这条守卫是保守的，代价写在这里**：若客户端手里那个（最后开的）
+        会话被注销、而同一玩家在**别处**还留着一个更早的活会话（另一个
+        网络上的旧终端），这里会判成「他还有活会话」而不发——那一次仍要
+        等到下一次点击被拒。要修得靠「被注销的是不是他最新那个会话」，
+        而不是「他还有没有会话」，属于另一次决定，本轮**没有替它定案**。
+
+        **何时不该调它**：`close_for_player`（玩家离开）与 `shutdown`
+        （停机）也走 `_forget_all`，但那两处**不该发**——收件人已经不在，
+        或整台服务正要停。因此通知挂在具体的调用点上，不放进 `_forget_all`。
         """
         notified = 0
         told = set()
@@ -1444,14 +1555,14 @@ class TerminalSyncHub(object):
                 continue
             told.add(player_id)
             if self.registry.sessions_for_player(player_id):
-                self.stats["expired_notices_skipped"] += 1
+                self.stats[skipped_key] += 1
                 continue
-            if self._send_gone(session):
+            if self._send_gone(session, detail, sent_key):
                 notified += 1
         return notified
 
-    def _send_gone(self, session):
-        # type: (object) -> bool
+    def _send_gone(self, session, detail, sent_key="gone_notices"):
+        # type: (object, str, str) -> bool
         """给一个**已经不在注册表里**的会话发一条「会话已失效」。
 
         **不走 `_send`。** 那条路会把 `session.session_id` 盖在信封上，而
@@ -1459,18 +1570,16 @@ class TerminalSyncHub(object):
         这个会话本身没了」（见 `SyncError` 的说明）。带着号发出去，客户端
         只会当成一次普通的请求失败，界面照旧亮着——发的这一条就等于没发。
 
-        同理，`request_id` 留空是**如实**：这一条不回答任何请求（超时回收
-        的时候客户端并没有在等什么，它只是没说话），客户端的空会话号那条
-        分支也根本不读它。
+        同理，`request_id` 留空是**如实**：这一条不回答任何请求（客户端
+        并没有在等什么，它只是界面上的那个会话没了），客户端的空会话号
+        那条分支也根本不读它。
 
         编码与发送的异常都在这里接住：这是每帧都会走到的路径，一个异常
         打挂的是整帧，不只是这一个客户端——与 `_send` 同一条纪律。会话
         已经注销，因此这里**不做** `_note_failure` 那一套连续失败与退避：
         没有下一次要退避的重试了。
         """
-        envelope = self._error(
-            "", "", Reason.SESSION_INVALID, "会话空闲超时，请重新打开界面"
-        )
+        envelope = self._error("", "", Reason.SESSION_INVALID, detail)
         if self.port is None:
             self.stats["send_failures"] += 1
             return False
@@ -1487,7 +1596,7 @@ class TerminalSyncHub(object):
         if not ok:
             self.stats["send_failures"] += 1
             return False
-        self.stats["expired_notices"] += 1
+        self.stats[sent_key] += 1
         return True
 
     # -- 发送 ----------------------------------------------------------
@@ -1692,6 +1801,16 @@ def _no_storage(network_id):
 def _no_status(device_ref):
     # type: (object) -> None
     """没有接入运行时（客户端半边单独跑、离线夹具）时的兜底：不发状态。"""
+    return None
+
+
+def _no_craft(device_ref):
+    # type: (object) -> None
+    """没有接工作台时的兜底：不发。
+
+    **不是「发一个空工作台」**：空工作台在客户端读出来是「你的原料没了」，
+    而真相是「这个功能没接」。与 `_no_status` 同一条纪律。
+    """
     return None
 
 

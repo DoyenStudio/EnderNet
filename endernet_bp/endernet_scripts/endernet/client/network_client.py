@@ -627,15 +627,23 @@ class NetworkClient(object):
         into_slot=None,
         into_slot_version=None,
         target=None,
+        recipe=None,
     ):
-        # type: (str, object, object, object, object, object, object, object, object) -> str
+        # type: (str, object, object, object, object, object, object, object, object, object) -> str
         """发一条手动存取命令，返回 `request_id`。
 
         `action` 是 `StorageService.handle` 认识的那几个之一（`inv_take` /
-        `inv_put` / `inv_split` / `inv_merge` / `inv_swap` / `inv_quick_move`，
-        以服务端那一侧为准）。**这里不校验动作名**：动作表在服务端，客户端
-        再列一份就有两个真相源，而漏改的那一份只会让某条命令被服务端回一句
-        「不认识」——那是能看见的失败，比本地拒发更好查。
+        `inv_put` / `inv_split` / `inv_merge` / `inv_swap` / `inv_quick_move` /
+        `craft_import` / `craft_take` / `craft_clear`，以服务端那一侧为准）。
+        **这里不校验动作名**：动作表在服务端，客户端再列一份就有两个真相源，
+        而漏改的那一份只会让某条命令被服务端回一句「不认识」——那是能看见的
+        失败，比本地拒发更好查。
+
+        `recipe` 是 11-04 加的：`craft_import` 带回玩家选中的那条配方标识
+        （`PresetRecipe.digest()`）。其余动作一律不发它（`None` = 不带这个键，
+        见 `TerminalCommand.payload()`）——**缺席不等于空配方**，服务端
+        `payload.get("recipe")` 拿到 `None` 的意思正是「这次没挑」，
+        因此不要写空串。
 
         **`key` 收 `ResourceKey`，在这里转成线上形状。** `TerminalCommand`
         的 `key` 字段与线上同形（字典）：它的 `from_dict` 原样转交、`payload()`
@@ -674,6 +682,7 @@ class NetworkClient(object):
                 into_slot=into_slot,
                 into_slot_version=into_slot_version,
                 target=target,
+                recipe=recipe,
             ),
             session_id=self.session_id,
             network_id=self.network_id,

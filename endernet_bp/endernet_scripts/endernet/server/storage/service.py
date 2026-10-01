@@ -35,7 +35,14 @@ from ...common.protocol import (
     TransferRequest,
     TransferStatus,
 )
+from ...common.crafting_recipe import match
 from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
+from ..crafting.workbench import (
+    IMPORT_REFUSE,
+    CraftingPolicy,
+    WorkbenchContainer,
+    plan_import,
+)
 from ..devices.io import (
     FILTER_MODES,
     INTAKE,
@@ -185,8 +192,13 @@ class StorageService(NetworkService):
         transfer_policy=None,
         reflow_sink=None,
         inventories=None,
+        workbench=None,
+        recipes=None,
+        crafting_policy=None,
+        grid_stack_limit=None,
     ):
-        # type: (object, object, object, object, object, object, object, object) -> None
+        # type: (object, object, object, object, object, object, object, object,
+        #        object, object, object, object) -> None
         #: 驱动器状态集合与介质权威表，由启动层注入（架构 §3）。
         #: **裸构造是合法的**（`default_stand_ins()` 会用 `None` 构造每个槽位），
         #: 此时 `is_ready()` 为假，一切业务给 `SERVICE_NOT_READY`——
@@ -210,6 +222,23 @@ class StorageService(NetworkService):
         #: 背包提供者（06-09）。生产实现是 `adapters/containers_engine.py`
         #: 的 `EngineInventoryProvider`，离线测试注入替身。
         self.inventories = inventories
+        #: 合成终端的工作台集合（11-04）。**由启动层注入**，与 `drivers`
+        #: 同一地位：九宫格里的东西是真实原料，不能因为运行时重建就没了。
+        #: 未接线时为 None，合成命令一律 `SERVICE_NOT_READY`——那是
+        #: 「装了但还不能用」，不是「这台设备没有九宫格」。
+        self.workbench = workbench
+        #: 工作台配方来源（`adapters/recipes.py` 的 `EngineRecipeSource`）。
+        #: 未接线时为 None，导入一律明确拒绝，**不返回空候选**——
+        #: 空候选会被读成「这个产物没有配方」。
+        self.recipes = recipes
+        #: 未定口径（`crafting/workbench.py` 的 `CraftingPolicy`）。
+        self.crafting_policy = (
+            crafting_policy if crafting_policy is not None else CraftingPolicy()
+        )
+        self.grid_stack_limit = grid_stack_limit
+        #: 借出后放不回去／产物收回失败的次数。**应当恒为 0**：
+        #: 它不为零就说明有一条路径在做了一半，得去查是哪一次。
+        self.craft_undo_failures = 0
         #: 接口的轮询驱动。同样惰性构造（需要运行时里的调度服务）。
         self._ports_runner = None
         #: 接口的命令处理器。每网络一份，与协调器同源。
@@ -1355,6 +1384,10 @@ class StorageService(NetworkService):
             "inv_merge": self._cmd_inv_merge,
             "inv_swap": self._cmd_inv_swap,
             "inv_quick_move": self._cmd_inv_quick_move,
+            # 合成终端的工作台（11-04）
+            "craft_import": self._cmd_craft_import,
+            "craft_take": self._cmd_craft_take,
+            "craft_clear": self._cmd_craft_clear,
         }
         handler = handlers.get(action)
         if handler is None:
@@ -2020,6 +2053,339 @@ class StorageService(NetworkService):
         if blocker is not None:
             return CommandResult.blocked(command.request_id, [blocker])
         return CommandResult.ok(command.request_id, {"work": work, "moved": moved})
+    # -- 合成终端的工作台（11-04）--------------------------------------
+
+    def _workbench_for(self, command):
+        # type: (object) -> tuple
+        """取这台设备的工作台。返回 `(grid, refusal)`。
+
+        走 `grid_for` 而不是 `of`：`grid_for` 对**不是合成终端的方块**返回
+        `None`，于是「这台方块没有工作台」是一条明确的拒绝，而不是凭空
+        变出一台空的。九宫格是设备库存，不是每条命令都能拿到的东西。
+        """
+        if self.workbench is None:
+            return None, CommandResult.blocked(
+                command.request_id,
+                [BlockReason(Reason.SERVICE_NOT_READY, "存储服务未接入工作台")],
+            )
+        grid = self.workbench.grid_for(command.device_ref)
+        if grid is None:
+            return None, self._reject(
+                command, Reason.UNSUPPORTED, "该设备没有工作台（不是合成终端）"
+            )
+        return grid, None
+
+    def _craft_recipes_for(self, output_key):
+        # type: (object) -> tuple
+        """按产物查工作台配方。返回 `(recipes, blocked)`。
+
+        **引擎那边炸了不当作 BadParameter。** `EngineRecipeSource` 在参数
+        类型不对时会抛（实测引擎返回 `False` 而不是空表），那条消息若被
+        `handle` 的兜底读成「参数不合法」，玩家会去改自己点的那件物品，
+        而真正坏的是适配器。
+        """
+        if self.recipes is None:
+            return None, None
+        try:
+            return list(self.recipes.recipes_for(output_key)), None
+        except Exception as error:
+            return None, CommandResult.blocked(
+                "",
+                [BlockReason(Reason.NO_ADAPTER,
+                             "工作台配方来源不可用：%s" % (error,))],
+            )
+
+    def _retained_recipe(self, grid):
+        # type: (object) -> object
+        """把「保留的配方」取回成一条真配方，取不回返回 `None`。
+
+        九宫格只存 digest 与产物名字——**产物名字必须留着**，否则查不回来：
+        引擎只能按产物或按原料查，而九宫格给不出产物是哪个。取回来之后
+        调用方还要**再核一次格子**，因为玩家可能把格子动过，而备忘不会知道。
+        """
+        if not grid.recipe or not grid.recipe_output:
+            return None
+        name = grid.recipe_output.get("name")
+        if not name:
+            return None
+        output = ResourceKey.item(name, aux=grid.recipe_output.get("aux", 0) or 0)
+        recipes, _blocked = self._craft_recipes_for(output)
+        for recipe in recipes or ():
+            if recipe.digest() == grid.recipe:
+                return recipe
+        return None
+
+    def _craft_grid_payload(self, grid):
+        # type: (object) -> dict
+        """九宫格的只读投影，附在回执里让客户端立刻刷新。"""
+        return {
+            "revision": grid.revision,
+            "recipe": grid.recipe or "",
+            "occupied": list(grid.occupied_slots()),
+        }
+
+    def _cmd_craft_import(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """「导入」：按产物找到配方，尽量从玩家背包与网络凑齐原料（11-04）。
+
+        已确认的照做，未定的记账：
+
+        - **每个原料槽位只摆一个**（文档 5.2 第 5 条），不是一组；
+        - **缺料不取消整次导入**，缺的格子留空；
+        - 九宫格非空时**拒绝**（`CraftingPolicy.import_when_occupied`）——
+          文档明令不得覆盖或删除已有实物，而在「旧料怎么办」有定论之前，
+          把选择权交回玩家（点「清空」）是唯一不丢物的做法；
+        - **来源优先级未定**（文档第 8 节）。本轮取「先背包、后网络」并记
+          在策略里，**不是定案**。
+        """
+        grid, refusal = self._workbench_for(command)
+        if refusal is not None:
+            return refusal
+        raw_key = payload.get("key")
+        if not isinstance(raw_key, dict):
+            return self._reject(command, Reason.BAD_PARAMETER, "导入需要给出产物 key")
+        try:
+            output = ResourceKey.from_dict(raw_key)
+        except (KeyError, TypeError, ValueError):
+            return self._reject(command, Reason.BAD_PARAMETER, "产物 key 不合法")
+
+        policy = self.crafting_policy
+        if IMPORT_REFUSE == policy.import_when_occupied and not grid.is_empty():
+            return self._reject(
+                command, Reason.CRAFT_GRID_OCCUPIED,
+                "九宫格里还有物品；先点「清空」再导入",
+            )
+
+        recipes, blocked = self._craft_recipes_for(output)
+        if blocked is not None:
+            return blocked
+        if recipes is None:
+            return self._reject(command, Reason.NO_ADAPTER, "存储服务未接入配方来源")
+        if not recipes:
+            return self._reject(
+                command, Reason.CRAFT_NO_RECIPE, "这个产物没有工作台配方",
+            )
+
+        digest = payload.get("recipe")
+        if digest:
+            chosen = None
+            for recipe in recipes:
+                if recipe.digest() == digest:
+                    chosen = recipe
+                    break
+            if chosen is None:
+                return self._reject(
+                    command, Reason.CRAFT_NO_RECIPE,
+                    "这条配方已不在候选里（配方表变了），请重选",
+                )
+        elif len(recipes) == 1:
+            chosen = recipes[0]
+        else:
+            # 多条候选：**不替玩家挑一条**。候选原样交回，由界面开选择窗口，
+            # 玩家点完带 digest 再来一次。
+            return CommandResult.ok(command.request_id, {
+                "action": "craft_import",
+                "needs_choice": True,
+                "output": {"name": output.name, "aux": output.aux},
+                "candidates": [recipe.to_dict() for recipe in recipes],
+            })
+
+        imported, missing = self._fill_grid(command, payload, grid, chosen)
+        grid.set_recipe(chosen.digest(), {"name": output.name, "aux": output.aux})
+        return CommandResult.ok(command.request_id, {
+            "action": "craft_import",
+            "recipe": chosen.digest(),
+            "imported": imported,
+            "missing": list(missing),
+            "grid": self._craft_grid_payload(grid),
+        })
+
+    def _fill_grid(self, command, payload, grid, recipe):
+        # type: (object, dict, object, object) -> tuple
+        """按计划往九宫格里摆原料。返回 `(摆了几格, 缺料的格子)`。"""
+        container = WorkbenchContainer(grid, limit_of=self.grid_stack_limit)
+        endpoint, refusal = self._inventory_endpoint_for(command, payload)
+        if refusal is not None:
+            # 背包读不了**不是**导入失败的理由：网络那一半还能用。
+            endpoint = None
+        op_id = payload.get("op_id") or command.request_id
+        moved = 0
+        missing = []
+        for slot, alternatives, count in plan_import(
+                recipe, self.crafting_policy.import_per_slot):
+            if grid.count_at(slot) > 0:
+                moved += 1
+                continue
+            if self._fill_slot(op_id, container, slot, alternatives, count,
+                               endpoint):
+                moved += 1
+            else:
+                # **不因为一格缺料取消整次导入**（文档 5.2 第 5 条）。
+                missing.append(slot)
+        return moved, missing
+
+    def _fill_slot(self, op_id, container, slot, alternatives, count, inventory):
+        # type: (str, object, int, tuple, int, object) -> bool
+        """给某一格凑一件原料。凑到返回真。"""
+        for ingredient in alternatives:
+            key = ResourceKey.item(ingredient.name, aux=_aux_or_zero(ingredient))
+            borrowed = _find_inventory_slot(inventory, key)
+            # **每一次借用必须有各自的 `op_id`。** 全部用同一个的话，
+            # 第二格拿到的会是第一次那条去重回执（`_commit` 直接返回
+            # 原回执、**一件都不动**），而回执上写着 `moved: 1`——
+            # 于是九宫格里凭空多出一件没从任何地方扣掉的原料。
+            # 这不是理论：`test_one_item_per_required_slot` 一开始就是红的。
+            borrow_id = u"%s:slot%d" % (op_id, slot)
+            origin = self._borrow(borrow_id, key, count, inventory, borrowed)
+            if origin is None:
+                continue
+            receipt = container.insert_at(borrow_id, slot, key, count)
+            if receipt.moved >= count:
+                return True
+            # 借来了却放不进去：**原路还回去**。留下的那半件对不上任何配方，
+            # 只会让玩家看见一格来路不明的物品。
+            if not self._return_borrowed(borrow_id, key, receipt.moved, origin):
+                self.craft_undo_failures += 1
+            return False
+        return False
+
+    def _borrow(self, op_id, key, count, inventory, borrowed):
+        # type: (str, object, int, object, tuple) -> object
+        """从玩家背包或网络借几件原料。返回来源标识，借不到返回 `None`。
+
+        来源优先级**未定**（文档第 8 节），这里取「先背包、后网络」并记在
+        `CraftingPolicy` 里。两个来源各走各自经过核对的原语：背包用带槽锚的
+        `anchored_extract`，网络用提交台账里的 `commit_extract`——
+        **都拿 `moved` 说话，不凭调用方声称**。
+        """
+        slot, version = borrowed
+        if slot is not None:
+            receipt = inventory.anchored_extract(
+                op_id, SlotAnchor(slot, key, version), count)
+            if receipt.moved >= count:
+                return ("inventory", inventory, slot, version)
+        if self.is_ready():
+            receipt = self.commit_extract(op_id, key, count)
+            if receipt.moved >= count:
+                return ("network", None, None, None)
+        return None
+
+    def _return_borrowed(self, op_id, key, count, origin):
+        # type: (str, object, int, object) -> bool
+        """把刚借来又没用上的那几件放回去。放不回返回假。
+
+        放不回**不抛**——那会把一条已经做了一半的导入变成异常。但也不装作
+        没事：调用方把它记进 `craft_undo_failures`，诊断里能看见。
+        """
+        if count <= 0:
+            return True
+        try:
+            if origin[0] == "inventory":
+                endpoint, slot, version = origin[1], origin[2], origin[3]
+                receipt = endpoint.anchored_insert(
+                    "%s:undo" % (op_id,), SlotAnchor(slot, key, version), count)
+                return receipt.moved >= count
+            if origin[0] == "network" and self.is_ready():
+                receipt = self.commit_insert("%s:undo" % (op_id,), key, count)
+                return receipt.moved >= count
+        except Exception:
+            return False
+        return False
+
+    def _cmd_craft_take(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """点击输出槽：执行**一次**合成（11-04）。
+
+        一次 = 一次配方执行，不是自动连做。判定看的是**格子里实际有什么**，
+        不是保留的配方备忘——玩家可能把格子动过。
+
+        产物进**玩家背包**（User 2026-10-01 裁定）。顺序是**先把产物放进
+        背包、再扣原料**：反过来的话，背包满了就会出现「料没了、东西也没
+        拿到」的丢物分支。放不下时整次拒绝，一格原料都不动。
+        """
+        grid, refusal = self._workbench_for(command)
+        if refusal is not None:
+            return refusal
+        recipe = self._retained_recipe(grid)
+        if recipe is None:
+            return self._reject(command, Reason.CRAFT_NO_RECIPE, "还没有导入配方")
+        found = match(recipe, grid.cells())
+        if found is None:
+            return self._reject(
+                command, Reason.INSUFFICIENT_STOCK, "九宫格里的原料不满足这条配方",
+            )
+        endpoint, refusal = self._inventory_endpoint_for(command, payload)
+        if refusal is not None:
+            return refusal
+        op_id = payload.get("op_id") or command.request_id
+
+        delivered = []
+        for index, item in enumerate(recipe.outputs):
+            key = ResourceKey.item(item.name, aux=_aux_or_zero(item))
+            receipt = endpoint.commit_insert(
+                "%s:out%d" % (op_id, index), key, item.count)
+            if receipt.moved < item.count:
+                self._undo_delivery(endpoint, op_id, delivered, key, receipt.moved)
+                return self._reject(
+                    command, Reason.NO_CAPACITY, "背包放不下这次合成的产物",
+                )
+            delivered.append((key, receipt.moved))
+
+        for slot, count in found.consumed:
+            grid.take_at(slot, count)
+        return CommandResult.ok(command.request_id, {
+            "action": "craft_take",
+            "outputs": [{"name": key.name, "aux": key.aux, "count": count}
+                        for key, count in delivered],
+            "grid": self._craft_grid_payload(grid),
+        })
+
+    def _undo_delivery(self, endpoint, op_id, delivered, key, moved):
+        # type: (object, str, list, object, int) -> None
+        """产物没送全时，把已经送进去的收回来。收不回就记一笔，不抛。"""
+        pending = list(delivered)
+        if moved > 0:
+            pending.append((key, moved))
+        for index, (sent_key, count) in enumerate(pending):
+            receipt = endpoint.commit_extract(
+                "%s:undo%d" % (op_id, index), sent_key, count)
+            if receipt.moved < count:
+                self.craft_undo_failures += 1
+
+    def _cmd_craft_clear(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """「清空」：把九宫格里的实物**全部返还网络**（11-04）。
+
+        默认返网（文档 5.4）。**网络收不下的部分留在格子里**——那条硬约束
+        是「不能删除尚未成功存入网络的物品」，因此逐格提交、按回执扣格，
+        收不下的原样留在原格，既不静默丢弃、也不改送背包。
+
+        全部清空后连保留的配方一起清掉（文档把配方去留列为未定项，「清空」
+        的字面就是清空）；**清不干净时保留配方**，免得界面显示一条与格子
+        对不上的配方。
+        """
+        grid, refusal = self._workbench_for(command)
+        if refusal is not None:
+            return refusal
+        op_id = payload.get("op_id") or command.request_id
+        returned = 0
+        kept = []
+        for slot in grid.occupied_slots():
+            key, count = grid.entry(slot)
+            receipt = self.commit_insert("%s:%d" % (op_id, slot), key, count)
+            if receipt.moved > 0:
+                grid.take_at(slot, receipt.moved)
+                returned += receipt.moved
+            if receipt.moved < count:
+                kept.append(slot)
+        if not kept:
+            grid.set_recipe(None, None)
+        return CommandResult.ok(command.request_id, {
+            "action": "craft_clear",
+            "returned": returned,
+            "kept": list(kept),
+            "grid": self._craft_grid_payload(grid),
+        })
 
     def _cmd_inv_take(self, command, payload):
         # type: (object, dict) -> CommandResult
@@ -2252,3 +2618,43 @@ RECOVERY_TEXT = {
     MediumRecovery.MISSING_MODEL: "介质型号未注册，内容原样保留但不可交易",
     MediumRecovery.CORRUPT: "记录损坏，内容原样保留但不可交易",
 }
+
+
+def _aux_or_zero(ingredient):
+    # type: (object) -> int
+    """配方条目要求的 aux；通配（`None`）按 0 处理。
+
+    通配条目在引擎给的数据里是「没写 `data`」，而我们这条路径要造一个
+    具体的 `ResourceKey` 去取货。取 0 是**实测样本上唯一见过的写法**
+    （凡是带 `data` 的一律是 0），但严格说这是把「任意 aux」收窄成了
+    「aux 0」——记在 `RecipePolicy.aux_wildcard_when_absent` 那条旁边。
+    """
+    return 0 if ingredient.aux is None else ingredient.aux
+
+
+def _find_inventory_slot(inventory, key):
+    # type: (object, object) -> tuple
+    """在玩家背包里找一格装有这种资源的槽。返回 `(槽号, 槽版本)`。
+
+    找不到返回 `(None, None)`。**只按名字与 aux 比**，与配方匹配同口径：
+    原版合成不看附魔与自定义数据，这里也不看，否则一把附魔剑就永远
+    配不齐原料。
+    """
+    if inventory is None:
+        return (None, None)
+    try:
+        view = inventory.inventory_view()
+    except Exception:
+        return (None, None)
+    for row in view.get("slots") or ():
+        if row.get("count", 0) <= 0 or row.get("key") is None:
+            continue
+        candidate = row["key"]
+        if isinstance(candidate, dict):
+            name = candidate.get("name")
+            aux = candidate.get("aux", 0)
+        else:
+            name, aux = candidate.name, candidate.aux
+        if name == key.name and aux == key.aux:
+            return (row["slot"], row.get("version"))
+    return (None, None)

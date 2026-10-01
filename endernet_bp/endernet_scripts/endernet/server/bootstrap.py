@@ -34,6 +34,7 @@
 并自己注入假 world 即可驱动整条链路。
 """
 
+from ..common.crafting_recipe import SLOT_COUNT
 from ..common.definitions import CATEGORY_PROCESSOR, CATEGORY_ASSEMBLY, DefinitionSet
 from .adapters.containers_engine import (
     EngineContainerProvider,
@@ -43,6 +44,7 @@ from .adapters.containers_engine import (
 )
 from .adapters.events import ServerEventBinder
 from .adapters.messages import AdapterSyncPort
+from .adapters.recipes import EngineRecipeSource
 from .adapters.world import ToolDeltaWorldAdapter
 from .application import ApplicationService
 from .devices.catalog import DeviceCatalog
@@ -52,6 +54,7 @@ from .crafting.patterns import PatternPolicy
 from .crafting.planner import PlanPolicy, Planner
 from .crafting.returns import ReturnPolicy, ReturnsService
 from .crafting.store import PatternStore
+from .crafting.workbench import CraftingPolicy, WorkbenchStore, preview_of
 from .devices.io import (
     TEMPLATE as PORT_TEMPLATE_ROLE,
     PortGateway,
@@ -116,8 +119,10 @@ def _energy_builder(policy, inputs_of=None):
 
 
 def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories,
-                     returns=None):
-    # type: (object, object, object, object, object, object) -> object
+                     returns=None, workbench=None, recipes=None,
+                     crafting_policy=None, grid_stack_limit=None):
+    # type: (object, object, object, object, object, object, object, object,
+    #        object, object) -> object
     """把**驱动器状态集合**与**接口状态集合**绑进存储服务的构造器。
 
     服务槽位是逐运行时各造一份的，而驱动器、介质与接口是**跨网络共享**的
@@ -145,10 +150,46 @@ def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories
             ports=ports,
             transfer_policy=transfer_policy,
             inventories=inventories,
+            workbench=workbench,
+            recipes=recipes,
+            crafting_policy=crafting_policy,
+            grid_stack_limit=grid_stack_limit,
             reflow_sink=_reflow_sink_for(returns, runtime),
         )
 
     return build
+
+
+#: 合成终端的方块型号。与 `definitions.py` 的 `DEVICES` 是同一个字符串，
+#: 这里再写一份是因为启动层要在不 import 定义表条目的前提下判型号；
+#: `test_crafting_workbench` 有一条用例把它与定义表钉在一起。
+CRAFTING_TERMINAL_DEVICE_ID = "endernet:crafting_terminal_panel"
+
+
+def _craft_slot_row(index, entry):
+    # type: (int, object) -> dict
+    """九宫格里的一格转成线上形状。
+
+    **`name` / `aux` 不是冗余的 `canonical` 的另一种写法，是客户端画图标
+    唯一能用的那两样。** 客户端渲染一个格要靠 `#item_id_aux`，而它是
+    `Item(资源名).GetBasicInfo().id_aux`——`canonical()` 那个指纹里虽然
+    也含着名字，但从指纹里反解名字是拿格式当接口，改一次编码就悄悄失效。
+    `InventorySnapshot` 只用 `canonical` 是因为玩家背包客户端**本地就能读
+    引擎**，它拿那个字段做槽锚而不是做渲染；九宫格是服务端权威、客户端
+    本地读不到，因此必须把能画的字段一起带上。
+
+    空位的写法与 `InventorySnapshot` 一致：`canonical: ""`、`count: 0`，
+    另外 `name: ""`、`aux: 0`——**四条都在，不用缺字段表达空**。
+    """
+    if entry is None:
+        return {"slot": index, "canonical": "", "count": 0, "name": "", "aux": 0}
+    return {
+        "slot": index,
+        "canonical": entry[0].canonical(),
+        "count": entry[1],
+        "name": entry[0].name,
+        "aux": entry[0].aux,
+    }
 
 
 def _reflow_sink_for(returns, runtime):
@@ -428,6 +469,17 @@ class ServerBootstrap(object):
             if inventory_provider is not None
             else EngineInventoryProvider(primitives, stack_limit)
         )
+        #: 合成终端的工作台集合（11-04）。**只对合成终端开口**：
+        #: `accepts` 按方块型号判，别的方块拿不到工作台，于是命令侧
+        #: 「这台方块没有九宫格」是一条明确拒绝，而不是凭空造一台空的。
+        self.workbench = WorkbenchStore(accepts=self._is_crafting_terminal)
+        #: 工作台配方来源。引擎调用写在方法体里，构造它是安全的。
+        self.recipes = EngineRecipeSource()
+        #: 合成终端的未定口径（文档第 8 节）。**全进程一份**：策略里的
+        #: 替身数值必须与实际生效的是同一份，否则诊断报的与真正用的对不上。
+        self.crafting_policy = CraftingPolicy()
+        #: 九宫格的叠加上限来源，与容器那边同一份 `stack_limit`。
+        self._craft_stack_limit = stack_limit
         #: 能源策略（04 的供需判定口径）。同样**全进程一份**。
         #: **库默认是保守的那一侧**：任何算不出的需求都让判定停在
         #: 「待确认」，因此默认装配下真实网络永远是 `ENERGY_UNAVAILABLE`。
@@ -499,6 +551,10 @@ class ServerBootstrap(object):
                         self.transfer_policy,
                         self.inventories,
                         self.returns_sink,
+                        workbench=self.workbench,
+                        recipes=self.recipes,
+                        crafting_policy=self.crafting_policy,
+                        grid_stack_limit=self._craft_stack_limit,
                     ),
                     ServiceId.ENERGY: _energy_builder(
                         self.energy_policy, self._energy_inputs_of),
@@ -543,6 +599,10 @@ class ServerBootstrap(object):
             # 设备总体状态（11-08/11-13）。同样是**绑定方法**，指向此刻还
             # 不存在的 `self.runtimes`——与上面两个口子同一个道理。
             status_of=self._sync_status_of,
+            # 合成终端的工作台（11-04）。同样指向此刻还不存在的
+            # `self.workbench`——与上面三个口子同一个道理：绑定方法
+            # 在调用时才查属性。
+            craft_of=self._sync_craft_of,
         )
         if session_check is None:
             # 注入值优先：离线测试与 05/08 的既有用例会自己传探针，
@@ -1042,6 +1102,56 @@ class ServerBootstrap(object):
         if runtime is None:
             return None
         return runtime.services.get(ServiceId.STORAGE)
+
+    def _is_crafting_terminal(self, device_ref):
+        # type: (object) -> bool
+        """这台设备是不是合成终端。
+
+        判据是**注册表里的方块型号**，不是「能不能拿到工作台」——反过来的
+        话，任何一次误调用都会给一个不存在的设备造出一台空工作台，
+        而「这台方块没有九宫格」与「它的九宫格是空的」在界面上是两回事。
+
+        查不到记录时返回假（**拒绝**，不是放行）：代次对不上、方块已被拆、
+        区块未加载都会走到这里，那时候放行等于让一条陈旧请求动到
+        某个来路不明的工作台。
+        """
+        if device_ref is None:
+            return False
+        record = self.registry.get(device_ref.node_key)
+        if record is None or not record.ref.matches(device_ref):
+            return False
+        return record.device_id == CRAFTING_TERMINAL_DEVICE_ID
+
+    def _sync_craft_of(self, device_ref):
+        # type: (object) -> object
+        """合成终端的九宫格状态（11-04），非合成终端返回 `None`。
+
+        **返回 `None` 与「返回一个空格子」是两回事**：前者是「这台设备没有
+        工作台」，后者是「你的原料没了」。同步层据此决定发不发。
+
+        预览（`preview`）在这里算：它要查引擎配方表，而 `sync/terminal.py`
+        不许 import 引擎。判定照旧是**格子里实际有什么**，不是保留的配方
+        备忘——玩家可能把格子动过。
+        """
+        if not self._is_crafting_terminal(device_ref):
+            return None
+        grid = self.workbench.get(device_ref)
+        if grid is None:
+            return None
+        return {
+            "revision": grid.revision,
+            "slots": [_craft_slot_row(index, grid.entry(index))
+                      for index in range(SLOT_COUNT)],
+            "recipe": grid.recipe or "",
+            "preview": self._craft_preview(grid),
+        }
+
+    def _craft_preview(self, grid):
+        # type: (object) -> object
+        """当前摆位能做出什么。**不做合成**，只回答界面「点了会怎样」。"""
+        if self.recipes is None:
+            return None
+        return preview_of(grid, self.recipes)
 
     def _sync_status_of(self, device_ref):
         # type: (object) -> object

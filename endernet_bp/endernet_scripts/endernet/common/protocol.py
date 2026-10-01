@@ -194,6 +194,15 @@ class Reason(object):
     MEDIUM_ORPHANED = "medium_orphaned"
     #: 目标槽位已被占用。
     SLOT_OCCUPIED = "slot_occupied"
+    #: 合成终端九宫格里还有真实原料，因此拒绝导入（11-04）。
+    #: **不是 `SLOT_OCCUPIED`**：那说的是「某一格被占了」，这只说
+    #: 「要先点清空」——文档第 8 节明确不许覆盖或删除已有实物，
+    #: 而在没有规则说清旧料怎么处理之前，唯一的出路是把选择权交回玩家。
+    CRAFT_GRID_OCCUPIED = "craft_grid_occupied"
+    #: 按这个产物查不到可用配方（11-04）。**与 `PLAN_NO_RECIPE` 分开**：
+    #: 那条是工厂规划里「这条样板没有配方」，这条是「这个物品在引擎的
+    #: 工作台配方表里查不到」，界面要指的东西不一样。
+    CRAFT_NO_RECIPE = "craft_no_recipe"
     #: 驱动器所在区块未加载。**不等于它被拆掉了**（与 `MASTER_UNLOADED` 同一条纪律）。
     DRIVER_UNLOADED = "driver_unloaded"
 
@@ -1048,6 +1057,8 @@ MSG_COMMAND = "command"
 MSG_COMMAND_RESULT = "command_result"
 #: 设备总体状态（11-08/11-13）。服务端单向推给客户端，见 `DeviceStatusMessage`。
 MSG_DEVICE_STATUS = "device_status"
+#: 合成终端的工作台状态（11-04）。服务端单向推，见 `CraftStateMessage`。
+MSG_CRAFT_STATE = "craft_state"
 
 CLIENT_TO_SERVER_KINDS = frozenset(
     [MSG_SESSION_OPEN, MSG_SESSION_CLOSE, MSG_SNAPSHOT_REQUEST, MSG_ACK, MSG_COMMAND]
@@ -1064,6 +1075,7 @@ SERVER_TO_CLIENT_KINDS = frozenset(
         MSG_ERROR,
         MSG_COMMAND_RESULT,
         MSG_DEVICE_STATUS,
+        MSG_CRAFT_STATE,
     ]
 )
 
@@ -1415,6 +1427,90 @@ class InventorySnapshot(SyncMessage):
     def from_dict(cls, data, descriptions=None):
         _require_fields(data, ("kind", "revision", "slots"), "inventory_snapshot")
         return cls(data["revision"], data["slots"])
+
+
+#: 合成终端工作台的槽位数。与 `crafting_recipe.SLOT_COUNT` 是同一个数
+#: （原版工作台九格）；这里再写一份是因为 `common/` 内部两模块各有各的
+#: 事实来源，而同步层**必须**钉住线上槽数，不能跟着对面变。
+CRAFT_SLOT_COUNT = 9
+
+
+class CraftStateMessage(SyncMessage):
+    """合成终端九宫格的状态（11-04）。服务端单向推。
+
+    **不能复用 `InventorySnapshot`**：那个类把槽数钉死成 36（玩家背包），
+    九宫格是 9 格，而且比它多两样东西——保留的配方，和产物预览。
+
+    - `slots`：9 行 `{slot, canonical, count, name, aux}`。空位四条一起空。
+      **`name` / `aux` 与 `canonical` 不是重复**：客户端画一格靠
+      `#item_id_aux`，那是 `Item(资源名).GetBasicInfo().id_aux`，
+      从 `canonical()` 那个指纹里反解名字是拿格式当接口。
+      `InventorySnapshot` 只用 `canonical`，是因为玩家背包客户端本地就能读
+      引擎、它拿那个字段做槽锚而不做渲染；九宫格客户端读不到，必须带上。
+      **没有每槽版本**：本轮九宫格不接受客户端改格（手动摆放属 R12），
+      客户端只读它，因此没有需要防的过期写。整台的版本由 `revision` 承担。
+    - `recipe`：上次导入的配方标识（`PresetRecipe.digest()`），没有就是空串。
+      **它只是备忘**，服务端做合成判定时看的是格子里实际有什么。
+    - `preview`：当前摆位能合成出来的产物，`{name, aux, count}` 或 `None`。
+      **`None` 不等于「不能合成」这句话的完整表述**——配方能对上但原料
+      数量不足也算 `None`，因此界面据它显示的是「点了会怎样」，
+      不是「配方存不存在」。
+    """
+
+    kind = MSG_CRAFT_STATE
+    __slots__ = ("revision", "slots", "recipe", "preview")
+
+    #: 线上字段的唯一清单，构造与解析共用。
+    FIELDS = ("kind", "revision", "slots", "recipe", "preview")
+
+    def __init__(self, revision, slots, recipe="", preview=None):
+        require_count(revision, "revision")
+        if not isinstance(slots, (list, tuple)) or len(slots) != CRAFT_SLOT_COUNT:
+            raise ValueError("craft state requires %d slots" % (CRAFT_SLOT_COUNT,))
+        rows = []
+        for index, row in enumerate(slots):
+            _require_fields(row, ("slot", "canonical", "count", "name", "aux"),
+                            "craft slot")
+            require_count(row["slot"], "slot")
+            require_count(row["count"], "count")
+            if row["slot"] != index:
+                raise ValueError("invalid craft slot index")
+            if row["canonical"] != "":
+                require_text(row["canonical"], "canonical")
+            # `name` / `aux` 是**画图标要用的**：客户端拿资源名去查
+            # `id_aux`。空位允许两者都空，非空位必须给出名字。
+            if row["name"] != "":
+                require_text(row["name"], "name")
+            elif row["canonical"] != "":
+                raise ValueError("craft slot has a key but no item name")
+            require_count(row["aux"], "aux")
+            rows.append(dict(row))
+        if not isinstance(recipe, _TEXT_TYPES):
+            raise TypeError("recipe 必须是文本，得到 %r" % (type(recipe),))
+        if preview is not None:
+            _require_fields(preview, ("name", "aux", "count"), "craft preview")
+            require_text(preview["name"], "name")
+            require_count(preview["aux"], "aux")
+            require_count(preview["count"], "count")
+            preview = dict(preview)
+        self.revision = revision
+        self.slots = tuple(rows)
+        self.recipe = recipe
+        self.preview = preview
+
+    def to_dict(self, descriptions=None):
+        return {
+            "kind": self.kind,
+            "revision": self.revision,
+            "slots": [dict(row) for row in self.slots],
+            "recipe": self.recipe,
+            "preview": None if self.preview is None else dict(self.preview),
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        _require_fields(data, cls.FIELDS, "craft_state")
+        return cls(data["revision"], data["slots"], data["recipe"], data["preview"])
 
 
 class SnapshotBegin(SyncMessage):
@@ -1785,6 +1881,7 @@ class TerminalCommand(SyncMessage):
         "into_slot",
         "into_slot_version",
         "target",
+        "recipe",
     )
 
     #: 本条消息**允许**出现的字段。`from_dict` 用它做严格检查，
@@ -1801,6 +1898,7 @@ class TerminalCommand(SyncMessage):
         "into_slot",
         "into_slot_version",
         "target",
+        "recipe",
     )
 
     def __init__(
@@ -1815,6 +1913,7 @@ class TerminalCommand(SyncMessage):
         into_slot=None,
         into_slot_version=None,
         target=None,
+        recipe=None,
     ):
         if settings.DEBUG:
             require_text(request_id, "request_id")
@@ -1843,6 +1942,7 @@ class TerminalCommand(SyncMessage):
         self.into_slot = into_slot
         self.into_slot_version = into_slot_version
         self.target = target
+        self.recipe = recipe
 
     def payload(self):
         # type: () -> dict
@@ -1869,6 +1969,8 @@ class TerminalCommand(SyncMessage):
             data["into_slot_version"] = self.into_slot_version
         if self.target is not None:
             data["target"] = self.target
+        if self.recipe is not None:
+            data["recipe"] = self.recipe
         return data
 
     def to_dict(self, descriptions=None):
@@ -1885,6 +1987,7 @@ class TerminalCommand(SyncMessage):
             "into_slot": self.into_slot,
             "into_slot_version": self.into_slot_version,
             "target": self.target,
+            "recipe": self.recipe,
         }
 
     @classmethod
@@ -1897,6 +2000,8 @@ class TerminalCommand(SyncMessage):
             require_count(data["expected_index_version"], "expected_index_version")
         if data["count"] is not None:
             require_count(data["count"], "count")
+        if data["recipe"] is not None:
+            require_text(data["recipe"], "recipe")
         return cls(
             data["request_id"],
             data["action"],
@@ -1908,6 +2013,7 @@ class TerminalCommand(SyncMessage):
             data["into_slot"],
             data["into_slot_version"],
             data["target"],
+            data["recipe"],
         )
 
 
@@ -2216,6 +2322,7 @@ _SYNC_MESSAGE_TYPES = _build_sync_message_types(
         TerminalCommand,
         CommandResultMessage,
         DeviceStatusMessage,
+        CraftStateMessage,
     )
 )
 

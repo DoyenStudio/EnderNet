@@ -720,21 +720,27 @@ def devices_for_mode(mode):
     return PATTERN_DEVICES.get(mode, frozenset())
 
 
-#: 右键哪个终端方块打开哪个界面（11-03）。
+#: 右键哪个终端方块打开哪个界面（11-03 / 11-04）。
 #:
 #: **四个终端方块都在 `DEVICES` 里、都带 `CAP_TERMINAL_ENDPOINT`，但这里只
-#: 映射一个。** 这不是遗漏，而是有意的：客户端目前只注册了
-#: `common_terminal_panel_ui.main` 这一个屏幕（`client/ui/__init__.py`），
-#: 而合成／样板／工厂终端各自属于 11-04 之后的子任务。
+#: 映射两个。** 这不是遗漏，而是有意的：客户端目前只注册了
+#: `common_terminal_panel_ui.main` 与 `crafting_terminal_panel_ui.main`
+#: 两个屏幕（`client/ui/__init__.py`），而样板／工厂终端各自属于 11-05 之后的
+#: 子任务。
 #:
-#: 另外三个**不映射、不打开、也不回退到通用终端**——把它们接到通用终端就是
+#: 另外两个**不映射、不打开、也不回退到通用终端**——把它们接到通用终端就是
 #: 替那些子任务悄悄定案（全局约束 7）。在此之前右键它们静默无反应，这条
 #: 限制记在 `plans/tasks/11-交付说明.md` 里。
 #:
-#: 值必须与 `@RegistToolDeltaScreen(...)` 注册的键一致：`PushUIRequest` 用它
-#: 在客户端查屏幕，查不到时 `tooldelta/ui/event_handler.py` 会**抛异常**。
+#: **只有屏幕真的注册了才写进来**：`PushUIRequest` 拿这个值在客户端查屏幕，
+#: 查不到时 `tooldelta/ui/event_handler.py` 会**抛异常**——先加映射只会让
+#: 右键炸掉（11-04 的客户端接上之前，合成终端那一行就是这么被压着的）。
+#: 因此这两条与 `client/ui/__init__.py` 的 `register_screens()` 必须同步增删。
+#:
+#: 值必须与 `@RegistToolDeltaScreen(...)` 注册的键**逐字相同**。
 TERMINAL_SCREENS = {
     "endernet:common_terminal_panel": "common_terminal_panel_ui.main",
+    "endernet:crafting_terminal_panel": "crafting_terminal_panel_ui.main",
 }
 
 #: 同一个人两次打开终端界面的最小间隔（秒）。窗口内再右键**静默忽略**。

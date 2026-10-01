@@ -58,6 +58,7 @@ from ...common.protocol import (
 from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
 from ..storage.transfer import InventoryEndpoint, slot_extract, slot_insert
 from .containers import ContainerAdapter, ContainerEntry
+from .engine_text import engine_text
 
 #: 玩家背包的槽位数：27 格背包 + 9 格快捷栏。
 #: 与 `client/ui/inventory_model.py` 的 `SLOT_COUNT` 是同一个数，
@@ -408,7 +409,12 @@ class EngineItemPrimitives(object):
 
     def stack_limit(self, name, aux):
         # type: (str, int) -> int
-        info = self._container_comp().GetItemBasicInfo(name, aux)
+        # 过边界统一转 `str`（见 `engine_text` 的说明）。**`GetItemBasicInfo`
+        # 实测是接受 `unicode` 的**，因此这一处不是修 bug，是把跨接口的
+        # 那条习惯落到每一处调用点上——只做一半的代价是下一个人看不出
+        # 哪些接口是「必须转」、哪些是「顺手转」，于是每一处都要重新查一遍。
+        info = self._container_comp().GetItemBasicInfo(
+            engine_text(name), aux)
         if not info:
             return 1
         limit = int(info.get("maxStackSize", 1) or 1)

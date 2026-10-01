@@ -689,8 +689,18 @@ class TerminalListView(object):
     """
 
     def __init__(self, screen, cache=None, device_ref=None, dimension=0,
-                 backpack=None):
+                 backpack=None, scroll_path=SCROLL_PATH, receipt_sink=None):
         self.screen = screen
+        #: 本界面滚动面板的路径。**默认是本终端列表那一处**，`None` 表示
+        #: 「这个界面的滚动路径没有运行时结论」——那时整块重锚不做，列表
+        #: 内容与搜索、排序都不受影响（合成终端就是这么接的，见
+        #: `crafting_panel.py` 的已知缺项）。传一个错的路径比不传更糟：
+        #: 取到的可能是另一个控件，重锚会去动一个与列表无关的滚动条。
+        self.scroll_path = scroll_path
+        #: 回执的**第二位消费者**（可选）。回执队列是「取走即出队」，
+        #: 两处各取一次会互相吃掉对方的条目，因此由本视图取，取完把整批
+        #: 转发给它（合成终端的工作台靠它收自己的三条命令的回执）。
+        self.receipt_sink = receipt_sink
         #: 下半屏那个背包模型，**同一个对象**（面板持有的那个）。传进来而不是
         #: 回头摸 `screen.backpack`：这里要的只是「读选中、清选中」两件事，而
         #: 显式传参把这条依赖摆在构造函数的签名上。
@@ -727,17 +737,18 @@ class TerminalListView(object):
         self._action_requests = {}
         self._scroll = None
         self._sort_uv = {SORT_METHOD_ICON_PATH: None, SORT_ORDER_ICON_PATH: None}
-        try:
-            # **拿到的就是引擎那个 `ScrollViewUIControl` 本身**，两个百分比
-            # 方法长在它身上；`.base` 是 tooldelta `UBaseCtrl` 才有的东西。
-            # 2026-10-01 真机实测：写成 `self._scroll.base.X` 会 AttributeError，
-            # 被下面两处 `except Exception: return` 吞掉，于是**重锚整条静默
-            # 失效**——表现只是「滚动位置偶尔会跳」，离线用例也照不到（当时的
-            # 替身照 tooldelta 包装层的形状写的）。见 `_remember_anchor`。
-            self._scroll = screen.GetBaseUIControl(SCROLL_PATH).asScrollView()
-        except Exception:
-            # 取不到滚动条不影响列表本身：锚点退化成「不重锚」。
-            self._scroll = None
+        if self.scroll_path is not None:
+            try:
+                # **拿到的就是引擎那个 `ScrollViewUIControl` 本身**，两个百分比
+                # 方法长在它身上；`.base` 是 tooldelta `UBaseCtrl` 才有的东西。
+                # 2026-10-01 真机实测：写成 `self._scroll.base.X` 会 AttributeError，
+                # 被下面两处 `except Exception: return` 吞掉，于是**重锚整条静默
+                # 失效**——表现只是「滚动位置偶尔会跳」，离线用例也照不到（当时的
+                # 替身照 tooldelta 包装层的形状写的）。见 `_remember_anchor`。
+                self._scroll = screen.GetBaseUIControl(self.scroll_path).asScrollView()
+            except Exception:
+                # 取不到滚动条不影响列表本身：锚点退化成「不重锚」。
+                self._scroll = None
         # **把排序状态写回模型**，而不是假定它自己也是这两个值。方向与方式
         # 是本类呈现给玩家的东西（两个图标），图标说的和列表做的必须是同一
         # 件事；而模型没有公开的读取接口，靠「两边默认值碰巧一样」来对齐，
@@ -1460,6 +1471,11 @@ class TerminalListView(object):
         例外是**我们自己发出的那条要清选中的命令**（`inv_take`，或背包内部的
         `inv_merge` / `inv_swap`）：它的回执要用来收尾选中态（见
         `_settle_action`），因此不能只当展示数据。
+
+        **取走的这一批要转给 `receipt_sink`**（如果装了）：它就是为此存在的
+        ——回执队列是「取走即出队」，同一个界面上的第二个消费者（合成终端的
+        工作台）若自己再取一次，两处会互相吃掉对方的条目，而列表这边被吃掉的
+        是「清掉选中」的信号，症状是选中框赖着不走。
         """
         taken = self.cache.client.take_command_results()
         if not taken:
@@ -1468,6 +1484,8 @@ class TerminalListView(object):
             self.receipts.append(message.result)
             self._settle_action(message.result)
         del self.receipts[:-RECEIPT_MEMORY]
+        if self.receipt_sink is not None:
+            self.receipt_sink(taken)
 
     def _settle_action(self, result):
         # type: (dict) -> None

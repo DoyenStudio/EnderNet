@@ -106,7 +106,7 @@
                                     3,
                                     3
                                 ],
-                                "grid_item_template": "endernet_container_common.custom_slot"
+                                "grid_item_template": "crafting_terminal_panel_ui.craft_slot"
                             }
                         },
                         {
@@ -127,13 +127,25 @@
                             }
                         },
                         {
-                            "output_slot@endernet_container_common.custom_slot": {
+                            "output_slot": {
+                                "type": "grid",
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
                                 "offset": [
                                     117,
                                     18
-                                ]
+                                ],
+                                "size": [
+                                    18.0,
+                                    18.0
+                                ],
+                                "layer": 1,
+                                "collection_name": "endernet_craft_output",
+                                "grid_dimensions": [
+                                    1,
+                                    1
+                                ],
+                                "grid_item_template": "crafting_terminal_panel_ui.craft_output_slot"
                             }
                         }
                     ]
@@ -164,7 +176,7 @@
                     "$is_background_nine_slice": false,
                     "$is_box_nine_slice": false,
                     "$is_track_nine_slice": false,
-                    "$scroll_background_image_control": "endernet_ui_common.simple_invisible_button",
+                    "$scroll_background_image_control": "crafting_terminal_panel_ui.terminal_scroll_background",
                     "$scroll_background_texture": "textures/ui/endernet/background_bottom",
                     "$scroll_box_mouse_image_control": "netease_editor_template_namespace.scroll_box_image",
                     "$scroll_box_size|default": [
@@ -175,7 +187,7 @@
                     "$scroll_box_touch_image_control": "netease_editor_template_namespace.scroll_box_image",
                     "$scroll_track_image_control": "netease_editor_template_namespace.scroll_track_image",
                     "$scroll_track_texture": "textures/ui/ScrollRail",
-                    "$scrolling_content": "endernet_ui_common.custom_item_slots_grid",
+                    "$scrolling_content": "crafting_terminal_panel_ui.terminal_items_grid",
                     "$scrolling_pane_size_touch|default": [
                         "100%+0px",
                         "100%+0px"
@@ -216,6 +228,17 @@
             {
                 "unavailable_mask": {
                     "type": "input_panel",
+                    "bindings": [
+                        {
+                            "binding_name": "#EnderNetTerminal.unavailable",
+                            "binding_name_override": "#visible",
+                            "binding_type": "global",
+                            "binding_condition": "always"
+                        }
+                    ],
+                    "property_bag": {
+                        "#EnderNetTerminal.unavailable": false
+                    },
                     "anchor_from": "bottom_middle",
                     "anchor_to": "bottom_middle",
                     "size": [
@@ -228,6 +251,8 @@
                         {
                             "mask_img": {
                                 "type": "image",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
                                 "size": [
                                     "100%+0px",
                                     "100%+0px"
@@ -273,13 +298,13 @@
                     ],
                     "$text_background_default": "netease_editor_template_namespace.edit_box_background_default",
                     "$text_background_hover": "netease_editor_template_namespace.edit_box_background_hover",
-                    "$text_box_name": "%netease_editor_template_namespace.message",
+                    "$text_box_name": "#EnderNetTerminal.search",
                     "$text_box_text_color": [
                         1,
                         1,
                         1
                     ],
-                    "$text_edit_box_content_binding_name": "#netease_editor_template_namespace.message_content",
+                    "$text_edit_box_content_binding_name": "#EnderNetTerminal.search_content",
                     "$text_edit_box_label_anchor_point": "right_middle",
                     "$text_edit_box_label_min_size": [
                         "100%",
@@ -333,7 +358,7 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "#EnderNetTerminal.sort_method",
                     "$pressed_texture": "textures/ui/endernet/button_pressed",
                     "$texture_layer": 2,
                     "anchor_from": "top_left",
@@ -347,7 +372,13 @@
                         20.0
                     ],
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed",
+                            "to_button_id": "$pressed_button_name"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
@@ -419,7 +450,7 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "#EnderNetTerminal.sort_order",
                     "$pressed_texture": "textures/ui/endernet/button_pressed",
                     "$texture_layer": 2,
                     "anchor_from": "top_left",
@@ -433,7 +464,13 @@
                         20.0
                     ],
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed",
+                            "to_button_id": "$pressed_button_name"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
@@ -509,7 +546,7 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "#EnderNetCraft.import",
                     "$pressed_texture": "textures/ui/endernet/button_pressed",
                     "$texture_layer": 2,
                     "anchor_from": "top_left",
@@ -523,7 +560,13 @@
                         14.0
                     ],
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed",
+                            "to_button_id": "$pressed_button_name"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
@@ -657,7 +700,7 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "#EnderNetCraft.clear",
                     "$pressed_texture": "textures/ui/endernet/button_pressed",
                     "$texture_layer": 2,
                     "anchor_from": "top_left",
@@ -671,7 +714,13 @@
                         14.0
                     ],
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed",
+                            "to_button_id": "$pressed_button_name"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
@@ -703,7 +752,9 @@
             },
             {
                 "flying_item@endernet_container_common.flying_item_renderer": {
-                    "visible": false
+                    "visible": false,
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left"
                 }
             }
         ]
@@ -789,7 +840,7 @@
                     "$scroll_box_touch_image_control": "netease_editor_template_namespace.scroll_box_image",
                     "$scroll_track_image_control": "netease_editor_template_namespace.scroll_track_image",
                     "$scroll_track_texture": "textures/ui/ScrollRail",
-                    "$scrolling_content": "crafting_terminal_panel_ui.recipe_section",
+                    "$scrolling_content": "crafting_terminal_panel_ui.recipe_list",
                     "$show_background": true,
                     "$track_nine_slice_buttom": 0,
                     "$track_nine_slice_left": 0,
@@ -1037,5 +1088,72 @@
                 }
             }
         ]
+    },
+    "craft_output_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "endernet_craft_output",
+        "$item_visible_binding": "#EnderNetCraft.output_visible",
+        "$item_id_aux_binding": "#EnderNetCraft.output_item_id_aux",
+        "$item_selected_binding": "#EnderNetCraft.output_selected",
+        "$item_count_binding": "#EnderNetCraft.output_item_count",
+        "$item_select_button": "#EnderNetCraft.take"
+    },
+    "craft_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "crafting_grid",
+        "$item_visible_binding": "#EnderNetCraft.grid_visible",
+        "$item_id_aux_binding": "#EnderNetCraft.grid_item_id_aux",
+        "$item_selected_binding": "#EnderNetCraft.grid_selected",
+        "$item_count_binding": "#EnderNetCraft.grid_item_count",
+        "$item_select_button": "#EnderNetCraft.grid_click"
+    },
+    "recipe_list": {
+        "type": "panel",
+        "size": [
+            "100%",
+            "default"
+        ]
+    },
+    "terminal_items_grid": {
+        "type": "grid",
+        "collection_name": "terminal_slots",
+        "grid_dimensions": [
+            9,
+            2
+        ],
+        "grid_item_template": "crafting_terminal_panel_ui.terminal_slot",
+        "maximum_grid_items": 30,
+        "grid_rescaling_type": "horizontal",
+        "size": [
+            162.0,
+            "default"
+        ],
+        "bindings": [
+            {
+                "binding_name": "#EnderNetTerminal.count",
+                "binding_name_override": "#maximum_grid_items",
+                "binding_type": "global",
+                "binding_condition": "always"
+            }
+        ],
+        "property_bag": {
+            "#maximum_grid_items": 0
+        }
+    },
+    "terminal_scroll_background@endernet_ui_common.simple_invisible_button": {
+        "button_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed",
+                "to_button_id": "$pressed_button_name"
+            }
+        ],
+        "$pressed_button_name": "#EnderNetTerminal.quick_store"
+    },
+    "terminal_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "terminal_slots",
+        "$item_visible_binding": "#EnderNetTerminal.has_item",
+        "$item_id_aux_binding": "#EnderNetTerminal.item_id_aux",
+        "$item_selected_binding": "#EnderNetTerminal.selected",
+        "$item_count_binding": "#EnderNetTerminal.item_count",
+        "$item_select_button": "#EnderNetTerminal.select"
     }
 }

@@ -291,6 +291,21 @@ class Fixture(unittest.TestCase):
             for envelope in self.of_kind(MSG_RESYNC_REQUIRED, player_id)
         ]
 
+    def error_payloads(self, player_id="p1"):
+        # type: (str) -> list
+        """端口上发给该玩家的 `error` **原始载荷**（还没解码的那一层）。
+
+        **不解码是有意的**：服务端单方面注销那几条通知带的是**空**会话号，
+        而 `SyncEnvelope.from_dict` 会拿 `session_id` 去查会话描述表——
+        查不到虽然不炸，但这里要断言的正是那几个字段本身（尤其是「空」），
+        走一遍解码只会把要测的东西绕过去。
+        """
+        return [
+            payload
+            for pid, payload in self.port.sent
+            if pid == player_id and payload["message"]["kind"] == MSG_ERROR
+        ]
+
     # -- 断言用的便捷入口 ----------------------------------------------
 
     def settle(self, session, ticks=4):
@@ -1150,15 +1165,6 @@ class TestExpiryNotice(Fixture):
         for _ in range(frames):
             self.hub.tick()
 
-    def error_payloads(self, player_id="p1"):
-        # type: (str) -> list
-        """端口上发给该玩家的 `error` **原始载荷**（还没解码的那一层）。"""
-        return [
-            payload
-            for pid, payload in self.port.sent
-            if pid == player_id and payload["message"]["kind"] == MSG_ERROR
-        ]
-
     def test_expiry_sends_a_sessionless_error(self):
         """空会话号 + 发得出去（线上格式合法）+ 只发一条。"""
         self.shorten_ttl()
@@ -1266,6 +1272,204 @@ class TestExpiryNotice(Fixture):
         self.assertIsNotNone(self.hub.registry.get(session.session_id))
         self.assertEqual(self.error_payloads(), [])
         self.assertEqual(self.hub.stats["expired_notices"], 0)
+
+
+# ---------------------------------------------------------------------------
+# 其余三条服务端单方面注销的通知（D-08 的后两条）
+# ---------------------------------------------------------------------------
+
+
+class TestGoneNotice(Fixture):
+    """设备被替换、网络退役/关闭/丢主控——同样是服务端单方面注销。
+
+    **与超时那条是同一个缺陷的另外两面**：`_forget` 一条包都不发，客户端
+    就继续拿着一个死会话显示库存，直到下一次点击被拒（欠账台账 **D-08**）。
+    这里钉的是「那一条通知在另外三条路径上也真的发出去、发的是各自那句话、
+    且客户端那边真的认」。
+
+    与 `TestExpiryNotice` 共用 `_notify_gone` 的核心（一个玩家一条、还有
+    活会话时不发），因此这里只补**路径本身**的差异：什么时候被调用、
+    发的是哪句话、以及**哪些路径不该发**。
+    """
+
+    def change(self, kind, network_id=NETWORK):
+        # type: (str, str) -> object
+        from endernet.server.network.runtime import RuntimeChange
+
+        return RuntimeChange(network_id, kind)
+
+    def test_a_retired_network_tells_the_client(self):
+        """整网退役：空会话号 + 发得出去 + 只发一条。"""
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+
+        self.assertEqual(self.hub.on_runtime_change(self.change(RUNTIME("retired"))), 1)
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+        payloads = self.error_payloads()
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        # 与超时那条同一套判据：客户端靠**空**会话号认出「这个会话没了」。
+        self.assertEqual(payload["session_id"], "")
+        self.assertEqual(payload["network_id"], "")
+        self.assertEqual(payload["epoch"], "")
+        self.assertEqual(payload["message"]["code"], Reason.SESSION_INVALID)
+        self.assertEqual(self.hub.stats["gone_notices"], 1)
+        # 超时那一桶不该被动到——两个数分开，才答得了「客户端为什么被通知」。
+        self.assertEqual(self.hub.stats["expired_notices"], 0)
+
+    def test_the_client_recognises_a_network_close_as_session_death(self):
+        """服务端「发了」与客户端「认了」是两件事，这里把两头接起来。"""
+        from endernet.client.network_client import NetworkClient
+
+        _, reply = self.open_view()
+        client = NetworkClient()
+        client.receive(reply.to_dict())
+        self.assertTrue(client.has_session())
+
+        self.hub.on_runtime_change(self.change(RUNTIME("master_lost")))
+        payloads = self.error_payloads()
+        self.assertEqual(len(payloads), 1)
+        client.receive(json.loads(json.dumps(payloads[0])))
+        self.assertFalse(client.has_session(), "客户端没认出来，界面会继续显示过期库存")
+        self.assertEqual(client.stats["sessions_dropped"], 1)
+
+    def test_a_replaced_device_tells_the_client(self):
+        """拆掉又在原地放一个：界面指着的方块已经没了。"""
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+        self.devices[NETWORK] = DeviceRef(session.device_ref.node_key, 2)
+
+        self.assertEqual(
+            self.hub.on_runtime_change(self.change(RUNTIME("members_changed"))), 1
+        )
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+        self.assertEqual(len(self.error_payloads()), 1)
+        self.assertEqual(self.hub.stats["gone_notices"], 1)
+
+    def test_an_unchanged_device_says_nothing(self):
+        """成员增减里没动到的那台不受影响——没关会话就不该有通知。"""
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+
+        self.assertEqual(
+            self.hub.on_runtime_change(self.change(RUNTIME("members_changed"))), 0
+        )
+        self.assertEqual(self.error_payloads(), [])
+        self.assertEqual(self.hub.stats["gone_notices"], 0)
+
+    def test_each_reason_carries_its_own_text(self):
+        """四种注销各有各的说法——玩家看到的那一句话就是这里定的。
+
+        「主控被拆」与「网络在重建」要查的东西完全不一样（一个查方块还在
+        不在，一个查重建为什么没结束），所以那句话不能合成一句「网络故障」。
+        """
+        texts = {}
+        for kind, reason in (
+            ("retired", sync_terminal.CLOSE_NETWORK_RETIRED),
+            ("closed", sync_terminal.CLOSE_NETWORK_CLOSED),
+            ("master_lost", sync_terminal.CLOSE_MASTER_LOST),
+        ):
+            self.setUp()
+            self.open_view()
+            self.hub.on_runtime_change(self.change(RUNTIME(kind)))
+            payloads = self.error_payloads()
+            self.assertEqual(len(payloads), 1, kind)
+            texts[kind] = payloads[0]["message"]["detail"]
+            self.assertEqual(
+                texts[kind], sync_terminal._GONE_DETAILS[reason], kind
+            )
+        self.assertEqual(len(set(texts.values())), 3, "四种注销至少有三种不同说法")
+
+    def test_the_replacement_text_is_its_own(self):
+        """设备被替换那一句与整网注销那三种都不同——它查的是另一件事。"""
+        session, _ = self.open_view()
+        self.devices[NETWORK] = DeviceRef(session.device_ref.node_key, 2)
+        self.hub.on_runtime_change(self.change(RUNTIME("members_changed")))
+        payloads = self.error_payloads()
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(
+            payloads[0]["message"]["detail"],
+            sync_terminal._GONE_DETAILS[sync_terminal.CLOSE_DEVICE_REPLACED],
+        )
+
+    def test_no_notice_while_this_player_still_has_a_live_session(self):
+        """玩家还有别的活会话时不发——那多半正是客户端手里那个。
+
+        与超时那条**同一条守卫、同一条理由**：替旧会话发一条「你的会话
+        没了」，客户端会把它手里那个新会话一并丢掉，比不发更糟。
+        """
+        self.add_network(SECOND_NETWORK, x=40)
+        first, _ = self.open_view(request_id="r1")
+        other, _ = self.open_view(network_id=SECOND_NETWORK, request_id="r2")
+        self.settle(other)
+        self.port.sent = []
+
+        self.assertEqual(self.hub.on_runtime_change(self.change(RUNTIME("retired"))), 1)
+        self.assertIsNone(self.hub.registry.get(first.session_id))
+        self.assertIsNotNone(self.hub.registry.get(other.session_id), "把另一个网络的也关了")
+        self.assertEqual(self.error_payloads(), [], "把客户端手里那个会话也顶掉了")
+        self.assertEqual(self.hub.stats["gone_notices"], 0)
+        self.assertEqual(self.hub.stats["gone_notices_skipped"], 1)
+
+    def test_one_notice_per_player_across_the_whole_network(self):
+        """同一玩家在同一网络上开了两个会话，整网注销时只发一条。"""
+        self.open_view(request_id="r1")
+        self.open_view(request_id="r2")
+        self.assertEqual(self.hub.on_runtime_change(self.change(RUNTIME("retired"))), 2)
+        self.assertEqual(len(self.error_payloads()), 1)
+        self.assertEqual(self.hub.stats["gone_notices"], 1)
+
+    def test_every_player_gets_their_own_notice(self):
+        """别的玩家被牵连注销，不能漏掉他。"""
+        self.open_view(player_id="p1", request_id="r1")
+        self.open_view(player_id="p2", request_id="r2")
+        self.hub.on_runtime_change(self.change(RUNTIME("retired")))
+        self.assertEqual(len(self.error_payloads("p1")), 1)
+        self.assertEqual(len(self.error_payloads("p2")), 1)
+        self.assertEqual(self.hub.stats["gone_notices"], 2)
+
+    def test_a_player_leaving_says_nothing(self):
+        """玩家离开**不发**——收件人已经不在了。
+
+        这条钉的是「通知挂在具体调用点上，不放进 `_forget_all`」：放进去的
+        话 `close_for_player` 与 `shutdown` 会跟着发，而那两个时候发出去的
+        包没有任何意义，只会污染「客户端为什么被通知」的计数。
+        """
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+
+        self.assertEqual(self.hub.close_for_player("p1", "player_left"), [session])
+        self.assertEqual(self.error_payloads(), [])
+        self.assertEqual(self.hub.stats["gone_notices"], 0)
+
+    def test_shutdown_says_nothing(self):
+        """停机也不发——整台服务正要停。"""
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+
+        self.assertEqual(self.hub.shutdown(), 1)
+        self.assertEqual(self.error_payloads(), [])
+        self.assertEqual(self.hub.stats["gone_notices"], 0)
+        self.assertEqual(self.hub.stats["expired_notices"], 0)
+
+    def test_an_unreachable_port_does_not_break_the_change(self):
+        """端口不通只记一笔，注销本身照常完成（调用方在看返回的条数）。"""
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+        self.port.reachable = False
+        before = self.hub.stats["send_failures"]
+
+        self.assertEqual(self.hub.on_runtime_change(self.change(RUNTIME("retired"))), 1)
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+        self.assertEqual(self.hub.stats["gone_notices"], 0)
+        self.assertEqual(self.hub.stats["send_failures"], before + 1)
+        self.assertEqual(self.port.sent, [])
 
 
 # ---------------------------------------------------------------------------
