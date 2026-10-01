@@ -126,26 +126,65 @@ class ResourceContractTests(unittest.TestCase):
         self.assertEqual(node[1][0][1], u"\ue000")
 
 
+#: 2026-09-25 游戏内实测读数：引擎对一个**原版箱子**里的石头返回的 16 个字段。
+#: 逐字段照抄自 `test_containers_engine.py` 的同一份夹具——两处同源是刻意的，
+#: 这份形状正是「客户端与服务端各读一次同一个槽」时引擎给的那一份。
+MEASURED_ENGINE_ITEM = {
+    "count": 12,
+    "newItemName": "minecraft:stone",
+    "isDiggerItem": False,
+    "enchantData": [],
+    "durability": 0,
+    "itemId": 1,
+    "customTips": "",
+    "extraId": "",
+    "newAuxValue": 0,
+    "modEnchantData": [],
+    "modId": "",
+    "userData": None,
+    "modItemId": "",
+    "itemName": "minecraft:stone",
+    "auxValue": 0,
+    "showInHand": True,
+}
+
+
+def _load_real_item_module():
+    """离线加载**真的** `tooldelta.define.item`。
+
+    真 `tooldelta/__init__.py` 在模块级 import 引擎，脱离游戏一导入就炸；
+    这里按文件路径单独加载 `item.py`，并给它一个假的 `internal` 包。
+    """
+    import importlib.util
+    import os
+    import sys
+    import types
+    from unittest.mock import patch
+
+    path = os.path.join(testsupport.SCRIPTS_ROOT, "tooldelta", "define", "item.py")
+    internal = types.ModuleType("resource_codec_test.internal")
+    internal.InServerEnv = lambda: False
+    spec = importlib.util.spec_from_file_location("resource_codec_test.define.item", path)
+    module = importlib.util.module_from_spec(spec)
+    with patch.dict(sys.modules, {internal.__name__: internal}):
+        spec.loader.exec_module(module)
+    return module
+
+
+def _register_stack_size(module, key, size):
+    """给 `GetBasicInfo()` 一个可查的堆叠上限，免得它去问引擎。"""
+    basic = module.BasicItemInfo()
+    basic.maxStackSize = size
+    module.itemBasicInfoPool[(key.name, key.aux)] = basic
+
+
 class ItemCodecTests(unittest.TestCase):
     def test_real_tooldelta_class_without_engine_bootstrap(self):
-        import importlib.util
-        import os
-        import sys
-        import types
-        from unittest.mock import patch
-        path = os.path.join(testsupport.SCRIPTS_ROOT, "tooldelta", "define", "item.py")
-        internal = types.ModuleType("resource_codec_test.internal")
-        internal.InServerEnv = lambda: False
-        spec = importlib.util.spec_from_file_location("resource_codec_test.define.item", path)
-        module = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {internal.__name__: internal}):
-            spec.loader.exec_module(module)
+        module = _load_real_item_module()
         key = ResourceKey.item("test:item", aux=2, enchant_data=[],
                                mod_enchant_data=[("test:enchant", 3)], durability=None,
                                extra_id="unique", custom_tips=u"中文", user_data={"v": [1]})
-        basic = module.BasicItemInfo()
-        basic.maxStackSize = 16
-        module.itemBasicInfoPool[(key.name, key.aux)] = basic
+        _register_stack_size(module, key, 16)
         item = item_from_key(key, 12, module.Item)
         self.assertEqual(item_key(item), key)
         self.assertEqual(item_key_from_dict(wire(item.marshal())), key)
@@ -153,6 +192,44 @@ class ItemCodecTests(unittest.TestCase):
         self.assertNotEqual(item_key(item), key)
         with self.assertRaises(ValueError):
             item_from_key(key, 17, module.Item)
+
+    def test_the_client_key_matches_the_server_key_for_a_measured_item(self):
+        """**界面按槽取放的身份回归位。**
+
+        客户端读自己的背包拿到的是一份引擎物品字典，服务端读同一个槽拿到的
+        是另一份；两边算出的 `ResourceKey` 必须**完全相同**，否则
+        `SlotAnchor` 的指纹核对恒不通过，每一次带槽请求都被判成
+        `SLOT_CHANGED`——玩家看到的是「点了没反应」，日志里只有一条回执。
+
+        这条不是假想的：`Item.from_dict` 把缺席的 `durability` 补成 `0`，
+        而服务端把 `0` 归一成 `None`，`ResourceKey` 又把这两者当成两个身份。
+        因此客户端**必须**回到原始字典走归一化，不能按属性取身份。
+        """
+        from endernet.common.item_codec import (
+            engine_item_key,
+            normalize_engine_item,
+        )
+        module = _load_real_item_module()
+        measured = dict(MEASURED_ENGINE_ITEM)
+        item = module.Item.from_dict(measured)
+
+        server_key = item_key_from_dict(normalize_engine_item(dict(measured)))
+        self.assertEqual(server_key, ResourceKey.item("minecraft:stone"))
+        self.assertEqual(engine_item_key(item), server_key)
+        self.assertEqual(engine_item_key(item).canonical(), server_key.canonical())
+
+    def test_a_hand_built_item_has_no_engine_dictionary(self):
+        """手工构造的物品没有原始字典，`engine_item_key` 要**明确拒绝**。
+
+        静默算一个键出来正是这条修法要消灭的失效模式：那种错不会报，
+        只会让服务端一直说「槽里的东西不是你说的那件」。
+        """
+        from endernet.common.item_codec import engine_item_key
+        module = _load_real_item_module()
+        key = ResourceKey.item("minecraft:stone")
+        _register_stack_size(module, key, 64)
+        with self.assertRaises(ValueError):
+            engine_item_key(item_from_key(key, 1, module.Item))
 
     def test_counts_empty_and_unknown_metadata(self):
         key = ResourceKey.item("test:item")
@@ -269,17 +346,47 @@ class SyncMessageTests(unittest.TestCase):
             protocol.SnapshotRequest("r3", 7),
             protocol.Ack("r4", "transfer-1", 3),
             protocol.SessionReady(11, 12),
+            protocol.InventorySnapshot(36, [
+                {"slot": slot, "canonical": "", "count": 0, "slot_version": 1}
+                for slot in range(36)]),
             protocol.SnapshotBegin("snap-1", 12, 3),
             protocol.SnapshotChunk("snap-1", 0, [(self.stone, 5, 1)]),
             protocol.SnapshotEnd("snap-1", 2),
             protocol.ItemDelta("batch-1", 0, 2, 12, 13, [(self.stone, 5, 1)], [self.dirt]),
             protocol.ResyncRequired("stale_version", "缺口已回收"),
             protocol.SyncError("r5", "stale_version", "期望版本过期"),
+            protocol.TerminalCommand(
+                "r6", "inv_take", 11, self.stone.to_dict(), 32, 3, 9
+            ),
+            protocol.CommandResultMessage(
+                "r6", protocol.CommandResult.ok("r6", {"action": "inv"}).to_dict()
+            ),
+            protocol.DeviceStatusMessage(
+                "endernet:storage_driver",
+                3,
+                True,
+                "在线",
+                "ok",
+                "runnable",
+                "运行中",
+                11,
+                reasons=[{"code": "ok", "detail": ""}],
+            ),
         )
 
     def test_every_registered_kind_is_covered_here(self):
         covered = set(message.kind for message in self.every_message())
         self.assertEqual(covered, set(protocol.sync_message_kinds()))
+
+    def test_inventory_snapshot_rejects_incomplete_and_invalid_versions(self):
+        rows = [{"slot": slot, "canonical": "", "count": 0, "slot_version": 1}
+                for slot in range(36)]
+        with self.assertRaises(ValueError):
+            protocol.InventorySnapshot(1, rows[:35])
+        for invalid in (True, -1, 0, "1"):
+            rows[0]["slot_version"] = invalid
+            with self.assertRaises((ValueError, TypeError)):
+                protocol.InventorySnapshot(1, rows)
 
     def test_message_kind_registry_matches_direction_sets(self):
         """方向表与注册表必须覆盖同一批种类，且互不重叠。"""
@@ -458,6 +565,107 @@ class SyncMessageTests(unittest.TestCase):
             protocol.ItemDelta("b", 2, 2, 1, 2)
         with self.assertRaises(ValueError):
             protocol.ItemDelta("b", 0, 0, 1, 2)
+
+    def test_command_absent_optionals_are_still_written(self):
+        """可选字段**必须显式写 `None`**，因为 `_require_fields` 也拒缺项。
+
+        「可选」在协议这一层不表示「可以不写」：任何一条字段缺席都会让
+        整条消息被判为缺项。这条用例把那个约定钉住——只拒缺项不拒多项
+        的宽松实现对下面 `test_command_*` 那几条毫无意义。
+        """
+        payload = protocol.TerminalCommand("r1", "inv_take").to_dict()
+        for field in protocol.TerminalCommand.FIELDS:
+            self.assertIn(field, payload, "字段 %s 缺席了" % (field,))
+        restored = protocol.decode_sync_message(payload)
+        self.assertIsNone(restored.count)
+        self.assertIsNone(restored.slot)
+        self.assertIsNone(restored.into_slot)
+
+    def test_command_rejects_injected_identity_and_cursor(self):
+        """命令里塞身份或 `cursor` 是**整条消息非法**，不是「被忽略」。
+
+        `cursor` 尤其重要：`StorageService._cursor_refusal` 只在
+        `payload.get("cursor")` 为真时才拦，而 R12 尚未定案。不发它是
+        「缺席」；能发它就成了「客户端可以自称手里有没有东西」，
+        那等于用一个未定的规则做了个看着能用的替身。
+        """
+        base = protocol.TerminalCommand("r1", "inv_take", 11, None, 32).to_dict()
+        self.assertNotIn("cursor", base)
+        self.assertNotIn("player_id", base)
+        # `target` 不在此列：它是**合法字段**（`inv_quick_move` 用），
+        # 只是别的动作不读它。字段集是统一的，逐动作收窄等于让「这条命令
+        # 该有哪些键」散到两处，而漏收的那一处不会报错。
+        for injected in ({"cursor": {"item": "x"}}, {"player_id": "attacker"},
+                         {"device_ref": {}}, {"op_id": "sneaky"}):
+            payload = dict(base)
+            payload.update(injected)
+            with self.assertRaises(ValueError, msg="%r 未被拒绝" % (injected,)):
+                protocol.decode_sync_message(payload)
+        # 真正合法的 `target` 走构造函数而不是绕过字段检查。
+        self.assertEqual(
+            protocol.TerminalCommand("r1", "inv_quick_move", target="network")
+            .payload()["target"],
+            "network",
+        )
+
+    def test_command_payload_maps_to_what_the_storage_service_reads(self):
+        """`payload()` 是线格式与 `StorageService` 之间**唯一**的字段名映射。
+
+        服务端那一侧一律 `payload.get(...)` 读，所以缺席的键不写即可；
+        而 `count` 总是写上——`inv_quick_move` 靠它的假值判断「整槽」。
+        """
+        command = protocol.TerminalCommand(
+            "r1", "inv_merge", 11, self.stone.to_dict(), 4, 3, 9,
+            into_slot=5, into_slot_version=2,
+        )
+        payload = command.payload()
+        self.assertEqual(payload["action"], "inv_merge")
+        self.assertEqual(payload["count"], 4)
+        self.assertEqual(payload["slot"], 3)
+        self.assertEqual(payload["slot_version"], 9)
+        self.assertEqual(payload["into_slot"], 5)
+        self.assertEqual(payload["into_slot_version"], 2)
+        # 不发 `op_id`：服务端取 `payload.get("op_id") or request_id`，
+        # 多发一个只会造出「账本按 A 去重、动作按 B 记账」的缝隙。
+        self.assertNotIn("op_id", payload)
+        # `expected_index_version` 属消息层，不是动作载荷。
+        self.assertNotIn("expected_index_version", payload)
+
+    def test_command_result_rejects_a_mismatched_request_id(self):
+        """消息层的 `request_id` 与结果里的那一份**必须相等**（指纹式核对）。
+
+        两份不一致说明消息在某一层被拼错了，此时按哪一份去挂回请求都是猜：
+        按消息层挂，界面会把结果贴到另一次操作上；按结果挂，客户端的在途
+        记录则永远释放不掉。
+        """
+        result = protocol.CommandResult.ok("r1", {}).to_dict()
+        with self.assertRaises(ValueError):
+            protocol.CommandResultMessage("OTHER", result)
+        # 走一遍线也不行：解析路径的检查无条件执行。
+        payload = protocol.CommandResultMessage("r1", result).to_dict()
+        payload["request_id"] = "OTHER"
+        with self.assertRaises(ValueError):
+            protocol.decode_sync_message(payload)
+
+    def test_command_result_rejects_a_malformed_result(self):
+        """形状不对的结果**当场拒绝**：界面拿它做不了任何判断。"""
+        good = protocol.CommandResult.rejected(
+            "r1", [protocol.BlockReason(protocol.Reason.BAD_PARAMETER, "x")]
+        ).to_dict()
+        with self.assertRaises(ValueError):
+            protocol.CommandResultMessage("r1", dict(good, status="no_such_status"))
+        with self.assertRaises(ValueError):
+            protocol.CommandResultMessage("r1", dict(good, reasons=[{"code": ""}]))
+        with self.assertRaises((TypeError, ValueError)):
+            protocol.CommandResultMessage("r1", dict(good, payload=[]))
+        with self.assertRaises(ValueError):
+            protocol.CommandResultMessage("r1", dict(good, extra=1))
+        # 原因码原样过线，界面据此决定「重发有没有用」。
+        restored = protocol.CommandResultMessage("r1", good)
+        self.assertEqual(restored.result["status"], protocol.STATUS_REJECTED)
+        self.assertEqual(
+            restored.result["reasons"][0]["code"], protocol.Reason.BAD_PARAMETER
+        )
 
     def test_full_roundtrip_carries_keys_and_versions(self):
         delta = protocol.ItemDelta(

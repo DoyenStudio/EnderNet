@@ -174,6 +174,40 @@ def build_event_classes(events_module):
     return TerminalRequestEvent, TerminalSyncEvent
 
 
+#: 进程内共享的事件类：`引擎 events 模块 -> (C2S, S2C)`。
+#:
+#: **必须进程内只建一份，不能「每个端口建一份」。** 这一条是客户端那一侧
+#: 实测出来的（2026-09-29，见 `client/network_client.py` 的同名注释）：同一条
+#: 消息被投递的次数等于进程里建过的端口数，且只有最后注册的端口收得到。
+#: 机理在 `tooldelta/events/event_bus/event_bus.py`——`_dyn_listen` 以**事件类
+#: 对象**为键判重，每新建一个类就多一次 `_add_sys_event_listener`；而
+#: `_add_sys_event_listener` 用 `tdevent_handler_<模块>.<类名><优先级>` 这个名字
+#: 把处理器 `setattr` 到 system 上，同类名即同名，`setattr` 只留得下最后一份。
+#: 注销走 `_dyn_unlisten`，**从不调 `UnListenForEvent`**，引擎侧的注册只增不减。
+#:
+#: 服务端这一侧**本轮没有实测到重复**（进程里只有一个服务端装配实例），
+#: 因此这里改的是同一个构造、同一个理由，记为「按客户端实测结论推广」，
+#: 不是「服务端已实测」。
+#:
+#: 键取 `events` 模块对象：客户端与服务端的 `build_event_classes` 造出的类
+#: 方向相反、**不能共用一张缓存**，两个模块各持一份是必须的。
+_EVENT_CLASSES = {}
+
+
+def shared_event_classes(events_module):
+    # type: (object) -> tuple
+    """进程内共享的 `(C2S, S2C)` 事件类；同一个 `events_module` 只建一份。
+
+    给 `AdapterSyncPort.classes()` 用，理由见 `_EVENT_CLASSES` 的注释。
+    `build_event_classes` 保持纯函数：离线测试直接调它核对类定义。
+    """
+    cached = _EVENT_CLASSES.get(events_module)
+    if cached is None:
+        cached = build_event_classes(events_module)
+        _EVENT_CLASSES[events_module] = cached
+    return cached
+
+
 class AdapterSyncPort(object):
     """同步通道的引擎侧实现。**这是 `server/sync/` 唯一的引擎出口。**
 
@@ -209,8 +243,9 @@ class AdapterSyncPort(object):
             if player_position is not None
             else engine_player_position
         )
-        #: 两个事件类，**每个端口只建一次**（见 `classes()`）。惰性构造：
-        #: `__init__` 里建就等于在这里 import 引擎，离线构造立刻失败。
+        #: 两个事件类，**进程内只建一份**（见 `classes()` 与
+        #: `shared_event_classes`）。惰性构造：`__init__` 里建就等于在这里
+        #: import 引擎，离线构造立刻失败。
         self._event_classes = None
         self.stats = {
             "requests": 0,
@@ -222,14 +257,14 @@ class AdapterSyncPort(object):
 
     def classes(self):
         # type: () -> tuple
-        """本端口用的 `(C2S, S2C)` 两个事件类，**只建一次**。
+        """本端口用的 `(C2S, S2C)` 两个事件类。**与其余端口共用同一份。**
 
         `EventBus` 用事件类对象本身当字典键（`event_listeners[priority][event]`），
-        同一个端口两次拿到不同的类对象就会注册到两张表里，而注销只摘得掉
-        其中一张——症状是热重载后同一个包被处理两次。
+        两次拿到不同的类对象就会注册到两张表里，而注销只摘得掉其中一张。
+        共用同一份的理由与实测见 `shared_event_classes`。
         """
         if self._event_classes is None:
-            self._event_classes = build_event_classes(self.events())
+            self._event_classes = shared_event_classes(self.events())
         return self._event_classes
 
     # -- 身份与位置 ----------------------------------------------------

@@ -16,6 +16,8 @@
   只能用于资源回收，因此这里**只**用来做区块卸载标记。
 """
 
+from ...common.definitions import TERMINAL_OPEN_LIMIT_SECONDS, TERMINAL_SCREENS
+from ...common.rate_limit import PlayerRateLimiter
 from ...common.identity import ChunkKey, NodeKey
 from ..runtime.events import EventKind, NormalizedEvent, WakeSet
 
@@ -119,6 +121,9 @@ class ToolDeltaEventApi(object):
         # 与能源接入口声明了 `netease:block_entity.tick = true`，
         # `test_assets.py` 正断言这一点。
         self.ServerBlockEntityTickEvent = events_module.ServerBlockEntityTickEvent
+        # 玩家右键方块（11-03 的终端打开入口）。**只用于终端**：其余方块
+        # 的交互都要么没有、要么有专门的容器事件（07 那四条）。
+        self.ServerBlockUseEvent = events_module.ServerBlockUseEvent
 
         # --- 容器变更（任务 07 的样板槽发现）---------------------------
         #
@@ -224,6 +229,10 @@ class ServerEventBinder(object):
         self.unregistered = 0
         #: 注销失败的条目（名字 + 异常文本）。非空说明有监听器没摘干净。
         self.unregister_failures = []
+        #: 终端打开入口的限速器（`_on_block_use`）。**按玩家记**，窗口见
+        #: `TERMINAL_OPEN_LIMIT_SECONDS`。放在这里而不是模块级：一个进程装了
+        #: 几套适配器就各限各的，且 `stop()` 之后不留跨会话的残留计数。
+        self._open_limiter = PlayerRateLimiter(TERMINAL_OPEN_LIMIT_SECONDS)
         self.counts = {}
 
     # -- 注册 ----------------------------------------------------------
@@ -336,6 +345,12 @@ class ServerEventBinder(object):
         def on_block_entity_tick(event):
             self._on_block_entity_tick(event.dimension, event.posX, event.posY,
                                        event.posZ, event.blockName)
+
+        # --- 终端打开入口（11-03）--------------------------------------
+
+        @self.listen(api.ServerBlockUseEvent)
+        def on_block_use(event):
+            self._on_block_use(event)
 
         # --- 容器变更（07）--------------------------------------------
         # 四条都只做一件事：**把位置标脏**。顺序不定、一条动作可能派发多条，
@@ -641,3 +656,76 @@ class ServerEventBinder(object):
             "event_counts": dict(self.counts),
             "wakes": self.wakes.stats(),
         }
+
+    # -- 终端打开入口（11-03）--------------------------------------------
+
+    def _on_block_use(self, event):
+        """玩家右键终端方块 → 推给客户端一条「打开这个界面」。
+
+        **设备的权威身份只能从注册表取。** 事件给的是方块名与坐标，而客户端
+        开会话时要带一个 `DeviceRef`（位置 + 实例代次）。代次不能由客户端
+        编——它得是注册表里那台**当前**设备的代次，否则 `SessionRegistry`
+        每一帧的 `_check_target` 都会判它过期。按坐标查注册表，查到的
+        `record.ref` 就是唯一答案。
+
+        查不到记录 = 这台方块还没被发现（区块刚加载），或它压根不是我们认的
+        设备。此时**什么都不做**：编一个代次为 0 的 ref 发过去，客户端会开出
+        一个立刻被服务端关掉的会话，玩家看到的是「界面一闪」。
+
+        见 `plans/tasks/11-03` 的打开入口决策（D5）。
+        """
+        self._count("block_use")
+        block_name = getattr(event, "blockName", "")
+        if not block_name:
+            return
+        ui_key = TERMINAL_SCREENS.get(block_name)
+        if ui_key is None:
+            # 本模组的其它方块或原版方块被右键：正常现象，不计入诊断，
+            # 否则 `block_use` 的计数会被无关右键淹没。
+            #
+            # 另三个终端方块（合成/样板/工厂）有意**不在这里**——它们的界面
+            # 是 11-04/11-05 的事，退回通用终端就是替那两项悄悄定案。
+            return
+        dimension = getattr(event, "dimensionId", 0)
+        node_key = NodeKey(dimension, event.x, event.y, event.z)
+        record = self.registry.get(node_key)
+        if record is None:
+            self._count("block_use_unknown")
+            return
+        # **限速在推之前。** 引擎的方块使用回调不节流，连点几下就是几条
+        # `PushUIRequest`，客户端会把同一次打开做几遍（真的开出好几个界面）。
+        # 窗口见 `TERMINAL_OPEN_LIMIT_SECONDS`（0.2 秒），按玩家记。
+        #
+        # 位置在**注册表查出记录之后**：查不到记录的那条路本来就什么都不做，
+        # 拿它去消耗窗口只会让「方块刚加载、玩家连点两下」的第二下被吞。
+        # 被限速的那一击单独计数，否则诊断里只看得到 `block_use` 涨、
+        # `block_use_opened` 不涨，分不清是限速还是别的原因。
+        player_id = getattr(event, "playerId", "")
+        if not self._open_limiter.allow(player_id):
+            self._count("block_use_limited")
+            return
+        self._count("block_use_opened")
+        self._notify_ui(
+            player_id,
+            ui_key,
+            {"device_ref": record.ref.to_dict(), "dimension": dimension},
+        )
+
+    def _notify_ui(self, player_id, ui_key, params):
+        # type: (str, str, dict) -> None
+        """把「打开某个界面」推给一个玩家。
+
+        引擎调用写在**方法体内**，与 `engine_player_dimension` 同一手法：
+        适配器模块本身必须能离线导入，否则整条链路在没有 `mod.server.*`
+        的环境里连构造都构造不了。
+
+        客户端侧链路是现成的：`tooldelta/ui/event_handler.py` 已在监听
+        `PushUIRequest`，收到后 `GetScreen(ui_key).PushUI(params=...)`。
+        因此 `ui_key` 必须与 `@RegistToolDeltaScreen` 注册的键逐字相同，
+        对不上时那边会抛异常（见 `common/definitions.py` 的 `TERMINAL_SCREENS`）。
+        """
+        if not player_id:
+            return
+        from ....tooldelta.events.server.ui import PushUIRequest
+
+        PushUIRequest(ui_key=ui_key, params=params).send(player_id)

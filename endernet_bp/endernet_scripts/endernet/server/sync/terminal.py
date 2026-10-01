@@ -46,7 +46,14 @@
 """
 
 from ...common.protocol import (
+    BlockReason,
+    CommandResult,
+    CommandResultMessage,
+    CommandSource,
+    CommandKind,
+    DeviceCommand,
     ItemDelta,
+    InventorySnapshot,
     Reason,
     ResyncRequired,
     SessionReady,
@@ -56,6 +63,7 @@ from ...common.protocol import (
     SyncEnvelope,
     SyncError,
     MSG_ACK,
+    MSG_COMMAND,
     MSG_SESSION_CLOSE,
     MSG_SESSION_OPEN,
     MSG_SNAPSHOT_REQUEST,
@@ -64,6 +72,11 @@ from ...common.protocol import (
 from ...common.resource_sync import ResourceResyncRequired
 from ..network.runtime import RuntimeChange
 from ..network.ticking import RotationCursor
+from .device_status import (
+    DeviceStatusSubscriptions,
+    build_status_message,
+    read_status,
+)
 from .sessions import SESSION_ACTIVE, SESSION_SNAPSHOTTING, SessionRegistry
 from .transfer import DeltaBatch, FrozenSnapshot, build_delta_packets  # noqa: F401
 
@@ -503,13 +516,21 @@ class NetworkSubscriptions(object):
 class TerminalSyncHub(object):
     """会话 + 发布窗口 + 传输推进。
 
-    三个注入的依赖，都是为了让本模块与引擎、拓扑、主控解耦：
+    四个注入的依赖，都是为了让本模块与引擎、拓扑、主控解耦：
 
     - `storage_of(network_id)` → `StorageService` 或 None。**无门槛只读
       路径**，先例见 `application.py` 的 `debug_query`（它同样走
       `runtime.services.get(...)` 而不订阅服务、不碰 `ServiceId.ALL`）。
     - `context_of(player_id, device_ref)` → `SessionContext` 或 None。
     - `port`：`send / listen / source_player_id / on_player_leave`。
+    - `submit(command)` → `CommandResult`。**手动存取命令的出口**（11-03）。
+
+    `submit` 走注入而不是持有 `ApplicationService`，理由与另外三个不同：
+    那是**分层禁令**要求的，不只是解耦偏好。`server/sync/` 在
+    `test_import_boundaries.py` 的 `DOMAIN_PREFIXES` 里，不得 import
+    `tooldelta` / `mod.*`；而命令真正要经过的主控在 `server/network/`，
+    注入一个回调就让本模块连 `controller.py` 都不必认识。副作用是它的
+    可测性：喂一个假 `submit` 就能断言「命令是怎么拼出来的」。
     """
 
     def __init__(
@@ -519,13 +540,21 @@ class TerminalSyncHub(object):
         storage_of=None,
         context_of=None,
         port=None,
+        submit=None,
+        status_of=None,
     ):
         self.registry = registry if registry is not None else SessionRegistry()
         self.policy = policy if policy is not None else SyncPolicy()
         self._storage_of = storage_of if storage_of is not None else _no_storage
         self._context_of = context_of if context_of is not None else _no_context
+        self._submit = submit if submit is not None else _no_submit
+        self._status_of = status_of if status_of is not None else _no_status
         self.port = port
         self._subs = {}
+        self._inventory_sent = {}
+        #: 设备总体状态（11-08/11-13）。订阅表就是 `registry`，这里只记
+        #: 「每会话上一次发出去的是什么」，用来做变化去重。
+        self.status = DeviceStatusSubscriptions()
         self._rotation = RotationCursor()
         self._next_batch = 1
         self._next_snapshot = 1
@@ -544,6 +573,13 @@ class TerminalSyncHub(object):
             "transport_errors": 0,
             "sessions_opened": 0,
             "sessions_refused": 0,
+            #: 空闲超时回收时**实际告诉客户端的条数**，以及**因为「这个玩家
+            #: 还有别的活会话」而没发的条数**（见 `_notify_abandoned`）。
+            #: 两个数分开，才答得了「客户端为什么没被通知」；回收总数在
+            #: `registry.stats["expired"]`，三个数的关系是
+            #: `expired == expired_notices + expired_notices_skipped + 发失败的`。
+            "expired_notices": 0,
+            "expired_notices_skipped": 0,
             #: 其中有多少条是**开着之后**复核不过而关掉的（走开、传走、
             #: 设备被换、网络不可用）。与开会话被拒分开计：前者是「这个人
             #: 现在离得远」，后者是「这条请求本来就开不了」——查的东西不同。
@@ -557,6 +593,14 @@ class TerminalSyncHub(object):
             # 的 `AdapterSyncPort.stats["requests"]` 上。「一个包都没收到」与
             # 「收到的都读不懂」是两件不同的事，前者查总线，后者查版本。
             "bad_packets": 0,
+            # 手动存取命令（11-03）。`commands` 只数**走到执行**的那些，
+            # 回绝在 `command_rejected`——两者相加才是「玩家按了多少次」，
+            # 而分开计才能回答「按了没反应」到底是没收到还是被拒了。
+            "commands": 0,
+            "command_rejected": 0,
+            #: 执行路径抛异常的次数。**必须回一条结果**：客户端没有时钟也
+            #: 没有超时，不回则它在途记录永不释放（见 `_on_command`）。
+            "command_errors": 0,
         }
 
     # -- 装配 ----------------------------------------------------------
@@ -638,7 +682,7 @@ class TerminalSyncHub(object):
         session = self.registry.get(envelope.session_id)
         if session is None:
             return self._error(
-                envelope.session_id,
+                "",
                 request_id,
                 Reason.SESSION_INVALID,
                 "会话不存在或已关闭",
@@ -647,7 +691,7 @@ class TerminalSyncHub(object):
             # 别人的会话：**不告诉他这条会话存在**，与「不存在」同一个回答。
             self.stats["sessions_refused"] += 1
             return self._error(
-                envelope.session_id,
+                "",
                 request_id,
                 Reason.SESSION_INVALID,
                 "会话不存在或已关闭",
@@ -669,14 +713,14 @@ class TerminalSyncHub(object):
             self.close_session(
                 session.session_id, "revalidate:%s" % (verdict.reason,)
             )
-            return self._error(
-                envelope.session_id, request_id, verdict.reason, verdict.detail
-            )
+            return self._error("", request_id, verdict.reason, verdict.detail)
         session.touch(frame)
         if kind == MSG_SNAPSHOT_REQUEST:
             return self._on_snapshot_request(session, envelope.message, frame)
         if kind == MSG_ACK:
             return self._on_ack(session, envelope.message, frame)
+        if kind == MSG_COMMAND:
+            return self._on_command(session, envelope.message, frame)
         return self._error(
             session.session_id,
             getattr(envelope.message, "request_id", ""),
@@ -804,6 +848,86 @@ class TerminalSyncHub(object):
             del session.outstanding[ack.transfer_id]
         return None
 
+    # -- 手动存取（11-03）----------------------------------------------
+
+    def _on_command(self, session, message, frame):
+        # type: (object, object, int) -> object
+        """受理一条手动存取命令，把结果作为 `command_result` 发回。
+
+        **走到这里时会话已经被复核过了**：`handle` 对每条非 `session_open`
+        的消息都先跑 `_revalidate`（距离、维度、设备代次），不过则关会话并
+        回 `error`。因此本方法不再重复校验目标——`session.device_ref` 就是
+        刚刚验过的那一台。
+
+        ## 来源取会话，不取载荷
+
+        `CommandSource` 的 `player_id` / `device_ref` / `dimension` 全部来自
+        `session`。载荷里根本没有对应字段（`TerminalCommand` 的文档列了
+        理由），所以「客户端自报身份」在这一层不是「被忽略」，而是
+        **不可能表达**——想塞进来会被 `_require_fields` 判成未知字段而
+        拒收整条消息。
+
+        ## `topology_version=None` 是有意的
+
+        主控能拒绝「基于旧图」的命令，那需要调用方给出它依据的图版本。
+        本模块手里**没有**权威的图版本源，而 `TerminalCommand` 里那个
+        版本是 `expected_index_version`（交易版本，属存储服务）。把后者
+        填进 `topology_version` 就是把两个版本混成一个——`protocol.py`
+        本节开头明禁的那种做法，且它不会报错，只会让主控按错误的依据
+        放行或拒绝。`MasterController` 只在非 None 时比对版本，None 合法。
+
+        ## 业务失败也是「答案」
+
+        `blocked` / `rejected` / `stale` / `partial` 一律走 `command_result`
+        正常回给客户端——它们是**结论**，界面据此提示玩家。`error` 仍然
+        只留给会话与信道级的拒收（会话不存在、复核不过）。
+
+        执行路径抛异常时**也必须回一条**：客户端没有时钟也没有超时，
+        不回则它的在途记录永不释放（`NetworkClient._in_flight`），
+        表现为「按了一次之后这个界面再也发不出命令」。
+        """
+        self.stats["commands"] += 1
+        command = DeviceCommand(
+            message.request_id,
+            CommandKind.STORAGE,
+            CommandSource(
+                session.player_id,
+                session.device_ref,
+                session.dimension,
+                distance_ok=True,
+                session_id=session.session_id,
+                received_tick=frame or 0,
+            ),
+            payload=message.payload(),
+            topology_version=None,
+        )
+        try:
+            result = self._submit(command)
+        except Exception as error:
+            self.stats["command_errors"] += 1
+            return self._error(
+                session.session_id,
+                message.request_id,
+                Reason.INTERNAL,
+                "命令执行异常：%s" % (error,),
+            )
+        if not isinstance(result, CommandResult):
+            # 注入接错时的兜底。静默当成成功会让界面显示一次没发生的存取，
+            # 而那是**账实不符**里最难查的一种：库存没动，界面说动了。
+            self.stats["command_errors"] += 1
+            return self._error(
+                session.session_id,
+                message.request_id,
+                Reason.INTERNAL,
+                "命令执行方返回了非 CommandResult：%r" % (type(result),),
+            )
+        if not result.is_applied():
+            self.stats["command_rejected"] += 1
+        self._send(
+            session, CommandResultMessage(message.request_id, result.to_dict())
+        )
+        return None
+
     # -- 推进 ----------------------------------------------------------
 
     def tick(self, context=None, budget=None):
@@ -812,6 +936,9 @@ class TerminalSyncHub(object):
 
         **必须紧跟 `runtimes.tick()`**：提交发生在那里，发布放其后，
         窗口才看得见本帧提交。
+
+        时效回收那一步**顺带通知客户端**（`_notify_abandoned`）：光把会话
+        从注册表里抹掉，客户端不会知道——见该方法的说明。
         """
         self._frame += 1
         frame = self._frame
@@ -820,6 +947,8 @@ class TerminalSyncHub(object):
         expired = self.registry.evict_expired(frame)
         for session in expired:
             self._forget(session)
+        if expired:
+            self._notify_abandoned(expired)
 
         active = [
             network_id
@@ -862,8 +991,59 @@ class TerminalSyncHub(object):
             return 0
         for session in subs.ordered_sessions():
             if session.is_open():
+                self._publish_inventory(session)
+                self._publish_device_status(session)
                 self._advance_transfer(session, subs, frame)
         return self._publish_network(subs, frame)
+
+    def _publish_inventory(self, session):
+        # type: (object) -> None
+        storage = self._storage_of(session.network_id)
+        provider = getattr(storage, "inventories", None)
+        if provider is None:
+            return
+        try:
+            endpoint = provider.endpoint_of(session.player_id)
+            if endpoint is None or not endpoint.can_read():
+                return
+            view = endpoint.inventory_view()
+            rows = [dict(slot=row["slot"], canonical=row["canonical"],
+                         count=row["count"], slot_version=row["version"])
+                    for row in view["slots"]]
+            message = InventorySnapshot(view["revision"], rows)
+        except Exception:
+            # 读取失败不伪造空背包；客户端旧版本仍由命令入口复核。
+            return
+        payload = message.to_dict()
+        if self._inventory_sent.get(session.session_id) == payload:
+            return
+        if self._send(session, message):
+            self._inventory_sent[session.session_id] = payload
+
+    def _publish_device_status(self, session):
+        # type: (object) -> None
+        """把**这台会话自己的设备**的总体状态推给客户端（11-08/11-13）。
+
+        与 `_publish_inventory` 共用同一次逐会话访问、同一个变化去重手法，
+        差别只在对象：库存是网络的，状态是**设备自己**的。搭在既有会话上
+        而不是另开一条订阅，是因为客户端只持有一个会话（见 `network_client`
+        的 `_absorb`：`session_id`/`epoch`/描述表都是单值），第二条会话会
+        把物品列表打乱。于是「打开即快照、持续更新、关闭即清理」三条都由
+        既有的会话生命周期保证，`_forget` 是唯一的清理点。
+
+        读不到就**什么都不发**（不是发一份「离线」）：读取失败与确认离线
+        是两件事，混起来会让界面在读取路径出问题时显示一个方向错误的结论。
+        真正的「离线但还没确认」由领域层的 `validity="pending"` 表达。
+        """
+        status = read_status(session.device_ref, self._status_of)
+        if status is None:
+            return
+        message = build_status_message(status)
+        payload = message.to_dict()
+        if self.status.unchanged(session.session_id, payload):
+            return
+        if self._send(session, message):
+            self.status.remember(session.session_id, payload)
 
     def _advance_transfer(self, session, subs, frame):
         # type: (object, object, int) -> None
@@ -1211,6 +1391,8 @@ class TerminalSyncHub(object):
 
     def _forget(self, session):
         # type: (object) -> None
+        self._inventory_sent.pop(session.session_id, None)
+        self.status.drop(session.session_id)
         subs = self._subs.get(session.network_id)
         if subs is None:
             return
@@ -1218,6 +1400,95 @@ class TerminalSyncHub(object):
         if subs.drop_if_empty():
             del self._subs[session.network_id]
             self.stats["networks_dropped"] += 1
+
+    # -- 时效回收的通知 ------------------------------------------------
+
+    def _notify_abandoned(self, sessions):
+        # type: (list) -> int
+        """空闲超时回收时**告诉客户端一声**，返回实际发出的条数。
+
+        **不发这一条的后果是「静默的尸体」。** `evict_expired` 只清服务端
+        自己的账（`_forget` 一条包都不发），客户端于是继续以为会话还在：
+        界面照常显示**过期库存**，直到下一次点击被回 `session_invalid`
+        才丢会话、亮遮罩（`client/network_client.py` 的 `_absorb_error`）。
+        2026-10-01 真机实测：服务端 `expired` 涨到 3，而客户端
+        `sessions_dropped` 始终是 0——玩家看到的是「点什么都没反应」，
+        而中间那段时间界面看起来一切正常。
+
+        补上这一条之后，界面在会话死掉的那一刻就起遮罩。**会话照样会被
+        回收**（TTL 是故意的，它是客户端崩溃或断线时的兜底），变的是它
+        不再无声无息。客户端**零改动**：空会话号的 `error` 它早就会处理。
+
+        **一个玩家最多一条。** 同一玩家可以并存多个会话
+        （`max_sessions_per_player` 是 4），一次回收可能同时丢掉其中几条；
+        逐条发等于让同一个客户端连收几条同样的通知。
+
+        **只有这个玩家一条活会话都不剩时才发。** 客户端一次只持有一个
+        会话，手里那个一定是**最后开的**那个；旧的之所以还在，正是因为
+        关界面时那条 `session_close` 没送到（引擎销毁界面不走 `OnDestroy`
+        时就是这样）。此时若替旧会话发一条「你的会话没了」，客户端会照
+        字面**把它手里那个新会话一并丢掉**——比不发更糟。判据因此是
+        「清完之后这个玩家还有没有活会话」，与 `_drop_stale_devices` 的
+        「必须重新查一遍，不要从变化里推」是同一条理由。
+
+        两条**同类但本轮没接**的路径：设备被替换（`_drop_stale_devices`）
+        与网络换代次（`on_runtime_change`）同样是服务端单方面注销、同样
+        静默，客户端要到下一次命令被拒才知道。它们记在
+        `plans/tasks/00-欠账台账.md`，别把本节读成「服务端注销都会通知」。
+        """
+        notified = 0
+        told = set()
+        for session in sessions:
+            player_id = session.player_id
+            if player_id in told:
+                continue
+            told.add(player_id)
+            if self.registry.sessions_for_player(player_id):
+                self.stats["expired_notices_skipped"] += 1
+                continue
+            if self._send_gone(session):
+                notified += 1
+        return notified
+
+    def _send_gone(self, session):
+        # type: (object) -> bool
+        """给一个**已经不在注册表里**的会话发一条「会话已失效」。
+
+        **不走 `_send`。** 那条路会把 `session.session_id` 盖在信封上，而
+        客户端正是靠「信封里没有会话号」认出「这不是某一次请求失败，是
+        这个会话本身没了」（见 `SyncError` 的说明）。带着号发出去，客户端
+        只会当成一次普通的请求失败，界面照旧亮着——发的这一条就等于没发。
+
+        同理，`request_id` 留空是**如实**：这一条不回答任何请求（超时回收
+        的时候客户端并没有在等什么，它只是没说话），客户端的空会话号那条
+        分支也根本不读它。
+
+        编码与发送的异常都在这里接住：这是每帧都会走到的路径，一个异常
+        打挂的是整帧，不只是这一个客户端——与 `_send` 同一条纪律。会话
+        已经注销，因此这里**不做** `_note_failure` 那一套连续失败与退避：
+        没有下一次要退避的重试了。
+        """
+        envelope = self._error(
+            "", "", Reason.SESSION_INVALID, "会话空闲超时，请重新打开界面"
+        )
+        if self.port is None:
+            self.stats["send_failures"] += 1
+            return False
+        try:
+            payload = envelope.to_dict()
+        except (TypeError, ValueError):
+            self.stats["transport_errors"] += 1
+            return False
+        try:
+            ok = self.port.send(session.player_id, payload)
+        except Exception:
+            self.stats["transport_errors"] += 1
+            return False
+        if not ok:
+            self.stats["send_failures"] += 1
+            return False
+        self.stats["expired_notices"] += 1
+        return True
 
     # -- 发送 ----------------------------------------------------------
 
@@ -1312,8 +1583,18 @@ class TerminalSyncHub(object):
         # type: (str, str, str, str) -> object
         """给客户端的拒绝。**会话不存在时也回**，否则客户端只会看到界面不响应。
 
-        这种情况下 `network_id` / `epoch` 只能留空，而 `SyncEnvelope` 对
-        S2C 消息要求它们非空——`error` 是那条规则唯一的例外（见
+        **`session_id` 传空表示「这个会话已经不在了」**（会话不存在／被别人
+        抢／距离、维度或设备复核不过），传非空表示「会话还活着，是这一条请求
+        自身失败了」（执行命令时抛了异常之类）。客户端据此决定要不要就地丢掉
+        会话。
+
+        **判据做成结构性的，而不是让客户端列一份「哪些原因码算会话级」的表。**
+        那份表一旦与服务端漂移，表现是「界面看起来还正常、点什么都没反应」
+        ——正是最难查的一类（同 `client/network_client.py` 里拒绝在校验动作名
+        时给出的理由：漏改的那一份只会造成看不见的失败）。
+
+        这种情况 `network_id` / `epoch` 只能留空，而 `SyncEnvelope` 对 S2C
+        消息要求它们非空——`error` 是那条规则唯一的例外（见
         `SyncEnvelope._validate`）。客户端按 `request_id` 把错误挂回对应的
         那次请求，因此它即使没有会话也送得到、认得出。
         """
@@ -1374,6 +1655,7 @@ class TerminalSyncHub(object):
                 "batches": subs.stats["batches"],
             }
         report["rotation"] = self._rotation.describe()
+        report["device_status"] = self.status.diagnostics()
         return report
 
 
@@ -1407,6 +1689,31 @@ def _no_storage(network_id):
     return None
 
 
+def _no_status(device_ref):
+    # type: (object) -> None
+    """没有接入运行时（客户端半边单独跑、离线夹具）时的兜底：不发状态。"""
+    return None
+
+
 def _no_context(player_id, device_ref):
     # type: (str, object) -> None
     return None
+
+
+def _no_submit(command):
+    # type: (object) -> object
+    """没有接入执行方时的兜底：**明确拒绝，绝不假装成功**。
+
+    返回 `blocked` 而不是抛异常，是因为「没接执行方」与「执行方坏了」是
+    两件事：前者是装配遗漏（离线测试、客户端半边单独跑），后者是内部
+    错误。前者该让界面显示「暂时不可用」，后者该让日志里有堆栈。
+    """
+    return CommandResult.blocked(
+        command.request_id,
+        [
+            BlockReason(
+                Reason.SERVICE_NOT_READY,
+                "同步中枢没有接入命令执行方（submit）",
+            )
+        ],
+    )

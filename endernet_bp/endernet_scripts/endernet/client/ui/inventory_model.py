@@ -1,5 +1,17 @@
 # coding=utf-8
-"""Local simulation only: no player inventory API or authoritative transfers."""
+"""本地模拟背包：**已无生产消费者，只作测试夹具保留**。
+
+界面早在终端下半屏接真实玩家背包时就改用 `backpack_model.BackpackModel` 了
+（点击=选中、搬运在服务端）。这个类留着的理由不是"以后可能用得上"，而是
+它守着一批**搬运语义**的边界用例（`test_terminal_inventory.py` 的
+`InventoryTests`）：同格再点取消、部分合堆留余、特殊元数据永不合并、随机
+搬运守恒。这些口径在搬运改由服务端做之后**仍然成立**，是后续手势扩展
+（R12：拖拽、按住取半、右键取一个）现成的回归位。
+
+**不要再把它接回界面**：它按属性算身份（`item_key`），而真实物品必须走
+`engine_item_key`——两套算法算出来的指纹不同，接回去的表现是每一次取放都
+被判 `SLOT_CHANGED`（客户端与网络算的不是同一个身份）。
+"""
 
 from copy import deepcopy
 

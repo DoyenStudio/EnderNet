@@ -18,6 +18,7 @@ from endernet.common.protocol import (
     CommandKind,
     CommandSource,
     DeviceCommand,
+    MSG_DEVICE_STATUS,
     MSG_SESSION_READY,
     Reason,
     SessionOpen,
@@ -1561,13 +1562,18 @@ class TestPatternWiring(unittest.TestCase):
         self.assertIn("pattern", self.server.diagnostics())
 
     def test_the_pattern_policy_is_in_the_assembly_check(self):
-        """R09 的三个字段必须进 `policy_bundle()`，否则正式验收时漏网。"""
+        """R09 仍未定的那一条必须进 `policy_bundle()`，否则正式验收时漏网。
+
+        `pattern.unlimited_fuel`（2026-09-30 定案：外部自理）与
+        `pattern.return_rule`（同日定案：返还物一律显式声明）**都不在这里**，
+        留在策略字段里但不进报告（见 `test_patterns.TestPolicy`）。
+        """
         fields = [
             item["field"] for item in self.server.policy_bundle().unresolved_report()
         ]
-        self.assertIn("pattern.unlimited_fuel", fields)
-        self.assertIn("pattern.return_rule", fields)
+        self.assertNotIn("pattern.return_rule", fields)
         self.assertIn("pattern.kind_scope", fields)
+        self.assertNotIn("pattern.unlimited_fuel", fields)
 
     def test_stop_marks_patterns_unloaded(self):
         """停机**不清样板**：它们是方块容器里的实物物品，不是内存状态。"""
@@ -1887,6 +1893,69 @@ class TestSyncWiring(unittest.TestCase):
 
         self.assertEqual(self.server.sync_port.stats["leaves"], 1)
         self.assertEqual(self.server.sync.registry.count(), 0)
+
+    # -- 设备总体状态（11-08/11-13）-----------------------------------
+
+    def test_the_device_status_reader_is_the_runtime_lookup(self):
+        """状态口子必须接在**运行时**上：接错了不报错，只是界面永远不亮。
+
+        `sync/` 不许 import `server/network/`，所以这一格只能是注入的绑定
+        方法。绑错对象（比如绑成存储、或绑成 `None` 兜底）时症状是「状态栏
+        一直是空的」，与「设备真的离线」在界面上长得一样。
+        """
+        #: 绑定方法每次取属性都是新对象，因此比相等而不是同一。
+        self.assertEqual(self.server.sync._status_of, self.server._sync_status_of)
+
+    def test_a_status_packet_follows_the_session(self):
+        """开会话 → 推进一帧 → 状态包发给同一个玩家，且带着该会话的路由字段。
+
+        这条把「组合根把状态口子接上了」钉到可观察的层面：读不到状态的
+        时候一个包都不会有，而这里的写入方没有任何别的来源。
+        """
+        self.build_network()
+        c2s, _ = self.server.sync_port.classes()
+        self.api.dispatch(c2s, self.open_message(self.device_ref()))
+        # `FakeEventsModule` 把 `sent` 捕进了闭包，重新赋值不会改发送目标，
+        # 因此记长度、取增量，而不是清空列表。
+        before = len(self.events.sent)
+
+        self.server.tick()
+
+        payloads = [payload for _pid, payload in self.events.sent[before:]]
+        statuses = [p for p in payloads if p["message"]["kind"] == MSG_DEVICE_STATUS]
+        self.assertEqual(len(statuses), 1, payloads)
+        status = statuses[0]
+        session = self.server.sync.registry.sessions_for_player("p1")[0]
+        self.assertEqual(status["session_id"], session.session_id)
+        self.assertEqual(status["network_id"], session.network_id)
+        self.assertEqual(status["epoch"], session.epoch)
+        self.assertEqual(status["message"]["device_id"], DRIVER)
+        self.assertEqual(status["message"]["state_text"], "离线")
+
+    def test_the_status_query_writes_nothing(self):
+        """11-08：「状态查询不触发业务写入」。读是纯的，版本与账本都不动。
+
+        查一次就推进一次版本、或往去重账本里记一笔的话，症状是「玩家只是
+        点开看了两眼，命令却开始被判成重复/过期」——查不出根因的那种。
+        """
+        self.build_network()
+        ref = self.device_ref()
+        before = (
+            self.server.topology.version,
+            self.server.admission.version,
+            self.server.sync.stats["commands"],
+        )
+
+        for _ in range(5):
+            status = self.server._sync_status_of(ref)
+            self.assertIsNotNone(status)
+
+        after = (
+            self.server.topology.version,
+            self.server.admission.version,
+            self.server.sync.stats["commands"],
+        )
+        self.assertEqual(before, after)
 
     def test_only_the_leaving_player_loses_his_sessions(self):
         self.build_network()

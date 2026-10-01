@@ -58,6 +58,16 @@ class ResourceDescriptions(object):
             raise ResourceResyncRequired("Unknown resource serial")
         return self._by_serial[serial]
 
+    def size(self):
+        # type: () -> int
+        """已登记的资源个数。
+
+        诊断用：**「客户端一张表都没有」与「有一张空的表」是两种不同的故障**
+        （前者是解码根本没有表可查、每条引用都判坏包，后者是表在但序号未知、
+        该走重同步），只看 `bad_packets` 分不出这两者。
+        """
+        return len(self._by_serial)
+
     def decode(self, reference):
         """客户端接收描述/数量引用。所有检查通过后才改变映射。"""
         if not isinstance(reference, dict):

@@ -117,8 +117,8 @@ class Reason(object):
     OUT_OF_RANGE = "out_of_range"
     BAD_PARAMETER = "bad_parameter"
     UNSUPPORTED = "unsupported"
-    #: 会话已失效（终端关闭、玩家离开、会话被顶替）。与「越权」分开：
-    #: 前者要重新开会话，后者是权限问题（架构规划 6.6）。
+    #: 会话已失效（终端关闭、玩家离开、会话被顶替、空闲超时回收）。
+    #: 与「越权」分开：前者要重新开会话，后者是权限问题（架构规划 6.6）。
     SESSION_INVALID = "session_invalid"
     #: 处理过程中抛出了异常。只在 `ApplicationService` 这一层使用——
     #: 引擎每帧调用数十次，把异常抛回去会刷屏并让后续帧全废
@@ -1010,6 +1010,13 @@ class CancelToken(object):
 # 版本一律叫 `expected_index_version`，物品视图版本一律叫 `item_view_version`
 # 或增量的 `base_version`/`new_version`。名字不同是唯一的防线：同名的话
 # 「客户端拿 UI 发布版本当交易预期版本」在代码层面根本看不出来。
+#
+# 两个版本的**产生者不同**，这一点在 11-03 定下命令通道时补记：
+# `expected_index_version` 对的是 `StorageService.index_version`（谁能动
+# 库存，谁才推进它），`item_view_version` 对的是终端视图自己的发布版本。
+# 库存动了视图迟早会动，但两者不是同一个计数器，也不能互相赋值——
+# 因此 `TerminalCommand` 只出现前者，`ItemDelta` 只出现后者，没有一条
+# 消息同时带两个。
 
 SYNC_SCHEMA_VERSION = 1
 
@@ -1030,18 +1037,24 @@ MSG_SESSION_CLOSE = "session_close"
 MSG_SNAPSHOT_REQUEST = "snapshot_request"
 MSG_ACK = "ack"
 MSG_SESSION_READY = "session_ready"
+MSG_INVENTORY_SNAPSHOT = "inventory_snapshot"
 MSG_SNAPSHOT_BEGIN = "snapshot_begin"
 MSG_SNAPSHOT_CHUNK = "snapshot_chunk"
 MSG_SNAPSHOT_END = "snapshot_end"
 MSG_ITEM_DELTA = "item_delta"
 MSG_RESYNC_REQUIRED = "resync_required"
 MSG_ERROR = "error"
+MSG_COMMAND = "command"
+MSG_COMMAND_RESULT = "command_result"
+#: 设备总体状态（11-08/11-13）。服务端单向推给客户端，见 `DeviceStatusMessage`。
+MSG_DEVICE_STATUS = "device_status"
 
 CLIENT_TO_SERVER_KINDS = frozenset(
-    [MSG_SESSION_OPEN, MSG_SESSION_CLOSE, MSG_SNAPSHOT_REQUEST, MSG_ACK]
+    [MSG_SESSION_OPEN, MSG_SESSION_CLOSE, MSG_SNAPSHOT_REQUEST, MSG_ACK, MSG_COMMAND]
 )
 SERVER_TO_CLIENT_KINDS = frozenset(
     [
+        MSG_INVENTORY_SNAPSHOT,
         MSG_SESSION_READY,
         MSG_SNAPSHOT_BEGIN,
         MSG_SNAPSHOT_CHUNK,
@@ -1049,6 +1062,8 @@ SERVER_TO_CLIENT_KINDS = frozenset(
         MSG_ITEM_DELTA,
         MSG_RESYNC_REQUIRED,
         MSG_ERROR,
+        MSG_COMMAND_RESULT,
+        MSG_DEVICE_STATUS,
     ]
 )
 
@@ -1367,6 +1382,41 @@ class SessionReady(SyncMessage):
         return cls(data["index_version"], data["item_view_version"])
 
 
+class InventorySnapshot(SyncMessage):
+    """当前玩家背包的服务端观察版本，槽号使用引擎顺序。"""
+
+    kind = MSG_INVENTORY_SNAPSHOT
+    __slots__ = ("revision", "slots")
+
+    def __init__(self, revision, slots):
+        require_count(revision, "revision")
+        if not isinstance(slots, (list, tuple)) or len(slots) != 36:
+            raise ValueError("inventory snapshot requires 36 slots")
+        rows = []
+        for index, row in enumerate(slots):
+            _require_fields(row, ("slot", "canonical", "count", "slot_version"),
+                            "inventory slot")
+            require_count(row["slot"], "slot")
+            require_count(row["count"], "count")
+            require_count(row["slot_version"], "slot_version")
+            if row["slot"] != index or row["slot_version"] < 1:
+                raise ValueError("invalid inventory slot/version")
+            if row["canonical"] != "":
+                require_text(row["canonical"], "canonical")
+            rows.append(dict(row))
+        self.revision = revision
+        self.slots = tuple(rows)
+
+    def to_dict(self, descriptions=None):
+        return {"kind": self.kind, "revision": self.revision,
+                "slots": [dict(row) for row in self.slots]}
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        _require_fields(data, ("kind", "revision", "slots"), "inventory_snapshot")
+        return cls(data["revision"], data["slots"])
+
+
 class SnapshotBegin(SyncMessage):
     kind = MSG_SNAPSHOT_BEGIN
     __slots__ = ("snapshot_id", "item_view_version", "total_items")
@@ -1624,7 +1674,22 @@ class ResyncRequired(SyncMessage):
 
 
 class SyncError(SyncMessage):
-    """一次请求被拒绝。`code` 用 `Reason` 里的原因码。"""
+    """一次请求被拒绝。`code` 用 `Reason` 里的原因码。
+
+    **信封的 `session_id` 是有含义的，不是装饰**（2026-09-30 起）：
+
+    - **空** ⇒ 「这个会话已经不在了」——会话不存在、被别人抢、或距离／维度／
+      设备复核不过。客户端收到就**丢掉本会话**。
+    - **非空** ⇒ 会话还活着，是**这一条请求自身**失败了（服务端执行命令时
+      抛了异常之类）。丢掉它会变成「服务端一次内部错误 = 玩家界面掉线」。
+
+    做成结构性的判据，而不是让客户端列一份「哪些原因码算会话级」的表：
+    那份表一旦与服务端漂移，表现是「界面看起来还正常、点什么都没反应」，
+    恰恰是最难查的一类。服务端那一侧见 `SyncTerminalHub._error`。
+
+    `error` 也是唯一允许空 `session_id` 的 S2C 消息（会话根本不存在时服务端
+    没有可填的），因此它与「S2C 必须带会话」那条规则不冲突。
+    """
 
     kind = MSG_ERROR
     __slots__ = ("request_id", "code", "detail")
@@ -1653,6 +1718,467 @@ class SyncError(SyncMessage):
         return cls(data["request_id"], data["code"], data["detail"])
 
 
+class TerminalCommand(SyncMessage):
+    """终端发来的一条手动存取命令（11-03）。
+
+    ## 为什么字段这么多
+
+    这条消息要覆盖 `StorageService` 已实现的五个背包动作（`inv_take` /
+    `inv_put` / `inv_split` / `inv_merge` / `inv_quick_move`），每个动作
+    各读几个不同的键（见 `payload()`）。**全部字段无条件序列化**，
+    缺席写 `None`——`_require_fields` 既拒缺项也拒多项，所以「可选字段
+    可以不写」在这里是不成立的。
+
+    这不是负担而是防线：客户端多塞一个字段会**当场**变成协议错误，
+    而不是被静静忽略。
+
+    ## `key` 是线上形状的字典
+
+    **不是 `ResourceKey` 实例。** `from_dict` 原样转交、`payload()` 原样转给
+    `StorageService`（后者的 `_key_from` 只认 `dict`），`__init__` 在
+    `DEBUG` 下会拒掉非字典。塞一个领域对象进去的后果是 `to_dict()` 把它
+    **原样写进消息**，引擎的 msgpack 编不了自定义对象——而**那要等发包那
+    一刻才炸**，界面上什么都看不到（2026-09-30 真机撞过）。转换的位置在
+    `NetworkClient.send_command`。
+
+    ## 为什么没有这些字段
+
+    - **没有 `player` / `player_id`。** 身份只有引擎在 C2S 事件上附的
+      `__id__` 一个起点，服务端从 `session.player_id` 取。定义了这个
+      字段，就迟早有一处代码去读它（`SessionOpen` 的文档说得更细）。
+    - **没有 `device_ref` / `target`。** 目标就是 `session.device_ref`，
+      而 `sessions._check_target` **每条请求**都已经核对过一次。再带一份
+      就是第二个真相源，且给伪造留了口子。
+    - **没有 `cursor`。** `StorageService._cursor_refusal` 只在
+      `payload.get("cursor")` 为真时才拦。不发它 = **没有这只手**，
+      这是「缺席」，**不等于**客户端声称「手里没拿东西」——R12 尚未定案
+      （见 `plans/tasks/11. 终端与客户端同步.md` 的待定段）。
+    - **没有 `op_id`。** 服务端取 `payload.get("op_id") or request_id`；
+      不发就自动落到 `request_id`，而去重账本用的正是 `request_id`。
+      多发一个 `op_id` 只会造出「账本按 A 去重、动作按 B 记账」的缝隙。
+
+    ## `expected_index_version` 目前**携带但不校验**
+
+    它是 11-01/11-02 定下的词汇（`SessionReady.index_version` 就是把它
+    交给客户端的），但本轮**没有任何消费者读它**，这是有意的：
+
+    客户端只在 `session_ready` 那一次拿到 `index_version`，此后
+    `_absorb` 不再更新它（`item_delta` 推的是 `item_view_version`，
+    另一个版本）。若服务端拿它做全局限定，客户端**自己发的第一条命令**
+    就会把 `index_version` 推高，第二条必然被判过期——而死锁：没有任何
+    通道会把新值告诉它。
+
+    真正在做过期防护的是**槽锚**（`slot_version` / `into_slot_version`，
+    见 `transfer._version_verdict`）：它比全局版本更精确，且客户端能
+    逐槽拿到新值。全局版本该不该管、由谁管，属未定规则。
+    """
+
+    kind = MSG_COMMAND
+    __slots__ = (
+        "request_id",
+        "expected_index_version",
+        "action",
+        "key",
+        "count",
+        "slot",
+        "slot_version",
+        "into_slot",
+        "into_slot_version",
+        "target",
+    )
+
+    #: 本条消息**允许**出现的字段。`from_dict` 用它做严格检查，
+    #: `tests` 用它当「不许悄悄加字段」的回归位。
+    FIELDS = (
+        "kind",
+        "request_id",
+        "expected_index_version",
+        "action",
+        "key",
+        "count",
+        "slot",
+        "slot_version",
+        "into_slot",
+        "into_slot_version",
+        "target",
+    )
+
+    def __init__(
+        self,
+        request_id,
+        action,
+        expected_index_version=None,
+        key=None,
+        count=None,
+        slot=None,
+        slot_version=None,
+        into_slot=None,
+        into_slot_version=None,
+        target=None,
+    ):
+        if settings.DEBUG:
+            require_text(request_id, "request_id")
+            require_text(action, "action")
+            if expected_index_version is not None:
+                require_count(expected_index_version, "expected_index_version")
+            if count is not None:
+                require_count(count, "count")
+            # **`key` 与线上同形：字典或 `None`，不是 `ResourceKey`。**
+            # 这条检查必须在离线就炸。放过去的话 `to_dict()` 会把对象原样
+            # 写进消息，引擎的 msgpack 编不了自定义对象——而那是**发包那一刻
+            # 才炸**的，界面上什么都看不到，只有引擎日志里一条
+            # `can not serialize 'ResourceKey' object`（2026-09-30 真机撞过）。
+            # `payload()` 与 `from_dict` 都按字典转交，这条与它们同源。
+            if key is not None and not isinstance(key, dict):
+                raise ValueError(
+                    "key 必须是字典（线上形状），得到 %r" % (type(key),)
+                )
+        self.request_id = request_id
+        self.expected_index_version = expected_index_version
+        self.action = action
+        self.key = key
+        self.count = count
+        self.slot = slot
+        self.slot_version = slot_version
+        self.into_slot = into_slot
+        self.into_slot_version = into_slot_version
+        self.target = target
+
+    def payload(self):
+        # type: () -> dict
+        """交给 `StorageService` 的载荷。**字段名映射只此一处。**
+
+        服务端那一侧一律用 `payload.get(...)` 读，因此缺席的键直接不写
+        即可（写 `None` 与不写等价）。这不影响消息本身的严格检查——
+        严格检查在 `to_dict`/`from_dict` 那一层，管的是线格式。
+
+        `count` 例外地总是写上：`inv_quick_move` 靠它的**假值**判断
+        「整槽搬走」，而 `None` 恰好是假值，两种写法在服务端等价，
+        写成总是出现只是让「客户端到底说没说数量」在日志里看得见。
+        """
+        data = {"action": self.action, "count": self.count}
+        if self.key is not None:
+            data["key"] = self.key
+        if self.slot is not None:
+            data["slot"] = self.slot
+        if self.slot_version is not None:
+            data["slot_version"] = self.slot_version
+        if self.into_slot is not None:
+            data["into_slot"] = self.into_slot
+        if self.into_slot_version is not None:
+            data["into_slot_version"] = self.into_slot_version
+        if self.target is not None:
+            data["target"] = self.target
+        return data
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "request_id": self.request_id,
+            "expected_index_version": self.expected_index_version,
+            "action": self.action,
+            "key": self.key,
+            "count": self.count,
+            "slot": self.slot,
+            "slot_version": self.slot_version,
+            "into_slot": self.into_slot,
+            "into_slot_version": self.into_slot_version,
+            "target": self.target,
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> TerminalCommand
+        _require_fields(data, cls.FIELDS, "command")
+        require_text(data["request_id"], "request_id")
+        require_text(data["action"], "action")
+        if data["expected_index_version"] is not None:
+            require_count(data["expected_index_version"], "expected_index_version")
+        if data["count"] is not None:
+            require_count(data["count"], "count")
+        return cls(
+            data["request_id"],
+            data["action"],
+            data["expected_index_version"],
+            data["key"],
+            data["count"],
+            data["slot"],
+            data["slot_version"],
+            data["into_slot"],
+            data["into_slot_version"],
+            data["target"],
+        )
+
+
+class CommandResultMessage(SyncMessage):
+    """一条命令的结果回执（11-03）。
+
+    `result` 就是 `CommandResult.to_dict()` 的原样字典。**这一层不重建
+    领域对象**：`CommandResult` 与 `TransferReceipt` 都没有 `from_dict`，
+    而回执是给界面看的展示数据（「成功/部分/过期/被拒/受阻」加上原因码），
+    重建一份出来只会多一个会与真身漂移的副本。
+
+    因此这里只验**形状**：`status` 是已知状态、`payload` 是字典、
+    `reasons` 是 `[{code, detail}]`。形状不对就当协议错误拒绝整条消息——
+    一个形状都不对的结果，界面拿它做不了任何判断。
+
+    `request_id` 在消息层与 `result` 里各有一份，且**必须相等**。这是
+    指纹式核对（同 `_decode_item` 的 `resource_key` 比对）：两份不一致
+    说明消息在某一层被拼错了，此时按哪一份去挂回请求都是猜。
+    """
+
+    kind = MSG_COMMAND_RESULT
+    __slots__ = ("request_id", "result")
+
+    def __init__(self, request_id, result):
+        if settings.DEBUG:
+            require_text(request_id, "request_id")
+            self._validate_result(request_id, result)
+        self.request_id = request_id
+        self.result = result
+
+    @staticmethod
+    def _validate_result(request_id, result):
+        # type: (str, object) -> None
+        if not isinstance(result, dict):
+            raise TypeError("命令结果必须是字典，得到 %r" % (type(result),))
+        _require_fields(
+            result,
+            ("request_id", "status", "payload", "reasons", "topology_version"),
+            "command_result.result",
+        )
+        require_text(result["request_id"], "command_result.result.request_id")
+        if result["request_id"] != request_id:
+            raise ValueError(
+                "命令结果的 request_id 与消息层不一致：%r != %r"
+                % (result["request_id"], request_id)
+            )
+        if result["status"] not in ALL_STATUSES:
+            raise ValueError("未知的命令结果状态 %r" % (result["status"],))
+        if not isinstance(result["payload"], dict):
+            raise TypeError("命令结果的 payload 必须是字典")
+        reasons = result["reasons"]
+        if not isinstance(reasons, (list, tuple)):
+            raise TypeError("命令结果的 reasons 必须是列表")
+        for reason in reasons:
+            if isinstance(reason, BlockReason):
+                continue
+            _require_fields(reason, ("code", "detail"), "command_result.reason")
+            require_text(reason["code"], "command_result.reason.code")
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {"kind": self.kind, "request_id": self.request_id, "result": self.result}
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> CommandResultMessage
+        _require_fields(data, ("kind", "request_id", "result"), "command_result")
+        require_text(data["request_id"], "request_id")
+        # 解析路径的检查**无条件执行**（同 `SyncEnvelope.from_dict`）：
+        # 这是来自对面的数据，本端没开 DEBUG 不能成为关掉边界检查的理由。
+        cls._validate_result(data["request_id"], data["result"])
+        return cls(data["request_id"], data["result"])
+
+
+#: `DeviceStatusMessage.validity` 的取值。`pending` = 结论还没确认——界面
+#: **照样显示「离线」**，只有 `reasons` 说明为什么还没确认（没有第三态）。
+DEVICE_STATUS_VALIDITY = ("ok", "pending")
+
+
+class DeviceStatusMessage(SyncMessage):
+    """一台设备的**总体**在线/离线与原因（11-08 / 11-13）。
+
+    **与进程内的 `DeviceStatusChanged` 不是一回事。** 那条只包带宽判定
+    （`admission.BandwidthChange`），任务 11 明令不得把它当成完整在线判定
+    （`plans/tasks/11. 终端与客户端同步.md` §「自动状态与详情」）。这里的
+    载荷取自 `controller.DeviceNetworkStatus`：有效唯一主控、型号是否被该
+    主控支持、网络是否允许工作、带宽与能源是否满足，合起来的那**一个**结论。
+
+    字段全部具名：图版本叫 `status_version`，**不叫 `version`**——同步区
+    头注那条「两个版本必须各有其名」在这里同样成立，一条裸 `version` 会让
+    「客户端把哪个版本当哪个用」在代码层面根本看不出来。
+
+    只有两种文本：`state_text` 是「在线」或「离线」；`validity` 为
+    `pending` 时结论尚未确认，界面照样显示离线。`ui_applicable` 为假的是
+    控制器本身（blocks.md 第 5 条不套用这套状态栏）：服务端不会为它发布，
+    客户端收到也应当忽略。
+    """
+
+    kind = MSG_DEVICE_STATUS
+    __slots__ = (
+        "device_id",
+        "generation",
+        "online",
+        "state_text",
+        "validity",
+        "run_state",
+        "run_state_text",
+        "master_instance_id",
+        "bandwidth_ok",
+        "power_ok",
+        "bandwidth_domain_id",
+        "ui_applicable",
+        "status_version",
+        "reasons",
+        "notes",
+    )
+
+    #: 线上字段的**唯一清单**，构造与解析共用，防止两边漂移。
+    FIELDS = (
+        "kind",
+        "device_id",
+        "generation",
+        "online",
+        "state_text",
+        "validity",
+        "run_state",
+        "run_state_text",
+        "master_instance_id",
+        "bandwidth_ok",
+        "power_ok",
+        "bandwidth_domain_id",
+        "ui_applicable",
+        "status_version",
+        "reasons",
+        "notes",
+    )
+
+    def __init__(
+        self,
+        device_id,
+        generation,
+        online,
+        state_text,
+        validity,
+        run_state,
+        run_state_text,
+        status_version,
+        reasons=(),
+        notes=(),
+        master_instance_id=None,
+        bandwidth_ok=None,
+        power_ok=None,
+        bandwidth_domain_id=None,
+        ui_applicable=True,
+    ):
+        self.device_id = device_id
+        self.generation = generation
+        self.online = online
+        self.state_text = state_text
+        self.validity = validity
+        self.run_state = run_state
+        self.run_state_text = run_state_text
+        self.master_instance_id = master_instance_id
+        #: True / False / None（待确认）。**None 不是「可以」。**
+        self.bandwidth_ok = bandwidth_ok
+        self.power_ok = power_ok
+        self.bandwidth_domain_id = bandwidth_domain_id
+        self.ui_applicable = ui_applicable
+        #: 计算该结论时的图版本。**不是**交易版本，也不是物品视图版本。
+        self.status_version = status_version
+        self.reasons = tuple(reasons)
+        self.notes = tuple(notes)
+        if settings.DEBUG:
+            self._validate(self.to_dict())
+
+    @classmethod
+    def _validate(cls, data):
+        # type: (dict) -> None
+        """形状校验。**不重建领域对象**，只验「界面拿它做得了判断吗」。
+
+        与 `CommandResultMessage._validate_result` 同一取向：形状不对就当
+        协议错误拒收整条消息，而不是让界面拿到半条能用的数据。
+        """
+        _require_count(data["generation"], "device_status.generation")
+        _require_count(data["status_version"], "device_status.status_version")
+        require_text(data["device_id"], "device_status.device_id")
+        require_text(data["state_text"], "device_status.state_text")
+        if data["validity"] not in DEVICE_STATUS_VALIDITY:
+            raise ValueError("未知的设备状态确认度 %r" % (data["validity"],))
+        for name in ("online", "ui_applicable"):
+            if not isinstance(data[name], bool):
+                raise TypeError("device_status.%s 必须是布尔值" % (name,))
+        for name in ("bandwidth_ok", "power_ok"):
+            value = data[name]
+            if value is not None and not isinstance(value, bool):
+                raise TypeError("device_status.%s 必须是布尔值或 None" % (name,))
+        for name in ("run_state", "run_state_text"):
+            if not isinstance(data[name], _TEXT_TYPES):
+                raise TypeError("device_status.%s 必须是文本" % (name,))
+        for name in ("master_instance_id", "bandwidth_domain_id"):
+            value = data[name]
+            if value is not None:
+                require_text(value, "device_status." + name)
+        reasons = data["reasons"]
+        if not isinstance(reasons, (list, tuple)):
+            raise TypeError("device_status.reasons 必须是列表")
+        for reason in reasons:
+            if isinstance(reason, BlockReason):
+                continue
+            _require_fields(reason, ("code", "detail"), "device_status.reason")
+            require_text(reason["code"], "device_status.reason.code")
+        notes = data["notes"]
+        if not isinstance(notes, (list, tuple)):
+            raise TypeError("device_status.notes 必须是列表")
+        for note in notes:
+            if not isinstance(note, _TEXT_TYPES):
+                raise TypeError("device_status.notes 的项必须是文本")
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "device_id": self.device_id,
+            "generation": self.generation,
+            "online": self.online,
+            "state_text": self.state_text,
+            "validity": self.validity,
+            "run_state": self.run_state,
+            "run_state_text": self.run_state_text,
+            "master_instance_id": self.master_instance_id,
+            "bandwidth_ok": self.bandwidth_ok,
+            "power_ok": self.power_ok,
+            "bandwidth_domain_id": self.bandwidth_domain_id,
+            "ui_applicable": self.ui_applicable,
+            "status_version": self.status_version,
+            "reasons": [
+                reason.to_dict() if isinstance(reason, BlockReason) else dict(reason)
+                for reason in self.reasons
+            ],
+            "notes": list(self.notes),
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> DeviceStatusMessage
+        _require_fields(data, cls.FIELDS, "device_status")
+        # 解析路径的检查**无条件执行**（同 `SyncEnvelope.from_dict`）：
+        # 这是来自对面的数据，本端没开 DEBUG 不是关掉边界检查的理由。
+        cls._validate(data)
+        return cls(
+            data["device_id"],
+            data["generation"],
+            data["online"],
+            data["state_text"],
+            data["validity"],
+            data["run_state"],
+            data["run_state_text"],
+            data["status_version"],
+            reasons=[
+                reason.to_dict() if isinstance(reason, BlockReason) else dict(reason)
+                for reason in data["reasons"]
+            ],
+            notes=list(data["notes"]),
+            master_instance_id=data["master_instance_id"],
+            bandwidth_ok=data["bandwidth_ok"],
+            power_ok=data["power_ok"],
+            bandwidth_domain_id=data["bandwidth_domain_id"],
+            ui_applicable=data["ui_applicable"],
+        )
+
+
 def _build_sync_message_types(classes):
     # type: (tuple) -> dict
     """建立 `kind -> 类` 注册表，并**当场拒绝重复的种类名**。
@@ -1675,6 +2201,7 @@ def _build_sync_message_types(classes):
 #: `sync_message_kinds()` 把它交给测试去和方向表对账。
 _SYNC_MESSAGE_TYPES = _build_sync_message_types(
     (
+        InventorySnapshot,
         SessionOpen,
         SessionClose,
         SnapshotRequest,
@@ -1686,6 +2213,9 @@ _SYNC_MESSAGE_TYPES = _build_sync_message_types(
         ItemDelta,
         ResyncRequired,
         SyncError,
+        TerminalCommand,
+        CommandResultMessage,
+        DeviceStatusMessage,
     )
 )
 

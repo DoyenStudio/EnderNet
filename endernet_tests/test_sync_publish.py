@@ -27,6 +27,10 @@ import testsupport
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.protocol import (
     Ack,
+    BlockReason,
+    CommandKind,
+    CommandResult,
+    MSG_COMMAND_RESULT,
     MSG_ERROR,
     MSG_ITEM_DELTA,
     MSG_RESYNC_REQUIRED,
@@ -40,6 +44,7 @@ from endernet.common.protocol import (
     SnapshotRequest,
     SyncEnvelope,
     SYNC_SCHEMA_VERSION,
+    TerminalCommand,
     VIEW_ITEM,
     VIEW_ORDER,
 )
@@ -100,11 +105,20 @@ class Fixture(unittest.TestCase):
         self.positions = {}
         self.dimensions = {}
         self.workable = {}
+        #: 手动存取命令的**执行方替身**。真的执行方是 `MasterController`
+        #: （经 `ServerBootstrap.submit_command`），而它属于 `server/network/`，
+        #: 不在本模块的可见范围内——注入回调正是为了这里能只测「命令是怎么
+        #: 拼出来的」，不去驱动整条主控链路（那条链路的用例在
+        #: `test_sync_commands` 之外的各服务测试里）。
+        self.submissions = []
+        self.submit_result = None
+        self.submit_error = None
         self.hub = TerminalSyncHub(
             policy=self.policy,
             storage_of=self._storage_of,
             context_of=self._context_of,
             port=self.port,
+            submit=self._submit,
         )
         self.add_network(NETWORK, x=10)
         self.stand = self.stands[NETWORK]
@@ -129,6 +143,16 @@ class Fixture(unittest.TestCase):
     def _storage_of(self, network_id):
         stand = self.stands.get(network_id)
         return None if stand is None else stand.service
+
+    def _submit(self, command):
+        # type: (object) -> object
+        """记录命令并按 `submit_result` / `submit_error` 作答。"""
+        self.submissions.append(command)
+        if self.submit_error is not None:
+            raise self.submit_error
+        if self.submit_result is not None:
+            return self.submit_result
+        return CommandResult.ok(command.request_id, {"action": "stand-in"})
 
     def _context_of(self, player_id, device_ref):
         """按**坐标**查，返回注册表里**当前**那一台——与生产同形。
@@ -200,6 +224,24 @@ class Fixture(unittest.TestCase):
             session.player_id,
         )
 
+    def send_as(self, session, message, player_id):
+        # type: (object, object, str) -> object
+        """以**另一个玩家**的身份发一条消息，用来测「别人的会话」。
+
+        `player_id` 是引擎在事件上附的那个值（`__id__`），因此伪造它不需要
+        动信封——信封里本来就没有玩家字段，这正是那条设计要保证的。
+        """
+        return self.hub.handle(
+            SyncEnvelope(
+                message,
+                session_id=session.session_id,
+                network_id=session.network_id,
+                epoch=session.epoch,
+                view_kind=session.view_kind,
+            ),
+            player_id,
+        )
+
     def ack(self, session, transfer_id, sequence):
         # type: (object, str, int) -> None
         self.send(session, Ack("ack-1", transfer_id, sequence))
@@ -269,6 +311,91 @@ class Fixture(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # 发布窗口
 # ---------------------------------------------------------------------------
+
+
+class InventoryPrimitives(object):
+    def __init__(self):
+        self.items = {}
+
+    def player_slot_count(self, player_id):
+        return 36
+
+    def player_item(self, player_id, slot):
+        return self.items.get((player_id, slot))
+
+
+class TestInventoryVersions(Fixture):
+    def setUp(self):
+        Fixture.setUp(self)
+        from endernet.server.adapters.containers_engine import EngineInventoryProvider
+        from endernet.client.network_client import NetworkClient
+        self.primitives = InventoryPrimitives()
+        self.provider = EngineInventoryProvider(self.primitives)
+        self.service.inventories = self.provider
+        self.client = NetworkClient()
+        self.session, reply = self.open_view()
+        self.client.receive(reply.to_dict())
+
+    def set_slot(self, name):
+        self.primitives.items[("p1", 0)] = testsupport.engine_item(name, 4)
+
+    def latest(self):
+        return self.of_kind("inventory_snapshot", "p1")[-1]
+
+    def test_sync_and_command_share_versions_and_reject_observed_aba(self):
+        from endernet.server.storage.transfer import SlotAnchor
+        self.set_slot("minecraft:stone")
+        self.hub.tick()
+        first = self.latest()
+        self.client.receive(first.to_dict())
+        old = self.client.inventory_slots[0]["slot_version"]
+        self.set_slot("minecraft:dirt")
+        self.hub.tick()
+        self.set_slot("minecraft:stone")
+        self.hub.tick()
+        endpoint = self.provider.endpoint_of("p1")
+        verdict = endpoint.anchor_verdict(SlotAnchor(0, STONE, old))
+        self.assertEqual(verdict[1], Reason.STALE_VERSION)
+        self.client.receive(self.latest().to_dict())
+        fresh = self.client.inventory_slots[0]["slot_version"]
+        self.assertGreater(fresh, old)
+        self.assertTrue(endpoint.anchor_verdict(SlotAnchor(0, STONE, fresh))[0])
+        # 迟到的旧快照不能覆盖当前版本。
+        self.assertIsNone(self.client.receive(first.to_dict()))
+        self.assertEqual(self.client.inventory_slots[0]["slot_version"], fresh)
+
+    def test_unchanged_snapshot_is_not_resent_and_send_failure_retries(self):
+        self.set_slot("minecraft:stone")
+        self.port.reachable = False
+        self.hub.tick()
+        self.assertEqual(self.of_kind("inventory_snapshot"), [])
+        self.port.reachable = True
+        self.hub.tick()
+        self.hub.tick()
+        self.assertEqual(len(self.of_kind("inventory_snapshot")), 1)
+
+    def test_player_and_session_isolation_and_close_cleanup(self):
+        other, reply = self.open_view(player_id="p2", request_id="r2")
+        self.set_slot("minecraft:stone")
+        self.hub.tick()
+        first = self.latest()
+        self.client.receive(first.to_dict())
+        second = self.of_kind("inventory_snapshot", "p2")[-1]
+        self.assertEqual(second.message.slots[0]["canonical"], "")
+        self.assertIsNone(self.client.receive(second.to_dict()))
+        self.assertEqual(self.client.session_id, self.session.session_id)
+        self.close_view(self.session)
+        self.assertNotIn(self.session.session_id, self.hub._inventory_sent)
+        self.client.drop_session()
+        self.assertEqual(self.client.inventory_slots, {})
+        self.assertIsNone(self.client.receive(first.to_dict()))
+
+    def test_read_failure_does_not_send_empty_snapshot(self):
+        self.set_slot("minecraft:stone")
+        self.hub.tick()
+        self.provider.endpoint_of("p1").adapter.invalidate()
+        self.hub.tick()
+        self.assertEqual(len(self.of_kind("inventory_snapshot")), 1)
 
 
 class TestPublishWindow(Fixture):
@@ -993,6 +1120,155 @@ class TestRuntimeChanges(Fixture):
 
 
 # ---------------------------------------------------------------------------
+# 空闲超时回收的通知
+# ---------------------------------------------------------------------------
+
+
+class TestExpiryNotice(Fixture):
+    """会话因空闲超时被回收时，服务端要**主动**告诉客户端。
+
+    2026-10-01 真机实测到的缺陷：`evict_expired` 只清服务端自己的账，一条
+    包都不发；客户端于是继续以为会话还在——界面照常显示**过期库存**，直到
+    下一次点击被拒才丢会话。本节钉的是「那一条通知真的发出去、发得对、且
+    客户端那边真的认」。
+
+    **TTL 本身没有被改动**：会话照样会被回收（它是客户端崩溃或断线时的
+    兜底），变的只是它不再无声无息。
+    """
+
+    def shorten_ttl(self, frames=3):
+        # type: (int) -> None
+        """把 TTL 调短，让用例只推几帧就到期。
+
+        改的是**策略值**，判据一个字没动——按 `SessionPolicy` 的说法，
+        用例该对着字段断言，而不是硬编 600 这个数去推 601 帧。
+        """
+        self.hub.registry.policy.session_ttl_frames = frames
+
+    def expire(self, frames=5):
+        # type: (int) -> None
+        for _ in range(frames):
+            self.hub.tick()
+
+    def error_payloads(self, player_id="p1"):
+        # type: (str) -> list
+        """端口上发给该玩家的 `error` **原始载荷**（还没解码的那一层）。"""
+        return [
+            payload
+            for pid, payload in self.port.sent
+            if pid == player_id and payload["message"]["kind"] == MSG_ERROR
+        ]
+
+    def test_expiry_sends_a_sessionless_error(self):
+        """空会话号 + 发得出去（线上格式合法）+ 只发一条。"""
+        self.shorten_ttl()
+        session, _ = self.open_view()
+        self.assertEqual(self.error_payloads(), [])
+        self.expire()
+        self.assertIsNone(
+            self.hub.registry.get(session.session_id), "会话本来就没被回收"
+        )
+        self.assertEqual(len(self.error_payloads()), 1)
+        payload = self.error_payloads()[0]
+        # **空的是关键**：客户端正是靠「信封里没有会话号」认出「这不是某一次
+        # 请求失败，是这个会话本身没了」。带上号就等于没发。
+        self.assertEqual(payload["session_id"], "")
+        self.assertEqual(payload["network_id"], "")
+        self.assertEqual(payload["epoch"], "")
+        self.assertEqual(payload["message"]["code"], Reason.SESSION_INVALID)
+        self.assertEqual(self.hub.stats["expired_notices"], 1)
+        self.assertEqual(self.hub.stats["expired_notices_skipped"], 0)
+
+    def test_the_client_recognises_it_as_session_death(self):
+        """服务端「发了」与客户端「认了」是两件事，这里把两头接起来。
+
+        只断言服务端发出了一个包，测不到客户端认不认——而认不出来的症状
+        （界面照常显示过期库存）与根本不发**一模一样**。所以把真发出去的
+        那份载荷喂给一个真客户端。
+        """
+        from endernet.client.network_client import NetworkClient
+
+        self.shorten_ttl()
+        _, reply = self.open_view()
+        client = NetworkClient()
+        client.receive(reply.to_dict())
+        self.assertTrue(client.has_session())
+
+        self.expire()
+        payloads = self.error_payloads()
+        self.assertEqual(len(payloads), 1)
+        client.receive(json.loads(json.dumps(payloads[0])))
+        self.assertFalse(client.has_session(), "客户端没认出来，界面会继续显示过期库存")
+        self.assertEqual(client.stats["sessions_dropped"], 1)
+
+    def test_no_notice_while_this_player_still_has_a_live_session(self):
+        """玩家还有别的活会话时**不发**——那多半正是客户端手里那个。
+
+        客户端一次只持有一个会话，而它手里那个一定是**最后开的**那个；
+        旧的之所以还在，是因为关界面时那条 `session_close` 没送到。替旧
+        会话发一条「你的会话没了」，客户端会把它手里那个新会话一起丢掉。
+        """
+        self.shorten_ttl()
+        old, _ = self.open_view(request_id="r1")
+        self.expire(2)
+        fresh, _ = self.open_view(request_id="r2")
+        self.assertNotEqual(old.session_id, fresh.session_id)
+
+        self.expire(2)   # 第 4 帧：old（第 0 帧）到期，fresh（第 2 帧）没有
+        self.assertIsNone(self.hub.registry.get(old.session_id))
+        self.assertIsNotNone(self.hub.registry.get(fresh.session_id), "连新的也回收了")
+        self.assertEqual(self.error_payloads(), [], "把客户端手里那个会话也顶掉了")
+        self.assertEqual(self.hub.stats["expired_notices"], 0)
+        self.assertEqual(self.hub.stats["expired_notices_skipped"], 1)
+
+    def test_one_notice_per_player_even_when_several_expire_together(self):
+        """同一玩家的几条会话同帧到期，只发一条。"""
+        self.shorten_ttl()
+        self.open_view(request_id="r1")
+        self.open_view(request_id="r2")
+        self.expire()
+        self.assertEqual(len(self.error_payloads()), 1)
+        self.assertEqual(self.hub.stats["expired_notices"], 1)
+
+    def test_every_player_gets_their_own_notice(self):
+        """别的玩家的会话到期，不能连累也不该漏掉。"""
+        self.shorten_ttl()
+        self.open_view(player_id="p1", request_id="r1")
+        self.open_view(player_id="p2", request_id="r2")
+        self.expire()
+        self.assertEqual(len(self.error_payloads("p1")), 1)
+        self.assertEqual(len(self.error_payloads("p2")), 1)
+        self.assertEqual(self.hub.stats["expired_notices"], 2)
+
+    def test_an_unreachable_port_does_not_break_the_tick(self):
+        """端口不通只记一笔，不能把整帧打挂（这一条每帧都会走到）。
+
+        **不能走 `_note_failure` 那一套**：会话已经注销，没有下一次要退避的
+        重试，而那个分支会去动一个已经不在表里的会话。
+        """
+        session, _ = self.open_view()
+        # 先把快照发完：不然这几帧里的失败是**传输**的，与这一条通知混在
+        # 同一个计数里，测的就不是它了。
+        self.settle(session)
+        self.port.sent = []
+        self.shorten_ttl(1)
+        self.port.reachable = False
+        before = self.hub.stats["send_failures"]
+        self.expire(3)
+        self.assertEqual(self.hub.stats["expired_notices"], 0)
+        self.assertEqual(self.hub.stats["send_failures"], before + 1)
+
+    def test_a_disabled_ttl_neither_evicts_nor_notifies(self):
+        """`session_ttl_frames <= 0` 是「不按时间回收」，那时没有人可通知。"""
+        self.hub.registry.policy.session_ttl_frames = 0
+        session, _ = self.open_view()
+        self.expire(50)
+        self.assertIsNotNone(self.hub.registry.get(session.session_id))
+        self.assertEqual(self.error_payloads(), [])
+        self.assertEqual(self.hub.stats["expired_notices"], 0)
+
+
+# ---------------------------------------------------------------------------
 # 历史与重取
 # ---------------------------------------------------------------------------
 
@@ -1147,11 +1423,19 @@ class TestRefusals(Fixture):
         self.assertEqual(self.port.sent, [])
 
     def test_the_error_envelope_needs_no_session(self):
-        """`error` 是「S2C 必须带会话」唯一的例外，否则只能硬编一个假会话。"""
+        """`error` 是「S2C 必须带会话」唯一的例外，否则只能硬编一个假会话。
+
+        **2026-09-30 起会话字段一律留空**：会话不存在时服务端没有可填的
+        session_id，而空与不空正是客户端据以区分「这个会话已经没了」与
+        「会话还活着、只是这条请求失败了」的**唯一**判据（见服务端
+        `_error` 的说明）。原先是把客户端自称的那个 id 回显回去——它听起来
+        更「有礼貌」，但那样两类错误在线上完全同形，客户端只能去列一份
+        「哪些原因码算会话级」的表，而那份表会漂移。
+        """
         reply = self.hub.handle(
             SyncEnvelope(SnapshotRequest("q1", 0), session_id="s404"), "p1"
         )
-        self.assertEqual(reply.session_id, "s404")
+        self.assertEqual(reply.session_id, "")
         self.assertEqual(reply.network_id, "")
         # 解回来仍然认得出是关于哪次请求的。
         wire = json.loads(json.dumps(reply.to_dict()))
@@ -1275,6 +1559,205 @@ class TestWireEntry(Fixture):
         self.assertIsNone(self.hub.receive("p1", data))
         self.assertIsNone(self.hub.registry.get(session.session_id))
         self.assertEqual(self.port.sent, [])
+
+
+# ---------------------------------------------------------------------------
+# 手动存取命令（11-03）
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalCommands(Fixture):
+    """`command` → `submit` → `command_result` 这条回路。
+
+    这里测的是**中枢**那一半：命令是怎么拼出来的、结果怎么回去、出错时
+    回不回。命令**执行**的那一半（`StorageService` 的五个背包动作）在
+    `test_terminal_inventory.py`，两边不重复。
+    """
+
+    def command(self, session, action="inv_take", request_id="c1", **kwargs):
+        # type: (object, str, str, dict) -> tuple
+        """发一条命令，返回 `(handle 的返回值, 端口上收到的 command_result 列表)`。
+
+        **两个出口要分开取。** 业务结果走 `_send`（进端口），而会话级的
+        拒收走 `handle` 的返回值（`_error` 构造回包交给调用方）。只看端口
+        会漏掉后者，只看返回值会漏掉前者。
+        """
+        reply = self.send(session, TerminalCommand(request_id, action, **kwargs))
+        return reply, self.of_kind(MSG_COMMAND_RESULT, session.player_id)
+
+    def test_a_command_reaches_the_executor_and_the_result_comes_back(self):
+        session, _ = self.open_view()
+        _, replies = self.command(session, count=32, slot=3)
+        self.assertEqual(len(self.submissions), 1)
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0].message.result["status"], "ok")
+        self.assertEqual(replies[0].session_id, session.session_id)
+        self.assertEqual(replies[0].message.request_id, "c1")
+
+    def test_the_source_is_built_from_the_session_not_the_payload(self):
+        """来源三件套全部取**会话**。
+
+        载荷里根本没有这些字段（`TerminalCommand` 的文档列了理由），所以
+        「客户端自报身份」在这一层不是「被忽略」而是**不可能表达**——
+        这正是这条用例要钉住的：命令上的 `source` 与发消息的那个玩家
+        一致，而不是与消息内容一致。
+        """
+        session, _ = self.open_view(player_id="p1")
+        self.command(session, count=1)
+        command = self.submissions[0]
+        self.assertEqual(command.source.player_id, "p1")
+        self.assertEqual(command.source.device_ref, session.device_ref)
+        self.assertEqual(command.source.dimension, session.dimension)
+        self.assertEqual(command.source.session_id, session.session_id)
+        self.assertTrue(command.source.distance_ok)
+        self.assertEqual(command.kind, CommandKind.STORAGE)
+        self.assertEqual(command.request_id, "c1")
+
+    def test_topology_version_is_left_unset_on_purpose(self):
+        """**不拿交易版本冒充图版本。**
+
+        中枢手里没有权威的图版本源；把 `expected_index_version` 填进
+        `topology_version` 会让主控按错误的依据放行或拒绝，而且不会报错。
+        交易版本自己也**不进动作载荷**：它是消息层的字段（`payload()` 的
+        文档写着），而服务端那五个背包动作没有一个读它——目前没有任何
+        消费者校验它（理由见 `TerminalCommand` 的类文档）。
+        """
+        session, _ = self.open_view()
+        message = TerminalCommand(
+            "c1", "inv_merge", 999, {"k": "v"}, 4, 3, 9, into_slot=5
+        )
+        self.send(session, message)
+        command = self.submissions[0]
+        self.assertIsNone(command.topology_version)
+        self.assertNotIn("expected_index_version", command.payload)
+        # 字段名映射**只有一处**（`TerminalCommand.payload()`），中枢原样转交：
+        # 两边各拼一次就是两条会各自漂移的路径。
+        self.assertEqual(command.payload, message.payload())
+
+    def test_a_business_refusal_is_an_answer_not_an_error(self):
+        """`blocked` / `rejected` 走 `command_result`，不走 `error`。
+
+        它们是**结论**（界面据此提示玩家），而 `error` 留给会话与信道级
+        的拒收。混在一起会让「没空间了」看起来像「协议坏了」。
+        """
+        session, _ = self.open_view()
+        self.submit_result = CommandResult.rejected(
+            "c1", [BlockReason(Reason.BAD_PARAMETER, "参数不合法")]
+        )
+        reply, replies = self.command(session, count=1)
+        self.assertIsNone(reply, "业务失败不是协议错误，不该另回一条 error")
+        self.assertEqual(replies[0].message.result["status"], "rejected")
+        self.assertEqual(
+            replies[0].message.result["reasons"][0]["code"], Reason.BAD_PARAMETER
+        )
+        self.assertEqual(self.hub.stats["command_rejected"], 1)
+
+    def test_an_executor_that_raises_still_gets_an_answer(self):
+        """执行方抛异常时**也回一条**。
+
+        客户端没有时钟也没有超时（`NetworkClient._in_flight` 只进不出），
+        不回则那条在途记录永不释放，表现为「按了一次之后这个界面再也发不
+        出命令」——而日志里什么都没有。
+        """
+        session, _ = self.open_view()
+        self.submit_error = RuntimeError("boom")
+        reply, replies = self.command(session, count=1)
+        self.assertEqual(replies, [], "异常不该被当成一条正常结果发出去")
+        self.assertEqual(reply.message.kind, MSG_ERROR)
+        self.assertEqual(reply.message.code, Reason.INTERNAL)
+        self.assertEqual(reply.message.request_id, "c1")
+        self.assertEqual(self.hub.stats["command_errors"], 1)
+
+    def test_an_executor_returning_the_wrong_type_is_never_a_success(self):
+        """注入接错时**绝不假装成功**：静默当成 ok 会让界面显示一次
+        没发生的存取，而库存没动——账实不符里最难查的一种。"""
+        session, _ = self.open_view()
+        self.submit_result = {"status": "ok"}
+        reply, replies = self.command(session, count=1)
+        self.assertEqual(replies, [])
+        self.assertEqual(reply.message.code, Reason.INTERNAL)
+        self.assertEqual(self.hub.stats["command_errors"], 1)
+
+    def test_a_command_is_revalidated_like_every_other_message(self):
+        """走开之后发命令：会话被关，命令**没有**到达执行方。
+
+        命令是能改库存的那一类，因此这条复核比增量更该过——放行等于让一个
+        已经站在远处的客户端继续动这台设备的网络。
+        """
+        session, _ = self.open_view()
+        self.positions["p1"] = (999.0, 64.0, 0.0)
+        reply, _ = self.command(session, count=1)
+        self.assertEqual(self.submissions, [])
+        self.assertEqual(reply.message.code, Reason.OUT_OF_RANGE)
+        self.assertIsNone(self.hub.registry.get(session.session_id))
+
+    def test_a_command_on_someone_elses_session_is_refused(self):
+        """别人的会话：**不告诉他这条会话存在**，与「不存在」同一个回答。"""
+        session, _ = self.open_view(player_id="p1")
+        reply = self.send_as(
+            session, TerminalCommand("c1", "inv_take", count=1), "p2"
+        )
+        self.assertEqual(self.submissions, [])
+        self.assertEqual(reply.message.code, Reason.SESSION_INVALID)
+
+    def test_without_an_executor_the_command_is_blocked_not_dropped(self):
+        """没接执行方 = 装配遗漏，回 `blocked` 而不是静默丢弃。
+
+        与「执行方坏了」分开：前者该让界面说「暂时不可用」，后者该在日志里
+        留堆栈。
+        """
+        hub = TerminalSyncHub(
+            policy=self.policy,
+            storage_of=self._storage_of,
+            context_of=self._context_of,
+            port=self.port,
+        )
+        # 会话开着**这个**中枢上：会话号是逐注册表发的，拿另一个中枢的号
+        # 会先撞上 `SESSION_INVALID`，那样测到的是会话校验而不是缺执行方。
+        opened = hub.handle(
+            SyncEnvelope(SessionOpen("r-open", self.device, 0), view_kind=VIEW_ITEM),
+            "p1",
+        )
+        self.port.sent = []
+        hub.handle(
+            SyncEnvelope(
+                TerminalCommand("c1", "inv_take", count=1),
+                session_id=opened.session_id,
+                network_id=opened.network_id,
+                epoch=opened.epoch,
+                view_kind=VIEW_ITEM,
+            ),
+            "p1",
+        )
+        results = [
+            SyncEnvelope.from_dict(json.loads(json.dumps(payload)))
+            for _, payload in self.port.sent
+            if payload["message"]["kind"] == MSG_COMMAND_RESULT
+        ]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].message.result["status"], "blocked")
+        self.assertEqual(
+            results[0].message.result["reasons"][0]["code"], Reason.SERVICE_NOT_READY
+        )
+        self.assertEqual(
+            results[0].message.result["request_id"], "c1",
+            "客户端靠它把结果挂回那次请求；丢了它界面就只剩「出错了」",
+        )
+
+    def test_command_counters_separate_refusals_from_executions(self):
+        """`commands` 与 `command_rejected` 分开计。
+
+        「按了没反应」到底是没收到还是被拒了，只有分开计才答得出来。
+        """
+        session, _ = self.open_view()
+        self.command(session, count=1, request_id="c1")
+        self.submit_result = CommandResult.stale(
+            "c2", [BlockReason(Reason.STALE_VERSION, "槽已变")]
+        )
+        self.command(session, count=1, request_id="c2")
+        self.assertEqual(self.hub.stats["commands"], 2)
+        self.assertEqual(self.hub.stats["command_rejected"], 1)
+        self.assertEqual(self.hub.stats["command_errors"], 0)
 
 
 if __name__ == "__main__":

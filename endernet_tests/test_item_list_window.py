@@ -234,21 +234,44 @@ class ItemListWindowTests(unittest.TestCase):
         def controls(node):
             return {key.split("@")[0]: value for entry in node["controls"] for key, value in entry.items()}
 
-        parts = controls(data["item_can_be_selected"])
+        template = data["item_can_be_selected"]
+        parts = controls(template)
+        # 模板的集合名与绑定名是 `$` 变量（11-03 起与终端共用一份），因此先按
+        # 它自己声明的 `|default` 把它们填回去——那些默认值就是本用例要守的
+        # 11-09 口径。**不写死成字面量**：写死了这个用例就只是把 JSON 抄了一
+        # 遍，默认值改了它照样绿，而 11-09 的窗口会当场瞎掉。
+        variables = {}
+        for key, value in template.items():
+            if key.startswith("$"):
+                variables["$" + key[1:].split("|")[0]] = value
+
+        def filled(value):
+            # type: (object) -> object
+            return variables.get(value, value) if isinstance(value, str) else value
+
+        self.assertEqual(filled("$item_collection_name"), self.module.COLLECTION)
         for control, name, target, flag in (
-            (data["item_can_be_selected"], "has_item", "#visible", BinderStub.BF_BindBool),
+            (template, "has_item", "#visible", BinderStub.BF_BindBool),
             (parts["item_renderer"], "item_id_aux", "#item_id_aux", BinderStub.BF_BindInt),
             (parts["selected_frame"], "selected", "#visible", BinderStub.BF_BindBool),
         ):
             binding = control["bindings"][0]
             self.assertEqual(binding["binding_name_override"], target)
-            key = (flag, binding["binding_collection_name"], binding["binding_name"])
+            key = (flag, filled(binding["binding_collection_name"]), filled(binding["binding_name"]))
             self.assertIn(key, self.screen.collection_bindings)
-            self.assertEqual(binding["binding_name"], self.module.BINDING_PREFIX + name)
+            self.assertEqual(
+                filled(binding["binding_name"]), self.module.BINDING_PREFIX + name)
         button = parts["interact_btn"]
-        self.assertIn((BinderStub.BF_ButtonClickUp, button["$pressed_button_name"]), self.screen.bindings)
-        self.assertEqual(button["bindings"][0]["binding_collection_name"], self.module.COLLECTION)
-        self.assertTrue(button["button_mappings"])
+        self.assertIn(
+            (BinderStub.BF_ButtonClickUp, filled(button["$pressed_button_name"])),
+            self.screen.bindings)
+        # 按键映射指向的是**控件自己的那个属性**，属性里装的才是绑定名，因此
+        # 要按 `$pressed_button_name` 取一次值、再把这个值当变量填一次。
+        self.assertEqual(
+            filled(button[button["button_mappings"][0]["to_button_id"]]),
+            self.module.BINDING_PREFIX + "select")
+        self.assertEqual(
+            filled(button["bindings"][0]["binding_collection_name"]), self.module.COLLECTION)
         grid = data["item_list_grid"]
         self.assertEqual(grid["collection_name"], self.module.COLLECTION)
         self.assertEqual(grid["bindings"][0]["binding_name_override"], "#maximum_grid_items")

@@ -42,16 +42,24 @@ import testsupport
 from endernet.client import network_client
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.protocol import (
+    MSG_COMMAND,
     MSG_SESSION_CLOSE,
     MSG_SESSION_OPEN,
     MSG_SESSION_READY,
     MSG_SNAPSHOT_REQUEST,
+    STATUS_OK,
     SYNC_CHANNEL_C2S,
     SYNC_CHANNEL_S2C,
+    CommandResult,
+    CommandResultMessage,
     SessionReady,
+    SnapshotChunk,
     SyncEnvelope,
     SyncError,
+    TerminalCommand,
 )
+from endernet.common.resource_key import ResourceKey
+from endernet.common.resource_sync import ResourceDescriptions
 from endernet.server.adapters import messages
 
 MESSAGES_PATH = os.path.join(
@@ -154,12 +162,14 @@ class TestEventClassNamesMatchTheProtocol(unittest.TestCase):
         self.assertTrue(issubclass(self.s2c, self.events_module.CustomS2CEvent))
 
     def test_building_twice_yields_distinct_classes(self):
-        """`build_event_classes` 每次新建，**缓存的责任在端口实例上**。
+        """`build_event_classes` 每次新建，**缓存的责任在 `classes()` 上**。
 
-        这条是给 `AdapterSyncPort.classes()` 立前提的：如果这里返回同一对类，
-        那边就不需要缓存；而 `EventBus` 恰恰是拿**类对象本身**当字典键的
-        （`event_listeners[priority][event]`），两次拿到不同的类对象会注册到
-        两张表里，注销只摘得掉一张——症状是热重载后同一个包被处理两次。
+        这条是给 `AdapterSyncPort.classes()` / `ClientEventPort.classes()` 立
+        前提的：如果这里返回同一对类，那两边就不需要缓存；而 `EventBus` 恰恰
+        是拿**类对象本身**当字典键的（`event_listeners[priority][event]`），
+        两次拿到不同的类对象就多登记一次，而注销只摘得掉其中一张表。
+        真机上多登记这一次的代价是**每一条 S2C 消息多投递一份**，见
+        `TestEventClassesAreSharedPerProcess`。
         """
         again = build_pair(self.events_module)
         self.assertIsNot(again[0], self.c2s)
@@ -285,6 +295,33 @@ class TestPortRegistration(unittest.TestCase):
         first = self.port.classes()
         self.assertIs(self.port.classes(), first)
         self.assertEqual(first, self.port.classes())
+
+    def test_a_second_port_shares_the_same_classes(self):
+        """**两个端口也必须是同一对类**，不只是同一个端口两次。
+
+        客户端那一侧实测过这条的代价（`TestEventClassesAreSharedPerProcess`）：
+        各建一份 → 引擎侧多登记一次 → 每建一个端口，同一条消息就多投递一份。
+        服务端这一侧本轮**没有实测到重复**（进程里只有一个装配实例），这条
+        用例按同一个构造、同一个理由立前提，**不记为服务端已实测**。
+        """
+        second = messages.AdapterSyncPort(
+            self.binder, events=lambda: self.events_module
+        )
+        self.assertIs(second.classes()[0], self.port.classes()[0])
+        self.assertIs(second.classes()[1], self.port.classes()[1])
+
+    def test_a_different_events_module_gets_its_own_classes(self):
+        """缓存按模块对象分，且**两侧不共用**：客户端的 `build_event_classes`
+        造出的方向相反，共用一张缓存会让 S2C 的类变成「只发不收」的那一半。"""
+        other = fake_events_module()
+        self.assertIsNot(
+            messages.shared_event_classes(self.events_module)[0],
+            messages.shared_event_classes(other)[0],
+        )
+        self.assertIsNot(
+            messages.shared_event_classes(self.events_module)[0],
+            network_client.shared_event_classes(self.events_module)[0],
+        )
 
     def test_player_leave_registers_the_leave_event(self):
         self.assertEqual(self.port.on_player_leave(lambda player_id: None), 1)
@@ -495,7 +532,12 @@ class FakeBus(object):
     - 已注销的监听器**收不到**（这正是 `unlisten` 那条用例要证明的）；
     - 注销只摘掉回调、不摘掉那张表本身（`_dyn_unlisten` 的已知行为），
       所以替身保留空列表而不是删掉键——否则「注销后再注册」会走出一条
-      真机上不存在的路径。
+      真机上不存在的路径；
+    - **登记按事件类去重**（`_dyn_listen` 的 `event not in
+      self.event_listeners[priority]`），同一个类注册第二个回调**不会**再往
+      引擎登记一次。替身必须照做：这一条正是「每个端口建一份事件类」那个
+      缺陷在离线看不出来的原因（真机实测第 4 个端口收到 4 份，见
+      `network_client.shared_event_classes`）。
     """
 
     def __init__(self):
@@ -513,7 +555,8 @@ class FakeBus(object):
                 if hasattr(func, "_td_static"):
                     return func
                 func._td_static = True
-            self.registrations.append((event_cls, func, priority, static))
+            if event_cls not in self._handlers:
+                self.registrations.append((event_cls, func, priority, static))
             self._handlers.setdefault(event_cls, []).append(func)
             return func
 
@@ -689,6 +732,92 @@ class TestClientPortRegistration(ClientPortFixture):
         )
 
 
+class TestEventClassesAreSharedPerProcess(ClientPortFixture):
+    """事件类**进程内只有一份**，不是「每个端口一份」。
+
+    真机实测（2026-09-29）：连开 4 个端口，第 4 个把同一条 S2C 消息收到了
+    **4 份**，而同一条消息的 `session_id` 四份完全相同——服务端只发了一次，
+    重复全在客户端。第 N 个端口收到 N 份的原因是**引擎侧的登记只增不减**：
+
+    - `EventBus._dyn_listen` 以**事件类对象**为键判重，新建一个类就多一次
+      `_add_sys_event_listener`；
+    - `_add_sys_event_listener` 用 `tdevent_handler_<模块>.<类名><优先级>` 这个
+      名字把处理器 `setattr` 到 system 上，几个端口造出的类同模块同类名，
+      于是处理器同名、只留得下最后一份——实测里先注册的端口**一条都收不到**；
+    - 注销走 `_dyn_unlisten`，它从不调 `UnListenForEvent`，所以关掉界面
+      （`unlisten`）也不会把登记还回去。
+
+    后果不止「多算一遍」：同一批增量被应用两次时第二次的 `base_version` 已经
+    对不上，模型判成断档并重取快照——**每开一次界面，之后每次刷新都白重取
+    一份快照**。
+
+    `FakeBus` 按真总线的去重规则记账（`registrations` 每个事件类只记一条），
+    所以「登记了几条」在这里是可断言的。引擎那一侧的命名冲突没法在离线复现，
+    它由 `shared_event_classes` 从源头上避免（类相同 → 判重命中 → 根本不登记）。
+    """
+
+    def test_two_ports_share_one_pair_of_classes(self):
+        first = self.port()
+        second = self.port()
+        self.assertIs(first.classes()[0], second.classes()[0])
+        self.assertIs(first.classes()[1], second.classes()[1])
+        self.assertIsNot(first, second)
+
+    def test_a_different_events_module_gets_its_own_classes(self):
+        """缓存按**模块对象**分，不按全局。两个模块共用一份会让离线测试互相
+        串台——而真机上只有一份 `tooldelta.events`，不构成问题。"""
+        other = fake_events_module()
+        self.assertIsNot(
+            network_client.shared_event_classes(self.events_module)[1],
+            network_client.shared_event_classes(other)[1],
+        )
+
+    def test_the_helper_is_idempotent(self):
+        first = network_client.shared_event_classes(self.events_module)
+        self.assertIs(network_client.shared_event_classes(self.events_module), first)
+
+    def test_opening_and_closing_three_times_registers_the_bus_once(self):
+        """**界面开关三轮，引擎侧只应登记一条。**
+
+        这一条是那个真机缺陷的回归门：按「每个端口建一份」的写法，这里会是
+        三条登记，实机上就是第三条起每条消息投递三份。
+        """
+        seen = []
+        s2c = None
+        for _ in range(3):
+            port = self.port()
+            port.listen(seen.append)
+            _, s2c = port.classes()
+            port.unlisten()
+        self.assertEqual(len(self.bus.registrations), 1)
+        # 最后一个端口已经注销，此时一条都到不了回调上——「登记还在」不等于
+        # 「还收得到」，这正是 `unlisten` 必须真的调 `RemoveEventListener`。
+        self.assertEqual(self.bus.deliver(s2c, {"kind": MSG_SESSION_READY}), 0)
+        self.assertEqual(seen, [])
+        # 再开一轮（第四个端口）：仍然只有那一条登记，且它收得到、只收一份。
+        again = self.port()
+        again.listen(seen.append)
+        self.assertIs(again.classes()[1], s2c)
+        self.assertEqual(len(self.bus.registrations), 1)
+        self.assertEqual(self.bus.deliver(s2c, {"kind": MSG_SESSION_READY}), 1)
+        self.assertEqual(len(seen), 1)
+
+    def test_each_live_port_receives_the_message_exactly_once(self):
+        """两个端口同时听着（同一份类）：一条消息**各收一份**，不是各收两份。
+
+        「同时两个端口」在生产里不会出现（一个界面一个），但它是这条不变量
+        最直接的量法：登记只有一条，回调表里有几个回调就调几次。
+        """
+        ports = [self.port(), self.port()]
+        seen = [[], []]
+        for index, port in enumerate(ports):
+            port.listen(seen[index].append)
+        _, s2c = ports[0].classes()
+        self.assertEqual(len(self.bus.registrations), 1)
+        self.bus.deliver(s2c, {"kind": MSG_SESSION_READY})
+        self.assertEqual([len(calls) for calls in seen], [1, 1])
+
+
 class TestClientPortSend(ClientPortFixture):
     def test_a_payload_reaches_the_engine_without_a_recipient(self):
         """客户端没有收件人参数：对端恒为服务端，引擎自己知道是谁在发。"""
@@ -824,11 +953,259 @@ class TestNetworkClientRequests(NetworkClientFixture):
         self.assertEqual(len(set(ids)), 3)
         self.assertEqual(self.client.stats["requests"], 3)
 
+    def test_request_ids_are_unique_across_clients(self):
+        """**序号是进程级的，不是实例级的。**
+
+        界面每打开一次就新建一个 `NetworkClient`。序号若随实例从 0 重新
+        开始，第二个会话里序列相同的请求会与上一个会话**撞号**，而服务端的
+        去重账本按 `(request_id, 来源设备实例)` 记账、保留约 900 tick——
+        那条命令拿回来的是一条**重放结果**（状态仍是当初的 `ok`），
+        **东西一件没搬**。2026-10-01 真机症状：关掉终端再打开、同样两个
+        槽位再交换一次，界面按本地虚拟空间画出了交换，真实背包纹丝不动。
+        """
+        other = network_client.NetworkClient(port=self.port())
+        first = self.client.open_session(DEVICE_REF, 0)
+        second = other.open_session(DEVICE_REF, 0)
+        self.assertNotEqual(first, second)
+        # 同一个实例内部仍然逐条递增（`_in_flight` 按 id 挂回执）。
+        self.open_a_session()
+        self.assertNotEqual(first, self.client.request_snapshot(0))
+
     def test_ack_carries_the_transfer_and_sequence(self):
         self.open_a_session()
         self.client.ack("t1", 4)
         self.assertEqual(self.body(0)["transfer_id"], "t1")
         self.assertEqual(self.body(0)["sequence"], 4)
+
+
+class TestNetworkClientCommands(NetworkClientFixture):
+    """客户端的命令通道（11-03）。
+
+    与 `TestTerminalCommands`（`test_sync_publish.py`）是**同一条协议的两端**：
+    那边钉服务端怎么读一条命令、回的又是什么；这边钉客户端发出去的那份
+    线上字典长什么样、回执怎么挂回请求上。
+    """
+
+    def command(self, action="inv_take", **kwargs):
+        """发一条命令，返回 `(request_id, 线上字典)`。"""
+        request_id = self.client.send_command(action, **kwargs)
+        return request_id, self.sent[-1]
+
+    def result_of(self, request_id, status=STATUS_OK, **extra):
+        """造一条形状合法的回执字典（`CommandResult.to_dict()` 的那一份）。"""
+        result = CommandResult.ok(request_id, {"action": "inv_take"}).to_dict()
+        result.update(extra)
+        return CommandResultMessage(request_id, result)
+
+    def test_send_command_sends_the_expected_body(self):
+        """这条钉的是**字段被原样带过去**，因此 `slot` 之类仍用占位值。
+
+        但 **`key` 不能用占位值**：它的契约是「收 `ResourceKey`、在
+        `send_command` 里转成线上字典」，塞别的东西进去会当场炸（那里直接
+        调 `.to_dict()`）。这正是一条形状用例该有的样子——它顺手把「`key`
+        到底是什么」也钉住了。
+        """
+        self.open_a_session()
+        key = ResourceKey.item("minecraft:stone")
+        request_id, data = self.command(
+            "inv_take", expected_index_version=7, key=key,
+            count=32, slot="slot_0", slot_version=3,
+        )
+        self.assertEqual(data["session_id"], "s1")
+        self.assertEqual(data["network_id"], "n1")
+        self.assertEqual(data["epoch"], "e1")
+        body = data["message"]
+        self.assertEqual(body["kind"], MSG_COMMAND)
+        self.assertEqual(body["request_id"], request_id)
+        self.assertEqual(body["action"], "inv_take")
+        self.assertEqual(body["expected_index_version"], 7)
+        self.assertEqual(body["key"], key.to_dict(), "线上形状是字典")
+        self.assertEqual(body["count"], 32)
+        self.assertEqual(body["slot"], "slot_0")
+        self.assertEqual(body["slot_version"], 3)
+
+    def test_the_whole_body_is_msgpack_encodable(self):
+        """**真机撞过（2026-09-30）。** C2S 的信封是引擎用 msgpack 编的，
+        而它编不了自定义对象。
+
+        `key` 曾经是 `ResourceKey` 实例、被 `to_dict()` 原样写进消息，于是
+        报名 `can not serialize 'ResourceKey' object`——**而那是发包那一刻
+        才炸的**，界面上什么都看不到，只有引擎日志里一行。协议层每一处形状
+        检查都拦不住它：它们看的是「键在不在」「值是不是文本/整数」，而
+        `key` 这两样都不查。
+
+        这条直接拿编码器过一遍**整条信封**，因此将来任何一种「塞了个对象
+        进去」都能在这里被拦下，而不必逐个字段去加检查。
+        """
+        try:
+            import msgpack
+        except ImportError:      # 引擎自带；离线环境没装就跳过
+            self.skipTest("没有 msgpack，跳过编码检查")
+        self.open_a_session()
+        for action, kwargs in (
+            ("inv_take", dict(expected_index_version=7, count=5, slot=9,
+                              slot_version=7)),
+            ("inv_swap", dict(expected_index_version=7, count=None, slot=9,
+                              slot_version=7, into_slot=10,
+                              into_slot_version=7)),
+            ("inv_put", dict(expected_index_version=7, count=5)),
+        ):
+            _, data = self.command(
+                action, key=ResourceKey.item("minecraft:stone"), **kwargs
+            )
+            msgpack.packb(data, use_bin_type=True)
+
+    def test_command_absent_optionals_are_still_written_as_none(self):
+        """可选字段**必须写出来**，不能省略。
+
+        `_require_fields` 既拒缺项也拒多项，所以「不写＝没这个意思」在这里
+        不成立。这条同时是「客户端多塞一个 `cursor` 会当场变成协议错误」的
+        依据——真正收窄字段集的地方是 `TerminalCommand.FIELDS`，不是这里
+        少写几个键。
+        """
+        self.open_a_session()
+        _, data = self.command("inv_take")
+        body = data["message"]
+        for field in TerminalCommand.FIELDS:
+            self.assertIn(field, body, "缺少字段 %s" % (field,))
+        self.assertIsNone(body["key"])
+        self.assertIsNone(body["count"])
+        self.assertIsNone(body["slot"])
+        self.assertIsNone(body["slot_version"])
+        self.assertIsNone(body["into_slot"])
+        self.assertIsNone(body["into_slot_version"])
+        self.assertIsNone(body["target"])
+
+    def test_command_carries_no_identity_or_cursor(self):
+        """身份、目标与光标持有物**都不在命令里**。
+
+        身份由引擎附在 C2S 原始字典上（服务端从 `session.player_id` 取）、
+        目标就是 `session.device_ref`（`_check_target` 每请求已核一次）、
+        `cursor` 一旦出现服务端的 `_cursor_refusal` 就会拦——R12 尚未定案，
+        不发是「没有这只手」，不是「声称手上没东西」。
+        `TerminalCommand` 的类文档逐条记了理由。
+        """
+        self.open_a_session()
+        _, data = self.command("inv_take")
+        body = data["message"]
+        for absent in ("player_id", "player", "device_ref", "cursor", "op_id", "__id__"):
+            self.assertNotIn(absent, body)
+
+    def test_a_command_needs_a_session(self):
+        """没有会话就当场报错，而不是发一条无会话的命令出去等回包。"""
+        with self.assertRaises(ValueError):
+            self.client.send_command("inv_take")
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.client.pending_commands(), 0)
+
+    def test_the_command_stays_in_flight_until_its_result_arrives(self):
+        self.open_a_session()
+        request_id, _ = self.command("inv_take")
+        self.assertEqual(self.client.pending_commands(), 1)
+        self.feed(self.result_of(request_id))
+        self.assertEqual(self.client.pending_commands(), 0)
+        self.assertEqual(self.client.pending_results(), 1)
+
+    def test_taking_results_drains_them(self):
+        self.open_a_session()
+        request_id, _ = self.command("inv_take")
+        self.feed(self.result_of(request_id))
+        taken = self.client.take_command_results()
+        self.assertEqual(len(taken), 1)
+        self.assertEqual(taken[0].request_id, request_id)
+        #: 取走即出队：留着会让界面把同一条回执报两遍。
+        self.assertEqual(self.client.take_command_results(), [])
+        self.assertEqual(self.client.pending_results(), 0)
+
+    def test_taking_a_bounded_number_of_results_leaves_the_rest(self):
+        self.open_a_session()
+        first, _ = self.command("inv_take")
+        second, _ = self.command("inv_put")
+        self.feed(self.result_of(first))
+        self.feed(self.result_of(second))
+        self.assertEqual(len(self.client.take_command_results(1)), 1)
+        self.assertEqual(self.client.pending_results(), 1)
+
+    def test_a_result_for_a_command_we_never_sent_is_counted(self):
+        """回执对不上**不关会话、不回错误**：一条对不上的回执不构成会话级
+        故障，为它关掉玩家的界面只会更糟。计数是留给诊断的。"""
+        self.open_a_session()
+        self.feed(self.result_of("c99"))
+        self.assertEqual(self.client.stats["unknown_results"], 1)
+        self.assertEqual(self.client.stats["stale_results"], 0)
+        self.assertEqual(self.client.session_id, "s1")
+        #: 仍然取得到：界面拿它至少能说「有条命令的结果对不上」。
+        self.assertEqual(self.client.pending_results(), 1)
+
+    def test_a_result_for_a_wiped_ledger_is_counted_as_stale(self):
+        """发过命令、账本却被会话清掉 → 迟到或重复的回执。
+
+        与「我们压根没发过」是两种故障，两个计数器分开就是为了让它们
+        在诊断里长得不一样（见 `_absorb_command_result`）。
+        """
+        self.open_a_session()
+        self.command("inv_take")
+        self.client.drop_session()
+        self.assertEqual(self.client.pending_commands(), 0)
+        self.open_a_session()
+        self.feed(self.result_of("c1"))
+        self.assertEqual(self.client.stats["stale_results"], 1)
+        self.assertEqual(self.client.stats["unknown_results"], 0)
+
+    def test_a_command_result_does_not_advance_the_item_view_version(self):
+        """回执说的是「这条命令成没成」，**不是**「本地已经是最新的」。
+
+        拿它去推视图版本，等于凭「命令成功」推断库存视图已经追上——而回执
+        完全可能先于增量到达。`item_delta` 同样不推（同一条纪律）。
+        """
+        self.open_a_session(index_version=7, item_view_version=9)
+        request_id, _ = self.command("inv_take")
+        self.feed(self.result_of(request_id))
+        self.assertEqual(self.client.item_view_version, 9)
+
+    def test_drop_session_clears_the_ledgers_without_sending(self):
+        """`drop_session` 给「服务端已判死这个会话」用：再发 `session_close`
+        只会换来又一条没人看的错误。"""
+        self.open_a_session()
+        self.command("inv_take")
+        sent_before = len(self.sent)
+        self.client.drop_session()
+        self.assertEqual(len(self.sent), sent_before)
+        self.assertEqual(self.client.pending_commands(), 0)
+        self.assertEqual(self.client.pending_results(), 0)
+        self.assertFalse(self.client.has_session())
+        self.assertIsNone(self.client.device_ref())
+
+    def test_close_session_also_clears_the_command_ledgers(self):
+        """在途表按会话算：留着它，下个会话的「有没有命令没回来」会一直说有。"""
+        self.open_a_session()
+        self.command("inv_take")
+        self.client.close_session()
+        self.assertEqual(self.client.pending_commands(), 0)
+        self.assertEqual(self.client.pending_results(), 0)
+
+    def test_a_bad_result_shape_is_a_bad_packet_and_keeps_the_command_in_flight(self):
+        """形状不对的回执**整条拒收**，在途记录因此留在表里。
+
+        这是有意的方向：把一条读不懂的回执当成「这条命令答过了」，会让
+        界面以为命令已经结束，而实际发生什么完全不知道。
+        """
+        self.open_a_session()
+        request_id, _ = self.command("inv_take")
+        data = self.envelope(self.result_of(request_id)).to_dict()
+        data["message"]["result"]["status"] = "no_such_status"
+        self.assertIsNone(self.client.receive(data))
+        self.assertEqual(self.client.stats["bad_packets"], 1)
+        self.assertEqual(self.client.pending_commands(), 1)
+        self.assertEqual(self.client.pending_results(), 0)
+
+    def test_diagnostics_reports_both_command_ledgers(self):
+        self.open_a_session()
+        request_id, _ = self.command("inv_take")
+        self.feed(self.result_of(request_id))
+        report = self.client.diagnostics()
+        self.assertEqual(report["in_flight"], 0)
+        self.assertEqual(report["results"], 1)
 
 
 class TestNetworkClientReceive(NetworkClientFixture):
@@ -887,18 +1264,48 @@ class TestNetworkClientReceive(NetworkClientFixture):
         self.assertIsNone(self.client.receive(data))
         self.assertEqual(self.client.stats["bad_packets"], 1)
 
-    def test_an_error_envelope_does_not_wipe_the_session(self):
-        """`error` 是唯一允许空会话字段的 S2C 消息（会话根本不存在时服务端
-        没有可填的）。拿它去覆盖，会让一个本来好好的会话在收到一条错误之后
-        自己失忆——之后发的每条请求都会被服务端当成无会话而拒掉。
+    def test_an_error_without_a_session_means_the_session_is_gone(self):
+        """**空会话字段的 `error` = 「那个会话已经没了」，客户端据此丢掉它。**
+
+        2026-09-30 起这是**结构性判据**（见服务端 `_error` 的说明）。丢掉
+        之后遮罩会出（`is_unavailable` 判的就是「有没有会话」）、库存快照
+        作废、在途命令表清空——原先这几样一样都不会发生：`error` 到了客户端
+        **没有任何人看它**，于是会话一直「活着」，界面看起来正常却什么都做
+        不了，连选中框都赖着不走。
+
+        **丢掉 ≠ 失忆。** 这里原先钉的是反过来的口径（「空字段不覆盖已有
+        值」）。两者的差别只在「空会话字段意味着什么」：现在服务端**只在
+        会话真的没了的时候**才留空，所以留着那份本地状态才是失忆——它记的
+        是一个服务端已经不认的会话。
         """
         self.open_a_session()
-        payload = SyncEnvelope(SyncError("req-1", "stale_version")).to_dict()
+        payload = SyncEnvelope(SyncError("req-1", "session_invalid")).to_dict()
+        envelope = self.client.receive(payload)
+        self.assertIsNotNone(envelope)
+        self.assertEqual(self.client.session_id, "")
+        self.assertEqual(self.client.epoch, "")
+        self.assertEqual(self.client.stats["bad_packets"], 0)
+        self.assertEqual(self.client.stats["errors"], 1)
+        self.assertEqual(self.client.stats["sessions_dropped"], 1)
+
+    def test_an_error_naming_a_live_session_keeps_it(self):
+        """**带会话 id 的 `error` = 「这条请求自己失败了」，不是会话级故障。**
+
+        服务端执行命令时抛异常走的就是这一支（`_error(session.session_id,
+        ...)`，`server/sync/terminal.py`）。把它当成会话判死，等于「服务端
+        一次内部错误 = 玩家界面掉线」——比它要修的那个毛病更糟。
+        """
+        self.open_a_session()
+        payload = SyncEnvelope(
+            SyncError("req-1", "internal"),
+            session_id="s1", network_id="n1", epoch="e1",
+        ).to_dict()
         envelope = self.client.receive(payload)
         self.assertIsNotNone(envelope)
         self.assertEqual(self.client.session_id, "s1")
         self.assertEqual(self.client.epoch, "e1")
-        self.assertEqual(self.client.stats["bad_packets"], 0)
+        self.assertEqual(self.client.stats["errors"], 1)
+        self.assertEqual(self.client.stats["sessions_dropped"], 0)
 
     def test_taking_events_drains_them(self):
         self.open_a_session()
@@ -980,6 +1387,12 @@ class TestNetworkClientReceive(NetworkClientFixture):
         self.assertEqual(self.client.session_id, "s1")
         self.assertEqual(self.client.item_view_version, 9)
 
+    def test_diagnostics_reports_whether_there_is_a_description_table(self):
+        """没有表与有一张空的表**是两种故障**，`bad_packets` 分不出来。"""
+        self.assertIsNone(self.client.diagnostics()["descriptions"])
+        self.open_a_session()
+        self.assertEqual(self.client.diagnostics()["descriptions"], 0)
+
     def test_diagnostics_keeps_the_two_versions_apart(self):
         self.open_a_session(index_version=7, item_view_version=9)
         report = self.client.diagnostics()
@@ -993,14 +1406,173 @@ class TestNetworkClientReceive(NetworkClientFixture):
             sorted(report["stats"]),
             [
                 "bad_packets",
+                "commands",
+                "describe_tables",
                 "dropped",
+                "errors",
+                "foreign_packets",
                 "handler_errors",
                 "received",
                 "requests",
                 "sessions_closed",
+                "sessions_dropped",
                 "sessions_opened",
+                "stale_results",
+                "unknown_results",
             ],
         )
+
+
+class TestNetworkClientDescriptions(NetworkClientFixture):
+    """客户端自己那张资源描述表（`resource_identity.md` §3）。
+
+    **这一条是真机上先炸出来的。** 服务端带描述表编码时，一个序号只在
+    首次发送时附带描述，之后只发 `{epoch, serial}`。客户端不持表的话，
+    快照分片与增量**两个包里每一条都解不出来**——而 `session_ready` /
+    `snapshot_begin` / `snapshot_end` 不带引用，照常通过。真机上的症状是
+    「会话开得起来、快照开始也收得到、内容一条没有」，`bad_packets` 缓慢
+    上涨。离线用例原先全用 `to_dict()`（不带描述表）编码，走的正是
+    `resource_key` 那条不需要表的路径，因此整条引用路径没有用例覆盖。
+    """
+
+    def wire(self, message, server, **kwargs):
+        """按**服务端真实的编码方式**（带描述表）产生线上字典。"""
+        return self.envelope(message, **kwargs).to_dict(server)
+
+    def server_table(self, epoch="e1"):
+        return ResourceDescriptions("n1", epoch)
+
+    def test_a_chunk_carrying_references_is_decoded_not_counted_as_bad(self):
+        server = self.server_table()
+        stone = ResourceKey.item("minecraft:stone")
+        iron = ResourceKey.item("minecraft:iron_ingot")
+        # 先把序号发出去（真机上就是这一条 `session_ready`），客户端才有表。
+        self.open_a_session()
+        payload = self.wire(
+            SnapshotChunk("s1", 0, ((stone, 4, 0), (iron, 3, 0))), server
+        )
+        envelope = self.client.receive(payload)
+        self.assertIsNotNone(envelope, "带引用的分片被判成了坏包")
+        self.assertEqual(self.client.stats["bad_packets"], 0)
+        self.assertEqual(
+            [(key.name, stored) for key, stored, _ in envelope.message.items],
+            [("minecraft:stone", 4), ("minecraft:iron_ingot", 3)],
+        )
+        self.assertEqual(self.client.diagnostics()["descriptions"], 2)
+
+    def test_only_the_first_send_of_a_serial_carries_the_description(self):
+        """第二次发同一个序号只有 `{epoch, serial}`——所以表必须留着。
+
+        这条钉的是**缺陷的成因**：若表没留（或每条都重新建），第二个分片
+        会因为「没有描述可读」被判坏包，而第一个好好的。顺序不能反：
+        `encode` 本身就会登记序号，先探一次它的返回值就等于把「首次」
+        用掉了，再发的第一个分片已经不带描述了。
+        """
+        server = self.server_table()
+        stone = ResourceKey.item("minecraft:stone")
+        self.open_a_session()
+        self.assertIsNotNone(
+            self.client.receive(self.wire(SnapshotChunk("s1", 0, ((stone, 4, 0),)), server))
+        )
+        # 序号已经发出去了，服务端这边再发同一个键就只剩引用。
+        self.assertNotIn("description", server.encode(stone))
+        self.assertIsNotNone(
+            self.client.receive(self.wire(SnapshotChunk("s1", 1, ((stone, 4, 0),)), server))
+        )
+        self.assertEqual(self.client.stats["bad_packets"], 0)
+        self.assertEqual(self.client.stats["describe_tables"], 1)
+
+    def test_a_new_session_gets_a_new_table(self):
+        """重开会话时服务端会换一张表（序号从 1 重新分配），客户端必须跟上。
+
+        跟不上就是最坏的一种：两边的 1 号指着不同的资源，谁都不报错。
+        客户端认得的仍然是上一会话的键，直到序号重绑检查把这一条判成坏包。
+
+        **换会话的真实路径是先关掉旧的**（面板每次打开都是一份新的
+        `NetworkClient`），所以这里先 `close_session()` 把号清掉再收新会话。
+        持着旧号直接收另一个号的 `session_ready` 是**另一台终端**的流，
+        现在会被丢掉——见 `test_a_foreign_session_does_not_steal_our_state`。
+        """
+        first = self.server_table()
+        stone = ResourceKey.item("minecraft:stone")
+        self.open_a_session()
+        self.assertIsNotNone(
+            self.client.receive(self.wire(SnapshotChunk("s1", 0, ((stone, 4, 0),)), first))
+        )
+        self.client.close_session()
+        self.assertFalse(self.client.has_session())
+        # 新会话：同一网络、同一 epoch，但服务端的表是新的。
+        self.feed(SessionReady(4, 1), session_id="s2")
+        second = self.server_table()
+        gold = ResourceKey.item("minecraft:gold_ingot")
+        envelope = self.client.receive(
+            self.wire(SnapshotChunk("s2", 0, ((gold, 2, 0),)), second, session_id="s2")
+        )
+        self.assertIsNotNone(envelope, "新会话沿用了旧表，序号被解成了别的资源")
+        self.assertEqual(envelope.message.items[0][0].name, "minecraft:gold_ingot")
+        self.assertEqual(self.client.stats["describe_tables"], 2)
+
+    def test_a_foreign_session_does_not_steal_our_state(self):
+        """**并存会话**：别人会话的包不进描述表、不改本地状态、不入队。
+
+        2026-10-01 真机实测撞出来的那条。关掉终端再打开，旧会话在
+        `session_ttl_frames` 到期前还活着还在推，而引擎按玩家派发，两条流
+        交替到达。旧实现里每来一条别人的包就把整张描述表换成空的，于是
+        **本会话自己的分片与增量跟着全解不出来**——快照判截断 → 重取 →
+        再被打断，滚成 3210 次请求的循环，界面上「存进去的东西永远不出现」。
+
+        这里钉三件事：别人的包不进表（`describe_tables` 不涨）、
+        `bad_packets` 不动（它是**别人的包**，不是坏包——两者混在一起就
+        分不清「协议对不上」与「并存会话」）、以及本会话的包照样解得出来。
+        """
+        ours = self.server_table()
+        stone = ResourceKey.item("minecraft:stone")
+        self.open_a_session()
+        self.assertEqual(self.client.session_id, "s1")
+
+        # 另一个会话（同一玩家、同一网络）的分片：它有自己的表。
+        theirs = self.server_table()
+        gold = ResourceKey.item("minecraft:gold_ingot")
+        queued = self.client.pending_count()   # 本会话那条 `session_ready`
+        self.assertIsNone(
+            self.client.receive(
+                self.wire(SnapshotChunk("s9", 0, ((gold, 2, 0),)), theirs,
+                          session_id="s9")
+            )
+        )
+        self.assertEqual(self.client.stats["foreign_packets"], 1)
+        self.assertEqual(self.client.stats["describe_tables"], 1)
+        self.assertEqual(self.client.stats["bad_packets"], 0)
+        self.assertEqual(self.client.session_id, "s1", "别人的包把会话号顶掉了")
+        self.assertEqual(self.client.pending_count(), queued, "别人的包进了队列")
+
+        # 本会话的包**没有**被牵连。
+        envelope = self.client.receive(
+            self.wire(SnapshotChunk("s1", 0, ((stone, 4, 0),)), ours)
+        )
+        self.assertIsNotNone(envelope)
+        self.assertEqual(envelope.message.items[0][0].name, "minecraft:stone")
+        self.assertEqual(self.client.stats["describe_tables"], 1)
+
+    def test_a_rotated_epoch_gets_a_new_table(self):
+        """epoch 是网络代次，轮换即「服务端那张表作废」。"""
+        self.feed(SessionReady(1, 1))
+        self.assertEqual(self.client.stats["describe_tables"], 1)
+        self.feed(SessionReady(1, 1), epoch="e2")
+        self.assertEqual(self.client.stats["describe_tables"], 2)
+
+    def test_an_error_envelope_does_not_build_a_table(self):
+        """`error` 的会话字段是空的，拿它建表只会让后续每条引用都判旧 epoch。"""
+        self.open_a_session()
+        self.client.receive(SyncEnvelope(SyncError("r1", "no_session")).to_dict())
+        self.assertEqual(self.client.stats["describe_tables"], 1)
+        self.assertEqual(self.client.stats["bad_packets"], 0)
+
+    def test_closing_the_session_drops_the_table(self):
+        self.open_a_session()
+        self.assertEqual(self.client.diagnostics()["descriptions"], 0)
+        self.client.close_session()
+        self.assertIsNone(self.client.diagnostics()["descriptions"])
 
 
 if __name__ == "__main__":

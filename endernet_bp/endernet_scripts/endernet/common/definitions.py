@@ -564,6 +564,15 @@ ASSEMBLE_CHAMBER_SLOT_COUNT = Value(
 #:
 #: 这个分叉当时在门禁里**没有任何征兆**：`test_assets.py` 只比对「界面画没画
 #: 这个集合」，不比对格数。改完之后它也不会被自动拦住——见 11-07 的 B 组。
+#:
+#: **两端现在都认这 5 格。** 领域层那半边于 2026-09-29 补上（与取货口一并，
+#: 11-07 的 C1）：`server/devices/io.py` 的 `PortStore.ensure` 为 `INTAKE` 建了
+#: `BUFFER_CONTAINER` 形态的 `TransferBuffer`，件数上界由
+#: `PortPolicy.intake_buffer_capacity` 从本值推出。
+#:
+#: 但**规格要求的流向「朝向容器 → 缓冲 → 网络」尚未实现**：`dispatch_intake`
+#: 至今走的是朝向容器 → 网络直输（06-05）。「这 5 格有权威来源」与
+#: 「缓冲已打通」仍是两件事，不要读成后者。
 ITEM_INTAKE_PORT_SLOT_COUNT = Value(
     5,
     note="物品存货口的缓冲槽数；也是方块容器格数（User 2026-09-29 定，以界面为准）",
@@ -573,10 +582,14 @@ ITEM_INTAKE_PORT_SLOT_COUNT = Value(
 #: 缓存槽」、`plans/ui/bus_item_output_io.md`「业务槽号 0–4」、
 #: 界面 JSON `grid_dimensions = [5, 1]`），这条只是把它收进单一来源表。
 #:
-#: **它只管方块容器。** 领域层里取货口**仍然没有缓冲**：`server/devices/io.py`
-#: 的 `BUFFERED_ROLES` 不含 `OUTPUT`，`PortStore.ensure` 给它 `buffer=None`。
-#: 那半边是 11-07 的 C1、**尚未实现**——所以「方块上有 5 格」与「服务端不认
-#: 这 5 格」在两边对齐之前是并存的，不要读成已经打通。
+#: **两端现在都认这 5 格。** 领域层那半边于 2026-09-29 补上（11-07 的 C1）：
+#: `server/devices/io.py` 的 `PortStore.ensure` 为 `OUTPUT` 建了
+#: `BUFFER_CONTAINER` 形态的 `TransferBuffer`，件数上界由
+#: `PortPolicy.output_cache_capacity` 从本值推出。
+#:
+#: 但**「网络 → 缓存 → 朝向容器」这条中转路由尚未实现**（06-06），
+#: 缓存开关（`PortConfig.cache_enabled`）目前只被记录与展示。
+#: 「这 5 格有权威来源」与「缓存已打通」仍是两件事，不要读成后者。
 ITEM_OUTPUT_PORT_SLOT_COUNT = Value(
     5,
     note="物品取货口的缓存槽数；也是方块容器格数（blocks.md 已确定）",
@@ -705,6 +718,37 @@ def devices_for_mode(mode):
     # type: (str) -> frozenset
     """该模式的样板在文档里指定给哪些设备。未知模式返回空集。"""
     return PATTERN_DEVICES.get(mode, frozenset())
+
+
+#: 右键哪个终端方块打开哪个界面（11-03）。
+#:
+#: **四个终端方块都在 `DEVICES` 里、都带 `CAP_TERMINAL_ENDPOINT`，但这里只
+#: 映射一个。** 这不是遗漏，而是有意的：客户端目前只注册了
+#: `common_terminal_panel_ui.main` 这一个屏幕（`client/ui/__init__.py`），
+#: 而合成／样板／工厂终端各自属于 11-04 之后的子任务。
+#:
+#: 另外三个**不映射、不打开、也不回退到通用终端**——把它们接到通用终端就是
+#: 替那些子任务悄悄定案（全局约束 7）。在此之前右键它们静默无反应，这条
+#: 限制记在 `plans/tasks/11-交付说明.md` 里。
+#:
+#: 值必须与 `@RegistToolDeltaScreen(...)` 注册的键一致：`PushUIRequest` 用它
+#: 在客户端查屏幕，查不到时 `tooldelta/ui/event_handler.py` 会**抛异常**。
+TERMINAL_SCREENS = {
+    "endernet:common_terminal_panel": "common_terminal_panel_ui.main",
+}
+
+#: 同一个人两次打开终端界面的最小间隔（秒）。窗口内再右键**静默忽略**。
+#:
+#: User 2026-09-30 定：**0.2 秒**。它只挡高频连点——正常走过去右键一次感觉
+#: 不到，而连点几下不会开出好几个界面。**不是 0 也不是负值**：0 的含义是
+#: 「窗口为零秒」，两种读法会给出相反的默认，因此本仓 `PlayerRateLimiter`
+#: 只把 `<= 0` 读作「不限速」。
+#:
+#: 放在定义表里而不是写死在适配器里：它是**玩家看得见的行为参数**（点了不
+#: 开界面），而定义表是本仓数值的单一事实来源。改它要连带看一眼
+#: `server/adapters/events.py` 的 `_on_block_use` 与
+#: `endernet_tests/test_rate_limit.py` 里的窗口断言。
+TERMINAL_OPEN_LIMIT_SECONDS = 0.2
 
 
 # -- 设备表（blocks.md）----------------------------------------------------

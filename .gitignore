@@ -22,6 +22,11 @@ dev*
 !endernet_bp/endernet_scripts/endernet/server/devices/
 !endernet_rp/textures/endernet/devices/
 !endernet_rp/textures/ui/endernet/device_title_background.*
+# 11-08/11-13 的两份交付物：`dev*` 同样命中它们的基名（`device_status.py`）。
+# **不加这两条的后果是静默的**——文件在本地一切正常、`py2check` 也照跑，
+# 只有提交时悄悄不存在（`git check-ignore -v` 已确认命中规则 18）。
+!endernet_bp/endernet_scripts/endernet/server/sync/device_status.py
+!endernet_bp/endernet_scripts/endernet/client/ui/widgets/device_status.py
 TODO
 AGENTS.md
 CLAUDE.md

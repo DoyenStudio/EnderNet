@@ -34,7 +34,7 @@
 并自己注入假 world 即可驱动整条链路。
 """
 
-from ..common.definitions import DefinitionSet
+from ..common.definitions import CATEGORY_PROCESSOR, CATEGORY_ASSEMBLY, DefinitionSet
 from .adapters.containers_engine import (
     EngineContainerProvider,
     EngineInventoryProvider,
@@ -62,7 +62,7 @@ from .devices.io import (
 from .devices.registry import DeviceRegistry
 from .devices.storage_driver import DriverPolicy, StorageDriverStore
 from .network.admission import AdmissionService
-from .network.energy import EnergyPolicy, EnergyService
+from .network.energy import DEVICE_IDLE, DEVICE_WORK, EnergyPolicy, EnergyService
 from .network.runtime import RuntimeChange, RuntimeManager
 from .network.services import (
     AssemblyProfile,
@@ -97,8 +97,8 @@ def _scheduler_builder(policy):
     return build
 
 
-def _energy_builder(policy):
-    # type: (object) -> object
+def _energy_builder(policy, inputs_of=None):
+    # type: (object, object) -> object
     """把能源策略绑进能源服务的构造器（供 `ServiceFactory` 使用）。
 
     与 `_scheduler_builder` 同形，走显式工厂而不是闭包 lambda：这里绑的是
@@ -107,7 +107,10 @@ def _energy_builder(policy):
     """
     def build(runtime):
         # type: (object) -> EnergyService
-        return EnergyService(runtime, policy=policy)
+        def read_inputs(ref, device_id):
+            return inputs_of(runtime, ref, device_id)
+        return EnergyService(runtime, policy=policy,
+                             inputs_of=read_inputs if inputs_of is not None else None)
 
     return build
 
@@ -186,8 +189,8 @@ def _returns_port_for(returns, runtime):
     return returns
 
 
-def _factory_builder(policy, planner, patterns, ports, returns=None):
-    # type: (object, object, object, object, object) -> object
+def _factory_builder(policy, planner, patterns, ports, returns=None, on_slots_changed=None):
+    # type: (object, object, object, object, object, object) -> object
     """把规划器、样板索引与接口状态集合绑进工厂服务的构造器。
 
     这三样都是**全进程一份**的（它们本来就跨网络：样板装在方块里、
@@ -210,6 +213,8 @@ def _factory_builder(policy, planner, patterns, ports, returns=None):
     def build(runtime):
         # type: (object) -> FactoryService
         port = _returns_port_for(returns, runtime)
+        def notify_slots():
+            on_slots_changed(runtime)
         return FactoryService(
             runtime,
             policy=policy,
@@ -220,6 +225,7 @@ def _factory_builder(policy, planner, patterns, ports, returns=None):
             returns=port if port is not None else AbsentReturns(),
             port_blocker=port_blocker,
             template_role=PORT_TEMPLATE_ROLE,
+            on_slots_changed=notify_slots if on_slots_changed is not None else None,
         )
 
     return build
@@ -466,6 +472,7 @@ class ServerBootstrap(object):
             # 因为 `self.runtimes` 这时还没构造（见 `_factory_of`）。
             factory_of=self._factory_of,
         )
+        self.patterns.assembly.on_changed = self._note_assembly_energy_changed
         #: 合成规划（08）。**它不是一个网络服务槽位**：规划是只读计算，
         #: 没有节点、没有生命周期、也不需要主控签发的许可。真正的调用方是
         #: 任务的 09（订单与执行），它会拿到同一个对象；在那之前，
@@ -493,13 +500,15 @@ class ServerBootstrap(object):
                         self.inventories,
                         self.returns_sink,
                     ),
-                    ServiceId.ENERGY: _energy_builder(self.energy_policy),
+                    ServiceId.ENERGY: _energy_builder(
+                        self.energy_policy, self._energy_inputs_of),
                     ServiceId.FACTORY: _factory_builder(
                         self.order_policy,
                         self.planner,
                         self.patterns,
                         self.ports,
                         self.returns_sink,
+                        self._note_factory_energy_changed,
                     ),
                 }
             )
@@ -527,6 +536,13 @@ class ServerBootstrap(object):
             registry=SessionRegistry(self.session_policy),
             storage_of=self._sync_storage_of,
             context_of=self._sync_context_of,
+            # 手动存取命令的出口（11-03）。`submit_command` 只是
+            # `application.submit` 的转发，注释写明**永不抛异常**——
+            # 与 `_on_command` 对执行方的要求正好吻合，因此不必另写一层。
+            submit=self.submit_command,
+            # 设备总体状态（11-08/11-13）。同样是**绑定方法**，指向此刻还
+            # 不存在的 `self.runtimes`——与上面两个口子同一个道理。
+            status_of=self._sync_status_of,
         )
         if session_check is None:
             # 注入值优先：离线测试与 05/08 的既有用例会自己传探针，
@@ -874,12 +890,62 @@ class ServerBootstrap(object):
 
     def _note_driver_load_changed(self, node_key):
         # type: (object) -> int
-        """插拔介质后立刻重算该设备所在负载域的名额（05 要求）。
+        """插拔介质后立刻重算负载名额，并回填能源需求（04/05）。
 
         **必须早于后续交易**：否则刚插上的一块盘还按旧准入放行，
         而旧准入不知道这台设备的需求变了。
         """
-        return self.admission.note_device_load_changed(node_key)
+        changed = self.admission.note_device_load_changed(node_key)
+        runtimes = getattr(self, "runtimes", None)
+        runtime = runtimes.runtime_of(node_key) if runtimes is not None else None
+        state = self.drivers.get(node_key)
+        if runtime is not None and state is not None:
+            energy = runtime.services.get(ServiceId.ENERGY)
+            if isinstance(energy, EnergyService):
+                energy.set_device_state(
+                    state.ref, unit_count=state.disk_count(self.drivers.medium))
+        return changed
+
+    def _energy_inputs_of(self, runtime, ref, device_id):
+        # type: (object, object, str) -> dict
+        """只读权威设备状态，不用可被配置命令改写的数量投影。"""
+        if device_id == "endernet:storage_driver":
+            state = self.drivers.get_by_ref(ref)
+            return {"unit_count": (
+                state.disk_count(self.drivers.medium) if state is not None else None)}
+        category = self.definitions.get(device_id).category
+        if category == CATEGORY_ASSEMBLY:
+            return {"state": DEVICE_WORK if self.patterns.assembly.is_working(ref) else DEVICE_IDLE}
+        if category == CATEGORY_PROCESSOR:
+            factory = runtime.services.get(ServiceId.FACTORY)
+            if not isinstance(factory, FactoryService):
+                return {"state": None}
+            working = ref.node_key in factory.working_processors()
+            return {"state": DEVICE_WORK if working else DEVICE_IDLE}
+        return {}
+
+    def _note_factory_energy_changed(self, runtime):
+        # type: (object) -> None
+        """租约先记账，再更新能源；同帧下一次主控准入可见新需求。"""
+        energy = runtime.services.get(ServiceId.ENERGY)
+        if not isinstance(energy, EnergyService):
+            return
+        for node in runtime.members():
+            if node.category == CATEGORY_PROCESSOR:
+                inputs = self._energy_inputs_of(runtime, node.ref, node.device_id)
+                energy.set_device_state(node.ref, state=inputs["state"])
+
+    def _note_assembly_energy_changed(self, holder):
+        # type: (str) -> None
+        """全局实体槽使用权只通知同代设备当前所属网络。"""
+        for runtime in self.runtimes.runtimes():
+            for node in runtime.members():
+                if node.category != CATEGORY_ASSEMBLY or "%s" % (node.ref.as_key(),) != holder:
+                    continue
+                energy = runtime.services.get(ServiceId.ENERGY)
+                if isinstance(energy, EnergyService):
+                    inputs = self._energy_inputs_of(runtime, node.ref, node.device_id)
+                    energy.set_device_state(node.ref, state=inputs["state"])
 
     # -- 终端同步的接线（任务 11） --------------------------------------
 
@@ -915,7 +981,11 @@ class ServerBootstrap(object):
         那个会话，发布窗口从此每帧都以为有人在看，而包发给一个已经不在的
         玩家——那正是 11-02 要防的「无人订阅时的空转」。
         """
-        return len(self.sync.close_for_player(player_id, "player_left"))
+        closed = len(self.sync.close_for_player(player_id, "player_left"))
+        forget = getattr(self.inventories, "forget", None)
+        if callable(forget):
+            forget(player_id)
+        return closed
 
     def _sync_runtime(self, network_id):
         # type: (str) -> object
@@ -972,6 +1042,19 @@ class ServerBootstrap(object):
         if runtime is None:
             return None
         return runtime.services.get(ServiceId.STORAGE)
+
+    def _sync_status_of(self, device_ref):
+        # type: (object) -> object
+        """一台设备的总体在线/离线（11-08/11-13），没有运行时也照样回答。
+
+        **只读路径**：`RuntimeManager.device_status` 在没有运行时、没有
+        主控、断电、超载、分量不存在时都给结论（`compose_device_status`
+        合成），不订阅服务、不预留、不写任何东西——这正是 11-08 那句
+        「状态查询不触发业务写入」所依赖的性质。缺代次/位置的复核在
+        `sync/device_status.read_status` 里做，这里只负责把设备身份换成
+        结论。
+        """
+        return self.runtimes.device_status(device_ref)
 
     def _sync_context_of(self, player_id, device_ref):
         # type: (str, object) -> object
@@ -1425,9 +1508,10 @@ class ServerBootstrap(object):
                 # **从不进入主控**。所以 R06 的正式档拦截走的是
                 # `assert_assembly_ok()`，与 R04/R09/R11 现状一致。
                 self.return_policy,
-                # 07 的样板策略带的是 R09（无限燃料、返还物规则、两类样板
-                # 适用范围）。少放一份的代价是正式验收时那三条漏网，
-                # 而它们正是全局约束 7 最怕的形态。
+                # 07 的样板策略带的是 R09（两类样板适用范围）。「无限燃料」
+                # 与「返还物显式声明」两侧已于 2026-09-30 定案、因此都不再进
+                # 报告；少放一份的代价是正式验收时剩下那一条漏网，而它正是
+                # 全局约束 7 最怕的形态。
                 self.pattern_policy,
                 # 08 的规划策略带的是 R11（目标量是生产量还是保有量）、
                 # R04（内存估算口径）与 08-04（配方优先级、替代配方范围、

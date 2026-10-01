@@ -193,7 +193,12 @@ class ItemListModel(object):
         #: 顺序需要重算。批次进行中时**只置位不重算**（见 `_ensure_order`）。
         self._order_dirty = False
         self._sort = SORT_NAME
-        self._descending = False
+        #: 默认**降序**（`plans/ui/common_terminal_panel.md` 第 79 行、
+        #: `plans/technical_notes/terminal_item_index.md` 第 120 行）。名字大的
+        #: 在前，玩家一进来看到的不是一堆 `a` 开头的东西。方向是模型的初始
+        #: 状态，与 `set_sort` 的形参默认值各管各的——后者只在调用方**显式
+        #: 省略**方向时生效，界面永远两个都传。
+        self._descending = True
         self._filter = ""
         self._generation = 0
         self._version = 0

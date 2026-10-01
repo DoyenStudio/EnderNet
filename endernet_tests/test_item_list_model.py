@@ -49,6 +49,22 @@ class ModelFixture(unittest.TestCase):
         # type: () -> list
         return list(self.model.query()[1])
 
+    def ascending(self):
+        # type: () -> None
+        """把排序钉成「名称升序」并**立刻把顺序建出来**。
+
+        模型的默认方向是**降序**（见 `test_the_default_order_is_descending`），
+        因此凡是断言里写着具体顺序、而方向本身不是它要考的东西的用例，都先
+        调这一下——不钉的话，「默认改了」会让一批与默认无关的用例跟着红，而
+        红的理由读者从用例名里看不出来。
+
+        顺手 `query()` 一次是**故意的**：调用方常在这之后数 `rebuilds()`，
+        把这次重排留在计数窗口里会让那个断言莫名其妙地多出一次。也因此它
+        会推进查询代次——`seed()` 返回的代次要在这之后再取。
+        """
+        self.model.set_sort(SORT_NAME, descending=False)
+        self.model.query()
+
 
 class TestEntriesAndOrder(ModelFixture):
     """条目写入、删除与顺序。"""
@@ -137,6 +153,24 @@ class TestEntriesAndOrder(ModelFixture):
             self.assertEqual(self.order(), expected, field)
             self.model.clear()
 
+    def test_the_default_order_is_descending(self):
+        """默认**降序**（对齐 `plans/ui/common_terminal_panel.md` 第 79 行、
+        `plans/technical_notes/terminal_item_index.md` 第 120 行）。
+
+        单独钉这一条是**故意**的：别的用例只关心「某个排序下的顺序」，方向
+        对它们只是前提（用 `ascending()` 钉住了）。默认方向要是没人测，改掉
+        它不会有任何东西变红——而那正是玩家一进终端就看得见的那一件事。
+        """
+        self.seed(1, [(STONE, 1, 0), (DIRT, 2, 0), (SAND, 3, 0)])
+        self.assertEqual(
+            self.order(),
+            sorted(
+                [STONE, DIRT, SAND],
+                key=lambda key: key.canonical(),
+                reverse=True,
+            ),
+        )
+
     def test_total_quantity_follows_the_filter(self):
         self.seed(1, [(STONE, 3, 0), (DIRT, 4, 0)])
         self.assertEqual(self.model.total_quantity(), 7)
@@ -205,6 +239,7 @@ class TestBatchMerging(ModelFixture):
 
     def test_a_quantity_change_does_not_reorder_under_the_name_sort(self):
         g = self.seed(1, [(STONE, 1, 0), (DIRT, 2, 0), (SAND, 3, 0)])
+        self.ascending()
         self.model.set_anchor(SAND, 0)
         rebuilds = self.model.rebuilds()
         token = self.model.begin_batch(self.model.version(), 2)
@@ -238,6 +273,7 @@ class TestBatchMerging(ModelFixture):
         """新键在任何排序下顺序都会变，但**变化本身也要等批结束**：
         边收包边插行，玩家看到的是表格在抖。"""
         self.seed(1, [(STONE, 1, 0)])
+        self.ascending()
         rebuilds = self.model.rebuilds()
         token = self.model.begin_batch(1, 2)
         self.model.upsert(DIRT, 1, 0)
@@ -299,6 +335,7 @@ class TestBatchMerging(ModelFixture):
         第 3 行没了，那就还是「第 3 行那个位置」——把他甩回列表顶部是更糟的
         答案。"""
         self.seed(1, [(STONE, 1, 0), (DIRT, 2, 0), (SAND, 3, 0)])
+        self.ascending()
         self.assertEqual(self.order(), [DIRT, SAND, STONE])
         self.model.set_anchor(SAND, 2)
         token = self.model.begin_batch(1, 2)
@@ -422,7 +459,9 @@ class TestPaging(ModelFixture):
             (ResourceKey.item("minecraft:test_%02d" % (index,)), index, 0)
             for index in range(25)
         ]
-        generation = self.seed(1, records)
+        self.seed(1, records)
+        self.ascending()
+        generation = self.model.query_generation()
         self.assertEqual(self.model.count(), 25)
         page = self.model.query_page(generation, 10, 5)
         self.assertEqual(keys_of(page), [record[0] for record in records[10:15]])
@@ -482,6 +521,7 @@ class TestSelectionAndAnchor(ModelFixture):
     def test_the_anchor_is_confirmed_by_its_key(self):
         """锚点不是选中项：滚动不改选中，选中也不该让列表跳走。"""
         self.seed(1, [(STONE, 1, 0), (DIRT, 2, 0)])
+        self.ascending()
         self.assertEqual(self.order(), [DIRT, STONE])
         self.model.set_anchor(DIRT, 3)
         # 报出来的是**它在当前顺序里的真实下标**，不是调用方报上来的那个数：
@@ -498,6 +538,7 @@ class TestSelectionAndAnchor(ModelFixture):
 
     def test_an_index_is_the_only_thing_index_of_gives(self):
         self.seed(1, [(STONE, 1, 0), (DIRT, 2, 0)])
+        self.ascending()
         self.assertEqual(self.model.index_of(DIRT), 0)
         self.assertEqual(self.model.index_of(STONE), 1)
         self.assertEqual(self.model.index_of(SAND), -1)
