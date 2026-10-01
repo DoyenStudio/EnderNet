@@ -2230,7 +2230,7 @@ class TestSearchAndSort(PanelFixture):
 class TestInteractionsNeedASession(PanelFixture):
     """**遮罩拦不住面板上的控件，所以拦截落在回调这一层。**
 
-    2026-10-01 真机实测：`unavaliable_mask` 提到 `layer: 39` 之后，两个排序
+    2026-10-01 真机实测：`unavailable_mask` 提到 `layer: 39` 之后，两个排序
     按钮**仍然点得到**（它拦得住列表区，拦不住这两个）。把窗口抬得更高能拦
     住，但那样连关闭按钮一起盖掉了——所以判据放在回调里，遮罩只管表现。
 
@@ -2659,7 +2659,7 @@ class TestJsonContract(unittest.TestCase):
             self.assertEqual(
                 content[button]["button_mappings"][0]["to_button_id"],
                 "$pressed_button_name")
-        mask = content["unavaliable_mask"]
+        mask = content["unavailable_mask"]
         self.assertEqual(mask["bindings"][0]["binding_name"],
                          terminal_panel.UNAVAILABLE_BINDING)
         self.assertEqual(mask["bindings"][0]["binding_name_override"], "#visible")
@@ -2739,8 +2739,8 @@ class TestJsonContract(unittest.TestCase):
     def test_the_unavailable_mask_actually_paints(self):
         """遮罩里那层变暗图必须画得出来。
 
-        **2026-10-01 游戏内实测撞出来的**：`unavaliable_mask` 会按绑定变可见
-        （那一半是好的），但它唯一的子控件 `image` 当时写死 `visible: false`
+        **2026-10-01 游戏内实测撞出来的**：`unavailable_mask` 会按绑定变可见
+        （那一半是好的），但它唯一的子控件 `mask_img` 当时写死 `visible: false`
         且没有 anchor——运行时 `GetSize()` / `GetMaxSize()` 都是 `0×0`，把
         它 `SetVisible(True)` 也什么都不画。**遮罩整块是空的。**
 
@@ -2751,16 +2751,16 @@ class TestJsonContract(unittest.TestCase):
         两条断言缺一不可：`visible` 不写死假值，`anchor_from`/`anchor_to`
         必须显式给出——`size` 用百分比，没有 anchor 时实测解析成 0。
         """
-        mask = self.find_control(self.panel["content"], "unavaliable_mask")
+        mask = self.find_control(self.panel["content"], "unavailable_mask")
         self.assertIsNotNone(mask)
         # 遮罩面板本身由绑定控制显隐，这两个名字必须与脚本常量一致。
         self.assertIn(terminal_panel.UNAVAILABLE_BINDING,
                       self.binding_names(mask))
-        image = self.controls(mask)["image"]
-        self.assertTrue(image.get("visible", True))
-        self.assertEqual(image["anchor_from"], "top_left")
-        self.assertEqual(image["anchor_to"], "top_left")
-        self.assertEqual(image["size"], ["100%+0px", "100%+0px"])
+        mask_img = self.controls(mask)["mask_img"]
+        self.assertTrue(mask_img.get("visible", True))
+        self.assertEqual(mask_img["anchor_from"], "top_left")
+        self.assertEqual(mask_img["anchor_to"], "top_left")
+        self.assertEqual(mask_img["size"], ["100%+0px", "100%+0px"])
 
     # -- 设备总体状态（11-13）------------------------------------------
 

@@ -326,7 +326,7 @@
                 }
             },
             {
-                "unavaliable_mask": {
+                "unavailable_mask": {
                     "type": "input_panel",
                     "anchor_from": "bottom_middle",
                     "anchor_to": "bottom_middle",
@@ -349,7 +349,7 @@
                     ],
                     "controls": [
                         {
-                            "image": {
+                            "mask_img": {
                                 "type": "image",
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",

@@ -214,7 +214,7 @@
                 }
             },
             {
-                "unavaliable_mask": {
+                "unavailable_mask": {
                     "type": "input_panel",
                     "anchor_from": "bottom_middle",
                     "anchor_to": "bottom_middle",
@@ -226,7 +226,7 @@
                     "visible": false,
                     "controls": [
                         {
-                            "image": {
+                            "mask_img": {
                                 "type": "image",
                                 "size": [
                                     "100%+0px",
