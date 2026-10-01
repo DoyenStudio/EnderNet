@@ -1,5 +1,4 @@
 {
-    "namespace": "creative_energy_source_ui",
     "content": {
         "type": "panel",
         "layer": 1,
@@ -116,5 +115,6 @@
     },
     "main@common.inventory_screen_common": {
         "$screen_content": "creative_energy_source_ui.content"
-    }
+    },
+    "namespace": "creative_energy_source_ui"
 }

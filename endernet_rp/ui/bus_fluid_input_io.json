@@ -58,7 +58,7 @@
                                                         "anchor_from": "top_left",
                                                         "anchor_to": "top_left",
                                                         "size": [
-                                                            82.0,
+                                                            84.0,
                                                             16.0
                                                         ],
                                                         "layer": 1,
@@ -118,17 +118,36 @@
                                                         "tiled": true,
                                                         "controls": [
                                                             {
-                                                                "arrow_img": {
+                                                                "arrow_img_upper": {
                                                                     "type": "image",
                                                                     "anchor_from": "top_middle",
                                                                     "anchor_to": "top_middle",
                                                                     "offset": [
                                                                         1.0,
-                                                                        3.0
+                                                                        4.0
                                                                     ],
                                                                     "size": [
                                                                         34.0,
-                                                                        48.0
+                                                                        4.0
+                                                                    ],
+                                                                    "clip_direction": "left",
+                                                                    "clip_ratio": 0.0,
+                                                                    "texture": "textures/ui/endernet/sign_flatted_down_simple",
+                                                                    "tiled": true
+                                                                }
+                                                            },
+                                                            {
+                                                                "arrow_img_lower": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "offset": [
+                                                                        1.0,
+                                                                        43.0
+                                                                    ],
+                                                                    "size": [
+                                                                        34.0,
+                                                                        4.0
                                                                     ],
                                                                     "clip_direction": "left",
                                                                     "clip_ratio": 0.0,
@@ -145,7 +164,7 @@
                                                         "anchor_to": "top_middle",
                                                         "offset": [
                                                             0,
-                                                            54
+                                                            52
                                                         ],
                                                         "size": [
                                                             100,

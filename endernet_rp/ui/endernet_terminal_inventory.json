@@ -1,57 +1,19 @@
 {
-    "backpack_slot": {
-        "type": "button",
-        "$pressed_button_name": "#EnderNetTerminal.backpack_click",
-        "size": [
-            18,
-            18
-        ],
-        "layer": 2,
-        "button_mappings": [
-            {
-                "to_button_id": "$pressed_button_name",
-                "from_button_id": "button.menu_select",
-                "mapping_type": "pressed"
-            }
-        ],
-        "bindings": [
-            {
-                "binding_type": "collection_details",
-                "binding_collection_name": "endernet_terminal_backpack"
-            }
-        ],
-        "controls": [
-            {
-                "visual@endernet_container_common.custom_slot": {}
-            }
-        ]
+    "backpack_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "endernet_terminal_backpack",
+        "$item_visible_binding": "#EnderNetTerminal.backpack_visible",
+        "$item_id_aux_binding": "#EnderNetTerminal.backpack_item_id_aux",
+        "$item_selected_binding": "#EnderNetTerminal.backpack_selected",
+        "$item_count_binding": "#EnderNetTerminal.backpack_item_count",
+        "$item_select_button": "#EnderNetTerminal.backpack_click"
     },
-    "hotbar_slot": {
-        "type": "button",
-        "$pressed_button_name": "#EnderNetTerminal.hotbar_click",
-        "size": [
-            18,
-            18
-        ],
-        "layer": 2,
-        "button_mappings": [
-            {
-                "to_button_id": "$pressed_button_name",
-                "from_button_id": "button.menu_select",
-                "mapping_type": "pressed"
-            }
-        ],
-        "bindings": [
-            {
-                "binding_type": "collection_details",
-                "binding_collection_name": "endernet_terminal_hotbar"
-            }
-        ],
-        "controls": [
-            {
-                "visual@endernet_container_common.custom_slot": {}
-            }
-        ]
+    "hotbar_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "endernet_terminal_hotbar",
+        "$item_visible_binding": "#EnderNetTerminal.hotbar_visible",
+        "$item_id_aux_binding": "#EnderNetTerminal.hotbar_item_id_aux",
+        "$item_selected_binding": "#EnderNetTerminal.hotbar_selected",
+        "$item_count_binding": "#EnderNetTerminal.hotbar_item_count",
+        "$item_select_button": "#EnderNetTerminal.hotbar_click"
     },
     "inventory": {
         "type": "panel",
@@ -90,7 +52,7 @@
                     "anchor_to": "top_middle",
                     "offset": [
                         0,
-                        13
+                        12.0
                     ],
                     "size": [
                         162,
@@ -112,7 +74,7 @@
                     "anchor_to": "top_middle",
                     "offset": [
                         0,
-                        73
+                        72.0
                     ],
                     "size": [
                         162,
@@ -125,6 +87,40 @@
                     ],
                     "grid_item_template": "endernet_terminal_inventory.hotbar_slot",
                     "maximum_grid_items": 9
+                }
+            },
+            {
+                "upper_frame": {
+                    "type": "image",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0.0,
+                        12.0
+                    ],
+                    "size": [
+                        "default",
+                        54.0
+                    ],
+                    "layer": 10,
+                    "texture": "textures/ui/endernet/slots_frame"
+                }
+            },
+            {
+                "lower_frame": {
+                    "type": "image",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0.0,
+                        72.0
+                    ],
+                    "size": [
+                        "default",
+                        18.0
+                    ],
+                    "layer": 10,
+                    "texture": "textures/ui/endernet/slots_frame"
                 }
             }
         ]

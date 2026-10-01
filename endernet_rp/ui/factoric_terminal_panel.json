@@ -10,7 +10,7 @@
             {
                 "bg@common.dialog_background_opaque": {
                     "layer": 0,
-                    "texture": "textures/ui/endernet/background_panel_opaque"
+                    "texture": "textures/ui/endernet/background_panel_thick"
                 }
             },
             {
@@ -19,11 +19,11 @@
                     "anchor_from": "top_left",
                     "anchor_to": "top_left",
                     "size": [
-                        78.0,
+                        73.0,
                         16.0
                     ],
                     "layer": 1,
-                    "texture": "textures/ui/endernet/device_title_background",
+                    "texture": "textures/ui/endernet/device_title_background_darker",
                     "controls": [
                         {
                             "title_text": {
@@ -31,15 +31,15 @@
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
                                 "offset": [
-                                    3.0,
+                                    4.0,
                                     3.0
                                 ],
                                 "color": [
-                                    0.3058823529411765,
-                                    0.2549019607843137,
-                                    0.3137254901960784
+                                    1.0,
+                                    1.0,
+                                    1.0
                                 ],
-                                "font_scale_factor": 1.2,
+                                "font_scale_factor": 1.1,
                                 "font_type": "default",
                                 "text": "tile.endernet:factoric_terminal_panel.name",
                                 "text_alignment": "center"
@@ -51,8 +51,8 @@
             {
                 "stat_bar@endernet_ui_common.device_stat_bar": {
                     "offset": [
-                        84,
-                        1
+                        72,
+                        2
                     ]
                 }
             },
@@ -119,7 +119,7 @@
                     "$is_box_nine_slice": false,
                     "$is_track_nine_slice": false,
                     "$scroll_background_image_control": "netease_editor_template_namespace.scroll_background_image",
-                    "$scroll_background_texture": "textures/ui/endernet/background_bottom",
+                    "$scroll_background_texture": "textures/ui/endernet/background_bottom_light",
                     "$scroll_bar_contained|default": true,
                     "$scroll_bar_left_padding_size_touch|default": [
                         0,
@@ -130,7 +130,7 @@
                     "$scroll_box_touch_image_control": "netease_editor_template_namespace.scroll_box_image",
                     "$scroll_box_visible_touch|default": true,
                     "$scroll_track_image_control": "netease_editor_template_namespace.scroll_track_image",
-                    "$scroll_track_texture": "textures/ui/ScrollRail",
+                    "$scroll_track_texture": "textures/ui/endernet/slots_background_gray",
                     "$scrolling_content": "factoric_terminal_panel_ui.orders",
                     "$show_background": true,
                     "$track_nine_slice_buttom": 0,
@@ -180,7 +180,7 @@
                                 "type": "image",
                                 "anchor_from": "top_right",
                                 "anchor_to": "top_right",
-                                "texture": "textures/ui/endernet/background_panel_2_flat"
+                                "texture": "textures/ui/endernet/background_panel_flat"
                             }
                         },
                         {
@@ -198,9 +198,9 @@
                                 ],
                                 "layer": 1,
                                 "color": [
-                                    0.0,
-                                    1.0,
-                                    0.0
+                                    0.7568627450980392,
+                                    0.7803921568627451,
+                                    1.0
                                 ],
                                 "texture": "textures/ui/white_background",
                                 "tiled": true
@@ -291,7 +291,7 @@
                                 "color": [
                                     1,
                                     1,
-                                    0.7529
+                                    1
                                 ]
                             }
                         },
@@ -305,26 +305,6 @@
                             }
                         }
                     ]
-                }
-            },
-            {
-                "res_item_renderer": {
-                    "type": "custom",
-                    "renderer": "inventory_item_renderer",
-                    "anchor_from": "top_left",
-                    "anchor_to": "top_left",
-                    "offset": [
-                        2.0,
-                        2.0
-                    ],
-                    "size": [
-                        12.0,
-                        12.0
-                    ],
-                    "layer": 5,
-                    "property_bag": {
-                        "#item_id_aux": 131072
-                    }
                 }
             },
             {
@@ -371,11 +351,9 @@
             {
                 "progress_bar": {
                     "type": "panel",
-                    "anchor_from": "bottom_middle",
-                    "anchor_to": "bottom_middle",
                     "size": [
                         "100%+-2px",
-                        2.0
+                        "100%+-4px"
                     ],
                     "layer": 1,
                     "controls": [
@@ -389,6 +367,7 @@
                                     -1.0
                                 ],
                                 "layer": 4,
+                                "visible": false,
                                 "color": [
                                     0.4313725490196079,
                                     0.4313725490196079,
@@ -401,21 +380,18 @@
                         {
                             "mask": {
                                 "type": "image",
-                                "anchor_from": "bottom_left",
-                                "anchor_to": "bottom_left",
-                                "offset": [
-                                    0.0,
-                                    -1.0
-                                ],
+                                "anchor_from": "left_middle",
+                                "anchor_to": "left_middle",
                                 "size": [
                                     "50%+0px",
                                     "default"
                                 ],
                                 "layer": 4,
+                                "alpha": 0.25,
                                 "color": [
+                                    0.0,
                                     1.0,
-                                    1.0,
-                                    0.0
+                                    1.0
                                 ],
                                 "texture": "textures/ui/white_background",
                                 "tiled": true
@@ -423,8 +399,415 @@
                         }
                     ]
                 }
+            },
+            {
+                "res_item_renderer": {
+                    "type": "custom",
+                    "renderer": "inventory_item_renderer",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        2.0,
+                        2.0
+                    ],
+                    "size": [
+                        12.0,
+                        12.0
+                    ],
+                    "layer": 5,
+                    "property_bag": {
+                        "#item_id_aux": 131072
+                    }
+                }
             }
         ]
+    },
+    "order_description_window": {
+        "type": "panel",
+        "size": [
+            180.0,
+            200.0
+        ],
+        "controls": [
+            {
+                "bg": {
+                    "type": "image",
+                    "layer": 1,
+                    "clip_direction": "left",
+                    "clip_ratio": 0.0,
+                    "texture": "textures/ui/endernet/background_panel_opaque"
+                }
+            },
+            {
+                "title": {
+                    "type": "image",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "size": [
+                        "default",
+                        16.0
+                    ],
+                    "layer": 1,
+                    "color": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "texture": "textures/ui/endernet/background_panel_2_flat",
+                    "controls": [
+                        {
+                            "title_text": {
+                                "type": "label",
+                                "font_type": "default",
+                                "shadow": true,
+                                "text": "当前正在制作： 未知",
+                                "text_alignment": "center"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "close@endernet_ui_common.close_btn": {
+                    "anchor_from": "top_right",
+                    "anchor_to": "top_right",
+                    "size": [
+                        16,
+                        16
+                    ]
+                }
+            },
+            {
+                "order_sources_scroll@common.scrolling_panel": {
+                    "$background_nine_slice_buttom": 0,
+                    "$background_nine_slice_left": 0,
+                    "$background_nine_slice_right": 0,
+                    "$background_nine_slice_top": 0,
+                    "$background_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$box_nine_slice_buttom": 0,
+                    "$box_nine_slice_left": 0,
+                    "$box_nine_slice_right": 0,
+                    "$box_nine_slice_top": 0,
+                    "$box_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$is_background_nine_slice": false,
+                    "$is_box_nine_slice": false,
+                    "$is_track_nine_slice": false,
+                    "$scroll_background_image_control": "netease_editor_template_namespace.scroll_background_image",
+                    "$scroll_background_texture": "textures/ui/endernet/backgroud_without_frame",
+                    "$scroll_box_mouse_image_control": "netease_editor_template_namespace.scroll_box_image",
+                    "$scroll_box_texture": "textures/ui/newTouchScrollBox",
+                    "$scroll_box_touch_image_control": "netease_editor_template_namespace.scroll_box_image",
+                    "$scroll_track_image_control": "netease_editor_template_namespace.scroll_track_image",
+                    "$scroll_track_texture": "textures/ui/ScrollRail",
+                    "$scrolling_content": "factoric_terminal_panel_ui.order_sources_grid",
+                    "$show_background": true,
+                    "$track_nine_slice_buttom": 0,
+                    "$track_nine_slice_left": 0,
+                    "$track_nine_slice_right": 0,
+                    "$track_nine_slice_top": 0,
+                    "$track_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "layer": 9,
+                    "offset": [
+                        0,
+                        24
+                    ],
+                    "size": [
+                        160,
+                        144
+                    ]
+                }
+            },
+            {
+                "cancel_order_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "textures/ui/endernet/button_red_default",
+                    "$hover_texture": "textures/ui/endernet/button_red_hovered",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        1,
+                        1,
+                        1
+                    ],
+                    "$label_font_scale_factor": 1.0,
+                    "$label_font_size": "normal",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0.0,
+                        -1.0
+                    ],
+                    "$label_text": "取消订单",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_texture": "textures/ui/endernet/button_red_pressed",
+                    "$texture_layer": 2,
+                    "anchor_from": "bottom_left",
+                    "anchor_to": "bottom_left",
+                    "offset": [
+                        24.0,
+                        -8.0
+                    ],
+                    "size": [
+                        48.0,
+                        20.0
+                    ],
+                    "layer": 2,
+                    "button_mappings": [],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {}
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {}
+                        },
+                        {
+                            "button_label@netease_editor_template_namespace.button_label": {
+                                "shadow": true
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "confirm_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "textures/ui/endernet/button_light_default",
+                    "$hover_texture": "textures/ui/endernet/button_hovered",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        0.2588235294117647,
+                        0.2588235294117647,
+                        0.2588235294117647
+                    ],
+                    "$label_font_scale_factor": 1.0,
+                    "$label_font_size": "normal",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0.0,
+                        -1.0
+                    ],
+                    "$label_text": "确认",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_texture": "textures/ui/endernet/button_pressed",
+                    "$texture_layer": 2,
+                    "anchor_from": "bottom_right",
+                    "anchor_to": "bottom_right",
+                    "offset": [
+                        -24.0,
+                        -8.0
+                    ],
+                    "size": [
+                        48.0,
+                        20.0
+                    ],
+                    "layer": 2,
+                    "button_mappings": [],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {}
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {}
+                        },
+                        {
+                            "button_label@netease_editor_template_namespace.button_label": {}
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "order_source_status": {
+        "type": "image",
+        "size": [
+            80.0,
+            20.0
+        ],
+        "layer": 1,
+        "clip_direction": "left",
+        "clip_ratio": 0.0,
+        "color": [
+            0.7843137254901961,
+            1.0,
+            0.7843137254901961
+        ],
+        "texture": "textures/ui/endernet/background_panel_light_flat",
+        "controls": [
+            {
+                "progress_bar": {
+                    "type": "image",
+                    "anchor_from": "bottom_left",
+                    "anchor_to": "bottom_left",
+                    "offset": [
+                        1.0,
+                        -1.0
+                    ],
+                    "size": [
+                        "50%+-2px",
+                        2.0
+                    ],
+                    "layer": 1,
+                    "clip_direction": "left",
+                    "clip_ratio": 0.0,
+                    "color": [
+                        1.0,
+                        1.0,
+                        0.4980392156862745
+                    ],
+                    "texture": "textures/ui/white_background",
+                    "tiled": true
+                }
+            },
+            {
+                "item_renderer": {
+                    "type": "custom",
+                    "renderer": "inventory_item_renderer",
+                    "anchor_from": "left_middle",
+                    "anchor_to": "left_middle",
+                    "offset": [
+                        2.0,
+                        0.0
+                    ],
+                    "size": [
+                        16.0,
+                        16.0
+                    ],
+                    "layer": 1,
+                    "property_bag": {
+                        "#item_id_aux": 131072
+                    }
+                }
+            },
+            {
+                "item_name_text": {
+                    "type": "label",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        20.0,
+                        2.0
+                    ],
+                    "size": [
+                        56.0,
+                        "default"
+                    ],
+                    "layer": 2,
+                    "color": [
+                        0.2588235294117647,
+                        0.2588235294117647,
+                        0.2588235294117647
+                    ],
+                    "font_type": "default",
+                    "text": "某某物品"
+                }
+            },
+            {
+                "process_stat_text": {
+                    "type": "label",
+                    "anchor_from": "bottom_left",
+                    "anchor_to": "bottom_left",
+                    "offset": [
+                        20.0,
+                        -2.0
+                    ],
+                    "size": [
+                        56.0,
+                        "default"
+                    ],
+                    "layer": 2,
+                    "color": [
+                        0.2588235294117647,
+                        0.2588235294117647,
+                        0.2588235294117647
+                    ],
+                    "font_scale_factor": 1.2,
+                    "font_size": "small",
+                    "font_type": "default",
+                    "text": "制作中 999/999 等待产物"
+                }
+            }
+        ]
+    },
+    "order_sources_grid": {
+        "type": "grid",
+        "size": [
+            160.0,
+            "default"
+        ],
+        "layer": 1,
+        "collection_name": "order_sources",
+        "grid_dimensions": [
+            2,
+            2
+        ],
+        "grid_item_template": "factoric_terminal_panel_ui.order_source_status",
+        "grid_rescaling_type": "horizontal",
+        "maximum_grid_items": 14
     },
     "orders": {
         "type": "panel",

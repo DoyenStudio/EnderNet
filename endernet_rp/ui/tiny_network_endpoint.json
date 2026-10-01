@@ -1,106 +1,100 @@
 {
-    "namespace": "tiny_network_endpoint_ui",
     "content": {
         "type": "panel",
+        "size": [
+            180.0,
+            200.0
+        ],
         "layer": 1,
         "controls": [
             {
-                "flying_item_renderer@common.flying_item_renderer": {
-                    "layer": 11,
+                "bg@common.dialog_background_opaque": {
+                    "layer": 0,
+                    "texture": "textures/ui/endernet/background_panel_opaque"
+                }
+            },
+            {
+                "title": {
+                    "type": "image",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
                     "size": [
-                        0,
-                        0
-                    ]
-                }
-            },
-            {
-                "container_gamepad_helpers@common.container_gamepad_helpers": {
-                    "layer": 3
-                }
-            },
-            {
-                "selected_item_details_factory@common.selected_item_details_factory": {
-                    "layer": 4,
-                    "size": [
-                        0,
-                        0
-                    ]
-                }
-            },
-            {
-                "item_lock_notification_factory@common.item_lock_notification_factory": {
-                    "size": [
-                        0,
-                        0
-                    ]
-                }
-            },
-            {
-                "root_panel@common.root_panel": {
+                        74.0,
+                        16.0
+                    ],
+                    "layer": 1,
+                    "texture": "textures/ui/endernet/device_title_background",
                     "controls": [
                         {
-                            "bg@common.dialog_background_opaque": {
-                                "controls": [
-                                    {
-                                        "close@common.close_button": {
-                                            "size": [
-                                                18,
-                                                18
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "main": {
-                                            "type": "panel",
-                                            "controls": [
-                                                {
-                                                    "title": {
-                                                        "type": "image",
-                                                        "anchor_from": "top_left",
-                                                        "anchor_to": "top_left",
-                                                        "size": [
-                                                            74.0,
-                                                            16.0
-                                                        ],
-                                                        "layer": 1,
-                                                        "texture": "textures/ui/endernet/background_panel_2_flat",
-                                                        "controls": [
-                                                            {
-                                                                "title_text": {
-                                                                    "type": "label",
-                                                                    "anchor_from": "top_left",
-                                                                    "anchor_to": "top_left",
-                                                                    "offset": [
-                                                                        3.0,
-                                                                        3.0
-                                                                    ],
-                                                                    "color": [
-                                                                        0.3058823529411765,
-                                                                        0.2549019607843137,
-                                                                        0.3137254901960784
-                                                                    ],
-                                                                    "font_scale_factor": 1.2,
-                                                                    "font_type": "default",
-                                                                    "text": "tile.endernet:tiny_network_endpoint.name",
-                                                                    "text_alignment": "center"
-                                                                }
-                                                            }
-                                                        ]
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    }
+                            "title_text": {
+                                "type": "label",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    3.0,
+                                    3.0
                                 ],
-                                "layer": 0,
-                                "texture": "textures/ui/endernet/background_panel_opaque"
+                                "color": [
+                                    0.3058823529411765,
+                                    0.2549019607843137,
+                                    0.3137254901960784
+                                ],
+                                "font_scale_factor": 1.2,
+                                "font_type": "default",
+                                "text": "tile.endernet:tiny_network_endpoint.name",
+                                "text_alignment": "center"
                             }
                         }
+                    ]
+                }
+            },
+            {
+                "close@endernet_ui_common.close_btn": {
+                    "anchor_from": "top_right",
+                    "anchor_to": "top_right",
+                    "offset": [
+                        -2,
+                        2
+                    ]
+                }
+            },
+            {
+                "network_data": {
+                    "type": "panel",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0.0,
+                        32.0
                     ],
-                    "layer": 0,
                     "size": [
-                        174,
+                        "100%+-20px",
                         100
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "image": {
+                                "type": "image",
+                                "layer": 1,
+                                "texture": "textures/ui/endernet/background_bottom_dark_edge"
+                            }
+                        },
+                        {
+                            "title": {
+                                "type": "label",
+                                "anchor_from": "top_left",
+                                "anchor_to": "bottom_left",
+                                "color": [
+                                    0.2588235294117647,
+                                    0.2588235294117647,
+                                    0.2588235294117647
+                                ],
+                                "font_type": "default",
+                                "text": "网络信息",
+                                "text_alignment": "center"
+                            }
+                        }
                     ]
                 }
             }
@@ -108,5 +102,6 @@
     },
     "main@common.inventory_screen_common": {
         "$screen_content": "tiny_network_endpoint_ui.content"
-    }
+    },
+    "namespace": "tiny_network_endpoint_ui"
 }

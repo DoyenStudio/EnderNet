@@ -297,6 +297,7 @@
     },
     "custom_slot": {
         "type": "panel",
+        "$cell_overlay_image": "",
         "size": [
             18,
             18
@@ -310,6 +311,14 @@
                         "100%",
                         "100%"
                     ]
+                }
+            },
+            {
+                "cell_overlay_img": {
+                    "type": "image",
+                    "$cell_overlay_image|default": "",
+                    "layer": 1,
+                    "texture": "$cell_overlay_image"
                 }
             },
             {
@@ -498,6 +507,18 @@
             20.0
         ],
         "layer": 1,
+        "property_bag": {
+            "#item_id_aux": 131072
+        }
+    },
+    "flying_item_renderer": {
+        "type": "custom",
+        "renderer": "inventory_item_renderer",
+        "size": [
+            16.0,
+            16.0
+        ],
+        "layer": 20,
         "property_bag": {
             "#item_id_aux": 131072
         }

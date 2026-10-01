@@ -9,7 +9,7 @@
             {
                 "bg@common.dialog_background_opaque": {
                     "layer": 0,
-                    "texture": "textures/ui/endernet/background_panel_opaque"
+                    "texture": "textures/ui/endernet/background_panel_thick"
                 }
             },
             {
@@ -33,16 +33,37 @@
                 }
             },
             {
+                "device_status_popup@endernet_windows.device_status_window_basic": {
+                    "anchor_from": "center",
+                    "anchor_to": "center",
+                    "bindings": [
+                        {
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetDeviceStatus.popup_visible",
+                            "binding_name_override": "#visible",
+                            "binding_type": "global"
+                        }
+                    ],
+                    "layer": 40
+                }
+            },
+            {
                 "title": {
                     "type": "image",
                     "anchor_from": "top_left",
                     "anchor_to": "top_left",
                     "size": [
-                        74.0,
+                        72.0,
                         16.0
                     ],
                     "layer": 1,
-                    "texture": "textures/ui/endernet/device_title_background",
+                    "nineslice_size": [
+                        3.0,
+                        3.0,
+                        13.0,
+                        1.0
+                    ],
+                    "texture": "textures/ui/endernet/device_title_background_darker",
                     "controls": [
                         {
                             "title_text": {
@@ -50,16 +71,17 @@
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
                                 "offset": [
-                                    3.0,
-                                    3.0
+                                    4.0,
+                                    4.0
                                 ],
                                 "color": [
-                                    0.3058823529411765,
-                                    0.2549019607843137,
-                                    0.3137254901960784
+                                    1.0,
+                                    1.0,
+                                    1.0
                                 ],
-                                "font_scale_factor": 1.2,
+                                "font_scale_factor": 1.1,
                                 "font_type": "default",
+                                "shadow": true,
                                 "text": "tile.endernet:common_terminal_panel.name",
                                 "text_alignment": "center"
                             }
@@ -70,8 +92,8 @@
             {
                 "stat_bar@endernet_ui_common.device_stat_bar": {
                     "offset": [
-                        84,
-                        1
+                        72,
+                        2
                     ]
                 }
             },
@@ -100,14 +122,14 @@
                     "$is_background_nine_slice": false,
                     "$is_box_nine_slice": false,
                     "$is_track_nine_slice": false,
-                    "$scroll_background_image_control": "netease_editor_template_namespace.scroll_background_image",
-                    "$scroll_background_texture": "textures/ui/endernet/background_bottom",
+                    "$scroll_background_image_control": "common_terminal_panel_ui.terminal_scroll_background",
+                    "$scroll_background_texture": "textures/ui/endernet/backgroud_without_frame",
                     "$scroll_box_mouse_image_control": "netease_editor_template_namespace.scroll_box_image",
                     "$scroll_box_texture": "textures/ui/newTouchScrollBox",
                     "$scroll_box_touch_image_control": "netease_editor_template_namespace.scroll_box_image",
                     "$scroll_track_image_control": "netease_editor_template_namespace.scroll_track_image",
                     "$scroll_track_texture": "textures/ui/ScrollRail",
-                    "$scrolling_content": "endernet_ui_common.custom_item_slots_grid",
+                    "$scrolling_content": "common_terminal_panel_ui.terminal_items_grid",
                     "$show_background": true,
                     "$track_nine_slice_buttom": 0,
                     "$track_nine_slice_left": 0,
@@ -121,7 +143,7 @@
                     ],
                     "anchor_from": "top_middle",
                     "anchor_to": "top_middle",
-                    "layer": 9,
+                    "layer": 1,
                     "offset": [
                         0,
                         34
@@ -133,44 +155,27 @@
                 }
             },
             {
+                "terminal_items_scroll_frame": {
+                    "type": "image",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0.0,
+                        34.0
+                    ],
+                    "size": [
+                        162.0,
+                        80.0
+                    ],
+                    "layer": 10,
+                    "texture": "textures/ui/endernet/slots_frame"
+                }
+            },
+            {
                 "inventory@endernet_terminal_inventory.inventory": {
                     "offset": [
                         0,
                         2
-                    ]
-                }
-            },
-            {
-                "unavaliable_mask": {
-                    "type": "input_panel",
-                    "anchor_from": "bottom_middle",
-                    "anchor_to": "bottom_middle",
-                    "size": [
-                        "100%+0px",
-                        "100%+-20px"
-                    ],
-                    "layer": 20,
-                    "visible": false,
-                    "controls": [
-                        {
-                            "image": {
-                                "type": "image",
-                                "size": [
-                                    "100%+0px",
-                                    "100%+0px"
-                                ],
-                                "alpha": 0.5,
-                                "clip_direction": "left",
-                                "clip_ratio": 0.0,
-                                "color": [
-                                    0.0,
-                                    0.0,
-                                    0.0
-                                ],
-                                "texture": "textures/ui/white_background",
-                                "tiled": true
-                            }
-                        }
                     ]
                 }
             },
@@ -200,13 +205,13 @@
                     ],
                     "$text_background_default": "netease_editor_template_namespace.edit_box_background_default",
                     "$text_background_hover": "netease_editor_template_namespace.edit_box_background_hover",
-                    "$text_box_name": "%netease_editor_template_namespace.message",
+                    "$text_box_name": "#EnderNetTerminal.search",
                     "$text_box_text_color": [
                         1,
                         1,
                         1
                     ],
-                    "$text_edit_box_content_binding_name": "#netease_editor_template_namespace.message_content",
+                    "$text_edit_box_content_binding_name": "#EnderNetTerminal.search_content",
                     "$text_edit_box_label_anchor_point": "right_middle",
                     "$text_edit_box_label_min_size": [
                         "100%",
@@ -260,7 +265,7 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "#EnderNetTerminal.sort_method",
                     "$pressed_texture": "textures/ui/endernet/button_pressed",
                     "$texture_layer": 2,
                     "anchor_from": "top_left",
@@ -274,18 +279,18 @@
                         20.0
                     ],
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
                     "pressed_control": "pressed",
-                    "bindings": [
-                        {
-                            "binding_type": "collection_details",
-                            "binding_collection_name": "",
-                            "binding_condition": "always_when_visible"
-                        }
-                    ],
+                    "bindings": [],
                     "controls": [
                         {
                             "default@netease_editor_template_namespace.default": {}
@@ -307,10 +312,59 @@
                                 ],
                                 "layer": 4,
                                 "texture": "textures/ui/endernet/terminal_item_sort_methods_icon",
+                                "uv": [
+                                    0.0,
+                                    0.0
+                                ],
                                 "uv_size": [
                                     16.0,
                                     16.0
                                 ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "unavaliable_mask": {
+                    "type": "input_panel",
+                    "anchor_from": "bottom_middle",
+                    "anchor_to": "bottom_middle",
+                    "size": [
+                        "100%+0px",
+                        "100%+-20px"
+                    ],
+                    "layer": 20,
+                    "is_swallow": true,
+                    "property_bag": {
+                        "#EnderNetTerminal.unavailable": false
+                    },
+                    "bindings": [
+                        {
+                            "binding_type": "global",
+                            "binding_name_override": "#visible",
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetTerminal.unavailable"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "image": {
+                                "type": "image",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "size": [
+                                    "100%+0px",
+                                    "100%+0px"
+                                ],
+                                "alpha": 0.5,
+                                "color": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                ],
+                                "texture": "textures/ui/white_background",
+                                "tiled": true
                             }
                         }
                     ]
@@ -346,7 +400,7 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "#EnderNetTerminal.sort_order",
                     "$pressed_texture": "textures/ui/endernet/button_pressed",
                     "$texture_layer": 2,
                     "anchor_from": "top_left",
@@ -360,18 +414,18 @@
                         20.0
                     ],
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
                     "pressed_control": "pressed",
-                    "bindings": [
-                        {
-                            "binding_type": "collection_details",
-                            "binding_collection_name": "",
-                            "binding_condition": "always_when_visible"
-                        }
-                    ],
+                    "bindings": [],
                     "controls": [
                         {
                             "default@netease_editor_template_namespace.default": {}
@@ -405,6 +459,13 @@
                         }
                     ]
                 }
+            },
+            {
+                "flying_item@endernet_container_common.flying_item_renderer": {
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "visible": false
+                }
             }
         ]
     },
@@ -426,5 +487,49 @@
             }
         ]
     },
-    "namespace": "common_terminal_panel_ui"
+    "namespace": "common_terminal_panel_ui",
+    "terminal_items_grid": {
+        "type": "grid",
+        "size": [
+            162.0,
+            "default"
+        ],
+        "collection_name": "terminal_slots",
+        "grid_dimensions": [
+            9,
+            2
+        ],
+        "grid_item_template": "common_terminal_panel_ui.terminal_slot",
+        "grid_rescaling_type": "horizontal",
+        "maximum_grid_items": 30,
+        "property_bag": {
+            "#maximum_grid_items": 0
+        },
+        "bindings": [
+            {
+                "binding_type": "global",
+                "binding_name_override": "#maximum_grid_items",
+                "binding_condition": "always",
+                "binding_name": "#EnderNetTerminal.count"
+            }
+        ]
+    },
+    "terminal_scroll_background@endernet_ui_common.simple_invisible_button": {
+        "$pressed_button_name": "#EnderNetTerminal.quick_store",
+        "button_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed",
+                "to_button_id": "$pressed_button_name"
+            }
+        ]
+    },
+    "terminal_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "terminal_slots",
+        "$item_count_binding": "#EnderNetTerminal.item_count",
+        "$item_id_aux_binding": "#EnderNetTerminal.item_id_aux",
+        "$item_select_button": "#EnderNetTerminal.select",
+        "$item_selected_binding": "#EnderNetTerminal.selected",
+        "$item_visible_binding": "#EnderNetTerminal.has_item"
+    }
 }

@@ -66,11 +66,11 @@
                                                         "anchor_from": "top_left",
                                                         "anchor_to": "top_left",
                                                         "size": [
-                                                            74.0,
+                                                            58.0,
                                                             16.0
                                                         ],
                                                         "layer": 1,
-                                                        "texture": "textures/ui/endernet/device_title_background",
+                                                        "texture": "textures/ui/endernet/device_title_background_sq",
                                                         "controls": [
                                                             {
                                                                 "title_text": {
@@ -98,7 +98,7 @@
                                                 {
                                                     "stat_bar@endernet_ui_common.device_stat_bar": {
                                                         "offset": [
-                                                            84,
+                                                            66,
                                                             1
                                                         ]
                                                     }

@@ -1,5 +1,4 @@
 {
-    "namespace": "bus_template_io_ui",
     "content": {
         "type": "panel",
         "layer": 1,
@@ -63,7 +62,7 @@
                                                             16.0
                                                         ],
                                                         "layer": 1,
-                                                        "texture": "textures/ui/endernet/background_panel_2_flat",
+                                                        "texture": "textures/ui/endernet/device_title_background",
                                                         "controls": [
                                                             {
                                                                 "title_text": {
@@ -115,20 +114,58 @@
                                                                     "anchor_to": "center",
                                                                     "grid_dimensions": [
                                                                         9,
-                                                                        1
+                                                                        2
                                                                     ],
-                                                                    "maximum_grid_items": 9,
+                                                                    "maximum_grid_items": 18,
                                                                     "offset": [
                                                                         0,
                                                                         0
                                                                     ],
                                                                     "size": [
                                                                         "default",
-                                                                        "100.0%c"
+                                                                        80
                                                                     ]
                                                                 }
                                                             }
                                                         ]
+                                                    }
+                                                },
+                                                {
+                                                    "template_slot_tip": {
+                                                        "type": "label",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            4.0,
+                                                            24.0
+                                                        ],
+                                                        "layer": 2,
+                                                        "color": [
+                                                            0.2588235294117647,
+                                                            0.2588235294117647,
+                                                            0.2588235294117647
+                                                        ],
+                                                        "font_type": "default",
+                                                        "text": "样板槽"
+                                                    }
+                                                },
+                                                {
+                                                    "input_slot_tip": {
+                                                        "type": "label",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            4.0,
+                                                            64.0
+                                                        ],
+                                                        "layer": 2,
+                                                        "color": [
+                                                            0.2588235294117647,
+                                                            0.2588235294117647,
+                                                            0.2588235294117647
+                                                        ],
+                                                        "font_type": "default",
+                                                        "text": "产物回流槽"
                                                     }
                                                 }
                                             ]
@@ -161,5 +198,6 @@
     },
     "main@common.inventory_screen_common": {
         "$screen_content": "bus_template_io_ui.content"
-    }
+    },
+    "namespace": "bus_template_io_ui"
 }

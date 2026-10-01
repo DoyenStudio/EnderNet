@@ -1,5 +1,4 @@
 {
-    "namespace": "parallel_processor_ui",
     "content": {
         "type": "panel",
         "layer": 1,
@@ -116,5 +115,6 @@
     },
     "main@common.inventory_screen_common": {
         "$screen_content": "parallel_processor_ui.content"
-    }
+    },
+    "namespace": "parallel_processor_ui"
 }
