@@ -63,6 +63,9 @@ User 先填写字段含义及已有 JSON 配置，脚本接入方核对后补充
 
 | 控件路径 | 字段含义、类型、单位与范围 | 来源与刷新时机 | JSON 绑定名／事件名 | Python 方法 | 接入状态 |
 | --- | --- | --- | --- | --- | --- |
+| `/stat_bar/stat_text` | 总体在线状态文本，**只有「在线」/「离线」两种**；颜色绿 `(0,1,0)`／红 `(1,0,0)`；结论未确认（`validity=pending`）**照样显示离线**，不设第三态 | 服务端 `DeviceNetworkStatus.state_text()`；会话开启即推首份，之后只在结论变化时重推 | `#EnderNetDeviceStatus.text` / `.color` / `.visible` | `TerminalPanelBase.device_status_text` / `device_status_color` / `device_status_visible` | **已接入**（通用终端面板）；其余界面未接 |
+| `/stat_bar/stat_icon` | 状态图标纹理路径 | 同上，随在线/离线切换 | `#EnderNetDeviceStatus.icon` | `device_status_icon` | **已接入**（同上） |
+| `/stat_bar/interact_btn` | 点开详情弹窗 | 无服务端往返 | `#EnderNetDeviceStatus.open` | `OnDeviceStatusClick` | **已接入**（同上） |
 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
 
 - 已有按钮映射及按下／抬起触发约定：待填写。
@@ -73,20 +76,27 @@ User 先填写字段含义及已有 JSON 配置，脚本接入方核对后补充
 
 ## 7. 脚本如何使用本 UI
 
-交接明确后由脚本接入方补充真实接口；未实现项写“待接入”，不提供虚构 API。
+**2026-10-01 起本节的 `device_stat_bar` 部分已由脚本接入方填写**（11-13，
+界面范围只有通用终端面板）。其余模板仍待接入。
 
 | 项目 | 使用说明 |
 | --- | --- |
-| Screen 文件、类名、注册入口，或公共组件的接入方式 | 待接入 |
-| namespace／根控件、打开方法与调用时机 | 待接入 |
-| 参数字段、类型、必填项及可信来源 | 待接入 |
-| 初始化、读取快照及订阅入口 | 待接入 |
-| 更新文本、图标、列表、槽位及状态的方法 | 待接入 |
-| 事件回调与服务端命令的调用位置 | 待接入 |
-| 关闭／销毁后的订阅、回调与缓存清理 | 待接入 |
-| 公共组件复用方法与允许覆盖的配置 | 待接入 |
+| Screen 文件、类名、注册入口，或公共组件的接入方式 | `device_stat_bar` 是**公共组件**，没有自己的 Screen。宿主界面在自己的类体里声明绑定，如 `endernet_bp/endernet_scripts/endernet/client/ui/terminal_panel.py` 的 `TerminalPanelBase`（`CommonTerminalPanel` 注册为 `common_terminal_panel_ui.main`）。绑定**必须写在类体里**——运行时注册在本引擎上不生效。 |
+| namespace／根控件、打开方法与调用时机 | 由宿主界面实例化：`"stat_bar@endernet_ui_common.device_stat_bar"`，只覆盖 `offset`。它会**自动继承模板里的绑定**，不需要在实例上重复声明。数据不跟实例走，跟**会话**走。 |
+| 参数字段、类型、必填项及可信来源 | 没有 `$` 参数。设备身份来自宿主界面的 `device_ref`（服务端 `PushUIRequest` 带来），**不接受客户端自报**。 |
+| 初始化、读取快照及订阅入口 | 宿主界面 `OnCreate` 里先 `client.on_message(handler)` **再** `open_session`——服务端下一帧就会推第一份快照，晚一步就永远补不上。订阅表就是会话表，没有第二条通道。 |
+| 更新文本、图标、列表、槽位及状态的方法 | 绑定名一律 `#EnderNetDeviceStatus.*`：`.text`（文字）、`.color`（绿/红）、`.visible`（拿不到结论时不显示）、`.icon`（在线/离线纹理）。回调返回安全值，且**在没有会话时也不抛**。 |
+| 事件回调与服务端命令的调用位置 | `.open` → `TerminalPanelBase.OnDeviceStatusClick` → 打开详情弹窗（幂等，连点不叠窗，**不发任何服务端命令**）；详情关闭走 `endernet_windows.device_status_window_basic` 的 `.close`。 |
+| 关闭／销毁后的订阅、回调与缓存清理 | 服务端一侧由 `TerminalSyncHub._forget`（会话关闭的唯一漏斗）丢掉每会话记账；界面一侧 `OnDestroy` 把 `status` 置空、`TerminalListView.close()` 调 `clear_handlers()`。绑定不摘——它们本来就不随会话生灭。 |
+| 公共组件复用方法与允许覆盖的配置 | 任意**非控制器**设备界面都可以 `"stat_bar@endernet_ui_common.device_stat_bar"` 并覆盖 `offset`。控制器不套用（服务端 `ui_applicable` 判），排除**不写在 JSON 里**。 |
 
-实际调用示例：待接入后填写执行端、导入路径、前置条件和真实参数。演示入口必须注明模拟用途。
+实际调用示例：见 `terminal_panel.py` 的 `TerminalPanelBase` 类体与
+`CommonTerminalPanel.OnCreate`／`_make_status_handler`。绑定名与三份 JSON 的
+一致性由 `endernet_tests/test_terminal_panel.py::TestJsonContract` 逐条钉住。
+
+**仍未接入的**：`custom_slot`、`custom_inventory`、`custom_item_slots_grid`、
+`endernet_image_button`、`endernet_text_button`、`simple_invisible_button`、
+`simple_slotitem_renderer`、`close_btn`（后两个的按下名由各实例自己覆盖）。
 
 ## 8. 待确认项与验证记录
 
@@ -95,10 +105,27 @@ User 先填写字段含义及已有 JSON 配置，脚本接入方核对后补充
 | 待填写；无则写“无” | 待填写 | 待填写 | 待填写 | 待填写 |
 
 - [ ] User 已交接资源、控件用途、槽位映射和操作流程。
-- [ ] 脚本接入方已核对路径和约定，记录所有缺项。
-- [ ] 注册、绑定、事件、同步和实际调用说明已完成。
-- [ ] 离线检查完成，结果已记录。
+      **2026-10-01**：`device_stat_bar` 有**口头**确认「可对接」，但本节
+      第 1～6 节仍是模板——**不勾**。第 1～6 节仍由 UI 归属方填写。
+- [x] 脚本接入方已核对路径和约定，记录所有缺项。
+      **2026-10-01**：逐条核对了 `endernet_ui_common.json`／
+      `endernet_windows.json`／`common_terminal_panel.json` 的实际控件与
+      绑定字段，并把三条**在引擎上没有先例**的绑定（`BF_BindColor`、用
+      `binding_name_override` 驱动 `texture`、弹窗根改 `input_panel`）
+      记进 [11-交付说明-设备状态](../tasks/11-交付说明-设备状态.md) 第七节。
+- [x] 注册、绑定、事件、同步和实际调用说明已完成。
+      **2026-10-01**：见本节第 7 节与第 6 节 `device_stat_bar` 各行；
+      名称一致性由 `test_terminal_panel.TestJsonContract` 钉住。
+- [x] 离线检查完成，结果已记录。
+      **2026-10-01**：`python -B endernet_tests/run_tests.py` 2602 项、
+      py2check 85 文件；本轮新增 53 项，分布见
+      [11-交付说明-设备状态](../tasks/11-交付说明-设备状态.md) 第一节。
 - [ ] 游戏内打开、操作、更新、关闭及重开已验证。
+      **2026-10-01 部分验证**：状态栏文字与颜色（在线绿/离线红）、图标随
+      状态切换、`interact_btn` 弹详情、详情关闭，都在 User 的测试世界里
+      看过；本轮还修掉一个只在界面上看得见的缺陷（纹理只能覆盖规范的
+      `#texture`，自造名会材质丢失）。**整条不勾**：点击穿透没真的用手点过、
+      重开与移动端没验、另外十七个界面未接。
 - [ ] 移动端、长文本、大数量和异常状态已验证（按适用范围）。
 
 | 日期／验证人 | 环境与方式 | 覆盖范围 | 结果／证据 | 未验证项 |

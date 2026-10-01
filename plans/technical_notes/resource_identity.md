@@ -1,6 +1,6 @@
 # ResourceKey 实现与接入说明
 
-更新日期：2026-09-24。对应任务 01-02，以及 05/06/11/12/13 的资源边界。
+更新日期：2026-09-29。对应任务 01-02，以及 05/06/11/12/13 的资源边界。
 参考 AE2 `45f315517ea346efc0babd02c85c6b9d32dc8acf` 的 AEItemKey、GenericStack、
 IncrementalUpdateHelper 与缺失内容保留机制。
 
@@ -77,26 +77,59 @@ ID 携带、行归属标记、空结构归一化、版本迁移及描述会话�
    校验。它用于自有样板载荷读取，会丢失类型信息，不是完整 NBT 解码器，
    也不能用于资源身份规范化；资源身份仍保留原始 `userData`。
 
-2. **引擎对 `userData` 里的 py2 `unicode` 是破坏性的**，与内容是不是 ASCII
-   无关：
+2. **引擎对 `userData` 里的 py2 `unicode` 是破坏性的。真正的分界是
+   `str` / `unicode`，不是 ASCII / 非 ASCII。**
+
+   2026-09-29 复核（12-02 探针，走引擎直连路径：
+   容器侧 `SpawnItemToContainer` + `GetContainerItem(pos, slot, dim, True)`，
+   背包侧 `SpawnItemToPlayerInv` + `GetPlayerItem(INVENTORY, slot, True)`）：
 
    | 写进去的 | 读回来 |
    | --- | --- |
    | `{"k": "v"}`（字节串） | 原样往返 |
-   | `{u"k": u"v"}` 或 `{u"k": "v"}`（unicode **键**） | **整个条目消失** |
-   | `{"k": u"v"}`（unicode **值**） | 条目在，但被**清空成 `{}`** |
-   | 非 ASCII 的 UTF-8 字节串 | 留得下，但被再编码一次（`中文` → `ä¸æ`） |
+   | `{"a": "keepme", "b": u"poison"}`（unicode **值**） | `{"a": "keepme"}`——**只丢那一条，兄弟项完好** |
+   | `{"lst": ["keepme", u"poison"]}` | `["keepme"]`——列表里被丢掉一个元素 |
+   | `{u"k": "v"}`（unicode **键**） | `{"k": "v"}`——**键正常**，被转成字节串 |
+   | 非 ASCII 的 UTF-8 字节串（`中文`、`§6剩余种类数：3`） | **字节级原样**，未被再编码 |
 
-   因此**写进 `userData` 的文本必须是纯 ASCII 的 py2 `str`**；
-   需要携带非 ASCII 时要自己转义（样板层用 `\uXXXX`，见
-   `crafting/patterns.py` 的 `_escape_text`）。
+   **规则**：`unicode` 值被静默丢弃（连同它的键）；值的字典被清空到只剩
+   合法项，全空时引擎对 `userData` 返回 `None`。`str` 字节串无论内容是
+   否 ASCII 都安全。
+
+   **与本节 2026-09-25 的读数不一致的地方，见下面的路径说明。**
+   写进 `userData` 的文本仍建议用 py2 `str`；样板层现有的 `\uXXXX`
+   转义（`crafting/patterns.py` 的 `_escape_text`）**继续有效**，
+   不因为本条而需要改。
+
+   **背包路径复核（同上 2026-09-29）**：`SpawnItemToPlayerInv` 写
+   `{"keepme": "ok", "poison": u"中文", "lst": ["ok", u"x"]}` 进玩家背包，
+   `GetPlayerItem` 读回 `{"keepme": "ok", "lst": ["ok"]}`——**规则逐条复现**：
+   `unicode` 值连同它的键消失，列表里只掉那一个元素，兄弟项完好。
+   所以这条规则**不是容器路径的孤例**，它是引擎对 `userData` 的一致行为。
+
+   读回形状与容器路径一致：嵌套容器不包装，叶子标量包装成
+   `{"__type__": T, "__value__": V}`；空槽读回 `None`（不是空气字典）。
+
+   **路径范围（重要）**：以上两条都是引擎直连路径。
+   2026-09-25 那三条记录的是任务 07 的路径（经 tooldelta 物品包装层），
+   两者的差异（"整个条目消失" vs "unicode 键正常"、"再编码成 `ä¸æ`" vs
+   字节原样）**很可能是包装层而非引擎造成的**。本文件不据此宣布旧读数为错；
+   **经 tooldelta 包装层写 `userData` 的路径没有重测**，走那条路的功能
+   仍应假定旧读数成立。
 
 3. **`SpawnItemToContainer` 的布尔返回值不可全信。** 实测到「返回 `False`、
    物品其实写进去了」。判据只能是**写回之后逐槽读回**（架构规划 §6.3 的
    那条纪律反过来同样成立：不看返回值会漏报，全信返回值会误报）。
 
-**尚未确认**：这三条只在本模组的 `netease:block_container` 与原版箱子上
-验证过；玩家背包路径（`SpawnItemToPlayerInv` / `GetPlayerItem`）没有实测。
+**2026-09-29 更新**：玩家背包路径已于当日实测。第 1 条（叶子标量带 NBT 包装、
+嵌套容器不带、空槽读回 `None`）与第 2 条（`unicode` 被丢弃、非 ASCII 字节串
+原样、Lore 字节级往返）在背包路径上**逐条复现**，与容器路径一致。
+三个背包原语 `GetPlayerItem` / `SpawnItemToPlayerInv` / `SetInvItemNum` 都跑通了
+（`SetInvItemNum(slot, 0)` 返回 `True` 且该槽随后读为 `None`）。
+
+**仍未确认**：第 3 条（`SpawnItemToContainer` 布尔返回值不可全信）只在容器侧
+观察到，背包侧没有做「返回 `False` 但实际写入」的对照；本模组自己的
+`netease:block_container` 与原版箱子之外的容器类型也没试。
 `EngineContainerProvider` 目前把 `userData` 原样交给 `item_codec`，
 因此**带 `customTips` 的物品在容器里往返会得到不同的 `ResourceKey`**
 （写进去是顶层 `customTips`，读回来引擎把它搬进了
@@ -129,9 +162,11 @@ ID 携带、行归属标记、空结构归一化、版本迁移及描述会话�
 
 ## 5. 验证
 
-`python endernet_tests/run_tests.py`：547 项测试通过，38 个源码文件通过 Python 2.7
-语法门禁。新增回归覆盖嵌套引用隔离、描述载荷往返、固定 Unicode 指纹、实际 ToolDelta
-Item 类的转换、描述首次/增量/丢失/旧会话、缺失资源原样保留和恢复。
+`python endernet_tests/run_tests.py`：**2249** 项测试通过，**76** 个源码文件通过 Python 2.7
+语法门禁（2026-09-29 复核；本节此前记的是 547 项 / 38 个文件，是本文档成文时的数字，
+此后仓库整体增长，不是本节所验事项的回归）。新增回归覆盖嵌套引用隔离、描述载荷往返、
+固定 Unicode 指纹、实际 ToolDelta Item 类的转换、描述首次/增量/丢失/旧会话、缺失资源
+原样保留和恢复。
 ToolDelta 测试替换引擎初始化依赖，未运行游戏；未实测 Python 2 解释器、引擎物品
 堆叠语义、真实存档和网络传输。新增测试也覆盖 DEBUG 关闭时的正常链路与外部数据
 拒绝。哈希缓存和模糊索引留待测量及后续业务需要。

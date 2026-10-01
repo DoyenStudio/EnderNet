@@ -1,13 +1,67 @@
-# 通用终端模拟物品栏 UI
+# 通用终端物品栏 UI
 
-代码：`endernet_bp/endernet_scripts/endernet/client/ui/`。`TerminalPanelBase` 继承 ToolDeltaScreen，`CommonTerminalPanel` 注册为 `common_terminal_panel_ui.main`，由客户端 bootstrap 导入注册。当前是独立模拟数据，不读取或修改真实玩家背包，也未接入网络库存。
+> **2026-09-30 下半屏已游戏内实测**：面板能打开、36 格全部生成、两个段的槽序映射
+> 与引擎实读逐格对上、集合下标落格正确。**绑定必须写在类体里**（`@Binder.binding` /
+> `binding_collection`）——运行时注册那条路在这个引擎上根本不生效，用了就是每渲染
+> 一帧一条 `AttributeError`。见 [交付](../tasks/11-交付说明.md) 第十二节。
+> **上半屏（列表）仍未跑过**：`OpenDemo` 没有权威身份，那 10 条只跑到了安全值分支。
+
+> **2026-09-30 S-15**：D-06 已修复。显示仍读本地背包，版本校验新增服务端 `inventory_snapshot` 与真实 `slot_version` 回传；无匹配快照则等待同步。下文“不新增协议”是此前 D3 的历史边界，已由此增量替代。见 [交付](../tasks/06-11-交付说明-背包槽版本.md)，游戏内未验。
+
+> **2026-09-30 背包内交换/合并：定案并接上（仅离线验证）**：User 补定玩家背包物品槽可**交换、合并**
+> （自实现物品栏的通用做法），终端用同样方式从网络取出存入。手势沿用「点选中 → 再点目标」，
+> **不引入光标持有物**——因此 R12 的持有物退出规则仍不触碰，`cursor` 照旧不发。
+> 本文下面「不实现分堆…」那一条与「本轮定的默认」的措辞已就地加注更正。
+> 服务端五个动作已齐（`inv_swap` 于同日补上，见 [欠账台账](../tasks/00-欠账台账.md)
+> **S-16**）；客户端也已接上**取放、合并、交换**三条，仍欠**拆分与快捷转移**
+> （手势属 R12）。**全部只离线验证过，真机没跑。**
+> 见 [Task 11](../tasks/11.%20终端与客户端同步.md) 文末补充段与 [欠账台账](../tasks/00-欠账台账.md)。
+
+代码：`endernet_bp/endernet_scripts/endernet/client/ui/`。`TerminalPanelBase` 继承 ToolDeltaScreen，`CommonTerminalPanel` 注册为 `common_terminal_panel_ui.main`，由客户端 bootstrap 导入注册。
+
+**下半屏渲染的是真实玩家背包**（2026-09-30 起）。它由客户端**本地读引擎**
+（`GetLocalPlayerHotbarAndInvItems(get_user_data=True)`，不新增协议），搬运则全部
+发命令给服务端（`inv_take` / `inv_put`），以回执为准。文件头写着「模拟」的那一份
+`inventory_model.py` 已无生产消费者，只剩测试夹具。
 
 ## 槽号与交互
 
-- 背包 0～26（27 格，9×3）；快捷栏 27～35（9 格，9×1）。合计 36 格；这些是 UI 槽号，未来接入真实背包时仍需显式映射引擎槽号。
-- 点击非空槽选择来源，再点击目标：空槽整堆移动，同 ResourceKey 合并到物品 maxStackSize，不同物品交换。合堆后的余量保留在来源并继续选中；目标同类且已满则不操作。
-- 再点来源取消选择。空手点空槽无动作。关闭/失活只取消选择，没有光标持有物，也没有待返还物品。
-- 不实现分堆、拖拽、快捷键或真实服务端存取。合堆身份包含附魔、耐久和自定义数据，不仅比较物品名称。
+- **两套槽序，方向正好相反。** 引擎给的是**快捷栏在前**（0–8 快捷栏、9–35 背包），
+  而界面与 `#collection_index` 是**背包在前**：上方 9×3 是 0–26、下方 9×1 是 27–35。
+  换算只有一处定义：`backpack_model.engine_slot_of`。
+  **写反了不会报错**——客户端用同一张表同时算出槽号与指纹，而服务端的锚只回答
+  「这个槽里是不是这件东西」，自己和自己必然一致。症状是**搬走玩家没点的那一格**，
+  只有逐格实点才看得出来（`test_backpack_model.py` 钉住四个端点）。
+- **交互是两步**：点背包槽只**选中**（不搬任何东西；空格子点不动；同格再点取消），
+  再点一下才发生动作，**看目标是谁**：点**终端行** → `inv_take`（背包 → 网络），
+  数量取那一槽的**一组** = `min(该槽数量, maxStackSize)`；点**另一个背包槽** →
+  背包内动作（同种且可合并 → **合并**、异种 → **交换**、目标为空 → **交换**即在移动）。
+  **没有选中**时点终端行仍是原有的 `inv_put`。
+  两条「一组」共用 `stack_size.py` 一份定义——各写一份的代价不是重复代码，而是
+  两个方向的天花板会悄悄分家。
+- **两条路共用一份选中态，因此天然互斥。** 选中了背包槽再点终端行仍然走 `inv_take`，
+  不会既交换又存取。「背包内」与「背包 ↔ 网络」是两类动作：前者不改变网络库存，
+  后者才走转移服务与去重账本；但**两类都由服务端执行**，客户端只发命令。
+  **界面已接**（2026-09-30）：判定在 `BackpackModel.pending_exchange`（同种可
+  合并 → 合并并把数量封在目标剩余空间内；异种或目标为空 → 交换；同类已满 →
+  什么都不发），发命令在 `TerminalListView.on_backpack_exchange`。
+  **「先问 `intends_exchange` 再决定要不要 `select()`」不是风格问题**：
+  `select()` 一旦先跑，选中就挪到目标格上去了，再拿它当源槽就是搬错了格子。
+  仍欠**拆分与快捷转移**——命令早就有，缺的是属 R12 的手势。
+- **本地不写引擎背包、不写网络**；选中态**不持有物品**，只记一个槽号，因此关闭
+  界面时没有任何悬空义务（R12 的持有物退出规则不因此被定案）。
+  **2026-09-30 起 `_slots` 是一份虚拟背包空间**（见下），屏幕上看到的那一份不再
+  保证等于引擎读数——但它仍是**画出来的**那一份，而不是写进世界的：背包写接口
+  全在服务端（`SetInvItemExchange` 等都是 `mod.server.*`），客户端只有 `Get*`。
+  因此「不需要回滚」换成了「本地操作按序重放、真值追上就退场」。
+- **不实现**分堆、拖拽、快捷键、光标持有物；「点击=选中、再点行=交接」是**本轮
+  定的默认、不是玩法定案**，R12 定稿后即被取代。载荷里 `cursor` 照旧不发。
+  > **2026-09-30 更正**：上面这半句里的「是**本轮定的默认、不是玩法定案**，
+  > R12 定稿后即被取代」**已不成立**——R12 已就该手势**定案**，且「再点」的目标
+  > 从「终端行」扩到「**另一个背包槽**」（背包内合并／交换／移动）。见
+  > [Task 11](../tasks/11.%20终端与客户端同步.md) 文末补充段。
+  > **同句里的「不实现分堆、拖拽、快捷键、光标持有物」仍然有效**：本次定案的模型
+  > 不产生持有物，R12 余下的拖拽、长按、键位、触控仍在未定。
 
 ## 调用与复用
 
@@ -16,23 +70,185 @@
 ```python
 from .ui.terminal_panel import CommonTerminalPanel
 
-screen = CommonTerminalPanel.OpenDemo()
-# 或传入 36 个 Item / None，未传 items 时默认全空：
-# screen = CommonTerminalPanel.CreateUI({"items": items})
-items_after_interaction = screen.GetInventoryItems()
-# screen.SetInventoryItems(items)  # 整体替换，取消旧选择
+screen = CommonTerminalPanel.OpenDemo()   # 空参数开会话：上方列表恒空，下方是真实背包
+backpack = screen.GetBackpackItems()      # [(资源名, 数量) | None] × 36，诊断快照
 ```
 
-OpenDemo 在 0/1/2/26/27/35 放置示例物品，用于验证合堆溢出、异类交换、两区边界和空格移动；不自动弹窗，也不向真实玩家发放物品。
+`OpenDemo` **不再注入示例物品**：它曾用 `items` 参数在 0/1/2/26/27/35 放示例物品，
+用来验证合堆溢出、异类交换、两区边界与空格移动——那套语义属于已被撤下的本地模拟
+模型（`plans/technical_notes/netease_container_screens.md` 记着它**在游戏里从来没
+渲染出来过**）。`items` 参数、`SetInventoryItems` 与 `OnInventoryChanged` 钩子都已
+删除：留一个没人用、又会诱导别人写本地假数据的写入口，比删掉更贵。
 
-其他终端继承 TerminalPanelBase 并单独使用 RegistToolDeltaScreen 注册。复用 `endernet_terminal_inventory.inventory` JSON 模板，默认路径 `/terminal/inventory`；布局不同可覆写 INVENTORY_PATH。继承的静态 Binder 方法由 ToolDelta 注册器发现。完成内容变化后调用 OnInventoryChanged(indices)，子类可覆写；选择变化不调用该钩子。
+其他终端继承 TerminalPanelBase 并单独使用 RegistToolDeltaScreen 注册。复用
+`endernet_terminal_inventory.inventory` JSON 模板（根控件路径 `/terminal/inventory`，
+不需要脚本侧知道）。继承的静态 Binder 方法由 ToolDelta 注册器发现。
 
-模型保存数据副本；GetInventoryItems 返回副本，修改返回值不会暗中改变界面。外部需要保留模拟结果时显式取出该快照。后续接入真实背包时须另加服务端交易与确认流程，不能直接把本地模拟结果作为库存余额上传。
+**36 格一格控件都不持有，全部走引擎的集合绑定。** 十条列表绑定与八条格子绑定
+**都写在 `TerminalPanelBase` 的类体里**（`@Binder.binding` / `@Binder.binding_collection`），
+**一条都不在运行时注册**。这不是风格选择，是**运行时注册那条路在这个引擎上根本
+不生效**（2026-09-30 由引擎源码与实测定案）：引擎存的是回调的 `__name__`，渲染时
+拿这个名字到界面实例上 `getattr`。类体里的绑定由 tooldelta 的注册器连名带壳塞进
+生成的 `_Base` 类，`getattr` 找得到；运行时那条路（`DynaBinding` /
+`DynaBindingCollection`）的包装器 `__name__` 是 `reader` 之类，`_Base` 上没有 →
+**每渲染一帧一条 `AttributeError: 'CommonTerminalPanel_Base' object has no
+attribute 'reader'`**，格子全空。列表那一半同理，区别只是它们委托给实例属性
+`list_view`，所以类体里必须有一个 `list_view = None` 的类属性兜底（绑定解析早于
+`OnCreate`），且每条回调在 `list_view is None` 时返回安全值——静态绑定在类注册时
+就生效，**不能按会话摘除**，没有会话时引擎照样会来问。
 
-CustomSlotView 缓存子控件引用，资源身份未变时仅更新数量/选择状态；只刷新本次涉及的槽位，无每帧全表刷新。身份变化时重新设置图标、耐久并清理旧状态。
+八条格子绑定每条只有四行：转手调 `_slot_*(段, 下标)`。两段的段常量是
+`BACKPACK_SEGMENT` / `HOTBAR_SEGMENT`，每段四个字段 `visible`（bool）、
+`item_id_aux`（int）、`selected`（bool）、`item_count`（string），名字由
+`slot_binding(前缀, 后缀)` 拼出，前缀 `backpack` / `hotbar`；点击那条同法拼
+`slot_binding(前缀, "click")`。界面侧是 `endernet_windows.item_can_be_selected` 的
+两个实例（`endernet_terminal_inventory.json`），覆盖六个 `$` 变量，视觉结构不动。
+
+**为什么不用控件路径**：grid 的格子要到**渲染**时才生成，滚动时还会被回收换出。
+早先的实现按 `grid.GetGridItem(x, y)` 逐格取、缓存子控件（`CustomSlotView`），
+`OnCreate` 第一步就 `ValueError: Can't initialize UBaseCtrl: comp is None`，整块界面
+建不起来；而按路径拿到的引用在换出之后就是过期的。ModSDK 的网格文档也是这么说的
+（不建议按子控件路径操作格子，要用数据绑定）。**因此现在没有任何「重画」的代码**：
+重读引擎之后引擎下一渲染帧自己来取，`_poll_backpack` 不通知任何人。
+
+**两段的绑定名必须分开**：集合绑定的回调只拿得到「集合内下标」，拿不到集合名。
+共用一套名字时快捷栏那 9 格会按背包的下标去读——界面照常渲染、不报任何错。
+段信息由每条回调**自己**传给 `_slot_*(段, 下标)`：八条格子绑定就是八个具名方法，
+各自写死段常量，不存在闭包捕获这回事（早先用默认参数捕获段信息，那是 py2 没有
+`nonlocal` 时在循环里建闭包的绕法，随运行时注册一起消失了）。
+`TestBackpackCellBindings` 钉住这一条。
+
+**空格子的可见性恒真**：模板把根控件的 `#visible` 挂在这个绑定上，而背包里的空格子
+仍然要画出槽底（槽底是它的子控件 `bg`）——空是用 `#item_id_aux == 0` 表达的，不是靠
+隐藏。**注意这与网格文档的一句劝告相左**（「在数据绑定的回调函数中需要明确 grid
+本身是否可见」）：本轮按「面板显隐由界面开关承担、脚本从不隐藏 `/inventory`」判断
+恒真即可，但那是推断，进游戏后要看一眼（待验清单第 0 条）。
+
+选中态因此没有第二个真相源，`BackpackModel.select()` 的返回值**不要**拿去画高亮
+（高亮由绑定每帧现读 `backpack.selected`）。
+
+**两处已知缺项**（不影响「能不能用」，但界面看得出来）：
+
+- 共享模板 `item_can_be_selected` **没有耐久条**，而它替换掉的
+  `endernet_container_common.custom_slot` 有。下半屏的耐久显示因此暂时没有承载位置。
+- `#item_id_aux` 按**资源名**查（`stack_size.id_aux`），而 `id_aux` 由 `(名字, aux)`
+  决定：带损耗的工具会画成完好的那一张图。上半屏是同一条路，同样如此。
+
+## 虚拟背包空间（2026-09-30）
+
+**数据流是「真实背包 → 虚拟空间 → UI」**（`BackpackModel` 的三个字段）：
+
+```
+引擎读数 ──→ _base（真值）
+               │  _replay（按序重放）
+_slots ←───────┘  + _pending（还没被真值兑现的本地操作）
+  ↑
+  └── 界面只读它（entry()）
+```
+
+**为什么要有它**：背包内的交换/合并，玩家点完要立刻看出结果，而**客户端写不了
+自己的背包**——背包写接口全在服务端（`SetInvItemExchange` / `SetInvItemNum` /
+`SpawnItemToPlayerInv` 都是 `mod.server.*`），客户端只有 `Get*`。有了这份虚拟
+快照，玩家在等服务端回执的那段时间里可以做**任意多轮**操作。
+
+**退场判据是「真值追上没有」，不是「回执到了没有」**（`_retire`）：回执到达只是
+去**重读一次**真实背包的信号，操作本身要等 `_base` 里那两格真的变成它的结果才退。
+差别在时序上看得见——回执往往比引擎读数先到，**按回执退会让画面先跳回操作前的
+样子、再跳过来**。真值走到别处去了（两格既不是操作前、也不是操作后）就**丢弃该
+操作**：硬撑着会盖掉别人的改动，比不显示严重得多。
+
+**退场只从队首、按序**：服务端也是按序执行这些命令的，因此真值只会沿队列从头
+兑现。中间某一环没兑现，后面就算「看起来对上了」也不退——那多半是巧合。
+
+**本地改过的槽发 `slot_version=None`**：那几格在服务端那边的版本客户端算不出来
+（服务端什么时候读到、读了几次取决于它自己的时序，而且交换只复核目标槽、合并
+两格各复核一次）。`None` 是 `SlotAnchor` 有意留的「不校验版本」。**没改过的槽
+照旧发真实版本。** 同理，`on_backpack_exchange` 对**本地改过的源槽跳过快照指纹
+核对**——那几格与快照对不上是应该的（服务端还没走到）。
+
+**取放（网络 ↔ 背包）不进虚拟空间**：那两格以外还有网络库存，本地看不到结果，
+预测不了。因此从**本地改过的槽**取东西时，快照核对会把那一下挡回去（等待同步）
+——这是有意的失败方向，不是遗漏。
+
+## 刷新节拍
+
+视图每 12 帧重读一次引擎背包（`BACKPACK_POLL_FRAMES`）。**这是帧数，不是秒**：UI 的
+渲染帧率与脚本 tick、模拟 tick 都不是一回事，在代码里写死频率换算会随负载漂。
+一次读是 36 份带 userData 的字典序列化加 36 次身份归一化，逐帧读不可取；容器那边
+的既定做法同样是退避轮询。点击时另外立刻重读一次，把「选中」与「发出」之间的过期
+窗口压到最小。
+
+**读失败时整块保持上一帧**（条数不对也一样），只计数进 `diagnostics()`。把玩家的
+背包画成空的，比闪一下严重得多——玩家会以为东西没了。**单格**身份算不出来时只跳过
+那一格、保留它上一帧的样子，理由相同。
 
 ## 验证
 
-离线入口：`python endernet_tests/run_tests.py`。用例覆盖移动、取消、完全/部分合堆、16 堆叠上限、异类/元数据交换、输入隔离、无效输入与随机操作数量守恒。
+离线入口：`python -B endernet_tests/run_tests.py`。
 
-游戏内仍需验证：初始化后 OpenDemo 能打开、36 格完整显示、点击抬起只触发一次、鼠标/触控 collection_index、关闭按钮与系统返回、附魔图标及耐久显示。离线用例不代表 ModSDK 渲染和事件已实测通过。
+- `test_backpack_model.py`：四个槽序端点、空槽点不动、同格再点取消、选中格换了东西
+  就丢选中（别格变化不丢）、读失败整块保持、`pending_take` 的 `(槽号, 身份, 数量)`
+  与一组上限。
+- `test_terminal_panel.py::TestBackpackHandoff`：有选中发 `inv_take`、无选中仍发
+  `inv_put`、回执按 `request_id` 清选中、被拒时清选中并重读。
+  > **2026-09-30 更正**：本条原写「`slot_version` 发 `None`」——**已过期**。
+  > S-15 之后 `inv_take` 发的是**服务端真实槽版本**（`terminal_panel.py:696` 取
+  > `view["slot_version"]`，用例断言 `== 7`），无匹配快照时等待同步、不发命令。
+  > 顶部 S-15 引用块记的就是这次变更，这一行当时漏改。
+- `test_terminal_panel.py::TestBackpackCellBindings`：八个集合绑定的名字/旗标/集合同
+  JSON 一致、两段不串段、空格可见且 `#item_id_aux == 0`、数量 > 1 才显示、越界下标
+  不报成选中、轮询后引擎自取、销毁摘干净。
+- `test_terminal_panel.py::TestEngineBindingResolution`：**钉住上面那条机制**。
+  替身按引擎的做法走一遍——先建生成的 `_Base`，再逐个按回调的 `__name__` 到界面
+  实例上 `getattr`，因此「类体里每条绑定都答得出引擎要的那个名字」（21 条）与
+  「运行时注册那条路答不出（`AttributeError`）」各有一条。**这条用例存在的意义
+  是让退回运行时注册立刻在离线变红**，而不是只在游戏里表现为格子全空。
+  引擎那条 `getattr` 的链路是 2026-09-30 从 ModSDK 源码
+  （`screenBase.process_binding` → C++ 侧按名解析）读出来的，离线替身照抄了它。
+- `test_terminal_inventory.py`：界面 JSON 的 grid／模板实例／六个 `$` 变量与常量的
+  接线，以及点击路径上的槽位映射。`InventoryTests` 那半守的是已撤下的
+  `InventoryModel`，保留它是因为那些搬运语义的边界用例仍然成立。
+
+**游戏内仍需验证（一条都不能省）**：
+
+0. ~~**下半屏到底画不画得出来**~~ —— **2026-09-30 实测通过**。36 格的槽底都在
+   （`backpack` 27 格 + `hotbar` 9 格，各 18×18、`visible` 全真）；8 个有物品的格子里
+   **7 个**画出了正确图标与数量。若绑定的 `binding_type` 或旗标与 JSON 对不上，引擎会
+   安静地给假值——现在这条路已经证明是通的。**剩下的一格见第 0b 条。**
+   连带那件事（`#visible` 恒真、与网格文档那句劝告相左）：本轮照旧**没有**照做，也
+   **没出现**「界面关掉了格子还浮着」——但那是因为没有实测过「界面关掉」这个动作，
+   不算验掉。
+0b. **一个第三方方块不画图标**（新，2026-09-30 实测中发现）。引擎槽 14（界面 5）的
+   `skybluetech:item_transport_cable_steel`：`item_id_aux` 是引擎给的 `-641138688`
+   （非 0，绑定值正确），但格子里不画图标。下标映射与「这一格是活的」都已实测排除
+   （同格的 `selected_frame` 能点亮）。倾向于「该方块没有 item 图标，`item_renderer`
+   画不出来」，**但那是推断**。要定案：把一件确定有图标的 skybluetech 物品（如
+   `skybluetech:aluminum_ingot`，它在 `netease_items_res` 里）放进同一格再看。
+1. ~~**格子画的是哪一格**~~ —— **2026-09-30 实测通过（数据侧）**。引擎 36 槽的实读与
+   界面侧逐项对上：`[9..14] = stone, crafting_template, factorical_template,
+   factorical_template, parallel_processor, steel cable` 对应界面 `0–5`；
+   `[0] = common_terminal_panel ×64` 对应界面 `27`；`[8] = parallel_processor_connector`
+   对应界面 `35`。集合下标 0 基也验掉了：选中设成 5 之后只有 `backpack_slot6` 的
+   `selected_frame` 变可见。**「`GetPlayerAllItems` 的 0–8 是快捷栏」「长度恰 36」
+   两个假设同时成立。**
+   **没验的是「逐格点一遍看背包少了哪一格」**——那要真的发 `inv_take`，属第 6、7 条。
+2. `GetPlayerAllItems(INVENTORY, True)` 在客户端返回的形状：长度是否恰 36、索引
+   0–8 是不是快捷栏、`durability`/`customTips`/`extraId`/`enchantData` 是「缺席」
+   「`0`/`""`/`[]`」还是「显式 `None`」。**这一条决定身份归一化的实测依据在客户端
+   是否同样成立**（`_EMPTY_IDENTITY` 是服务端侧的实测）。
+3. 界面开着时能否读到正确背包；`inv_take` 之后物品多久从本地消失（「闪回」的真实
+   时延）。
+4. `engine_item_key` 对真引擎物品不炸（`DEBUG=True` 与 `False` 各跑一次）。
+5. 特殊物品：附魔工具、带 userData 的旗帜/潜影盒、耐久不满的工具——存进网络后与
+   背包里那件身份一致。
+6. 服务端拒绝时的界面表现：人为制造过期 → 应看到选中被清且界面重读，而不是
+   「点了没反应」。
+7. 满网络／网络未开：`inv_take` 的余量回退会不会出现「背包扣了、网络没进」。
+8. 连点与触控：一次点击只触发一次。
+9. 关闭／返回／断线：无残留高亮，也没有上一次的选中被后一次点击用掉。
+10. 第 4 条里那两处已知缺项（格子没有耐久条、带损耗的工具按完好图标画）是否可接受
+    ——**这是要 User 裁定的，不是实现方能自己定案的**。前者要动的是共享模板
+    `endernet_windows.item_can_be_selected`（它同时被上半屏用着），后者要动
+    `stack_size` 的缓存维度。
+
+离线用例不代表 ModSDK 渲染和事件已实测通过。

@@ -21,6 +21,7 @@
 标记：`[有]` 已有模块，职责按需扩展；`[新]` 待实现，只在有实际功能时创建。省略 `__init__.py` 和其他设备业务。不要预建空目录、空类或转发包装层。
 
 版本库注意：当前 `.gitignore` 的 `dev*` 会匹配 `devices.py`、`device_status.py` 等新文件；实现时须为实际交付路径添加精确例外并用 `git status --untracked-files=all` 核验。不要让功能只存在本机而缺失于提交，也不要为此整体取消开发文件的忽略规则。
+**2026-10-01 已为 `server/sync/device_status.py` 与 `client/ui/widgets/device_status.py` 加上两条 `!` 例外**；`devices.py`（11-07）仍未交付，届时同样要加。
 
 ```text
 endernet_scripts/
@@ -58,7 +59,11 @@ endernet_scripts/
     │   │   ├── sessions.py            [新] 共用会话身份、资格、过期与清理
     │   │   ├── devices.py             [新] 驱动器槽位快照、配置请求与确认
     │   │   ├── terminal.py            [新] 终端库存快照、增量与重同步
-    │   │   └── device_status.py       [新] 总体在线状态与详细原因订阅
+    │   │   └── device_status.py       [有] 设备总体状态的上行编码、守卫读取
+    │   │                                  与每会话去重（11-08/11-13）。**聚合
+    │   │                                  不在这里**——`controller.compose_device_status`
+    │   │                                  （03）已经把带宽／能源／主控／型号合成
+    │   │                                  一个结论，本模块只把它编上线
     │   ├── adapters/
     │   │   ├── events.py              [有] 引擎事件；交互事件接入与拆除快照
     │   │   ├── world.py               [有] 方块、朝向及世界访问
@@ -77,14 +82,18 @@ endernet_scripts/
         ├── bootstrap.py               [有] 客户端启动与界面注册
         ├── network_client.py          [新] 请求、响应、客户端会话与缓存路由
         └── ui/
-            ├── terminal_panel.py      [有] 终端基类与通用终端，目前为模拟背包
+            ├── terminal_panel.py      [有] 终端基类与通用终端，下半屏接真实背包
             ├── storage_driver.py      [新] 驱动器介质槽与容量信息界面
             ├── inventory_model.py     [有] 背包显示与交互状态，需接服务端确认
             ├── item_list_model.py     [新] 网络物品摘要、筛选、排序与选择
             └── widgets/
-                ├── item_slot.py       [新] 从现有 CustomSlotView 提取共用显示
+                ├── item_slot.py       [新] 共用槽位显示；渲染侧已由共享模板
+                │                          `endernet_windows.item_can_be_selected`
+                │                          ＋集合绑定承担，这里只留注册与取值
                 ├── virtual_grid.py    [新] 可见槽位池、滚动与重绑定
-                └── device_status.py   [新] 共用状态栏与详情弹窗
+                └── device_status.py   [有] 状态栏与详情弹窗的绑定名、显示常量
+                                           与纯模型（11-13）；`@Binder.binding`
+                                           仍必须写在注册的 Screen 子类类体里
 ```
 
 UI JSON 继续位于 `endernet_rp/ui/`，不移入脚本目录。客户端统一使用现有 `ui/`，不再并列新建 `screens/`、`slots/`、`render/` 或另一个顶层 `widgets/`。旧规划的 `view_models.py` 职责分配到具体模型，不保留第二份缓存；`subscriptions.py` 的库存发布职责先放入 `sync/terminal.py`，不要为同一批数据再建一套发布器。
@@ -102,7 +111,7 @@ UI JSON 继续位于 `endernet_rp/ui/`，不移入脚本目录。客户端统一
 | 玩家背包及介质物品的实际交接 | transfer.py + 容器适配器 | 同一时刻只有一处拥有真实物品，无法核对时返回不确定 |
 | 样板槽的实际内容（样板接口 9 格） | **方块容器本身**（`store.py` 只读它） | 样板是自包含物品，配方编码在自己的 `userData` 里；权威在世界侧，不在内存 |
 | 产物 → 样板／提供者的索引、样板版本（内容指纹） | crafting/store.py | **派生缓存**：每次从容器重读重建，不存档、不迁移、不构成第二份真相 |
-| 配方结构、编码格式版本、R09 未定策略 | crafting/patterns.py | 不记录外部机器类型；可用性活在提供者上（架构规划「配方定义与当前可用的提供者分离」） |
+| 配方结构、编码格式版本、R09 策略（无限燃料 **2026-09-30 已定案**；返还物显式声明 **同日已定案**；两类样板适用范围未定） | crafting/patterns.py | 不记录外部机器类型；可用性活在提供者上（架构规划「配方定义与当前可用的提供者分离」） |
 | 规划结果（批次、依赖步骤、缺口、复核凭据） | crafting/planner.py | **只读计算**：不扣库存、不预留、不占真实槽位。两份输入（库存、样板索引）由调用方采集并**深拷贝成纯值**，因此规划结果不随世界变化而变；**计划不是预留**——09 提交前必须 `revalidate()` 再按 `claims` 逐个 `reserve()` |
 | 样板提供者的执行半边（投料与回流） | **09 的订单执行器** | 07 只提供只读的样板列表；`push_inputs` 必须是 06 的 `port_stage` 命令的薄封装，不另开绕过主控账本的投料路径。**那条路已经跑通**：`executor.OrderExecutor._port_stage()` 就是它。**07-05 已按此落地**（2026-09-27，台账 S-07）：`push_inputs` → `FactoryService.stage_inputs` → 同一个 `_port_stage`，命令与请求号形状只有一个来源；**装配回流已接线**（07-06 / 台账 S-11）：`assembly_advance` 经 06 按槽转移，真实回库后通知 10；离线完成、游戏内未验 |
 | 订单状态、预留凭据、执行批次与等待台账 | crafting/jobs.py（领域）+ executor.py（推进） | **每网络一份**（服务槽位逐运行时各造一套），两张网络不共享订单。容量从 02 的处理器群与网络成员**每帧重算**，不另建设备索引。**这条是「拉」不是「推」**（2026-09-28 台账 D-03 定案）：02 曾经发过一份「槽位来源变化」清单，正因为与本行相抵而无人消费，已连同 `ProcessorGroup.slot_count()` 一并删除；读法是 `ProcessorGroup.contributes_slots()` + `.slots`，去重由 `crafting/capacity.py::slot_capacity` 自己做 |
@@ -184,7 +193,7 @@ common 和 server 领域模块不导入 ModSDK 或 ToolDelta 引擎模块。sync
 
 复用 `storage_driver.json` 和公共状态控件。驱动器同步自己的槽位、介质型号、容量／类型使用量、版本和阻塞原因；不持续订阅整个网络物品列表。槽位的真实物品交接与配置展示分开，客户端只提交意图。
 
-会话公共身份与关闭清理放 sessions；设备槽位同步放 devices；库存长列表发布放 terminal；状态聚合放 device_status。业务写请求复用主控去重账本，不在每个 sync 模块另建一份互不相知的交易去重表。界面关闭不应销毁权威驱动器状态或未确认交接记录。
+会话公共身份与关闭清理放 sessions；设备槽位同步放 devices；库存长列表发布放 terminal；设备总体状态**聚合**放 `network/controller` 的 `compose_device_status`（只读），上行编码与订阅记账放 `sync/device_status`。状态的订阅表**就是会话表**（不开第二条会话），清理点只有 `TerminalSyncHub._forget` 一处。业务写请求复用主控去重账本，不在每个 sync 模块另建一份互不相知的交易去重表。界面关闭不应销毁权威驱动器状态或未确认交接记录。
 
 通用终端按 [增量索引说明](terminal_item_index.md) 实现。现有模拟 UI 仅作组件起点，不直接上传本地模拟结果；驱动器不要求先完成整个终端。静态 UI 绑定实施时读取 `tooldelta-ui-binding` 技能并核对实际 JSON 与 Screen，不能把占位按钮当作已接线。
 

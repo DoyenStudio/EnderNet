@@ -64,8 +64,10 @@ User 的分类规则独立预测出这个切分，实测恰好相符，两条线
 ——「那 5 格是不是方块自身的库存」——也**已于 2026-09-29 由 User 答「是」并落地**
 （加容器组件就是回答「是」）：本文件 §二 记的 4 台扩到 9 台，
 见 [11-07 清单](../tasks/11-07-UI缺项与等待交接.md) §七 Q2 与 §十。
-**注意这解决的是方块侧**：领域层 `PortStore` 对 `OUTPUT` 仍是 `buffer=None`，
-两边尚未对齐（11-07 §四 C1）。
+**注意这解决的是方块侧**：领域层那半边于同日稍后补上——`PortStore` 对 `OUTPUT`
+（缓存）与 `INTAKE`（缓冲）各建了一个 `BUFFER_CONTAINER`，**但两边仍未打通**：
+方块容器与这份记账之间缺的是中转路由（06-05／06-06），它们目前只是各自存在
+（11-07 §四 C1）。
 
 ## 二、三种集合名，对应三条不同通路
 
@@ -235,6 +237,11 @@ OpenNeteaseContainer(self, screenName, customDescription, isCloseReturnItem=Fals
    `CreateUI failed: return None is not <class ...CommonTerminalPanel>`；
    但 `capture_game_window` 截图里**屏幕确实渲染出来了**（标题「通用终端面板」、
    搜索框、上下两片格），只是 `OpenDemo` 塞的演示物品没有出现。
+   **这段记录的历史对象已经不存在了**：2026-09-30 起下半屏渲染真实玩家背包，
+   `OpenDemo` 的 `items` 注入与 `SetInventoryItems` 写入口都已删除（见
+   [终端物品栏 UI](terminal_inventory_ui.md)）。留着它是因为**两条结论仍然有效**：
+   创屏本身在真机上能成，而 ModSDK 脚本屏「渲染出来了」并不能证明脚本接上了——
+   当时那半屏的格子就是引擎画的空壳。
    首调另有 `GetBaseUIControl('/terminal/inventory')` → `UBaseCtrl` 报
    `Can't initialize UBaseCtrl: comp is None`：**脚本路径与 JSON 对不上**——
    `common_terminal_panel.json` 里该控件实际是 `content/inventory`

@@ -150,14 +150,14 @@ show_item_list_window(self, draft_item_ids, 9, "自动输出物品")
 
 | 缺项／待确认规则 | 影响与处理边界 |
 | --- | --- |
-| ~~**打开入口未定，5 格身份随之未定**~~ **2026-09-29 已定：路径甲 + 5 格即设备自身库存** | 本屏是容器屏幕（根 `main@common.inventory_screen_common`），网格用引擎集合 `netease_container`。User 定「容器类设备走引擎自动打开、脚本以 `is_proxy=True` 挂代理」，取货口方块当日补上了 `netease:block_container`（`container_size=5`）与 `base_block`，**三条候选路线中选了第一条**。因此 5 格是**方块自身的容器**，外部模组也能存取。**仍未解决的是领域层半边**：`PortStore` 对 `OUTPUT` 仍是 `buffer=None`，方块上的 5 格与服务端记账尚未对齐。依据见 [11-07 缺项清单](../tasks/11-07-UI缺项与等待交接.md) §一／§十、[网易容器屏幕的打开机制](../technical_notes/netease_container_screens.md) §零 |
+| ~~**打开入口未定，5 格身份随之未定**~~ **2026-09-29 已定：路径甲 + 5 格即设备自身库存** | 本屏是容器屏幕（根 `main@common.inventory_screen_common`），网格用引擎集合 `netease_container`。User 定「容器类设备走引擎自动打开、脚本以 `is_proxy=True` 挂代理」，取货口方块当日补上了 `netease:block_container`（`container_size=5`）与 `base_block`，**三条候选路线中选了第一条**。因此 5 格是**方块自身的容器**，外部模组也能存取。**领域层半边已于当日稍后补上权威**（`PortStore` 对 `OUTPUT` 建 `BUFFER_CONTAINER`，容量 `PortPolicy.output_cache_capacity`、开关 `PortConfig.cache_enabled`）；**仍未打通的**是方块那 5 格与这份记账之间的中转路由（「网络 → 缓存 → 朝向容器」归 06-06），因此两者目前只是各自存在、尚未对齐。依据见 [11-07 缺项清单](../tasks/11-07-UI缺项与等待交接.md) §一／§十、[网易容器屏幕的打开机制](../technical_notes/netease_container_screens.md) §零 |
 | 缓存有货时关闭／修改或清空名单 | 排空后切换、拒绝切换、回网等方案未定；不自动删除、掉落或重新解释余货，需 06/11/12 联合确认 |
 | 多项配置的单图标摘要 | 代表项、轮播及提示文案未定；不缩减 9 种配置能力 |
 | 缓存关闭视觉与手动存取 | 隐藏／置灰及玩家权限待定；继承原生槽模板不等于授予权限 |
 | 预取与调度 | 目标满／缺失时是否预取、补货顺序及槽位分配未定；保持资源守恒和预算约束 |
 | 精确物品匹配 | 列表仅 identifier，aux／NBT 口径需对齐服务端身份契约 |
 | 静态占位与容量继承 | renderer=131072（草方块，应为 barrier）、toggle 编辑器绑定串、maximum_grid_items=27 待接入时修正。开关另缺 `$toggle_binding_type`（原版默认 `"none"`），只换 `$toggle_name` 仍是空转，两者须一起改 |
-| 脚本、同步与恢复 | 专用 Screen、新模式、5 格库存及迁移待实现；旧搬运验证不覆盖本轮缓存规则。服务端侧取货口**无缓冲**（`io.py:101` 的 `BUFFERED_ROLES` 不含 OUTPUT）、`PortConfig` 无缓存模式字段、无设备视图通道、`Migrator.register` 全仓零调用点，逐条见 [11-07 缺项清单](../tasks/11-07-UI缺项与等待交接.md) 第四节 |
+| 脚本、同步与恢复 | 专用 Screen、新模式、5 格库存及迁移待实现；旧搬运验证不覆盖本轮缓存规则。~~服务端侧取货口**无缓冲**（`io.py:101` 的 `BUFFERED_ROLES` 不含 OUTPUT）、`PortConfig` 无缓存模式字段~~ **这两条 2026-09-29 已补**（`PortStore` 对 `OUTPUT` 建 `BUFFER_CONTAINER`、`PortConfig.cache_enabled`）；**仍未补的**是无设备视图通道与 `Migrator.register` 全仓零调用点，以及「网络 → 缓存 → 朝向容器」这条中转路由（06-06）。逐条见 [11-07 缺项清单](../tasks/11-07-UI缺项与等待交接.md) 第四节 |
 | 引擎交互 | 层级、触控、防穿透、距离／拆除失效、R12 及异常状态待验证 |
 | 公共组件未交接 | 本文件依赖的 `endernet_container_common.md`、`endernet_ui_common.md`、`endernet_windows.md` 三份文档仍为空模板（各 27 处「待填写」）。列表窗口可被 §7 引用，但组件文档未交接时接入示意无法核对 |
 | ~~同类问题（非本设备）~~ **2026-09-29 已一并解决** | 物品存货口（`bus_item_input_io.json:331`）与内存槽（`memory_slot.json:102-106`）原先同样画了 `netease_container` 网格却无容器组件；当日连同本设备一起补上了组件。**附带的规格更正**：存货口格数由 9 改为 **5**（以 JSON 的 `[5,1]` 为准），[bus_item_input_io.md](bus_item_input_io.md) 与 [blocks.md](../blocks.md) 已同步 |
