@@ -12,6 +12,8 @@ if 0 > 1:
 
 WINDOW_ATTRIBUTE = "_endernet_number_set_window"
 EDIT_BINDING = "#EnderNetNumberSet.number"
+TITLE_PATH = "title/title_tip"
+DEFAULT_TITLE = "设置数量"
 STEP_BUTTONS = (
     ("add_1x_btn", 1), ("add_10x_btn", 10), ("add_100x_btn", 100),
     ("sub_1x_btn", -1), ("sub_10x_btn", -10), ("sub_100x_btn", -100),
@@ -22,13 +24,20 @@ try:
 except NameError:
     INTEGER_TYPES = (int,)
 
+try:
+    TEXT_TYPES = (str, unicode)
+except NameError:
+    TEXT_TYPES = (str,)
 
-def show_number_set_window(screen, number, confirm_callback, min_number=1, max_number=None):
-    # type: (ToolDeltaScreen, int, typing.Callable[[int], None], int, int | None) -> bool
+
+def show_number_set_window(screen, number, confirm_callback, min_number=1, max_number=None,
+                           title=DEFAULT_TITLE):
+    # type: (ToolDeltaScreen, int, typing.Callable[[int], None], int, int | None, str) -> bool
     """Open once per screen; confirm returns an integer, close only cancels.
 
     Initial values and button steps are clamped to the supplied range. Empty,
-    non-integer and out-of-range input cannot be confirmed. The host may call
+    non-integer and out-of-range input cannot be confirmed. `title` replaces
+    the window's heading, whose JSON default is DEFAULT_TITLE. The host may call
     screen._vars[WINDOW_ATTRIBUTE].close() from OnDestroy for cleanup.
     """
     if WINDOW_ATTRIBUTE in screen._vars:
@@ -41,7 +50,9 @@ def show_number_set_window(screen, number, confirm_callback, min_number=1, max_n
         raise ValueError("invalid quantity range")
     if not callable(confirm_callback):
         raise TypeError("confirm_callback must be callable")
-    NumberSetWindow(screen, number, confirm_callback, min_number, max_number)
+    if not isinstance(title, TEXT_TYPES):
+        raise TypeError("title must be a string")
+    NumberSetWindow(screen, number, confirm_callback, min_number, max_number, title)
     return True
 
 
@@ -51,11 +62,13 @@ class NumberSetWindow(object):
     CONTROL_DEFINITION = "endernet_windows.number_set_window"
     CONTROL_NAME = "endernet_number_set_window"
 
-    def __init__(self, screen, number, confirm_callback, min_number=1, max_number=None):
+    def __init__(self, screen, number, confirm_callback, min_number=1, max_number=None,
+                 title=DEFAULT_TITLE):
         self.screen = screen
         self.confirm_callback = confirm_callback
         self.min_number = min_number
         self.max_number = max_number
+        self.title = title
         self.number = min_number
         self.closed = False
         self.root = None
@@ -64,6 +77,9 @@ class NumberSetWindow(object):
         try:
             self.root = screen.AddElement(self.CONTROL_DEFINITION, self.CONTROL_NAME)
             self.root.SetLayer(50)
+            # The heading is a plain label, so write its text directly: the same
+            # control in other panels proved a binding would not draw here.
+            self.root.GetElement(TITLE_PATH).asLabel().SetText(title)
             self.editor = self.root.GetElement("num_editor").asTextEditBox()
             for path, step in STEP_BUTTONS:
                 self.root.GetElement(path).asButton().SetCallback(partial(self._step, step))

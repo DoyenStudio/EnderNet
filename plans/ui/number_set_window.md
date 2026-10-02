@@ -11,10 +11,14 @@ def on_confirm(number):
     pass
 
 show_number_set_window(screen, 64, on_confirm, min_number=1, max_number=4096)
+show_number_set_window(screen, 1, on_confirm, title="设置流体数量")
 ```
 
-- `show_number_set_window(screen, number, confirm_callback, min_number=1, max_number=None)`：
+- `show_number_set_window(screen, number, confirm_callback, min_number=1, max_number=None, title="设置数量")`：
   返回是否成功打开；同一屏幕重复打开返回 `False`，保留已有窗口及其回调。
+- `title` 覆盖窗口标题 `number_set_window/title/title_tip` 的文本，默认与 JSON 里的
+  `"设置数量"` 一致。该 label 走 `SetText`（与合成面板标题同一写法），标题类型非字符串
+  时抛 `TypeError`，不创建控件。
 - 初始数量和 `screen._vars[WINDOW_ATTRIBUTE].set_number(number)` 都按范围截取。
   默认允许正整数，不设置上限；调用方可显式设置最小值为 `0`。
 - 六个按钮分别增减 1、10、100，到达范围边界后停在边界值。
@@ -30,4 +34,5 @@ show_number_set_window(screen, 64, on_confirm, min_number=1, max_number=4096)
 未改变终端手势映射或其他未定玩法规则。
 
 离线回归覆盖打开、手动输入、六种步进、范围、确认/取消、重复打开、销毁清理、
-创建失败及 JSON 绑定名。实际输入法、按钮事件和窗口显示仍需在游戏内验证。
+创建失败、标题默认值与自定义及 JSON 绑定名。实际输入法、按钮事件和窗口显示
+仍需在游戏内验证。

@@ -23,6 +23,9 @@ class NumberControl(Control):
     def asTextEditBox(self):
         return self
 
+    def asLabel(self):
+        return self
+
     def SetText(self, text):
         self.text = text
 
@@ -55,9 +58,13 @@ class NumberSetWindowTests(unittest.TestCase):
         self.screen = NumberScreen()
         self.confirmed = []
 
-    def open(self, number=64, minimum=1, maximum=None, callback=None):
-        self.assertTrue(self.module.show_number_set_window(
-            self.screen, number, callback or self.confirmed.append, minimum, maximum))
+    def open(self, number=64, minimum=1, maximum=None, callback=None, title=None):
+        args = (self.screen, number, callback or self.confirmed.append, minimum, maximum)
+        if title is None:
+            opened = self.module.show_number_set_window(*args)
+        else:
+            opened = self.module.show_number_set_window(*args, title=title)
+        self.assertTrue(opened)
         self.window = self.screen._vars[self.module.WINDOW_ATTRIBUTE]
         self.root = self.screen.root
         self.editor = self.root.GetElement("num_editor")
@@ -77,6 +84,14 @@ class NumberSetWindowTests(unittest.TestCase):
         self.assertFalse(self.module.show_number_set_window(self.screen, 1, self.confirmed.append))
         self.window.set_number(128)
         self.assertEqual(self.editor.GetText(), "128")
+
+    def test_title_defaults_and_can_be_customized(self):
+        self.open()
+        self.assertEqual(self.root.GetElement("title/title_tip").GetText(),
+                         self.module.DEFAULT_TITLE)
+        self.window.close()
+        self.open(title="设置流体数量")
+        self.assertEqual(self.root.GetElement("title/title_tip").GetText(), "设置流体数量")
 
     def test_all_six_steps_and_bounds(self):
         self.open(200, maximum=1000)
@@ -177,6 +192,10 @@ class NumberSetWindowTests(unittest.TestCase):
                     self.screen, number, self.confirmed.append, minimum, maximum)
         with self.assertRaises(TypeError):
             self.module.show_number_set_window(self.screen, 1, None)
+        for title in (None, 5, ("a",)):
+            with self.assertRaises(TypeError):
+                self.module.show_number_set_window(
+                    self.screen, 1, self.confirmed.append, 1, None, title)
         self.assertFalse(self.screen._vars)
 
     def test_json_control_paths_and_binding_do_not_collide_with_item_search(self):
@@ -194,6 +213,10 @@ class NumberSetWindowTests(unittest.TestCase):
         self.assertEqual(controls["num_editor"]["$text_edit_box_content_binding_name"],
                          self.module.EDIT_BINDING + "_content")
         self.assertNotEqual(self.module.EDIT_BINDING, "#EnderNetSelectItem.search")
+        title_tip = controls["title"]["controls"][0]["title_tip"]
+        self.assertEqual(title_tip["type"], "label")
+        self.assertEqual(title_tip["text"], self.module.DEFAULT_TITLE)
+        self.assertEqual(self.module.TITLE_PATH, "title/title_tip")
 
 
 if __name__ == "__main__":
