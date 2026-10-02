@@ -929,9 +929,23 @@ def slot_insert(adapter, op_id, slot, resource_key, count):
     adapter.write_slot(slot, data)
     after = slot_read(adapter, slot)
     if after["key"] != resource_key:
+        # **写下去的东西可能已经在那里了**：这时报 `moved=0` 就是「写了却报
+        # 没写」，而调用方正是按 `moved` 决定要不要扣来源格的——2026-10-02
+        # 在样板终端上实测到的**一次复制**就是这么来的（写完读回核对判不等，
+        # 但键确实换了、东西确实进了槽）。
+        # 因此按**读回的实际增量**如实报 `moved`，状态降级为 `PARTIAL` +
+        # `SLOT_CHANGED`（槽里不是我们以为的那件东西）。不用 `UNCERTAIN`：
+        # 它被 `TransferReceipt.is_applied()` 排除在去重账本之外，重发会再动
+        # 一遍；而这里是真的写下去了。
+        moved = max(0, after["count"] - view["count"])
+        if moved <= 0:
+            return TransferReceipt(
+                op_id, count, 0, TransferStatus.REFUSED,
+                Reason.CONTAINER_REFUSED, resource_key,
+            )
         return TransferReceipt(
-            op_id, count, 0, TransferStatus.REFUSED, Reason.CONTAINER_REFUSED,
-            resource_key,
+            op_id, count, moved, TransferStatus.PARTIAL,
+            Reason.SLOT_CHANGED, resource_key,
         )
     moved = after["count"] - view["count"]
     if moved >= count:
@@ -965,9 +979,17 @@ def slot_extract(adapter, op_id, slot, resource_key, count):
     adapter.write_slot(slot, data)
     after = slot_read(adapter, slot)
     if after["key"] is not None and after["key"] != resource_key:
+        # 与 `slot_insert` 同一条理由（见那里的说明）：取出可能已经发生，
+        # 这时报 `moved=0` 会让调用方以为来源格还在、于是**不扣**。
+        moved = max(0, view["count"] - after["count"])
+        if moved <= 0:
+            return TransferReceipt(
+                op_id, count, 0, TransferStatus.REFUSED,
+                Reason.CONTAINER_REFUSED, resource_key,
+            )
         return TransferReceipt(
-            op_id, count, 0, TransferStatus.REFUSED, Reason.CONTAINER_REFUSED,
-            resource_key,
+            op_id, count, moved, TransferStatus.PARTIAL,
+            Reason.SLOT_CHANGED, resource_key,
         )
     moved = view["count"] - after["count"]
     if moved >= count:

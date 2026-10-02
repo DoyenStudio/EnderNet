@@ -581,22 +581,31 @@ class TestItemResources(AssetFixture):
                 identifier = payload["minecraft:item"]["description"]["identifier"]
                 self.assertEqual(identifier, item_id)
 
-    def test_items_do_not_stack(self):
-        """**堆叠上限必须是 1，两类物品各自的理由都成立。**
+    def test_stack_limits_match_the_definition_table(self):
+        """堆叠上限与定义表逐项一致。
 
-        - 介质要携带自己的身份与内容，一叠 64 个会共享同一份物品数据，
-          拔出其中一个就无法确定它是哪一块盘。
-        - 样板把配方编码在自己的 `userData` 里，一叠 64 块只会剩下其中
-          一块的配方，而玩家看到的是一叠——**这一条比介质那条更硬**：
-          样板没有世界侧的记录可以兜底。
+        **写成「与定义表一致」而不是「都等于 1」**：后者会在玩法数值一改时
+        先红一次、然后被人顺手改成常数，那条断言就再也拦不住「定义表改了、
+        生成物没跟上」。
+
+        介质与合成样板取 1（要携带自己的身份与内容／配方编码在 `userData` 里）；
+        工厂样板由 User 2026-10-02 定为 64（样板终端的输入槽要能一次放一叠），
+        代价是一条尚未验证的引擎风险，见 `plans/items.md` 的样板一节。
         """
-        for item_id in self.item_ids:
-            payload = read_json(os.path.join(BP_ITEMS, item_file_name(item_id)))
+        for spec in self.item_specs:
+            payload = read_json(os.path.join(BP_ITEMS, item_file_name(spec.id)))
             self.assertEqual(
                 payload["minecraft:item"]["components"]["minecraft:max_stack_size"],
-                1,
-                item_id,
+                getattr(spec, "max_stack_size", 1),
+                spec.id,
             )
+
+    def test_the_two_templates_keep_their_own_limits(self):
+        """把两类样板的取值钉死——两边一起被改时，只有这一条会红。"""
+        crafting = self.definitions.get_template("endernet:crafting_template")
+        factory = self.definitions.get_template("endernet:factorical_template")
+        self.assertEqual(crafting.max_stack_size, 1)
+        self.assertEqual(factory.max_stack_size, 64)
 
     def test_items_carry_a_tip(self):
         """物品说明里要有内容：样板是塞在容器里的实物，玩家只能靠悬停分辨。"""

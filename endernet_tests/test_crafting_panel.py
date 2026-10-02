@@ -1503,5 +1503,31 @@ class TestSlotLayoutPaths(unittest.TestCase):
             slot_layout.scroll_content_at(self.screen, "/nope/scroll_view"))
 
 
+class TestCellNameFromTheWire(unittest.TestCase):
+    """九宫格那一行的 `name` **过线回来是字节串**。
+
+    2026-10-02 在样板终端上真机撞到同一个写法：只认 `unicode` 时
+    `isinstance(name, unicode)` 判假、名字被换成空串，`id_aux` 恒为 0——
+    格子里有原料、画面上没有图标。11-04 这两行是同一份代码，但它从没上过机，
+    所以一直没暴露；离线夹具喂的是 `ResourceKey.name`（unicode），照不出来。
+    """
+
+    def row(self, name):
+        return {"canonical": "item|minecraft:dirt|0|...", "count": 1,
+                "name": name, "aux": 0}
+
+    def test_a_byte_string_name_is_decoded_not_dropped(self):
+        cell = crafting_panel._cell_of(self.row(b"minecraft:dirt"))
+        self.assertEqual(u"minecraft:dirt", cell["name"])
+
+    def test_a_unicode_name_still_works(self):
+        cell = crafting_panel._cell_of(self.row(u"minecraft:dirt"))
+        self.assertEqual(u"minecraft:dirt", cell["name"])
+
+    def test_a_non_text_name_is_blank_rather_than_guessed(self):
+        self.assertEqual(u"", crafting_panel._cell_of(self.row(7))["name"])
+        self.assertEqual(u"", crafting_panel._cell_of(self.row(None))["name"])
+
+
 if __name__ == "__main__":
     unittest.main()

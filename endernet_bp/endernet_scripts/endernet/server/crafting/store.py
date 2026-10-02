@@ -68,6 +68,7 @@ from ...common.protocol import BlockReason, Reason
 from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
 from ..devices.capabilities import PATTERN_PROVIDER, CapabilityRegistry
 from ..runtime.lifecycle import ChangeKind
+from .template_terminal import encode_template_item
 from . import patterns
 from .execution import PatternProviderPort, editable_view
 from .patterns import PatternError, PatternPolicy, PatternValidationError
@@ -998,21 +999,16 @@ class PatternStore(object):
         物品标识**按模式反查定义表**，因此「合成配方却写成工厂样板物品」
         这条路径不存在——两者查的是同一个映射。
 
-        `customTips` 与 `userData` 一起进**资源键**，因为 `item_codec`
-        把两者都算作身份：写进去的和读回来的必须是同一个键，否则
-        「刚装上去就被判成换了另一块」。
+        **物品字典本身由 `template_terminal.encode_template_item` 造**，
+        这里只负责「按哪条映射取标识」这一个决定：那件物品长什么样
+        （`customTips` + `userData` 一起进资源键的写法）只有一处，
+        免得样板终端编出来的与样板接口装进去的悄悄不是同一种东西。
         """
         item_id = self.definitions.item_id_for_template_mode(definition.mode)
         if not item_id:
             return None
-        user_data = patterns.write_pattern(None, definition)
-        key = ResourceKey.item(
-            item_id,
-            0,
-            custom_tips=patterns.describe_tip(definition),
-            user_data=user_data,
-        )
-        return item_dict_from_key(key, 1)
+        _key, item = encode_template_item(definition, item_id)
+        return item
 
     # -- 插槽判定（引擎事件路径的入口）--------------------------------
 

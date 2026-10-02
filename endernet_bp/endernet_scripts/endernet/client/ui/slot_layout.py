@@ -5,6 +5,12 @@
 免得同一条路径在两个文件里各写一份——那种重复的代价不是多打几个字，而是
 改了 JSON 只改到一处，另一处静默指向一个不存在的控件。
 
+**路径一律写成「内容区相对」的形式**（`/flying_item`、`/inventory/backpack`），
+由 `control()` 按 `_candidates` 补前缀。**四台终端面板有两种屏幕挂法**，同
+一个控件因此在两个命名空间里（通用终端是 `/terminal/…`，另外三台是
+`SCREEN_BASE_PATH + …`）；写死其中一种，另一类面板上**每一个槽位都取不到**，
+而那是静默的——见 `_candidates` 的实测记录。
+
 **矩形是「现在」的。** 每次调用都现问引擎，不缓存：滚动一下、窗口一缩放、
 背包行数一变，同一个槽位的坐标就变了。缓存下来的结果是动画飞到一个
 已经没人站的位置，而那种错要盯着屏幕才看得出来。
@@ -22,16 +28,23 @@
 就会缩两遍——而两遍差 1 像素，只在屏幕上看得见。
 """
 
-#: 内容面板（`terminal@common_terminal_panel_ui.content`）的路径。它同时是
-#: 飞行动画的坐标系原点——`flying_item` 是它的子控件。
-TERMINAL_ROOT = "/terminal"
+#: 内容区本身（飞行动画的坐标系原点——`flying_item` 是它的子控件）。
+#: 空串＝「这一层的内容区」，由 `_candidates` 补上两种挂法各自的前缀。
+CONTENT_PATH = ""
+
+#: **通用终端那一种挂法**的内容区前缀。四台终端面板里只有它一个用：
+#: 它在 `main@common.base_screen` 的 `controls` 里显式挂了
+#: `terminal@common_terminal_panel_ui.content`，于是引擎的相对命名空间从
+#: `terminal` 开始。其余三台（合成／工厂／样板）用 `$screen_content` 把内容
+#: **直接铺在屏幕基底上**，没有这一层。详见 `_candidates`。
+CONTENT_ROOT = "/terminal"
 
 #: 滚动区面板。**注意它自己是 `common.scrolling_panel`（一个 panel），不是
 #: `scroll_view`**，真正的滚动控件在它下面一层，见 `SCROLL_VIEW_PATHS`。
-SCROLL_PATH = TERMINAL_ROOT + "/terminal_items_scroll"
+SCROLL_PATH = "/terminal_items_scroll"
 
 #: 背包那一半的整块面板（上 9x3 + 下 9x1）。
-INVENTORY_PATH = TERMINAL_ROOT + "/inventory"
+INVENTORY_PATH = "/inventory"
 
 #: 两段格子。**与 `common_terminal_panel.json` 里的两个 collection 一一对应**，
 #: 顺序是界面序：0..26 在背包网格、27..35 在快捷栏。
@@ -39,7 +52,7 @@ BACKPACK_GRID_PATH = INVENTORY_PATH + "/backpack"
 HOTBAR_GRID_PATH = INVENTORY_PATH + "/hotbar"
 
 #: 飞行动画用的那个图标控件。
-FLYING_ITEM_PATH = TERMINAL_ROOT + "/flying_item"
+FLYING_ITEM_PATH = "/flying_item"
 
 try:
     INTEGER_TYPES = (int, long)
@@ -74,13 +87,86 @@ SCROLL_VIEW_SUFFIXES = (
 SCROLL_VIEW_PATHS = tuple(SCROLL_PATH + suffix for suffix in SCROLL_VIEW_SUFFIXES)
 
 
-def _control(screen, path):
+def screen_base():
+    # type: () -> str
+    """屏幕基底（`tooldelta.ui.SCREEN_BASE_PATH`）。
+
+    **惰性 import**：`tooldelta/ui/utils.py` 在**模块级**就
+    `import mod.client.extraClientApi`，顶层 import 会让本模块离线（没有引擎）
+    时整个导不进来。拿不到就返回空串——离线用例因此拿到**相对路径**那一支，
+    与通用终端在游戏里的走法一致。与 `template_panel.title_control_path` 同一手法。
+    """
+    try:
+        from ....tooldelta.ui import SCREEN_BASE_PATH
+    except ImportError:
+        return ""
+    return str(SCREEN_BASE_PATH)
+
+
+def _candidates(screen, path):
+    # type: (object, str) -> tuple
+    """`path` 是**内容区相对路径**（如 `/inventory/backpack`），返回按序试的完整路径。
+
+    **四台终端面板有两种屏幕挂法，同一个控件因此在两个命名空间里**，两条都
+    在真机上量过（2026-10-02，两张面板各开着直接问引擎）：
+
+    - **通用终端**（`common_terminal_panel.json`）在 `main@common.base_screen`
+      的 `controls` 里**显式**挂了 `terminal@common_terminal_panel_ui.content`，
+      引擎的相对命名空间从 `terminal` 开始 → `/terminal/inventory/backpack`
+      命中，而 `SCREEN_BASE_PATH + …` **取不到**。
+    - **合成／工厂／样板**三台用 `main@common.base_screen` 的 `$screen_content`
+      把内容**直接铺在屏幕基底上**，没有 `terminal` 那一层，相对命名空间是空的
+      → 只有 `SCREEN_BASE_PATH + /inventory/backpack` 命中，`/terminal/…`
+      取不到。
+
+    两条候选实测**互斥**，因此「按序试、命中即用」不会选错；两条都取不到时
+    调用方拿到 `None`，与「这块面板上没有这个控件」是同一种结局（本模块不发
+    明一个第三种说法）。
+
+    **这两条是这次修的缺陷的落点**：`SCREEN_BASE_PATH` 是 2026-10-02 才引入的
+    约定（屏幕从 `common.inventory_screen_common` 换成 `common.base_screen`
+    之后，相对路径在三个新面板上全部失效），而本模块当时还在发裸的
+    `/terminal/…`，于是**每一个槽位矩形都取不到**——表现是飞行动画整个不见，
+    而不报任何错。
+    """
+    base = screen_base()
+    return (CONTENT_ROOT + path, base + path)
+
+
+def _control_at(screen, path):
     # type: (object, str) -> object
-    """按路径取控件；取不到（或引擎抛）返回 `None`。"""
+    """按**完整**路径取控件；取不到（或引擎抛）返回 `None`。"""
     try:
         return screen.GetBaseUIControl(path)
     except Exception:
         return None
+
+
+def control(screen, path):
+    # type: (object, str) -> object
+    """按**内容区相对路径**取控件（`path` 同 `_candidates`）；取不到返回 `None`。
+
+    公开给 `flying_item`：动画器手上只有路径字符串，解析（两种挂法的候选）
+    必须走同一条路，否则控件找到了、原点却按另一条候选算，图标会整块偏移。
+    """
+    for candidate in _candidates(screen, path):
+        found = _control_at(screen, candidate)
+        if found is not None:
+            return found
+    return None
+
+
+def path_of(screen, path):
+    # type: (object, str) -> object
+    """内容区相对路径 → **本界面上真正取得到的那条完整路径**；一条都不中返回 `None`。
+
+    给「必须把路径字符串交给别的接口」的调用方用（`GetElement` 之类）。
+    与 `control` 是同一套候选，因此两边永远不会指向不同的控件。
+    """
+    for candidate in _candidates(screen, path):
+        if _control_at(screen, candidate) is not None:
+            return candidate
+    return None
 
 
 def _rect(control):
@@ -106,16 +192,16 @@ def scroll_view_at(screen, panel_path):
     # type: (object, str) -> object
     """**任意**滚动面板下面的滚动控件（`ScrollViewUIControl`）；取不到返回 `None`。
 
-    `panel_path` 是这个滚动面板的完整路径（如 `/terminal/terminal_items_scroll`）。
-    **不给默认值**：默认值会让调用方以为「不传就是本界面的那一个」，
-    而本模块里唯一知道自己是哪个面板的地方是调用点。
+    `panel_path` 是这个滚动面板的**内容区相对**路径（如
+    `/terminal_items_scroll`）。**不给默认值**：默认值会让调用方以为
+    「不传就是本界面的那一个」，而本模块里唯一知道自己是哪个面板的地方是调用点。
     """
     for suffix in SCROLL_VIEW_SUFFIXES:
-        control = _control(screen, panel_path + suffix)
-        if control is None:
+        found = control(screen, panel_path + suffix)
+        if found is None:
             continue
         try:
-            view = control.asScrollView()
+            view = found.asScrollView()
         except Exception:
             continue
         if view is not None:
@@ -173,11 +259,11 @@ def _content_of(view):
 def _grid_cell_rect(screen, path, index):
     # type: (object, str, int) -> object
     """某个网格里第 `index` 格（按行优先、每行 `COLUMNS` 格）的矩形。"""
-    control = _control(screen, path)
-    if control is None:
+    found = control(screen, path)
+    if found is None:
         return None
     try:
-        grid = control.asGrid()
+        grid = found.asGrid()
     except Exception:
         return None
     if grid is None:
@@ -215,7 +301,7 @@ def backpack_area_rect(screen):
     用在「网络 → 背包」这一向上：服务端把东西放进**第一个装得下的格子**，
     客户端看不到是哪一格，因此只能落到整块区域，而不假装知道是哪一格。
     """
-    return _rect(_control(screen, INVENTORY_PATH))
+    return _rect(control(screen, INVENTORY_PATH))
 
 
 def network_row_rect(screen, row):
@@ -250,7 +336,7 @@ def network_area_rect(screen):
     用在「物品在网络里还没有行」的场合——它要飞进去的是那一份库存，而
     屏幕上还没有它落脚的地方；落到列表区的中心，比随便挑一行准。
     """
-    return _rect(_control(screen, SCROLL_PATH))
+    return _rect(control(screen, SCROLL_PATH))
 
 
 #: 引擎附在按钮回调参数里的**点击位置**，键名取自

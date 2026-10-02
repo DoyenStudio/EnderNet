@@ -187,14 +187,63 @@ _EMPTY_IDENTITY = {
 }
 
 
+#: 引擎把顶层 `customTips` **复制**一份到 `userData` 里的这个键（2026-10-02 实测）。
+#: 归一时要去掉它：顶层那一份还在原处，这一份是引擎自己加的，不属于调用方
+#: 写过的载荷。不去掉的话「构造的键」与「读回来的键」永远不相等。
+_ENGINE_CUSTOM_TIPS_KEY = "ItemCustomTips"
+
+
+def normalize_user_data(value, custom_tips):
+    # type: (object, object) -> object
+    """把引擎读回来的 `userData` 归一成**调用方构造时的那份形状**。
+
+    两件事，都是 2026-10-02 在样板终端上实测出来的（依据见
+    [资源身份](../plans/technical_notes/resource_identity.md) §2）：
+
+    1. **解掉叶子标量的 NBT 包装。** 引擎读回来时每个标量是
+       `{"__type__": T, "__value__": V}`，而 `item_dict_from_key` 写进去的是
+       裸值。不解包，「写进去的键」与「读回来的键」恒不相等。
+    2. **丢掉引擎复制进 `userData` 的 `customTips` 副本。**
+
+    **为什么必须在这里解，而不是只在读载荷时解**：身份与载荷看到的是同一份
+    `userData`。`crafting/store.py` 早就为了**解码**而解包（`read_pattern`
+    之前那一步），但身份（`item_key_from_dict`）解的是同一份原始字典——
+    两边形状不一致时，凡是「写下去再读回来核对」的地方都会判失败。
+    2026-10-02 实测到的后果是**一次复制**：`slot_insert` 写完判
+    `after["key"] != resource_key` → 报 `moved=0`，而东西已经在槽里，
+    调用方因此不扣来源格（`slot_extract` 那一侧同形）。
+
+    **仍然会丢 NBT 类型信息**（这是 `unbox_engine_value` 的既有取舍）：一个
+    恰好长成 `{"__type__": <int>, "__value__": ...}` 的同形业务字典会被误判
+    成包装。这条取舍与「同一件物品写进去、读回来必须是同一个键」直接冲突，
+    2026-10-02 选择后者——前者只是理论上的歧义，后者已经在真机上造成了复制。
+
+    非字典（含 `None`）原样返回：异常形状交给调用方的类型检查，本函数不替它
+    决定。全空的字典归一成 `None`——引擎对空 `userData` 直接回 `None`，
+    两者必须是同一个身份。
+    """
+    if not isinstance(value, dict):
+        return value
+    plain = unbox_engine_value(value)
+    if not isinstance(plain, dict):
+        return plain
+    copy = plain.get(_ENGINE_CUSTOM_TIPS_KEY)
+    if copy is not None and (
+            copy == custom_tips or (copy == "" and custom_tips is None)):
+        plain = dict(plain)
+        plain.pop(_ENGINE_CUSTOM_TIPS_KEY, None)
+    return plain or None
+
+
 def normalize_engine_item(data):
     # type: (object) -> object
     """把引擎读回来的物品字典**归一成 `item_codec` 认的形状**。
 
-    两件事，都在**引擎边界**做（本模块其余部分保持严格不变）：
+    三件事，都在**引擎边界**做（本模块其余部分保持严格不变）：
 
     1. 丢掉 6 个已知派生字段（见 `_DERIVED_FIELDS`）；
-    2. 把身份的「空值」从引擎写法（`[]` / `""` / `0`）归一到 `None`。
+    2. 把身份的「空值」从引擎写法（`[]` / `""` / `0`）归一到 `None`；
+    3. 把 `userData` 归一成构造侧的形状（见 `normalize_user_data`）。
 
     空槽（`None` 或 count≤0）原样返回，交给调用方判空。
 
@@ -226,6 +275,10 @@ def normalize_engine_item(data):
         value = data.get(engine_name)
         if value in _EMPTY_IDENTITY[engine_name]:
             value = None
+        if engine_name == "userData" and value is not None:
+            # `customTips` 排在 `userData` 前面（`_IDENTITY_FIELDS` 的顺序），
+            # 因此这里读到的已经是归一后的那一份。
+            value = normalize_user_data(value, out.get("customTips"))
         out[engine_name] = value
     return out
 
@@ -293,6 +346,49 @@ def item_dict_from_key(key, count=1):
     data = dict((engine, raw[field]) for field, engine in ITEM_FIELDS)
     data.update(newItemName=key.name, newAuxValue=key.aux, count=count, showInHand=True)
     return data
+
+
+#: `CreateEngineItemEntity`（掉落物）要的**旧式键名**。2026-10-02 真机逐字段
+#: 二分出来的：给它 `newItemName` / `newAuxValue` 会报
+#: 「expected string or Unicode object, NoneType found」——它读的是这两个名。
+_DROP_FIELD_ALIASES = (("itemName", "newItemName"), ("auxValue", "newAuxValue"))
+
+#: 掉落 API **不接受 `None`** 的三个字段与各自的空写法（真机逐字段二分）。
+#: 其余身份字段（`enchantData` / `modEnchantData` / `userData`）给 `None`
+#: 也能生成实体，因此原样传，不在这里补。
+_DROP_NEVER_NONE = (("customTips", ""), ("extraId", ""), ("durability", 0))
+
+
+def item_dict_for_drop(key, count=1):
+    # type: (ResourceKey, int) -> dict
+    """`CreateEngineItemEntity`（掉落物）要的物品字典。
+
+    **这不是 `item_dict_from_key` 的另一种写法，是两个不同的边界。**
+    2026-10-02 真机逐字段二分出的两条（否则拆方块时一件也掉不出来）：
+
+    1. 名字与附加值要**旧式键名** `itemName` / `auxValue`；
+    2. `customTips` / `extraId` 要字符串、`durability` 要整数，
+       **三个都不接受 `None`**。
+
+    缺任一，引擎抛 `TypeError`，而调用方（`TemplateStore._drop_real_slots`）
+    把它接成「一件也没掉」——症状是**拆了方块、格子里的东西不掉出来**，
+    日志干净，东西留在孤儿索引里。这套要求只在这一条引擎面上成立，
+    `SpawnItemToPlayerInv` / `SpawnItemToContainer` 都收 `newItemName`。
+
+    补进去的是引擎自己的空值写法（`""` / `0`），与读回时的归一
+    （`_EMPTY_IDENTITY` 把 `""` / `0` 归成 `None`）正好相消，身份往返不变。
+    """
+    data = item_dict_from_key(key, count)
+    out = {"count": data["count"]}
+    for alias, engine in _DROP_FIELD_ALIASES:
+        out[alias] = data[engine]
+    blanks = dict(_DROP_NEVER_NONE)
+    for field, engine in ITEM_FIELDS:
+        value = data[engine]
+        if value is None and engine in blanks:
+            value = blanks[engine]
+        out[engine] = value
+    return out
 
 
 def item_from_key(key, count, item_factory):

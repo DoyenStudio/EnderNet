@@ -53,6 +53,12 @@
 `(名字, aux, 数量)` 或 `None`（空位）。**带数量**是因为无序配方的一条可以要
 3 个同种东西（`minecraft:book` 要 3 张纸），而工作台里那 3 张是堆在一个格子里的，
 只看名字会让「只剩 1 张纸」的格子满足一条要 3 张的配方。
+
+**匹配是精确的：九宫格里多摆的任何一件都会让配方不成立。** 有序配方靠
+「图案矩形之外也必须是空的」实现，无序配方靠「非空格数 == 配料条目数」。
+原版就是这么比的——多出来的物品不会参与合成，也不该被无视：一块木板加一颗
+钻石做不成按钮。曾经两处都漏了这一条，后果是预览亮着、点下去照做，多出来的
+那件既没进产物也没被吃掉（User 2026-10-02 报告的正是这个）。
 """
 
 import zlib
@@ -529,12 +535,19 @@ def _cell_matches(cell, ingredient):
 
 def match_ordered(recipe, cells):
     # type: (PresetRecipe, tuple) -> object
-    """有序匹配：**允许整体平移**。
+    """有序匹配：**允许整体平移，但整张九宫格要精确对齐**。
 
     原版工作台里把 2×2 的配方摆到右上角照样能合成——`pattern` 给的是
     最小包围盒，不是绝对坐标。因此这里枚举所有合法偏移。
-    包围盒里凡是 `pattern` 标了空格的位置，摆位上也**必须是空的**；
-    包围盒之外摆了什么一概不看（原版如此）。
+
+    偏移定下来之后，**九格里的每一格都有要求**：包围盒里 `pattern` 标了
+    空格的位置必须是空的；**包围盒之外也必须是空的**。
+
+    后半句是按原版行为写的——原版拿整张工作台去比配方，图案矩形之外按
+    「空」这一味配料逐格比——但**没有在真机上量过**；把它钉成规则的
+    是 User 2026-10-02 的裁定：多摆的东西不该被无视。曾经这里只查包围盒
+    那一块，于是多出来的物品**参与匹配却被无视**：预览亮着、点下去照做，
+    多出来的那件既没进产物也没被吃掉。
     """
     height = recipe.height
     width = recipe.width
@@ -550,15 +563,32 @@ def match_ordered(recipe, cells):
 
 def _try_offset(recipe, cells, offset_row, offset_col):
     # type: (PresetRecipe, tuple, int, int) -> object
+    """按给定的偏移比整张九宫格。
+
+    **遍历的是 9 格，不是图案的矩形**：偏移定下来之后，图案矩形之外的
+    每一格都按「这一格得是空的」来比——原版就是这么比的（它拿整个容器
+    去对配方，矩形之外取 `Ingredient.EMPTY`）。只比矩形会让多摆的东西
+    被无视，见 `match_ordered`。
+    """
     consumed = []
-    for row_index in range(recipe.height):
-        row = recipe.rows[row_index]
-        for col_index in range(recipe.width):
-            char = row[col_index] if col_index < len(row) else EMPTY_SYMBOL
-            grid_slot = (offset_row + row_index) * GRID_SIZE + (offset_col + col_index)
+    for row_index in range(GRID_SIZE):
+        for col_index in range(GRID_SIZE):
+            # 该格在图案矩形里的相对位置；负数或越界即「矩形之外」。
+            pattern_row = row_index - offset_row
+            pattern_col = col_index - offset_col
+            grid_slot = row_index * GRID_SIZE + col_index
             cell = cells[grid_slot]
+            if not (0 <= pattern_row < recipe.height
+                    and 0 <= pattern_col < recipe.width):
+                # 图案矩形之外：必须是空的，多摆一件整条不成立。
+                if cell is not None:
+                    return None
+                continue
+            row = recipe.rows[pattern_row]
+            # 行短于矩形宽度时按空格补齐，与 `width` 取最长行的口径一致。
+            char = row[pattern_col] if pattern_col < len(row) else EMPTY_SYMBOL
             if char == EMPTY_SYMBOL:
-                # 包围盒里的空位必须是真空位，否则等于「多摆了东西」。
+                # 矩形里的空位必须是真空位，否则等于「多摆了东西」。
                 if cell is not None:
                     return None
                 continue
@@ -571,11 +601,15 @@ def _try_offset(recipe, cells, offset_row, offset_col):
 
 def match_shapeless(recipe, cells):
     # type: (PresetRecipe, tuple) -> object
-    """无序匹配：只看「每种东西够不够」，不看位置。
+    """无序匹配：只看「每种东西够不够」，不看位置，**但九宫格不许有剩货**。
 
     同名条目在 `ingredients` 里出现两次表示占**两个**格子，因此这里按条目
     逐条去要一格，不能先把同名条目合并（合并会把「2 个格子各 1 个」读成
     「1 个格子放 2 个」）。
+
+    配料都找到格子之后，还得**一格不剩**：原版无序配方比的是「非空格子的
+    张数」与配料条目数相等，多摆一件就整条不成立。少了这一条，一块木板
+    加一颗钻石照样能做出按钮，而那颗钻石既没进产物也没被吃掉。
     """
     needed = list(recipe.ingredients)
     taken = []
@@ -592,6 +626,9 @@ def match_shapeless(recipe, cells):
             return None
         used.add(found)
         taken.append((found, ingredient.count))
+    for slot in range(SLOT_COUNT):
+        if slot not in used and cells[slot] is not None:
+            return None
     taken.sort()
     return RecipeMatch(recipe, tuple(taken))
 

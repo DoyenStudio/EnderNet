@@ -51,6 +51,21 @@ def _fetch_from_engine(name, tag, aux, max_results):
     )
 
 
+def _fetch_input_from_engine(name, tag, aux, max_results):
+    # type: (str, str, int, int) -> list
+    """按**原料**查配方。与 `_fetch_from_engine` 是引擎的两个不同接口。
+
+    **这一条的原始返回形状没有在真机上核对过**（11-04 只量过按产物那一条）。
+    因此这里照抄那条的三条纪律（`engine_text` 转换、非列表判错、逐条跳过），
+    并把它记进交付说明的未验证项——形状若不同，`normalize_recipe` 需要第二份。
+    """
+    from ....tooldelta.api.server.world import GetRecipesByInput
+
+    return GetRecipesByInput(
+        engine_text(name), engine_text(tag), aux, max_results,
+    )
+
+
 class EngineRecipeSource(object):
     """引擎预设配方来源。
 
@@ -64,12 +79,23 @@ class EngineRecipeSource(object):
 
     source_id = "engine.workbench"
 
-    def __init__(self, fetch=None, policy=DEFAULT_POLICY, cache_size=64):
+    def __init__(self, fetch=None, input_fetch=None, policy=DEFAULT_POLICY,
+                 cache_size=64):
         self._fetch = _fetch_from_engine if fetch is None else fetch
+        #: 按**原料**查配方的那条路（11-05）。与 `_fetch` 是两个引擎接口，
+        #: 因此是两个可注入点：只替一个的话，另一个会在离线测试里打到引擎上。
+        self._input_fetch = (
+            _fetch_input_from_engine if input_fetch is None else input_fetch
+        )
         self.policy = policy
         #: 产物指纹 -> `(PresetRecipe, ...)`。按产物缓存：同一件物品在一次
         #: 会话里会被反复预览，而这条查询在真机上是引擎侧的字典查找。
         self._cache = {}
+        #: 原料指纹 -> `(PresetRecipe, ...)`。**与 `_cache` 是两份**：
+        #: 「按产物查到的」与「按原料查到的」是两个完全不同的候选集合，
+        #: 共用一个字典会让预览格显示一个摆不出来的产物（缓存键一样、
+        #: 含义不同，而且不报错）。
+        self._input_cache = {}
         self._cache_size = cache_size
         #: `(name, code, raw)`，最近 `SKIPPED_MEMORY` 条。
         self.skipped = []
@@ -110,6 +136,40 @@ class EngineRecipeSource(object):
         self._remember(cache_key, recipes)
         return list(recipes)
 
+    def recipes_for_input(self, key):
+        # type: (object) -> list
+        """按**原料**查会用到它的配方（11-05）。
+
+        样板终端的合成模式要用它算中间那个预览格：玩家摆的是原料，而
+        「摆出来能做出什么」只有引擎知道。
+
+        **与 `recipes_for` 是两次不同的查询**，因此缓存也是两份（见
+        `__init__`）。其余纪律逐条照抄那条：非列表判错而不是读成空表、
+        单条脏配方跳过并记进 `skipped`、返回列表而不是元组。
+        """
+        cache_key = (key.name, key.aux)
+        if cache_key in self._input_cache:
+            self.stats["cache_hits"] += 1
+            return list(self._input_cache[cache_key])
+
+        self.stats["calls"] += 1
+        raw = self._input_fetch(key.name, RECIPE_TAG, key.aux, MAX_RESULTS)
+        if not isinstance(raw, (list, tuple)):
+            raise TypeError(
+                "配方查询（按原料）返回了 %s，不是列表（原料 %r）"
+                % (type(raw).__name__, key.name)
+            )
+        recipes = []
+        for entry in raw:
+            try:
+                recipes.append(normalize_recipe(entry, self.policy))
+            except RecipeError as error:
+                self._remember_skip(key.name, error, entry)
+        recipes = tuple(recipes)
+        self.stats["results"] += len(recipes)
+        self._remember_in(self._input_cache, cache_key, recipes)
+        return list(recipes)
+
     def version(self):
         # type: () -> str
         """数据来源标识。
@@ -126,13 +186,17 @@ class EngineRecipeSource(object):
         # type: () -> None
         """丢掉缓存。会话关闭、设备被替换、版本换代时都该调一次。"""
         self._cache = {}
+        self._input_cache = {}
 
     def _remember(self, key, value):
-        if len(self._cache) >= self._cache_size and key not in self._cache:
+        self._remember_in(self._cache, key, value)
+
+    def _remember_in(self, cache, key, value):
+        if len(cache) >= self._cache_size and key not in cache:
             # 不引 collections.OrderedDict：py2 下它存在，但这里只要
             # 「别无限涨」，丢掉重新查即可——引擎侧查询本来就是字典查找。
-            self._cache.clear()
-        self._cache[key] = value
+            cache.clear()
+        cache[key] = value
 
     def _remember_skip(self, name, error, raw):
         self.stats["skipped"] += 1
@@ -147,6 +211,9 @@ class EngineRecipeSource(object):
         report["available"] = True
         report["version"] = self.version()
         report["cached"] = len(self._cache)
+        #: 两份缓存**分开报**：合成起来看着像一个数，出问题时正是要看
+        #: 「按原料那条是不是一直查不到」。
+        report["cached_inputs"] = len(self._input_cache)
         #: 规范化失败的那几条。**留着原始字典**：没有它就只能知道
         #: 「有几条被跳过了」，看不出是引擎换了形状还是我们收错了。
         report["last_skipped"] = [

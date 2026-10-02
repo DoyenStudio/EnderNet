@@ -100,13 +100,14 @@
                                     10.0,
                                     0.0
                                 ],
+                                "layer": 2,
                                 "color": [
                                     0.2588235294117647,
                                     0.2588235294117647,
                                     0.2588235294117647
                                 ],
                                 "font_type": "default",
-                                "text": "样板配置 （模式： 合成样板）",
+                                "text": "样板配置 - 合成样板",
                                 "text_alignment": "center"
                             }
                         },
@@ -120,12 +121,12 @@
                                     0.0
                                 ],
                                 "layer": 1,
-                                "collection_name": "crafting_grid",
+                                "collection_name": "endernet_template_source",
                                 "grid_dimensions": [
                                     3,
                                     3
                                 ],
-                                "grid_item_template": "template_terminal_panel_ui.template_item_slot"
+                                "grid_item_template": "template_terminal_panel_ui.template_source_cell"
                             }
                         },
                         {
@@ -155,32 +156,56 @@
                                     0.0
                                 ],
                                 "layer": 1,
-                                "collection_name": "test_grid",
+                                "collection_name": "endernet_template_outputs",
                                 "grid_dimensions": [
                                     1,
                                     3
                                 ],
-                                "grid_item_template": "template_terminal_panel_ui.template_item_slot"
+                                "grid_item_template": "template_terminal_panel_ui.template_outputs_cell"
                             }
                         },
                         {
-                            "template_input_slot@endernet_container_common.custom_slot": {
+                            "template_input_slot": {
+                                "type": "grid",
                                 "anchor_from": "top_right",
                                 "anchor_to": "top_right",
                                 "offset": [
                                     -9,
                                     0
-                                ]
+                                ],
+                                "size": [
+                                    18.0,
+                                    18.0
+                                ],
+                                "layer": 1,
+                                "collection_name": "endernet_template_input",
+                                "grid_dimensions": [
+                                    1,
+                                    1
+                                ],
+                                "grid_item_template": "template_terminal_panel_ui.template_input_cell"
                             }
                         },
                         {
-                            "template_output_slot@endernet_container_common.custom_slot": {
+                            "template_output_slot": {
+                                "type": "grid",
                                 "anchor_from": "top_right",
                                 "anchor_to": "top_right",
                                 "offset": [
                                     -9,
                                     36
-                                ]
+                                ],
+                                "size": [
+                                    18.0,
+                                    18.0
+                                ],
+                                "layer": 1,
+                                "collection_name": "endernet_template_result",
+                                "grid_dimensions": [
+                                    1,
+                                    1
+                                ],
+                                "grid_item_template": "template_terminal_panel_ui.template_result_cell"
                             }
                         },
                         {
@@ -188,7 +213,7 @@
                                 "type": "button",
                                 "$control_alpha": 1.0,
                                 "$default_texture": "textures/ui/endernet/button_default",
-                                "$hover_texture": "textures/netease/common/button/hover",
+                                "$hover_texture": "textures/ui/endernet/button_hovered",
                                 "$is_new_nine_slice": false,
                                 "$label_color": [
                                     1,
@@ -213,7 +238,7 @@
                                     0,
                                     0
                                 ],
-                                "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                "$pressed_button_name": "#EnderNetTemplate.make",
                                 "$pressed_texture": "textures/ui/endernet/button_pressed",
                                 "$texture_layer": 2,
                                 "anchor_from": "top_right",
@@ -227,7 +252,13 @@
                                     16.0
                                 ],
                                 "layer": 2,
-                                "button_mappings": [],
+                                "button_mappings": [
+                                    {
+                                        "to_button_id": "$pressed_button_name",
+                                        "from_button_id": "button.menu_select",
+                                        "mapping_type": "pressed"
+                                    }
+                                ],
                                 "default_control": "default",
                                 "hover_control": "hover",
                                 "is_handle_button_move_event": true,
@@ -304,7 +335,7 @@
                                     0,
                                     0
                                 ],
-                                "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                "$pressed_button_name": "#EnderNetTemplate.mode_crafting",
                                 "$pressed_texture": "textures/ui/crafting_table_top",
                                 "$texture_layer": 2,
                                 "anchor_from": "top_left",
@@ -318,7 +349,13 @@
                                     12.0
                                 ],
                                 "layer": 2,
-                                "button_mappings": [],
+                                "button_mappings": [
+                                    {
+                                        "to_button_id": "$pressed_button_name",
+                                        "from_button_id": "button.menu_select",
+                                        "mapping_type": "pressed"
+                                    }
+                                ],
                                 "default_control": "default",
                                 "hover_control": "hover",
                                 "is_handle_button_move_event": true,
@@ -349,7 +386,15 @@
                                                 0.6666666666666666,
                                                 1.0
                                             ],
-                                            "texture": "textures/ui/endernet/slots_frame"
+                                            "texture": "textures/ui/endernet/slots_frame",
+                                            "bindings": [
+                                                {
+                                                    "binding_type": "global",
+                                                    "binding_name_override": "#visible",
+                                                    "binding_condition": "always",
+                                                    "binding_name": "#EnderNetTemplate.mode_crafting_selected"
+                                                }
+                                            ]
                                         }
                                     }
                                 ]
@@ -385,7 +430,7 @@
                                     0,
                                     0
                                 ],
-                                "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                "$pressed_button_name": "#EnderNetTemplate.mode_factory",
                                 "$pressed_texture": "textures/ui/furnace_front_on",
                                 "$texture_layer": 2,
                                 "anchor_from": "top_left",
@@ -399,7 +444,13 @@
                                     12.0
                                 ],
                                 "layer": 2,
-                                "button_mappings": [],
+                                "button_mappings": [
+                                    {
+                                        "to_button_id": "$pressed_button_name",
+                                        "from_button_id": "button.menu_select",
+                                        "mapping_type": "pressed"
+                                    }
+                                ],
                                 "default_control": "default",
                                 "hover_control": "hover",
                                 "is_handle_button_move_event": true,
@@ -425,13 +476,20 @@
                                         "selected_frame": {
                                             "type": "image",
                                             "layer": 5,
-                                            "visible": false,
                                             "color": [
                                                 0.0,
                                                 0.6666666666666666,
                                                 1.0
                                             ],
-                                            "texture": "textures/ui/endernet/slots_frame"
+                                            "texture": "textures/ui/endernet/slots_frame",
+                                            "bindings": [
+                                                {
+                                                    "binding_type": "global",
+                                                    "binding_name_override": "#visible",
+                                                    "binding_condition": "always",
+                                                    "binding_name": "#EnderNetTemplate.mode_factory_selected"
+                                                }
+                                            ]
                                         }
                                     }
                                 ]
@@ -465,14 +523,14 @@
                     "$is_background_nine_slice": false,
                     "$is_box_nine_slice": false,
                     "$is_track_nine_slice": false,
-                    "$scroll_background_image_control": "endernet_ui_common.simple_invisible_button",
+                    "$scroll_background_image_control": "template_terminal_panel_ui.terminal_scroll_background",
                     "$scroll_background_texture": "textures/ui/endernet/background_bottom",
                     "$scroll_box_mouse_image_control": "netease_editor_template_namespace.scroll_box_image",
                     "$scroll_box_texture": "textures/ui/newTouchScrollBox",
                     "$scroll_box_touch_image_control": "netease_editor_template_namespace.scroll_box_image",
                     "$scroll_track_image_control": "netease_editor_template_namespace.scroll_track_image",
                     "$scroll_track_texture": "textures/ui/ScrollRail",
-                    "$scrolling_content": "endernet_ui_common.custom_item_slots_grid",
+                    "$scrolling_content": "template_terminal_panel_ui.terminal_items_grid",
                     "$show_background": true,
                     "$track_nine_slice_buttom": 0,
                     "$track_nine_slice_left": 0,
@@ -517,10 +575,23 @@
                     ],
                     "layer": 20,
                     "visible": false,
+                    "property_bag": {
+                        "#EnderNetTerminal.unavailable": false
+                    },
+                    "bindings": [
+                        {
+                            "binding_type": "global",
+                            "binding_name_override": "#visible",
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetTerminal.unavailable"
+                        }
+                    ],
                     "controls": [
                         {
                             "mask_img": {
                                 "type": "image",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
                                 "size": [
                                     "100%+0px",
                                     "100%+0px"
@@ -542,62 +613,289 @@
             },
             {
                 "flying_item@endernet_container_common.flying_item_renderer": {
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
                     "visible": false
+                }
+            },
+            {
+                "sort_method_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "textures/ui/endernet/button_default",
+                    "$hover_texture": "textures/ui/endernet/button_hovered",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        1,
+                        1,
+                        1
+                    ],
+                    "$label_font_scale_factor": 1.0,
+                    "$label_font_size": "large",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0,
+                        0
+                    ],
+                    "$label_text": "Button",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "#EnderNetTerminal.sort_method",
+                    "$pressed_texture": "textures/ui/endernet/button_pressed",
+                    "$texture_layer": 2,
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_right",
+                    "offset": [
+                        -2.0,
+                        20.0
+                    ],
+                    "size": [
+                        20.0,
+                        20.0
+                    ],
+                    "layer": 2,
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {}
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {}
+                        },
+                        {
+                            "icon": {
+                                "type": "image",
+                                "anchor_from": "top_middle",
+                                "anchor_to": "top_middle",
+                                "size": [
+                                    "100%+-2px",
+                                    "100%+-2px"
+                                ],
+                                "layer": 4,
+                                "texture": "textures/ui/endernet/terminal_item_sort_methods_icon",
+                                "uv": [
+                                    0.0,
+                                    0.0
+                                ],
+                                "uv_size": [
+                                    16.0,
+                                    16.0
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "sort_order_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "textures/ui/endernet/button_default",
+                    "$hover_texture": "textures/ui/endernet/button_hovered",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        1,
+                        1,
+                        1
+                    ],
+                    "$label_font_scale_factor": 1.0,
+                    "$label_font_size": "large",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0,
+                        0
+                    ],
+                    "$label_text": "Button",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "#EnderNetTerminal.sort_order",
+                    "$pressed_texture": "textures/ui/endernet/button_pressed",
+                    "$texture_layer": 2,
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_right",
+                    "offset": [
+                        -2.0,
+                        50.0
+                    ],
+                    "size": [
+                        20.0,
+                        20.0
+                    ],
+                    "layer": 2,
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {}
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {}
+                        },
+                        {
+                            "icon": {
+                                "type": "image",
+                                "anchor_from": "top_middle",
+                                "anchor_to": "top_middle",
+                                "size": [
+                                    "100%+-2px",
+                                    "100%+-2px"
+                                ],
+                                "layer": 4,
+                                "texture": "textures/ui/endernet/sort_order_icon",
+                                "uv": [
+                                    16.0,
+                                    0.0
+                                ],
+                                "uv_size": [
+                                    16.0,
+                                    16.0
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "device_status_popup@endernet_windows.device_status_window_basic": {
+                    "anchor_from": "center",
+                    "anchor_to": "center",
+                    "bindings": [
+                        {
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetDeviceStatus.popup_visible",
+                            "binding_name_override": "#visible",
+                            "binding_type": "global"
+                        }
+                    ],
+                    "layer": 40
                 }
             }
         ]
     },
-    "main@common.inventory_screen_common": {
+    "main@common.base_screen": {
         "$screen_content": "template_terminal_panel_ui.content"
     },
     "namespace": "template_terminal_panel_ui",
-    "template_item_slot": {
-        "type": "panel",
+    "template_input_cell@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "endernet_template_input",
+        "$item_count_binding": "#EnderNetTemplate.input_item_count",
+        "$item_id_aux_binding": "#EnderNetTemplate.input_item_id_aux",
+        "$item_select_button": "#EnderNetTemplate.input_click",
+        "$item_selected_binding": "#EnderNetTemplate.input_selected",
+        "$item_visible_binding": "#EnderNetTemplate.input_visible"
+    },
+    "template_outputs_cell@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "endernet_template_outputs",
+        "$item_count_binding": "#EnderNetTemplate.outputs_item_count",
+        "$item_id_aux_binding": "#EnderNetTemplate.outputs_item_id_aux",
+        "$item_select_button": "#EnderNetTemplate.outputs_click",
+        "$item_selected_binding": "#EnderNetTemplate.outputs_selected",
+        "$item_visible_binding": "#EnderNetTemplate.outputs_visible"
+    },
+    "template_result_cell@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "endernet_template_result",
+        "$item_count_binding": "#EnderNetTemplate.result_item_count",
+        "$item_id_aux_binding": "#EnderNetTemplate.result_item_id_aux",
+        "$item_select_button": "#EnderNetTemplate.result_click",
+        "$item_selected_binding": "#EnderNetTemplate.result_selected",
+        "$item_visible_binding": "#EnderNetTemplate.result_visible"
+    },
+    "template_source_cell@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "endernet_template_source",
+        "$item_count_binding": "#EnderNetTemplate.source_item_count",
+        "$item_id_aux_binding": "#EnderNetTemplate.source_item_id_aux",
+        "$item_select_button": "#EnderNetTemplate.source_click",
+        "$item_selected_binding": "#EnderNetTemplate.source_selected",
+        "$item_visible_binding": "#EnderNetTemplate.source_visible"
+    },
+    "terminal_items_grid": {
+        "type": "grid",
         "size": [
-            18.0,
-            18.0
+            162.0,
+            "default"
         ],
-        "layer": 1,
-        "controls": [
+        "collection_name": "terminal_slots",
+        "grid_dimensions": [
+            9,
+            2
+        ],
+        "grid_item_template": "template_terminal_panel_ui.terminal_slot",
+        "grid_rescaling_type": "horizontal",
+        "maximum_grid_items": 30,
+        "property_bag": {
+            "#maximum_grid_items": 0
+        },
+        "bindings": [
             {
-                "bg": {
-                    "type": "image",
-                    "texture": "textures/ui/endernet/container_item_slot_background"
-                }
-            },
-            {
-                "item_renderer": {
-                    "type": "custom",
-                    "renderer": "inventory_item_renderer",
-                    "size": [
-                        "100%+-2px",
-                        "100%+-2px"
-                    ],
-                    "layer": 1,
-                    "property_bag": {
-                        "#item_id_aux": 131072
-                    }
-                }
-            },
-            {
-                "count": {
-                    "type": "label",
-                    "anchor_from": "bottom_right",
-                    "anchor_to": "bottom_right",
-                    "layer": 19,
-                    "color": [
-                        1.0,
-                        1.0,
-                        1.0
-                    ],
-                    "font_scale_factor": 1.6,
-                    "font_size": "small",
-                    "font_type": "default",
-                    "shadow": true,
-                    "text": "99",
-                    "text_alignment": "center"
-                }
+                "binding_type": "global",
+                "binding_name_override": "#maximum_grid_items",
+                "binding_condition": "always",
+                "binding_name": "#EnderNetTerminal.count"
             }
         ]
+    },
+    "terminal_scroll_background@endernet_ui_common.simple_invisible_button": {
+        "$default_texture": "textures/ui/endernet/backgroud_without_frame",
+        "$hover_texture": "textures/ui/endernet/backgroud_without_frame",
+        "$pressed_button_name": "#EnderNetTerminal.quick_store",
+        "$pressed_texture": "textures/ui/endernet/backgroud_without_frame",
+        "button_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed",
+                "to_button_id": "$pressed_button_name"
+            }
+        ]
+    },
+    "terminal_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "terminal_slots",
+        "$item_count_binding": "#EnderNetTerminal.item_count",
+        "$item_id_aux_binding": "#EnderNetTerminal.item_id_aux",
+        "$item_select_button": "#EnderNetTerminal.select",
+        "$item_selected_binding": "#EnderNetTerminal.selected",
+        "$item_visible_binding": "#EnderNetTerminal.has_item"
     }
 }

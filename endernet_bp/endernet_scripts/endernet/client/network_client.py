@@ -655,8 +655,9 @@ class NetworkClient(object):
         into_slot_version=None,
         target=None,
         recipe=None,
+        cell=None,
     ):
-        # type: (str, object, object, object, object, object, object, object, object, object) -> str
+        # type: (str, object, object, object, object, object, object, object, object, object, object) -> str
         """发一条手动存取命令，返回 `request_id`。
 
         `action` 是 `StorageService.handle` 认识的那几个之一（`inv_take` /
@@ -671,6 +672,10 @@ class NetworkClient(object):
         见 `TerminalCommand.payload()`）——**缺席不等于空配方**，服务端
         `payload.get("recipe")` 拿到 `None` 的意思正是「这次没挑」，
         因此不要写空串。
+
+        `cell` 是 11-05 加的：样板终端那条命令里的**虚格下标**。与 `slot`
+        **刻意分开**——交接明令不把虚格下标当作真实槽号，共用一个字段会让
+        「这个数属于哪个空间」逐动作去猜（见 `TerminalCommand.cell`）。
 
         **`key` 收 `ResourceKey`，在这里转成线上形状。** `TerminalCommand`
         的 `key` 字段与线上同形（字典）：它的 `from_dict` 原样转交、`payload()`
@@ -710,6 +715,7 @@ class NetworkClient(object):
                 into_slot_version=into_slot_version,
                 target=target,
                 recipe=recipe,
+                cell=cell,
             ),
             session_id=self.session_id,
             network_id=self.network_id,

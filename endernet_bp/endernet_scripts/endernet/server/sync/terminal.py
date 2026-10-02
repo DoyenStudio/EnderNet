@@ -53,6 +53,7 @@ from ...common.protocol import (
     CommandKind,
     CraftStateMessage,
     DeviceCommand,
+    TemplateStateMessage,
     ItemDelta,
     InventorySnapshot,
     Reason,
@@ -561,6 +562,7 @@ class TerminalSyncHub(object):
         submit=None,
         status_of=None,
         craft_of=None,
+        template_of=None,
     ):
         self.registry = registry if registry is not None else SessionRegistry()
         self.policy = policy if policy is not None else SyncPolicy()
@@ -572,12 +574,19 @@ class TerminalSyncHub(object):
         #: 装配层按方块型号决定，其它终端一律拿到 `None`，
         #: 因此这里不需要再判一次「这是不是合成终端」。
         self._craft_of = craft_of if craft_of is not None else _no_craft
+        #: 样板终端的真实槽与虚拟配置（11-05）。与 `_craft_of` 同一地位：
+        #: 只有样板终端才会有值。
+        self._template_of = (
+            template_of if template_of is not None else _no_template
+        )
         self.port = port
         self._subs = {}
         self._inventory_sent = {}
         #: 每会话上一次发出去的工作台状态，用来做变化去重。与
         #: `_inventory_sent` 一样在 `_forget` 里清。
         self._craft_sent = {}
+        #: 每会话上一次发出去的样板状态（11-05），同样在 `_forget` 里清。
+        self._template_sent = {}
         #: 设备总体状态（11-08/11-13）。订阅表就是 `registry`，这里只记
         #: 「每会话上一次发出去的是什么」，用来做变化去重。
         self.status = DeviceStatusSubscriptions()
@@ -637,6 +646,9 @@ class TerminalSyncHub(object):
             #: 推出去的工作台状态条数（11-04）。**只数真的发出去的**：
             #: 去重命中不算，因此这个数涨就说明格子或预览真的变了。
             "craft_states": 0,
+            #: 推出去的样板终端状态条数（11-05）。判据与 `craft_states` 相同：
+            #: 去重命中不算，涨就说明真实槽或虚拟配置真的变了。
+            "template_states": 0,
             #: 收到多少条保活（11-07）。**它涨而 `expired` 不涨**，就是
             #: 「只读设备屏真的把会话养住了」这句话在实机上的判据；反过来
             #: 「设备屏开着不动、`expired` 照涨」说明屏根本没在发。
@@ -1044,6 +1056,7 @@ class TerminalSyncHub(object):
                 self._publish_inventory(session)
                 self._publish_device_status(session)
                 self._publish_craft_state(session)
+                self._publish_template_state(session)
                 self._advance_transfer(session, subs, frame)
         return self._publish_network(subs, frame)
 
@@ -1104,6 +1117,37 @@ class TerminalSyncHub(object):
         if self._send(session, message):
             self._craft_sent[session.session_id] = payload
             self.stats["craft_states"] += 1
+
+    def _publish_template_state(self, session):
+        # type: (object) -> None
+        """把**这台样板终端的真实槽与虚拟配置**推给客户端（11-05）。
+
+        与 `_publish_craft_state` 逐字同形：内容没变就不发（按整个载荷去重）、
+        装配层对非样板终端返回 `None`、读取失败宁可不发也不伪造一份空配置。
+        配置拼装（含行形状与 `locked`）全在装配层，本模块不许 import 引擎。
+        """
+        try:
+            state = self._template_of(session.device_ref)
+        except Exception:
+            # 引擎那边（配方查询）出问题时不发：发一份**没有预览**的配置
+            # 会被客户端读成「摆的东西没有配方」。
+            return
+        if state is None:
+            return
+        try:
+            message = TemplateStateMessage(
+                state["revision"], state["mode"], state["source"],
+                state["outputs"], state["input"], state["result"],
+                state["limits"],
+            )
+        except (KeyError, TypeError, ValueError):
+            return
+        payload = message.to_dict()
+        if self._template_sent.get(session.session_id) == payload:
+            return
+        if self._send(session, message):
+            self._template_sent[session.session_id] = payload
+            self.stats["template_states"] += 1
 
     def _publish_device_status(self, session):
         # type: (object) -> None
@@ -1494,6 +1538,7 @@ class TerminalSyncHub(object):
         # type: (object) -> None
         self._inventory_sent.pop(session.session_id, None)
         self._craft_sent.pop(session.session_id, None)
+        self._template_sent.pop(session.session_id, None)
         self.status.drop(session.session_id)
         subs = self._subs.get(session.network_id)
         if subs is None:
@@ -1826,6 +1871,13 @@ def _no_craft(device_ref):
     **不是「发一个空工作台」**：空工作台在客户端读出来是「你的原料没了」，
     而真相是「这个功能没接」。与 `_no_status` 同一条纪律。
     """
+    return None
+
+
+def _no_template(device_ref):
+    # type: (object) -> None
+    """没有接样板终端时的兜底：不发。理由与 `_no_craft` 逐字相同——
+    「发一份空配置」在客户端读出来是「你配的东西没了」。"""
     return None
 
 

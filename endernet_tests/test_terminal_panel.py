@@ -186,11 +186,25 @@ class Screen(object):
         self.scrolls = {}
         self._activated = True
 
+    def _key(self, path):
+        # type: (str) -> str
+        """把两种屏幕挂法收成同一个键。
+
+        真机上 `/terminal/x`（通用终端）与 `/x`（另外三台）是**两个命名空间**
+        （见 `slot_layout._candidates`）。这份替身两种都得认，否则代码按候选
+        顺序问到哪一条，测试就得跟着改读哪一条——而测试要钉的是「代码写进去
+        的那一格，用本模块的常量名读得出来」。
+        """
+        prefix = slot_layout.CONTENT_ROOT + "/"
+        if path.startswith(prefix):
+            return path[len(slot_layout.CONTENT_ROOT):]
+        return path
+
     def GetElement(self, path):
-        return self.elements.setdefault(path, Control())
+        return self.elements.setdefault(self._key(path), Control())
 
     def GetBaseUIControl(self, path):
-        return self.scrolls.setdefault(path, Scroll())
+        return self.scrolls.setdefault(self._key(path), Scroll())
 
 
 class ScreenNodeStub(object):
@@ -582,6 +596,7 @@ class TestBindings(PanelFixture):
             (BinderStub.BF_BindInt, "count"),
             (BinderStub.BF_BindBool, "unavailable"),
             (BinderStub.BF_EditChanged, "search"),
+            (BinderStub.BF_ButtonClickUp, "close"),
             (BinderStub.BF_ButtonClickUp, "sort_method"),
             (BinderStub.BF_ButtonClickUp, "sort_order"),
             (BinderStub.BF_ButtonClickUp, "select"),
@@ -589,6 +604,27 @@ class TestBindings(PanelFixture):
         for flag, name in expected:
             self.assertIn((flag, terminal_panel.BINDING_PREFIX + name),
                           self.screen.bindings)
+
+    def test_the_close_binding_sits_on_the_close_handler(self):
+        """`#EnderNetTerminal.close` 必须挂在 `OnCloseClick` 上——**名字配名字**。
+
+        2026-10-02 出过一次：加 ESC 那条时，`@Binder.binding(...close)`
+        被留在了新方法 `OnEscapeKey` 头上，于是**点 ✕ 完全没反应**——那一下
+        调到的是键盘事件的处理函数，它拿到按钮的 `params`，
+        `getattr(event, "isDown", 0)` 取不到就当场返回；而 `OnCloseClick`
+        成了没人绑的死方法。
+
+        **装饰器与它修饰的函数之间没有任何语法约束**，插一个新方法进去就能
+        悄悄拆散一对，而且两边都不报错。因此这里钉的不是「close 有没有绑定」
+        （上面那条已经钉了），而是**它挂在哪个函数上**。
+        """
+        close_name = terminal_panel.BINDING_PREFIX + "close"
+        holders = sorted(
+            name for name, func
+            in td_screen_attrs(terminal_panel.CommonTerminalPanel).items()
+            if getattr(func, "binding_name", None) == close_name
+        )
+        self.assertEqual(["OnCloseClick"], holders)
 
     def test_cell_bindings_live_on_the_terminal_collection(self):
         expected = (
@@ -1824,7 +1860,7 @@ class FlyScreen(object):
     def GetBaseUIControl(self, path):
         if path == slot_layout.FLYING_ITEM_PATH:
             return self.control
-        if path == slot_layout.TERMINAL_ROOT:
+        if path == slot_layout.CONTENT_PATH:
             return self.origin
         return None
 
@@ -1856,7 +1892,7 @@ class TestFlyingItem(unittest.TestCase):
         self.clock = FlyClock()
         self.animator = flying_item.FlyingItemAnimator(
             FlyScreen(self.control, self.origin),
-            slot_layout.FLYING_ITEM_PATH, slot_layout.TERMINAL_ROOT,
+            slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH,
             now=self.clock,
         )
         #: 源槽在 (118, 68) 处、18x18；目标在 (218, 168) 处、18x18。
@@ -1962,7 +1998,7 @@ class TestFlyingItem(unittest.TestCase):
         clock = FlyClock()
         animator = flying_item.FlyingItemAnimator(
             FlyScreen(control, self.origin),
-            slot_layout.FLYING_ITEM_PATH, slot_layout.TERMINAL_ROOT, now=clock)
+            slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH, now=clock)
         animator.fly(STONE, self.source, self.target)
         for _ in range(5):
             clock.advance(half / 5.0)
@@ -1985,7 +2021,7 @@ class TestFlyingItem(unittest.TestCase):
     def test_a_missing_control_degrades_to_flying_nothing(self):
         animator = flying_item.FlyingItemAnimator(
             FlyScreen(None, self.origin),
-            slot_layout.FLYING_ITEM_PATH, slot_layout.TERMINAL_ROOT,
+            slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH,
             now=self.clock,
         )
         self.assertFalse(animator.fly(STONE, self.source, self.target))
@@ -2001,7 +2037,7 @@ class TestFlyingItem(unittest.TestCase):
         control = FlyControl(broken=True)
         animator = flying_item.FlyingItemAnimator(
             FlyScreen(control, self.origin),
-            slot_layout.FLYING_ITEM_PATH, slot_layout.TERMINAL_ROOT,
+            slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH,
             now=self.clock,
         )
         self.assertFalse(animator.fly(STONE, self.source, self.target))
@@ -2080,6 +2116,55 @@ class LayoutScreen(object):
 
     def GetBaseUIControl(self, path):
         return self.tree.get(path)
+
+
+class TestSlotLayoutCandidates(unittest.TestCase):
+    """控件路径的**两种屏幕挂法**（2026-10-02 真机实测，两边各开着直接问过）。
+
+    四个终端面板不都用同一种挂法，同一个控件因此在两个命名空间里：
+
+    - 通用终端：`main` 里显式挂了 `terminal@…content` → `/terminal/…` 命中；
+    - 合成／工厂／样板：`$screen_content` 把内容直接铺在屏幕基底上 →
+      只有 `SCREEN_BASE_PATH + /…` 命中。
+
+    离线拿不到 `SCREEN_BASE_PATH`（`screen_base()` 返回空串），因此这几个
+    用例把它换成一个假基底——**钉住的正是「两种挂法都要试」这条**：改回
+    只发一种，这里的红就是游戏里「动画整个不见」的那个症状。
+    """
+
+    def setUp(self):
+        self.base = slot_layout.screen_base
+        slot_layout.screen_base = lambda: "/FAKE_BASE"
+        self.addCleanup(setattr, slot_layout, "screen_base", self.base)
+
+    def test_a_panel_that_only_has_the_absolute_path_still_resolves(self):
+        screen = LayoutScreen()
+        screen.tree["/FAKE_BASE" + slot_layout.BACKPACK_GRID_PATH] = GridStub((1.0, 2.0))
+        self.assertEqual(slot_layout.backpack_slot_rect(screen, 0),
+                         (1.0, 2.0, 18.0, 18.0))
+
+    def test_a_panel_that_only_has_the_relative_path_still_resolves(self):
+        """通用终端那一支：绝对路径取不到，`/terminal/…` 取得到。"""
+        screen = LayoutScreen()
+        screen.tree[slot_layout.CONTENT_ROOT + slot_layout.BACKPACK_GRID_PATH] = (
+            GridStub((3.0, 4.0)))
+        self.assertEqual(slot_layout.backpack_slot_rect(screen, 0),
+                         (3.0, 4.0, 18.0, 18.0))
+
+    def test_neither_convention_resolving_is_still_none(self):
+        """两条都取不到就是「本界面上没有这个控件」，不发明第三种说法。"""
+        self.assertIsNone(slot_layout.backpack_slot_rect(LayoutScreen(), 0))
+
+    def test_the_flying_item_and_the_origin_resolve_through_the_same_rule(self):
+        """图标与原点**必须走同一条候选**：各解各的会让图标整块偏移，而
+        那个错的症状看起来像缓动写错了。"""
+        screen = LayoutScreen()
+        screen.tree["/FAKE_BASE" + slot_layout.FLYING_ITEM_PATH] = "fly"
+        screen.tree["/FAKE_BASE" + slot_layout.CONTENT_PATH] = "origin"
+        self.assertEqual("fly", slot_layout.control(
+            screen, slot_layout.FLYING_ITEM_PATH))
+        self.assertEqual("origin", slot_layout.control(
+            screen, slot_layout.CONTENT_PATH))
 
 
 class TestSlotLayout(unittest.TestCase):
@@ -3057,6 +3142,227 @@ class TestDeviceStatusBindingsTolerateNoSession(unittest.TestCase):
         """界面隐藏时也要能收尾：弹窗收起来，而 `status` 可能压根没建。"""
         self.panel.OnDeactive()
         self.assertIsNone(self.panel.status)
+
+
+class TestTemplateConfigHook(PanelFixture):
+    """11-05 留下的那个协作口子（`TerminalPanelBase.config`）。
+
+    两条判据，缺一不可：
+
+    1. **`config is None` 时行为与 11-03 定下的一字不差**——这是给通用／
+       合成终端的回归保证，不是顺手一提；
+    2. **接上协作对象之后，那两条手势由它接管**，且「接管」意味着**什么都
+       不发**，而不是「发了但服务端会拒」。后者在界面上看起来一样，
+       但玩家点空格的每一次都会换来一条回执。
+
+    还钉住它插在**长按之后**：`inv_split` 是另一条手势，不能被它吃掉。
+    """
+
+    class RecordingConfig(object):
+        def __init__(self, slot_click=True, row_click=True):
+            self.slot_click = slot_click
+            self.row_click = row_click
+            self.slot_calls = []
+            self.row_calls = []
+
+        def consumes_slot_click(self, ui_index):
+            self.slot_calls.append(ui_index)
+            return self.slot_click
+
+        def consumes_row_click(self, row_index):
+            self.row_calls.append(row_index)
+            return self.row_click
+
+    def click_backpack(self, index=0):
+        self.panel._click({"#collection_index": index}, 0, 27)
+
+    def test_the_hook_defaults_to_nothing(self):
+        self.assertIsNone(self.panel.__class__.config)
+        self.assertIsNone(self.panel.config)
+
+    def test_without_a_config_a_backpack_click_still_selects(self):
+        self.engine_backpack((9, "minecraft:stone", 40))
+        self.click_backpack(0)
+        self.assertEqual(0, self.backpack.selected)
+
+    def test_a_consuming_config_takes_the_click_and_nothing_happens(self):
+        self.engine_backpack((9, "minecraft:stone", 40))
+        config = self.RecordingConfig()
+        self.panel.config = config
+        self.addCleanup(setattr, self.panel, "config", None)
+        before = len(self.commands())
+        self.click_backpack(3)
+        self.assertEqual([3], config.slot_calls)
+        self.assertIsNone(self.backpack.selected, "既没选中也没搬")
+        self.assertEqual(before, len(self.commands()))
+
+    def test_a_non_consuming_config_falls_through_untouched(self):
+        self.engine_backpack((9, "minecraft:stone", 40))
+        config = self.RecordingConfig(slot_click=False)
+        self.panel.config = config
+        self.addCleanup(setattr, self.panel, "config", None)
+        self.click_backpack(0)
+        self.assertEqual([0], config.slot_calls, "问了，但没接管")
+        self.assertEqual(0, self.backpack.selected)
+
+    def test_a_long_press_still_wins_over_the_config(self):
+        """长按是另一条手势：协作对象在它**之后**才轮到。"""
+        self.engine_backpack((9, "minecraft:stone", 40))
+        self.backpack.select(0)
+        config = self.RecordingConfig()
+        self.panel.config = config
+        self.addCleanup(setattr, self.panel, "config", None)
+        self.panel._clock = lambda: 100.0
+        self.panel._press_index = 0
+        self.panel._press_at = 0.0
+        self.click_backpack(0)
+        self.assertEqual([], config.slot_calls, "长按没轮到它")
+
+    def test_a_consuming_config_takes_the_row_click_and_sends_nothing(self):
+        self.engine_backpack((9, "minecraft:stone", 40))
+        self.backpack.select(0)
+        config = self.RecordingConfig()
+        self.panel.config = config
+        self.addCleanup(setattr, self.panel, "config", None)
+        before = len(self.commands())
+        self.view.on_select({"#collection_index": 0})
+        self.assertEqual([0], config.row_calls)
+        self.assertEqual(before, len(self.commands()), "不发 inv_take/inv_put")
+
+    def test_without_a_config_the_row_click_is_unchanged(self):
+        self.engine_backpack((9, "minecraft:stone", 40))
+        self.backpack.select(0)
+        before = len(self.commands())
+        self.view.on_select({"#collection_index": 0})
+        self.assertEqual(before + 1, len(self.commands()))
+        self.assertEqual("inv_take", self.commands()[-1]["action"])
+
+    def test_the_list_view_does_not_import_the_panel_class(self):
+        """列表视图只从**传进来的那个屏幕对象**上取口子，不认识面板类。
+
+        传进来的正是面板（`TerminalListView(self.panel, ...)`），因此
+        `getattr(screen, "config", None)` 取到的就是面板上那一个。
+        这里顺手钉住另一半：控件桩（`self.screen`）上有没有这个属性
+        **与它无关**——`_fly` 取 `screen.fly` 是同一手法。
+        """
+        self.assertIsNone(getattr(self.view.screen, "config", None))
+        config = self.RecordingConfig()
+        self.view.screen.config = config
+        self.addCleanup(delattr, self.view.screen, "config")
+        before = len(self.commands())
+        self.view.on_select({"#collection_index": 0})
+        self.assertEqual([0], config.row_calls)
+        self.assertEqual(before, len(self.commands()))
+
+
+class TestKeepalive(PanelFixture):
+    """终端面板不能只靠「发命令」续命（2026-10-02 真机撞出来的）。
+
+    服务端按**多久没有 C2S 消息**回收会话（600 个脚本 tick ≈20 秒），而
+    界面开着不动时一条命令都不发——于是 20 秒后会话没了、遮罩起来，
+    表现是「点哪儿都没反应」。修法就是按帧发一条 `keepalive`
+    （11-07 已经给容器代理屏做过同一件事）。
+    """
+
+    def kinds(self, since):
+        return [item["message"]["kind"] for item in self.port.sent[since:]]
+
+    def test_the_interval_is_the_same_number_as_the_proxy_panel(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui import proxy_panel
+
+        self.assertEqual(proxy_panel.KEEPALIVE_FRAMES,
+                         terminal_panel.KEEPALIVE_FRAMES)
+
+    def test_it_fires_once_per_interval_and_not_before(self):
+        before = len(self.port.sent)
+        for _ in range(terminal_panel.KEEPALIVE_FRAMES - 1):
+            self.view.tick()
+        self.assertEqual([], self.kinds(before), "还没到间隔")
+        self.view.tick()
+        self.assertEqual(["keepalive"], self.kinds(before))
+
+    def test_the_next_interval_starts_over(self):
+        before = len(self.port.sent)
+        for _ in range(terminal_panel.KEEPALIVE_FRAMES * 2):
+            self.view.tick()
+        self.assertEqual(["keepalive", "keepalive"], self.kinds(before))
+
+    def test_without_a_session_it_stays_silent(self):
+        self.client.drop_session()
+        before = len(self.port.sent)
+        for _ in range(terminal_panel.KEEPALIVE_FRAMES + 3):
+            self.view.tick()
+        self.assertEqual([], self.kinds(before))
+
+    def test_a_failing_keepalive_never_escapes_the_frame(self):
+        """保活是保活，不是业务：一次抖动不该让 `OnTicking` 每帧报错。"""
+        def broken():
+            raise RuntimeError("bus down")
+
+        self.client.keepalive = broken
+        for _ in range(terminal_panel.KEEPALIVE_FRAMES + 1):
+            self.view.tick()
+
+
+class TestEscapeKey(PanelFixture):
+    """ESC 关屏走 `OnKeyPressInGame`，**不走 JSON 的 `button_mappings`**
+    （那条路在真机上会触发脚本层奇怪的报错，User 2026-10-02 定）。
+
+    离线拿不到 `tooldelta.events.client.control`（它在模块级 import 引擎），
+    因此这条监听**在离线是「压根没注册」**，而不是「注册了一个不来的回调」。
+    下面钉的正是这两件事：退化是安全的，以及判据本身是对的。
+    """
+
+    class Event(object):
+        def __init__(self, key, is_down=1, screen="main"):
+            self.key = key
+            self.isDown = is_down
+            self.screenName = screen
+
+    def setUp(self):
+        PanelFixture.setUp(self)
+        # 真机上 `_do_active` 会把它置真，而监听器也正是在那一刻注册的。
+        self.panel._activated = True
+        self.removed = []
+        self.panel.RemoveUI = lambda: self.removed.append(True)
+        self.addCleanup(setattr, terminal_panel, "ESCAPE_KEY",
+                        terminal_panel.ESCAPE_KEY)
+
+    def test_offline_the_key_is_unresolved_and_that_is_safe(self):
+        """离线时 `ESCAPE_KEY` 是 `None`；监听器随之永不触发，不报错。"""
+        self.assertIsNone(terminal_panel.ESCAPE_KEY)
+        terminal_panel.ESCAPE_KEY = None
+        self.panel.OnEscapeKey(self.Event(27))
+        self.assertEqual([], self.removed)
+
+    def test_a_press_of_escape_closes_the_screen(self):
+        terminal_panel.ESCAPE_KEY = 27
+        self.panel.OnEscapeKey(self.Event(27))
+        self.assertEqual([True], self.removed)
+
+    def test_release_does_not_close_it(self):
+        """只认按下：抬起时再来一次会把刚开的屏又关掉。"""
+        terminal_panel.ESCAPE_KEY = 27
+        self.panel.OnEscapeKey(self.Event(27, is_down=0))
+        self.assertEqual([], self.removed)
+
+    def test_other_keys_do_not_close_it(self):
+        terminal_panel.ESCAPE_KEY = 27
+        for key in (48, 65, 0):
+            self.panel.OnEscapeKey(self.Event(key))
+        self.assertEqual([], self.removed)
+
+    def test_a_deactivated_screen_ignores_the_key(self):
+        """`_do_deactive` 与事件派发之间可能隔着一帧，这里再挡一次。"""
+        terminal_panel.ESCAPE_KEY = 27
+        self.panel._activated = False
+        self.panel.OnEscapeKey(self.Event(27))
+        self.assertEqual([], self.removed)
+
+    def test_a_malformed_event_never_raises(self):
+        terminal_panel.ESCAPE_KEY = 27
+        self.panel.OnEscapeKey(object())
+        self.assertEqual([], self.removed)
 
 
 if __name__ == "__main__":

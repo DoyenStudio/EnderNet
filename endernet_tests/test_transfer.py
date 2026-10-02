@@ -26,6 +26,7 @@ from endernet.common.protocol import (
     TransferRequest,
     TransferStatus,
 )
+from endernet.common.item_codec import item_dict_from_key, item_key_from_dict
 from endernet.common.resource_key import ResourceKey
 from endernet.server.adapters.containers_engine import SlotBackedContainer
 from endernet.server.adapters.containers import (
@@ -51,6 +52,8 @@ from endernet.server.storage.transfer import (
     TransferPolicy,
     TransferReceipt,
     TransferStatus,
+    slot_extract,
+    slot_insert,
 )
 
 STONE = ResourceKey.item("minecraft:stone")
@@ -1135,6 +1138,120 @@ class TestRateLimitedTransfer(unittest.TestCase):
         self.assertEqual(receipt.moved, 0)
         self.assertEqual(receipt.reason, Reason.RATE_LIMITED)
         self.assertNotEqual(receipt.reason, Reason.INSUFFICIENT_STOCK)
+
+
+class ShiftingContainer(object):
+    """写下去一份、**读回来换了身份**——模拟引擎对 `userData` 的变形。
+
+    2026-10-02 真机上那条复制就是它造成的：原语写下去之后回读核对判不等，
+    于是报 `moved=0`，而东西已经进了那一格。本类的职责只是**把那个形状
+    造出来**，让「写了却报没写」这条纪律有用例咬着。
+
+    注意它**故意不实现** `normalize_engine_item`（真引擎适配器会做）。
+    身份归一修好之后，真机上的键不会再变；这一层守的是**别的原因**造成
+    的不一致（第三方模组、引擎行为再变、别的容器类型）。
+    """
+
+    def __init__(self, max_stack=64, shift=True):
+        self._slots = {}
+        self.max_stack = max_stack
+        self.shift = shift
+        #: 变形**只在写过一次之后**出现。写入前就变形的话，撞到的是原语
+        #: **写入前**那道「槽里的东西换了」的检查——那条分支不吃 `moved`，
+        #: 也从来不会复制，测不到本次要守的东西。
+        self._written = False
+        self.writes = []
+
+    def can_read(self):
+        return True
+
+    def can_write(self):
+        return True
+
+    def stack_limit_of(self, key):
+        return self.max_stack
+
+    def read_slot(self, slot):
+        entry = self._slots.get(slot)
+        if entry is None:
+            return None
+        key, count = entry
+        data = item_dict_from_key(key, count)
+        if self.shift and self._written:
+            user_data = dict(key.raw_identity.get("user_data") or {})
+            user_data["shifted"] = 1
+            data["userData"] = user_data
+        return data
+
+    def write_slot(self, slot, data):
+        self.writes.append((slot, data))
+        self._written = True
+        if data is None or not data.get("count"):
+            self._slots.pop(slot, None)
+            return True
+        self._slots[slot] = (item_key_from_dict(dict(data)), data["count"])
+        return True
+
+
+def carrier():
+    """一件带 `userData` 载荷的物品（变形只对它有意义）。"""
+    return ResourceKey.item("endernet:factorical_template", 0,
+                            user_data={"endernet:pattern": {"format": 1}})
+
+
+class SlotPrimitiveIsHonestTests(unittest.TestCase):
+    """**报了 `moved=0` 就必须真的没动过东西。**
+
+    写入是「先写、再读回核对」，因为引擎可能写成功却返回 `False`。但核对
+    不过时的出路不是「当没写过」——那样调用方会不扣来源格，而东西已经在
+    目标格里：**一次复制**。这里把两边都钉住。
+    """
+
+    def test_insert_reports_moved_when_the_readback_key_differs(self):
+        box = ShiftingContainer()
+        key = carrier()
+        receipt = slot_insert(box, "op1", 0, key, 3)
+        self.assertEqual(receipt.moved, 3, "东西真的写进去了，不能报 0")
+        self.assertEqual(receipt.status, TransferStatus.PARTIAL)
+        self.assertEqual(receipt.reason, Reason.SLOT_CHANGED)
+        self.assertTrue(receipt.is_applied(), "重发不能再写一遍")
+        self.assertEqual(box.writes[0][0], 0)
+
+    def test_insert_still_refuses_when_nothing_landed(self):
+        box = ShiftingContainer(shift=False)
+        box._slots[0] = (key_other(), 1)
+        receipt = slot_insert(box, "op1", 0, carrier(), 1)
+        self.assertEqual(receipt.moved, 0)
+        self.assertEqual(receipt.status, TransferStatus.REFUSED)
+        self.assertEqual(receipt.reason, Reason.SLOT_OCCUPIED)
+
+    def test_extract_reports_moved_when_the_readback_key_differs(self):
+        box = ShiftingContainer()
+        key = carrier()
+        box._slots[0] = (key, 5)
+        receipt = slot_extract(box, "op1", 0, key, 2)
+        self.assertEqual(receipt.moved, 2, "东西真的取出来了，不能报 0")
+        self.assertEqual(receipt.status, TransferStatus.PARTIAL)
+        self.assertEqual(receipt.reason, Reason.SLOT_CHANGED)
+
+    def test_extract_still_refuses_when_the_slot_holds_another_item(self):
+        box = ShiftingContainer(shift=False)
+        box._slots[0] = (key_other(), 1)
+        receipt = slot_extract(box, "op1", 0, carrier(), 1)
+        self.assertEqual(receipt.moved, 0)
+        self.assertEqual(receipt.status, TransferStatus.REFUSED)
+        self.assertEqual(receipt.reason, Reason.SLOT_CHANGED)
+
+    def test_the_same_item_round_trips_normally(self):
+        """不变形时行为一字不改：写多少就是多少。"""
+        box = ShiftingContainer(shift=False)
+        receipt = slot_insert(box, "op1", 0, carrier(), 3)
+        self.assertEqual(receipt.moved, 3)
+        self.assertEqual(receipt.status, TransferStatus.COMPLETE)
+
+
+def key_other():
+    return ResourceKey.item("minecraft:stone")
 
 
 if __name__ == "__main__":

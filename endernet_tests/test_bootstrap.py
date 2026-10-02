@@ -69,6 +69,15 @@ class FakeWorld(object):
     def register_block_remove_listener(self, block_ids):
         self.whitelisted.update(block_ids)
 
+    def drop_items_at(self, node_key, items):
+        """假世界也记账：真实现走 `CreateEngineItemEntity`，这里只记下来。
+
+        `items` 是 `((ResourceKey, 数量), ...)`——字典形状由适配器自己构造
+        （真机要旧式键名、且不接受 `None` 的 `customTips`/`durability`）。
+        """
+        self.dropped.append((node_key, list(items)))
+        return len(items)
+
     def facing_at(self, node_key):
         return None
 
@@ -2225,6 +2234,138 @@ class TestSyncWiring(unittest.TestCase):
         self.positions["p1"] = (self.DEVICE.x, self.DEVICE.y + 2, self.DEVICE.z)
         self.api.dispatch(c2s, self.open_message(server.registry.get(self.DEVICE).ref))
         self.assertEqual(server.sync.stats["sessions_refused"], 1, "超出上限必须拒")
+
+
+class TestTemplateTerminalWiring(unittest.TestCase):
+    """11-05 的装配接线：型号闸、状态投影、堆叠上限与拆方块掉落。"""
+
+    DEVICE = "endernet:template_terminal_panel"
+    CRAFTING = "endernet:crafting_terminal_panel"
+
+    def setUp(self):
+        self.world = FakeWorld()
+        self.world.dropped = []
+        self.server = ServerBootstrap(world=self.world)
+        self.server.start(bind_engine=False)
+
+    def place(self, x=0, device=None):
+        self.server.push(NormalizedEvent.place(
+            key(x), device or self.DEVICE))
+        self.server.tick()
+        return self.server.registry.get(key(x)).ref
+
+    def test_only_the_template_terminal_passes_the_gate(self):
+        ref = self.place()
+        self.assertTrue(self.server._is_template_terminal(ref))
+        self.assertFalse(self.server._is_template_terminal(None))
+        self.assertFalse(self.server._is_template_terminal(
+            self.place(x=5, device=self.CRAFTING)))
+
+    def test_an_unregistered_position_never_admits(self):
+        self.assertFalse(self.server._is_template_terminal(
+            DeviceRef(key(9), 1)))
+
+    def test_the_stack_limit_comes_from_the_definition_table(self):
+        self.assertEqual(
+            64, self.server._template_stack_limit(
+                ResourceKey.item("endernet:factorical_template")))
+        self.assertEqual(
+            1, self.server._template_stack_limit(
+                ResourceKey.item("minecraft:stone")))
+        self.assertEqual(1, self.server._template_stack_limit(None))
+
+    def test_a_non_terminal_gets_no_state_at_all(self):
+        ref = self.place(x=5, device=self.CRAFTING)
+        self.assertIsNone(self.server._sync_template_of(ref))
+
+    def test_the_state_carries_the_four_groups_and_the_limits(self):
+        ref = self.place()
+        state = self.server._sync_template_of(ref)
+        self.assertEqual(9, len(state["source"]))
+        self.assertEqual(3, len(state["outputs"]))
+        self.assertEqual(1, len(state["input"]))
+        self.assertEqual(1, len(state["result"]))
+        self.assertEqual("crafting", state["mode"])
+        self.assertEqual(65535, state["limits"]["max_count"])
+        self.assertEqual(1, state["limits"]["default_count"])
+        self.assertEqual([False] * 9,
+                         [row["locked"] for row in state["source"]])
+
+    def test_the_crafting_outputs_are_locked_and_empty_without_a_recipe(self):
+        """合成模式下三个输出格**都锁定**；没有检测到配方时**三格都是空行**。
+
+        **中间那格不再发 `minecraft:barrier` 占位**（User 2026-10-02 改）：
+        「没有产物」由 `id_aux` 回 0 表达，与下半屏背包槽同一套做法。空行的
+        四条字段一起空，这是那一行形状本来就有的写法（非空位必须给名字）。
+        """
+        ref = self.place()
+        state = self.server._sync_template_of(ref)
+        rows = state["outputs"]
+        self.assertEqual([True, True, True], [row["locked"] for row in rows])
+        for index in range(3):
+            self.assertEqual("", rows[index]["name"], index)
+            self.assertEqual("", rows[index]["canonical"], index)
+            self.assertEqual(0, rows[index]["count"], index)
+            self.assertEqual(0, rows[index]["aux"], index)
+
+    def test_the_crafting_middle_cell_carries_the_detected_product(self):
+        """检测到配方时中间那格是产物——空行只表示「没有」这一种情况。
+
+        不走 `_sync_template_of`：那要一份能匹配的九宫格，而这里没有引擎、
+        配方来源一被问到就会打到真机上。产物这一侧是纯函数，直接喂预览。
+        """
+        ref = self.place()
+        config = self.server.templates.state_for(ref).config
+        self.assertEqual("crafting", config.mode)
+        preview = {"name": "minecraft:wooden_button", "aux": 0, "count": 1}
+        rows = self.server._template_output_rows(config, preview)
+        self.assertEqual("", rows[0]["name"])
+        self.assertEqual("minecraft:wooden_button", rows[1]["name"])
+        self.assertEqual(1, rows[1]["count"])
+        self.assertTrue(rows[1]["locked"])
+        self.assertEqual("", rows[2]["name"])
+
+    def test_a_row_with_no_key_has_all_four_empty_fields(self):
+        ref = self.place()
+        row = self.server._sync_template_of(ref)["input"][0]
+        self.assertEqual("", row["canonical"])
+        self.assertEqual("", row["name"])
+        self.assertEqual(0, row["count"])
+        self.assertEqual(0, row["aux"])
+
+    def test_breaking_the_block_drops_the_real_slots(self):
+        ref = self.place()
+        state = self.server.templates.state_for(ref)
+        state.slots.set_slot(0, ResourceKey.item(
+            "endernet:factorical_template"), 3)
+        state.slots.set_slot(1, ResourceKey.item(
+            "endernet:factorical_template"), 2)
+
+        self.server.push(NormalizedEvent.remove(key(0), self.DEVICE))
+        self.server.tick()
+
+        self.assertEqual(1, len(self.world.dropped))
+        node_key, items = self.world.dropped[0]
+        self.assertEqual((0, 0, 64, 0), node_key)
+        self.assertEqual([2, 3], sorted(count for _key, count in items))
+        self.assertIsNone(self.server.templates.get(ref), "拆了就不在活动索引里")
+        self.assertEqual(1, len(self.server.templates.orphans()))
+
+    def test_breaking_a_non_template_block_drops_nothing(self):
+        self.place(x=5, device=self.CRAFTING)
+        self.server.push(NormalizedEvent.remove(key(5), self.CRAFTING))
+        self.server.tick()
+        self.assertEqual([], self.world.dropped)
+
+    def test_the_assembly_is_wired_end_to_end(self):
+        """中枢拿到的 `template_of` 确实指向装配层那一份状态。"""
+        ref = self.place()
+        state = self.server.sync._template_of(ref)
+        self.assertIsNotNone(state, "中枢的 template_of 必须指向装配层")
+        self.assertEqual(state["revision"],
+                         self.server.templates.get(ref).revision)
+        self.assertIs(self.server.template_policy,
+                      self.server.template_policy)
 
 
 if __name__ == "__main__":

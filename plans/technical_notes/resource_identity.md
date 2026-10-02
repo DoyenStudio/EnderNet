@@ -136,6 +136,57 @@ ID 携带、行归属标记、空结构归一化、版本迁移及描述会话�
 `userData["ItemCustomTips"]`）——这一条影响 05/06 的守恒核对与 12-02 的
 介质身份，**修不修、在哪里修由它们决定**，本文件只记录事实。
 
+> **2026-10-02 已修，方向是「读取侧解包」。** 上面这条从「记录事实」升级为
+> **已实测的缺陷**：11-05 的样板终端是第一批把 `userData` 承载物送过传输层的
+> 物品，`template_output_take`（产物槽 → 背包）当场**复制了一份**——
+> `slot_insert` 写完按资源键回读核对、判 `after["key"] != resource_key`，
+> 于是报 `moved=0`，而东西**已经写进那一格**；调用方（`_template_slot_take`）
+> 按 `moved` 决定扣不扣来源格，于是设备那一格没扣 → **净 +1 份**。
+> 同一根因还有一条副作用：「同一份配置编两次得到同一个键」这条性质，
+> 中间经一次背包往返就不成立了（设备里的键是构造出来的裸形态，
+> 背包里的键是引擎读回来的带标签形态）。
+>
+> **修法与取舍**：`common/item_codec.normalize_user_data` 在
+> `normalize_engine_item` 里对 `userData` 解包（复用既有的
+> `unbox_engine_value`）并丢掉引擎复制的那份 `ItemCustomTips`（只在它与顶层
+> `customTips` 相同时丢——第三方真把它当载荷写的话要留下）。这**推翻**了
+> 本节原先「解包会丢 NBT 类型信息，不能用于资源身份规范化」的取舍：
+> 同形歧义只是理论上的，而身份不相等已经造成了复制。载荷侧的解码
+> （`crafting/store.py` 的 `unbox_engine_value`）不变，两处看到的是同一份
+> 形状了。
+>
+> 另外补了一条**不依赖身份**的安全带（`storage/transfer.py` 的
+> `slot_insert` / `slot_extract`）：写完读回核对判不等时，按**读回的实际
+> 增量**如实报 `moved`（`PARTIAL` + `slot_changed`），不再报 `moved=0`。
+> 理由是「报了没动就必须真的没动」——那条不变量被破坏的表现正是复制。
+> 回归位：`test_resource_contracts.EngineUserDataIdentityTests`（夹具自己造
+> 带标签的引擎形状）与 `test_transfer.SlotPrimitiveIsHonestTests`。
+
+**同一天同一次实测还撞出第二条**（与身份无关，属 11-05 的取值方向）：
+`_template_slot_take` 把锚上的 `key` 当插入物用，而客户端在「选中背包槽 →
+点产物槽」时报的是**目标格里现在装着的东西**。不换锚的话，插进去的是目标格
+那件无关物品、同时把设备里的样板扣掉。修法是服务端换锚（插入物恒为设备
+这一格的 resource key），槽号与版本锚不变。见 `_template_slot_take` 的说明。
+
+### 掉落物 API 的字典形状（2026-10-02 真机逐字段二分）
+
+`CreateEngineItemEntity(itemDict, dimensionId, pos)`（`ServerSystem`，**没有
+tooldelta 封装**）与写容器／写背包那两个口子**不吃同一种字典**：
+
+| 要点 | 依据 |
+| --- | --- |
+| 名字与附加值要**旧式键名** `itemName` / `auxValue` | 给 `newItemName` / `newAuxValue` 时报 `expected string or Unicode object, NoneType found`——它读的是旧名，读不到就是 `None` |
+| `customTips` / `extraId` **不接受 `None`**（要字符串） | 给 `None` 报同一条 `TypeError` |
+| `durability` **不接受 `None`**（要整数） | 给 `None` 报 `an integer is required` |
+| `enchantData` / `modEnchantData` / `userData` 给 `None` 也能生成 | 逐项验证过 |
+| 返回值是**实体 id 字符串**，失败才是 `None` | 成功实测形如 `'-824633720831'` |
+
+构造它的入口是 `common/item_codec.item_dict_for_drop`（补 `""` / `0`，
+与读回时的 `_EMPTY_IDENTITY` 归一正好相消）。**给错形状不会报错到看得见的地方**：
+`TemplateStore._drop_real_slots` 把异常接成「一件也没掉」，症状是拆了方块、
+格子里的东西不掉出来，而日志干净。因此掉落回调的契约是
+`((ResourceKey, 数量), ...)`，字典由引擎边界（`adapters/world.py`）自己构造。
+
 ## 3. 终端描述映射
 
 `common/resource_sync.py` 的 `ResourceDescriptions(network_id, epoch)` 由服务端和

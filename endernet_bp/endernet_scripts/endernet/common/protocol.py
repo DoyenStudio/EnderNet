@@ -13,6 +13,7 @@
 并按实际数量提交（架构规划 6.3）。
 """
 
+from .definitions import PATTERN_MODES
 from .resource_key import ResourceKey, _TEXT_TYPES, _require_count
 from . import settings
 
@@ -224,6 +225,20 @@ class Reason(object):
     #: 槽里的物品根本不是本模组的样板。与 `PATTERN_INVALID` 分开：
     #: 那是「是样板但内容坏了」，这是「压根不是样板」。
     PATTERN_NOT_A_TEMPLATE = "pattern_not_a_template"
+
+    # 样板终端（11-05）
+    #: 这一格在当前模式下不能改。**与 `UNSUPPORTED` 分开**：那条说「这个动作
+    #: 不存在」，这条说「动作存在、格子也在，只是这个模式下它是只读的」——
+    #: 合成模式的三个输出格就是这一种（上下是固定图标，中间是自动预览）。
+    #: 也不并进 `SLOT_OCCUPIED`：那条说「别人占着这个位置」。
+    TEMPLATE_CELL_LOCKED = "template_cell_locked"
+    #: 当前的虚拟配置还构不成一块合法样板（输入空、产物空、摆位与模式不符……），
+    #: `detail` 里带 `patterns.PatternError` 的码。
+    #: **与 `PATTERN_INVALID` 分开**：那条说的是「世界里那块样板物品的内容坏了」
+    #: （读路径），这条说的是「你刚摆的这份配置还不成样板」（写路径）——
+    #: 行为者与下一步动作都不一样，与 `CRAFT_GRID_OCCUPIED` / `SLOT_OCCUPIED`
+    #: 的分家同一个理由。
+    TEMPLATE_CONFIG_INVALID = "template_config_invalid"
 
     # 合成规划（08）
     #
@@ -1075,6 +1090,8 @@ MSG_COMMAND_RESULT = "command_result"
 MSG_DEVICE_STATUS = "device_status"
 #: 合成终端的工作台状态（11-04）。服务端单向推，见 `CraftStateMessage`。
 MSG_CRAFT_STATE = "craft_state"
+#: 样板终端的真实槽与虚拟配置（11-05）。服务端单向推，见 `TemplateStateMessage`。
+MSG_TEMPLATE_STATE = "template_state"
 
 CLIENT_TO_SERVER_KINDS = frozenset(
     [
@@ -1099,6 +1116,7 @@ SERVER_TO_CLIENT_KINDS = frozenset(
         MSG_COMMAND_RESULT,
         MSG_DEVICE_STATUS,
         MSG_CRAFT_STATE,
+        MSG_TEMPLATE_STATE,
     ]
 )
 
@@ -1484,6 +1502,37 @@ class InventorySnapshot(SyncMessage):
         return cls(data["revision"], data["slots"])
 
 
+def _require_slot_row(row, index, extra=()):
+    # type: (object, int, object) -> dict
+    """一行槽位状态的形状检查。**两条消息共用**（11-04 的九宫格与 11-05 的
+    样板状态），免得两种行形状各自漂移——分叉的代价是「一边多了一个字段、
+    另一边解析时炸」，而那只有跑起来才看得见。
+
+    判据（与 `CraftStateMessage` 的文档同源）：
+
+    - 槽号必须**按位置连续**（`row["slot"] == index`）；
+    - `canonical` 为空即空位，此时 `name` / `aux` 允许一起为空；
+    - **非空位必须给出 `name`**：客户端画一格靠 `#item_id_aux`，那是
+      `Item(资源名).GetBasicInfo()`，从 `canonical()` 那个指纹里反解名字是
+      拿格式当接口。取不到名字的键是**消息的 bug**，不是空位。
+    - `extra` 里列出的字段一并要求存在（样板状态多一个 `locked`）。
+    """
+    fields = ("slot", "canonical", "count", "name", "aux") + tuple(extra)
+    _require_fields(row, fields, "slot row")
+    require_count(row["slot"], "slot")
+    require_count(row["count"], "count")
+    if row["slot"] != index:
+        raise ValueError("invalid slot index")
+    if row["canonical"] != "":
+        require_text(row["canonical"], "canonical")
+    if row["name"] != "":
+        require_text(row["name"], "name")
+    elif row["canonical"] != "":
+        raise ValueError("slot row has a key but no item name")
+    require_count(row["aux"], "aux")
+    return dict(row)
+
+
 #: 合成终端工作台的槽位数。与 `crafting_recipe.SLOT_COUNT` 是同一个数
 #: （原版工作台九格）；这里再写一份是因为 `common/` 内部两模块各有各的
 #: 事实来源，而同步层**必须**钉住线上槽数，不能跟着对面变。
@@ -1522,24 +1571,8 @@ class CraftStateMessage(SyncMessage):
         require_count(revision, "revision")
         if not isinstance(slots, (list, tuple)) or len(slots) != CRAFT_SLOT_COUNT:
             raise ValueError("craft state requires %d slots" % (CRAFT_SLOT_COUNT,))
-        rows = []
-        for index, row in enumerate(slots):
-            _require_fields(row, ("slot", "canonical", "count", "name", "aux"),
-                            "craft slot")
-            require_count(row["slot"], "slot")
-            require_count(row["count"], "count")
-            if row["slot"] != index:
-                raise ValueError("invalid craft slot index")
-            if row["canonical"] != "":
-                require_text(row["canonical"], "canonical")
-            # `name` / `aux` 是**画图标要用的**：客户端拿资源名去查
-            # `id_aux`。空位允许两者都空，非空位必须给出名字。
-            if row["name"] != "":
-                require_text(row["name"], "name")
-            elif row["canonical"] != "":
-                raise ValueError("craft slot has a key but no item name")
-            require_count(row["aux"], "aux")
-            rows.append(dict(row))
+        rows = [_require_slot_row(row, index)
+                for index, row in enumerate(slots)]
         if not isinstance(recipe, _TEXT_TYPES):
             raise TypeError("recipe 必须是文本，得到 %r" % (type(recipe),))
         if preview is not None:
@@ -1566,6 +1599,110 @@ class CraftStateMessage(SyncMessage):
     def from_dict(cls, data, descriptions=None):
         _require_fields(data, cls.FIELDS, "craft_state")
         return cls(data["revision"], data["slots"], data["recipe"], data["preview"])
+
+
+#: 样板终端的两片虚格各有几格。**与 `template_terminal` 的同名常量是同一个
+#: 数**，这里再写一份的理由与 `CRAFT_SLOT_COUNT` 相同：同步层必须钉住线上
+#: 格数，不能跟着对面变。
+TEMPLATE_SOURCE_CELLS = 9
+TEMPLATE_OUTPUT_CELLS = 3
+#: 设备一共有几个真实槽。**它不在这条消息的形状里**：两个槽各自成组
+#: （`input` / `result`），每组一行，因此线上每组的行数是下面那个 1。
+#: 两个常量分开写，是因为「设备有几个槽」与「一条消息几行」是两个问题——
+#: 合成起来第一个改的人就会改错另一个。
+TEMPLATE_REAL_SLOTS = 2
+#: `input` / `result` 两组各自的行数。
+TEMPLATE_REAL_SLOT_ROWS = 1
+
+
+def _template_rows(rows, count, label):
+    # type: (object, int, str) -> tuple
+    """一组样板状态行：格数要对，每行的 `locked` 必须是真布尔。"""
+    if not isinstance(rows, (list, tuple)) or len(rows) != count:
+        raise ValueError("%s requires %d rows" % (label, count))
+    out = []
+    for index, row in enumerate(rows):
+        checked = _require_slot_row(row, index, extra=("locked",))
+        # `locked` 不接受 0/1/None：它决定界面上那一格能不能点，
+        # 一个「看着像真」的值会让只读格变成可编辑的。
+        if not isinstance(checked["locked"], bool):
+            raise TypeError("%s 的 locked 必须是布尔，得到 %r"
+                            % (label, type(checked["locked"])))
+        out.append(checked)
+    return tuple(out)
+
+
+class TemplateStateMessage(SyncMessage):
+    """样板终端的两个真实槽与一份虚拟配置（11-05）。服务端单向推。
+
+    四组行同形（`{slot, canonical, count, name, aux, locked}`），因此共用
+    同一个校验器：
+
+    - `source`：9 格虚拟输入九宫格；
+    - `outputs`：3 格虚拟输出格。合成模式下 `locked` 全真——上下两格不显示、
+      中间那格是自动检测出来的预览，玩家都不能改；
+    - `input` / `result`：两个真实样板槽，各 1 行，恒不锁。
+
+    **`locked` 由服务端给，不由客户端按模式推。** 客户端自己推的话，「哪一格
+    在什么模式下只读」就有两份，而两份迟早分叉（模式一改，客户端那份还在按
+    旧的画），症状是「点了没反应」，看不出是服务端拒的还是本地压根没发。
+
+    `limits` 带 `{"max_count": int, "default_count": int}`：数量的上下限是
+    服务端的策略值，只有一处，客户端的数量窗照它开。
+
+    **行里的 `name` / `aux` 与 `canonical` 不重复**，理由与
+    `CraftStateMessage` 逐字相同：真实槽与虚格客户端都读不到引擎，画一格
+    只能靠服务端把资源名一起带过来。装配处见
+    `bootstrap._sync_template_of`。
+    """
+
+    kind = MSG_TEMPLATE_STATE
+    __slots__ = ("revision", "mode", "source", "outputs", "input", "result",
+                 "limits")
+
+    #: 线上字段的唯一清单，构造与解析共用。
+    FIELDS = ("kind", "revision", "mode", "source", "outputs", "input",
+              "result", "limits")
+
+    def __init__(self, revision, mode, source, outputs, input, result, limits):
+        require_count(revision, "revision")
+        if mode not in PATTERN_MODES:
+            raise ValueError("未知样板模式 %r" % (mode,))
+        if not isinstance(limits, dict):
+            raise TypeError("limits 必须是字典，得到 %r" % (type(limits),))
+        _require_fields(limits, ("max_count", "default_count"), "template limits")
+        require_count(limits["max_count"], "max_count")
+        require_count(limits["default_count"], "default_count")
+        if limits["default_count"] > limits["max_count"]:
+            raise ValueError("默认数量不能大于上限")
+        if limits["max_count"] < 1:
+            raise ValueError("数量上限必须是正数")
+        self.revision = revision
+        self.mode = mode
+        self.source = _template_rows(source, TEMPLATE_SOURCE_CELLS, "source")
+        self.outputs = _template_rows(outputs, TEMPLATE_OUTPUT_CELLS, "outputs")
+        self.input = _template_rows(input, TEMPLATE_REAL_SLOT_ROWS, "input")
+        self.result = _template_rows(result, TEMPLATE_REAL_SLOT_ROWS, "result")
+        self.limits = dict(limits)
+
+    def to_dict(self, descriptions=None):
+        return {
+            "kind": self.kind,
+            "revision": self.revision,
+            "mode": self.mode,
+            "source": [dict(row) for row in self.source],
+            "outputs": [dict(row) for row in self.outputs],
+            "input": [dict(row) for row in self.input],
+            "result": [dict(row) for row in self.result],
+            "limits": dict(self.limits),
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        _require_fields(data, cls.FIELDS, "template_state")
+        return cls(data["revision"], data["mode"], data["source"],
+                   data["outputs"], data["input"], data["result"],
+                   data["limits"])
 
 
 class SnapshotBegin(SyncMessage):
@@ -1937,6 +2074,7 @@ class TerminalCommand(SyncMessage):
         "into_slot_version",
         "target",
         "recipe",
+        "cell",
     )
 
     #: 本条消息**允许**出现的字段。`from_dict` 用它做严格检查，
@@ -1954,6 +2092,7 @@ class TerminalCommand(SyncMessage):
         "into_slot_version",
         "target",
         "recipe",
+        "cell",
     )
 
     def __init__(
@@ -1969,6 +2108,7 @@ class TerminalCommand(SyncMessage):
         into_slot_version=None,
         target=None,
         recipe=None,
+        cell=None,
     ):
         if settings.DEBUG:
             require_text(request_id, "request_id")
@@ -1987,6 +2127,8 @@ class TerminalCommand(SyncMessage):
                 raise ValueError(
                     "key 必须是字典（线上形状），得到 %r" % (type(key),)
                 )
+            if cell is not None:
+                require_count(cell, "cell")
         self.request_id = request_id
         self.expected_index_version = expected_index_version
         self.action = action
@@ -1998,6 +2140,11 @@ class TerminalCommand(SyncMessage):
         self.into_slot_version = into_slot_version
         self.target = target
         self.recipe = recipe
+        #: **样板终端的虚格下标**（11-05）。与 `slot` **刻意分开**：
+        #: 交接明令「不将虚格下标当作玩家或设备真实槽号」，两个下标空间
+        #: 共用一个字段，会让「这个数属于哪个空间」变成逐动作去猜的事，
+        #: 而猜错的表现是搬走玩家没点的那一格。
+        self.cell = cell
 
     def payload(self):
         # type: () -> dict
@@ -2026,6 +2173,8 @@ class TerminalCommand(SyncMessage):
             data["target"] = self.target
         if self.recipe is not None:
             data["recipe"] = self.recipe
+        if self.cell is not None:
+            data["cell"] = self.cell
         return data
 
     def to_dict(self, descriptions=None):
@@ -2043,6 +2192,7 @@ class TerminalCommand(SyncMessage):
             "into_slot_version": self.into_slot_version,
             "target": self.target,
             "recipe": self.recipe,
+            "cell": self.cell,
         }
 
     @classmethod
@@ -2057,6 +2207,8 @@ class TerminalCommand(SyncMessage):
             require_count(data["count"], "count")
         if data["recipe"] is not None:
             require_text(data["recipe"], "recipe")
+        if data["cell"] is not None:
+            require_count(data["cell"], "cell")
         return cls(
             data["request_id"],
             data["action"],
@@ -2069,6 +2221,7 @@ class TerminalCommand(SyncMessage):
             data["into_slot_version"],
             data["target"],
             data["recipe"],
+            data["cell"],
         )
 
 
@@ -2379,6 +2532,7 @@ _SYNC_MESSAGE_TYPES = _build_sync_message_types(
         CommandResultMessage,
         DeviceStatusMessage,
         CraftStateMessage,
+        TemplateStateMessage,
     )
 )
 

@@ -34,6 +34,17 @@ grid 的格子要到**渲染**时才生成，在 `OnCreate` 里按控件路径�
 import time
 
 from ....tooldelta.ui import Binder, RegistToolDeltaScreen, ToolDeltaScreen
+
+try:
+    from ....tooldelta.events.client.control import OnKeyPressInGame
+except ImportError:
+    # 离线（没有引擎）时拿不到这个事件类：`tooldelta/events/client/control.py`
+    # 在**模块级** import `mod.client.extraClientApi`。**退化成「不注册这条
+    # 监听」，而不是让整个模块导入失败**——界面代码必须能离线导入，否则
+    # `endernet_tests` 里所有引用本模块的用例会一起报废。这与
+    # `device_status_bindings` 取 `BF_BindColor`（拿不到就不挂颜色绑定）
+    # 是同一手法。
+    OnKeyPressInGame = None
 from . import flying_item, slot_layout, stack_size
 from .widgets import device_status
 from .backpack_model import (
@@ -117,8 +128,8 @@ def slot_binding(prefix, suffix):
 #: 因此 `/terminal/...` 就是内容面板的根。滚动区那条**定义在 `slot_layout`
 #: 里**（飞行动画的坐标也走它），这里重导出一次，免得同一条路径两个出处。
 SCROLL_PATH = slot_layout.SCROLL_PATH
-SORT_METHOD_ICON_PATH = "/terminal/sort_method_btn/icon"
-SORT_ORDER_ICON_PATH = "/terminal/sort_order_btn/icon"
+SORT_METHOD_ICON_PATH = "/sort_method_btn/icon"
+SORT_ORDER_ICON_PATH = "/sort_order_btn/icon"
 
 #: 排序方式图标是横排两格：左格按标识符、右格按数量
 #: （`plans/ui/common_terminal_panel.md` 的 UV 表）。
@@ -139,6 +150,60 @@ try:
     TEXT_TYPE = unicode
 except NameError:
     TEXT_TYPE = str
+
+
+#: 保活间隔：每这么多帧发一条 `keepalive`。**帧数，不是秒**。
+#:
+#: 终端面板**不需要**它的时候看起来一切正常，需要它的时候症状是「开着不动
+#: 20 秒，界面还在、点哪儿都没反应」——服务端按空闲回收会话
+#: （`SessionPolicy.session_ttl_frames`，出厂 600 个脚本 tick ≈20 秒），
+#: 而 `expired` 那条路只推一条空会话号的 `error`（D-08）。
+#:
+#: 取值与推导**与 `proxy_panel.KEEPALIVE_FRAMES` 完全相同**（那里写得最细：
+#: 两个计数器不同源，真正要比的是 `KEEPALIVE_FRAMES / 渲染帧率 <
+#: 600 / 脚本 tick 频率`，而且**渲染帧率越慢余量越小**）。
+#: 两边各留一份是因为两个模块互不依赖，`test_terminal_panel` 有一条用例
+#: 把它们钉成同一个数——它们没有理由分家。
+KEEPALIVE_FRAMES = 100
+
+
+def _escape_key():
+    # type: () -> object
+    """ESC 的键码。**从引擎枚举里取**，不写死数字。
+
+    那个枚举的取值不是本仓库的事实来源，抄一份只会在换版本时静默接不到键
+    ——而「接了但永远不触发」与「压根没接」在界面上长得一模一样。
+    常见写法试一遍；一个都取不到时返回 `None`，监听器随之永不触发
+    （那是安全的退化：最多少一个关屏快捷键，而不是乱关别人的界面）。
+    """
+    board = getattr(OnKeyPressInGame, "KeyBoardType", None)
+    if board is None:
+        return None
+    for name in ("Escape", "ESCAPE", "Esc", "KEY_ESCAPE"):
+        value = getattr(board, name, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+ESCAPE_KEY = _escape_key()
+
+
+def _listen_key_event(func):
+    # type: (object) -> object
+    """把方法挂成「**本屏在前台时才收到**」的引擎事件监听。
+
+    `EventListenerService` 的监听器由 `general_screen.py` 的 `_do_active` /
+    `_do_deactive` 成对开关，注册期恰好就是本屏在前台的那一段，屏一收起来
+    就注销了。因此处理函数里**不需要再判 `screenName`**。
+
+    离线时（`OnKeyPressInGame` 拿不到）原样返回，方法上不会留下标记，
+    `_process_bind_listeners` 也就不会收它——不是「注册了一个永远不来的
+    回调」，是压根没注册。
+    """
+    if OnKeyPressInGame is None:
+        return func
+    return ToolDeltaScreen.Listen(OnKeyPressInGame, 0)(func)
 
 
 def _text(value):
@@ -189,6 +254,18 @@ class TerminalPanelBase(device_status_bindings.DeviceStatusBindingsMixin, ToolDe
     #: 状态栏**不显示**（而不是显示一个假的「离线」）。
     status = None
 
+    #: **虚格编辑器的协作对象**（11-05 的样板终端）。与 `list_view` / `status`
+    #: 同一个地位，为 `None` 时**不存在**，此时背包点击与网络行点击的行为
+    #: 与 11-03 定下的一字不差。
+    #:
+    #: 存在的理由是那两条手势在样板终端上多了一层含义（交接第 4 节）：
+    #: 「选中虚格 → 点外界（背包槽或网络行）= 仅清空被选虚格」，而那一格
+    #: **不取物、不清选中**。做成子类覆盖绑定方法是不行的——绑定按方法名
+    #: 从 `dir(cls)` 收集，同名覆盖会让两个版本都注册进去，引擎怎么取是
+    #: 未定义的。因此这里留一个显式的口子，默认 `None` 保证通用／合成终端
+    #: 逐字不变。
+    config = None
+
     def __init__(self, screen_name, screen_instance, params=None):
         ToolDeltaScreen.__init__(self, screen_name, screen_instance, params)
         self.backpack = BackpackModel()
@@ -203,8 +280,10 @@ class TerminalPanelBase(device_status_bindings.DeviceStatusBindingsMixin, ToolDe
         self._clock = time.time
         #: 搬运动画。控件解析是懒的（`flying_item` 不在本界面上时永久退化成
         #: 不做任何事），因此这里不等 `OnCreate`，也不会因为没有它而失败。
+        #: 两条路径都是**内容区相对**的，由 `slot_layout.control` 按本界面的
+        #: 屏幕挂法解析（两种挂法见 `slot_layout._candidates`）。
         self.fly = flying_item.FlyingItemAnimator(
-            self, slot_layout.FLYING_ITEM_PATH, slot_layout.TERMINAL_ROOT)
+            self, slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH)
 
     def OnCreate(self):
         # 先读一次。读失败时 `replace_from_engine` 返回空表，界面停在「全空」
@@ -474,6 +553,13 @@ class TerminalPanelBase(device_status_bindings.DeviceStatusBindingsMixin, ToolDe
         #
         # 没有会话时不发命令、也不动选中：这些动作必须由服务端执行，本地没有
         # 任何可写的东西（`BackpackModel` 的第三条纪律）。
+        # **虚格选中优先于背包动作**（11-05，见 `config` 的文档）。放在长按
+        # 之后、三选一之前：长按是「改这一格的数量」之外的另一种手势，
+        # 而虚格选中要抢的是「再点一下」那一下。`config` 为 `None` 时这两行
+        # 是空操作，通用／合成终端的行为因此逐字不变。
+        if (self.config is not None
+                and self.config.consumes_slot_click(ui_index)):
+            return
         if self.list_view is not None and self._row_selected():
             self.list_view.on_backpack_put(ui_index)
             return
@@ -552,8 +638,42 @@ class TerminalPanelBase(device_status_bindings.DeviceStatusBindingsMixin, ToolDe
         if self.list_view is not None:
             self.list_view.on_quick_store(params)
 
+    @_listen_key_event
+    def OnEscapeKey(self, event):
+        # type: (object) -> None
+        """按 ESC 关屏（User 2026-10-02）。
+
+        **不走 JSON 的 `button_mappings`。** 引擎给的那条路（`menu_cancel` →
+        某个按钮名）在真机上会触发脚本层奇怪的报错，因此改成在这里接
+        `OnKeyPressInGame`。
+
+        三条判据：**只认按下**（`isDown == 1`——抬起时再来一次会把刚开的屏
+        又关掉）、键码是 ESC、本屏仍是活动的那个（监听器本身已经保证了这一点，
+        这里再挡一次是因为 `_do_deactive` 与事件派发之间可能隔着一帧）。
+
+        `RemoveUI()` 与点 ✕ 走同一条路（`OnCloseClick` 也调它），因此收尾
+        ——清选中、收动画、注销端口——完全一致。
+        """
+        if not self._activated:
+            return
+        if getattr(event, "isDown", 0) != 1:
+            return
+        if ESCAPE_KEY is None or getattr(event, "key", None) != ESCAPE_KEY:
+            return
+        self.RemoveUI()
+
     @Binder.binding(Binder.BF_ButtonClickUp, "#EnderNetTerminal.close")
     def OnCloseClick(self, params):
+        # type: (object) -> None
+        """点 ✕ 关屏。
+
+        **这条装饰器一度挂错了地方**（2026-10-02 加 ESC 那条时）：它被留在了
+        新方法 `OnEscapeKey` 头上，于是点 ✕ 触发的是那个只在键盘事件上成立的
+        处理函数——它拿到的是按钮的 `params` 字典，`getattr(event, "isDown", 0)`
+        取不到就当场返回。**表现是 ✕ 点了完全没反应**，而 `OnCloseClick` 成了
+        一个没人绑的死方法。加方法时贴着别人的装饰器插，就是这个下场：
+        装饰器与它修饰的函数之间没有任何语法约束，错了不报错。
+        """
         self.backpack.clear_selection()
         # 半空中的那一个要收起来：界面都没了，`OnTicking` 不再推进它，
         # 留着下一次打开时还挂在半路。
@@ -616,6 +736,9 @@ class TerminalListView(object):
         self.cache = cache if cache is not None else TerminalCache()
         self.device_ref = device_ref
         self.closed = False
+        #: 保活计数（帧）。见 `_keepalive`：终端面板一条命令都不发时，
+        #: 服务端会在 20 秒后把会话回收，而界面上只表现为「点哪儿都没反应」。
+        self._keepalive_frames = 0
         #: 排序状态。初值是 `ItemListModel` 的默认（决策 D6：名称降序），
         #: 但**不是抄来的**——`__init__` 末尾会把它写回模型（见那里）。
         self.sort_field = SORT_NAME
@@ -653,7 +776,7 @@ class TerminalListView(object):
                 # 被下面两处 `except Exception: return` 吞掉，于是**重锚整条静默
                 # 失效**——表现只是「滚动位置偶尔会跳」，离线用例也照不到（当时的
                 # 替身照 tooldelta 包装层的形状写的）。见 `_remember_anchor`。
-                self._scroll = screen.GetBaseUIControl(self.scroll_path).asScrollView()
+                self._scroll = slot_layout.scroll_view_at(screen, self.scroll_path)
             except Exception:
                 # 取不到滚动条不影响列表本身：锚点退化成「不重锚」。
                 self._scroll = None
@@ -793,8 +916,14 @@ class TerminalListView(object):
         # type: (str, tuple) -> None
         if self._sort_uv.get(path) == uv:
             return
+        # **路径要先解析**：`path` 是内容区相对的，四台面板的屏幕挂法不同
+        # （见 `slot_layout._candidates`），直接交给 `GetElement` 会在这三台
+        # 上一条都取不到——而取不到的代价只是两个排序图标永远不换 UV。
+        full = slot_layout.path_of(self.screen, path)
+        if full is None:
+            return
         try:
-            self.screen.GetElement(path).asImage().SetUV(uv, ICON_UV_SIZE)
+            self.screen.GetElement(full).asImage().SetUV(uv, ICON_UV_SIZE)
         except Exception:
             # 图标缺失或引擎拒绝都不该让排序本身失效：UV 只是表现，
             # 排序状态与列表内容都已经改完了。
@@ -860,6 +989,18 @@ class TerminalListView(object):
         # 拿不到快照就等待同步），但拦在这里比让两条路各靠一个偶然成立的条件
         # 安全——那种「碰巧不会炸」迟早会随别人的改动失效。
         if not self.cache.client.has_session():
+            return
+        # **样板终端的虚格选中优先**（11-05）：选中虚格之后点网络行是
+        # 「清空那一格」，**不取物**。判据与背包那一侧共用同一个方法，
+        # 因此两条路径不会各有一套「什么算外界」的说法。
+        #
+        # 放在**下标范围与会话检查之前**：这两条说的是「这一行有没有东西
+        # 可搬」，而虚格选中要做的动作与那一行无关（那一行可能是空的、
+        # 甚至列表还没收到快照）。`config`（`getattr` 而不是直取：本类不
+        # import 屏幕类，与 `_fly` 取 `screen.fly` 同一手法）为 `None` 时
+        # 这一行是空操作，通用／合成终端的行为因此一字不改。
+        config = getattr(self.screen, "config", None)
+        if config is not None and config.consumes_row_click(index):
             return
         if not 0 <= index < len(self.rows):
             return
@@ -1243,6 +1384,35 @@ class TerminalListView(object):
                 return rect
         return slot_layout.network_area_rect(self.screen)
 
+    def _keepalive(self):
+        # type: () -> None
+        """每 `KEEPALIVE_FRAMES` 帧告诉服务端「这个会话还开着」。
+
+        **放在列表视图里而不是各个面板的 `OnTicking`**：三个终端面板
+        （通用／合成／样板）都建了这个视图、都每帧调 `tick()`，因此这里是
+        唯一的收口处——放进面板的话要写三遍，而漏掉一个的症状是「那个界面
+        开着不动 20 秒就死」，看起来像别处的问题。
+
+        没有会话时**只把计数清零**，不发：`keepalive` 需要会话号，而这不是
+        错误（界面刚打开、会话还在路上）。`_settle_lost_session` 已经在
+        这一步之前把丢会话的情形收过尾了。
+
+        `keepalive` 抛异常时咽掉并清零：它是保活，不是业务，一次网络抖动
+        不该让 `OnTicking` 每帧报错（而引擎把那个异常算在渲染里）。
+        """
+        client = getattr(self.cache, "client", None)
+        if client is None or not client.has_session():
+            self._keepalive_frames = 0
+            return
+        self._keepalive_frames += 1
+        if self._keepalive_frames < KEEPALIVE_FRAMES:
+            return
+        self._keepalive_frames = 0
+        try:
+            client.keepalive()
+        except Exception:
+            pass
+
     # -- 每帧 ----------------------------------------------------------
 
     def tick(self):
@@ -1251,6 +1421,7 @@ class TerminalListView(object):
         if self.closed:
             return
         self._settle_lost_session()
+        self._keepalive()
         self._drain_receipts()
         # **顺序不能反**：重排发生在 `cache.tick()` 里面，等它跑完再读滚动
         # 位置，读到的是「换过之后」的顶行——那时玩家正看着的那一行已经

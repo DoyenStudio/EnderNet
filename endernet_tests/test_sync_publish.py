@@ -38,6 +38,7 @@ from endernet.common.protocol import (
     MSG_SNAPSHOT_CHUNK,
     MSG_SNAPSHOT_END,
     MSG_SESSION_READY,
+    MSG_TEMPLATE_STATE,
     Reason,
     SessionClose,
     SessionOpen,
@@ -1962,6 +1963,105 @@ class TestTerminalCommands(Fixture):
         self.assertEqual(self.hub.stats["commands"], 2)
         self.assertEqual(self.hub.stats["command_rejected"], 1)
         self.assertEqual(self.hub.stats["command_errors"], 0)
+
+
+# -- 11-05 样板终端的状态推送 ----------------------------------------------
+
+def template_rows(count, locked=False):
+    return [{"slot": index, "canonical": "", "count": 0, "name": "", "aux": 0,
+             "locked": locked}
+            for index in range(count)]
+
+
+def template_state(revision=1, mode="crafting"):
+    """与 `bootstrap._sync_template_of` 同形的一份状态。"""
+    return {
+        "revision": revision,
+        "mode": mode,
+        "source": template_rows(9),
+        "outputs": template_rows(3, locked=mode == "crafting"),
+        "input": template_rows(1),
+        "result": template_rows(1),
+        "limits": {"max_count": 65535, "default_count": 1},
+    }
+
+
+class TestTemplateStatePublish(Fixture):
+    """11-05 的样板状态推送。判据与 11-04 的工作台那条逐条对应：
+    按整个载荷去重、没接上就不发、读炸了也宁可不发。"""
+
+    def setUp(self):
+        Fixture.setUp(self)
+        self.template = None
+        self.template_calls = 0
+        self.template_raises = False
+        #: `Fixture` 建中枢时没有传 `template_of`，而这里要测的正是接上之后
+        #: 的行为，因此换掉那个注入点（与 `_inventory_sent` 同一种用法）。
+        self.hub._template_of = self._template_of
+
+    def _template_of(self, device_ref):
+        self.template_calls += 1
+        if self.template_raises:
+            raise RuntimeError("engine query exploded")
+        return self.template
+
+    def publish(self, session):
+        self.hub.tick()
+        return self.of_kind(MSG_TEMPLATE_STATE)
+
+    def test_a_device_without_template_slots_is_not_pushed_to(self):
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+        self.template = None
+        self.assertEqual([], self.publish(session))
+
+    def test_the_state_is_pushed_once_and_only_when_it_changes(self):
+        """`settle` 自己会 tick，因此第一帧就已经推过一条了。"""
+        self.template = template_state()
+        session, _ = self.open_view()
+        self.settle(session)
+        self.assertIn(session.session_id, self.hub._template_sent, "第一帧发过了")
+        self.port.sent = []
+        self.assertEqual([], self.publish(session), "内容没变就不发")
+        self.template = template_state(revision=2)
+        self.assertEqual(1, len(self.publish(session)), "改了就要再发")
+
+    def test_a_switch_to_factory_mode_unlocks_the_output_rows(self):
+        self.template = template_state(mode="factory")
+        session, _ = self.open_view()
+        self.settle(session)
+        message = self.of_kind(MSG_TEMPLATE_STATE)[-1].message
+        self.assertEqual("factory", message.mode)
+        self.assertEqual([False] * 3, [row["locked"] for row in message.outputs])
+        self.assertEqual([False] * 9, [row["locked"] for row in message.source])
+
+    def test_a_failing_read_never_fakes_an_empty_state(self):
+        """**不发**与**发一份空的**是两回事：后者在客户端读出来是
+        「你配的东西没了」。"""
+        self.template_raises = True
+        session, _ = self.open_view()
+        self.settle(session)
+        self.assertEqual([], self.of_kind(MSG_TEMPLATE_STATE))
+        self.assertEqual(0, self.hub.stats["template_states"])
+
+    def test_the_pushed_payload_survives_the_wire(self):
+        self.template = template_state(revision=7)
+        session, _ = self.open_view()
+        self.settle(session)
+        message = self.of_kind(MSG_TEMPLATE_STATE)[-1].message
+        self.assertEqual(7, message.revision)
+        self.assertEqual(9, len(message.source))
+        self.assertEqual(65535, message.limits["max_count"])
+        self.assertEqual(1, self.hub.stats["template_states"])
+
+    def test_closing_the_session_drops_the_dedup_record(self):
+        self.template = template_state()
+        session, _ = self.open_view()
+        self.settle(session)
+        self.assertIn(session.session_id, self.hub._template_sent)
+        self.close_view(session)
+        self.assertNotIn(session.session_id, self.hub._template_sent)
 
 
 if __name__ == "__main__":

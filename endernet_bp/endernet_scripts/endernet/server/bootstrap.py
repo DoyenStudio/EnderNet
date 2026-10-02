@@ -35,7 +35,13 @@
 """
 
 from ..common.crafting_recipe import SLOT_COUNT
-from ..common.definitions import CATEGORY_PROCESSOR, CATEGORY_ASSEMBLY, DefinitionSet
+from ..common.definitions import (
+    CATEGORY_ASSEMBLY,
+    CATEGORY_PROCESSOR,
+    PATTERN_MODE_CRAFTING,
+    DefinitionSet,
+)
+from ..common.resource_key import ResourceKey
 from .adapters.containers_engine import (
     EngineContainerProvider,
     EngineInventoryProvider,
@@ -54,6 +60,18 @@ from .crafting.patterns import PatternPolicy
 from .crafting.planner import PlanPolicy, Planner
 from .crafting.returns import ReturnPolicy, ReturnsService
 from .crafting.store import PatternStore
+from .crafting.template_terminal import (
+    CRAFT_PREVIEW_CELL,
+    GROUP_OUTPUTS,
+    GROUP_SOURCE,
+    INPUT_SLOT,
+    OUTPUT_CELL_COUNT,
+    RESULT_SLOT,
+    SOURCE_CELL_COUNT,
+    TemplatePolicy,
+    TemplateStore,
+    detect_crafting_output,
+)
 from .crafting.workbench import CraftingPolicy, WorkbenchStore, preview_of
 from .devices.io import (
     TEMPLATE as PORT_TEMPLATE_ROLE,
@@ -120,9 +138,10 @@ def _energy_builder(policy, inputs_of=None):
 
 def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories,
                      returns=None, workbench=None, recipes=None,
-                     crafting_policy=None, grid_stack_limit=None):
+                     crafting_policy=None, grid_stack_limit=None,
+                     templates=None, template_policy=None):
     # type: (object, object, object, object, object, object, object, object,
-    #        object, object) -> object
+    #        object, object, object, object) -> object
     """把**驱动器状态集合**与**接口状态集合**绑进存储服务的构造器。
 
     服务槽位是逐运行时各造一份的，而驱动器、介质与接口是**跨网络共享**的
@@ -154,6 +173,8 @@ def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories
             recipes=recipes,
             crafting_policy=crafting_policy,
             grid_stack_limit=grid_stack_limit,
+            templates=templates,
+            template_policy=template_policy,
             reflow_sink=_reflow_sink_for(returns, runtime),
         )
 
@@ -164,6 +185,33 @@ def _storage_builder(drivers, medium_policy, ports, transfer_policy, inventories
 #: 这里再写一份是因为启动层要在不 import 定义表条目的前提下判型号；
 #: `test_crafting_workbench` 有一条用例把它与定义表钉在一起。
 CRAFTING_TERMINAL_DEVICE_ID = "endernet:crafting_terminal_panel"
+
+#: 样板终端的方块型号（11-05）。与 `definitions.py` 的 `DEVICES` 是同一个
+#: 字符串，理由与上一行相同。
+TEMPLATE_TERMINAL_DEVICE_ID = "endernet:template_terminal_panel"
+
+
+def _template_slot_row(index, entry, locked=False):
+    # type: (int, object, bool) -> dict
+    """样板状态里的一格：**在九宫格那一行的形状上多一个 `locked`**。
+
+    复用 `_craft_slot_row` 而不是另写一份，是因为那五个字段的写法
+    （尤其「空位四条一起空」「非空位必须给名字」）是 11-04 用一次真机
+    bug 换来的，抄第二遍迟早会漂移。`locked` 只有样板状态有，因此由这里
+    补上——那条消息的字段检查会拒掉多余的键，不能塞进九宫格那一行。
+    """
+    row = _craft_slot_row(index, entry)
+    row["locked"] = bool(locked)
+    return row
+
+
+def _entry_of_preview(preview):
+    # type: (object) -> object
+    """预览（`{name, aux, count}`）转成一行槽位形状要的条目；没有就是 `None`。"""
+    if not isinstance(preview, dict) or not preview.get("name"):
+        return None
+    return (ResourceKey.item(preview["name"], preview.get("aux") or 0),
+            preview.get("count") or 1)
 
 
 def _craft_slot_row(index, entry):
@@ -473,6 +521,22 @@ class ServerBootstrap(object):
         #: `accepts` 按方块型号判，别的方块拿不到工作台，于是命令侧
         #: 「这台方块没有九宫格」是一条明确拒绝，而不是凭空造一台空的。
         self.workbench = WorkbenchStore(accepts=self._is_crafting_terminal)
+        #: 样板终端的真实槽与虚拟配置（11-05）。与 `workbench` 同一地位，
+        #: 三个回调各有各的必要性：
+        #:
+        #: - `accepts` 按方块型号判，别的方块拿不到样板槽；
+        #: - `limit_of` 回答「一块样板物品能叠几个」——那是定义表的数值
+        #:   （工厂样板 64），领域层不许读引擎、也不该复制一份；
+        #: - `drop` 是方块被拆时把实物掉出来。**这是引擎面**，因此是回调
+        #:   而不是服务引用；没有它时状态原样进孤儿索引，一件不丢。
+        self.templates = TemplateStore(
+            accepts=self._is_template_terminal,
+            drop=self._drop_template_items,
+            limit_of=self._template_stack_limit,
+        )
+        #: 样板终端的未定口径（`template_terminal.TemplatePolicy`）。
+        #: **全进程一份**，理由与 `crafting_policy` 相同。
+        self.template_policy = TemplatePolicy()
         #: 工作台配方来源。引擎调用写在方法体里，构造它是安全的。
         self.recipes = EngineRecipeSource()
         #: 合成终端的未定口径（文档第 8 节）。**全进程一份**：策略里的
@@ -555,6 +619,8 @@ class ServerBootstrap(object):
                         recipes=self.recipes,
                         crafting_policy=self.crafting_policy,
                         grid_stack_limit=self._craft_stack_limit,
+                        templates=self.templates,
+                        template_policy=self.template_policy,
                     ),
                     ServiceId.ENERGY: _energy_builder(
                         self.energy_policy, self._energy_inputs_of),
@@ -603,6 +669,9 @@ class ServerBootstrap(object):
             # `self.workbench`——与上面三个口子同一个道理：绑定方法
             # 在调用时才查属性。
             craft_of=self._sync_craft_of,
+            # 样板终端的真实槽与虚拟配置（11-05）。同样指向此刻还不存在的
+            # `self.templates`——绑定方法在调用时才查属性。
+            template_of=self._sync_template_of,
         )
         if session_check is None:
             # 注入值优先：离线测试与 05/08 的既有用例会自己传探针，
@@ -1153,6 +1222,136 @@ class ServerBootstrap(object):
             return None
         return preview_of(grid, self.recipes)
 
+    # -- 样板终端（11-05）----------------------------------------------
+
+    def _is_template_terminal(self, device_ref):
+        # type: (object) -> bool
+        """这台设备是不是样板终端。判据与 `_is_crafting_terminal` 逐字同形：
+        查注册表里的方块型号，查不到时返回假（**拒绝**，不是放行）——
+        代次对不上、方块已被拆、区块未加载都会走到这里，那时候放行等于让
+        一条陈旧请求动到某个来路不明的样板槽。"""
+        if device_ref is None:
+            return False
+        record = self.registry.get(device_ref.node_key)
+        if record is None or not record.ref.matches(device_ref):
+            return False
+        return record.device_id == TEMPLATE_TERMINAL_DEVICE_ID
+
+    def _template_stack_limit(self, resource_key):
+        # type: (object) -> int
+        """一块样板物品能叠几个。**取自定义表**（工厂样板 64）。
+
+        领域层不许 import 引擎、也不该把那个数复制一份，因此这条是**注入的
+        回调**。不是样板物品的键退回 1——那是保守那侧：叠少了玩家再放一次，
+        叠多了会占掉一格里本该装别的东西的位置。
+        """
+        if resource_key is None:
+            return 1
+        try:
+            return self.definitions.get_template(resource_key.name).max_stack_size
+        except KeyError:
+            return 1
+
+    def _drop_template_items(self, node_key, items):
+        # type: (tuple, list) -> int
+        """方块被拆时，把两个真实槽里的实物掉在原地（User 2026-10-02）。
+
+        **只需要一个维度与一个坐标**，因此离线、无主控、没有玩家在旁边时
+        照样成立——这正是「掉落」这一侧比「还给拆方块的玩家」更好的地方
+        （`BlockRemoveServerEvent` **不带 `playerId`**，那条路根本走不通）。
+        真的掉出来几件由世界适配器回答，不是「我调过了」。
+        """
+        return self.world.drop_items_at(node_key, items)
+
+    def _template_preview(self, state):
+        # type: (object) -> object
+        """合成模式当前摆位能做出什么。工厂模式不看它（产物由玩家配）。
+
+        **不做合成**，只回答界面「点了会怎样」。引擎那边炸了就让异常穿出去：
+        `_publish_template_state` 那里有兜底，会变成「这一帧不发」而不是
+        「预览为空」——后者会被读成「摆的东西没有配方」，而真相是查询坏了。
+        """
+        if state.config.mode != PATTERN_MODE_CRAFTING or self.recipes is None:
+            return None
+        return detect_crafting_output(
+            state.config.cells(GROUP_SOURCE), self.recipes)
+
+    def _template_output_rows(self, config, preview):
+        # type: (object, object) -> list
+        """虚拟输出格的三行。
+
+        合成模式**不是读配置**：那三格在配置里恒为空（编辑被锁），界面看到
+        的是服务端算出来的——中间那格是检测到的产物，上下两格**空着且锁定**
+        （界面按 `mode` 把它们整个藏掉，User 2026-10-02 定）。
+
+        **三格的「没有东西」一律发空行，不发占位图标**（User 2026-10-02 改；
+        中间那格原先在没有检测到配方时发 `minecraft:barrier`）。空行由
+        `id_aux` 回 0 表达，与下半屏背包槽是同一套做法。
+
+        两条路在界面层长得像，**别混**：本消息走的是集合绑定，回 0 就清掉了
+        图标；而 `SetUiItem(Item("minecraft:air"))` 那条（搬运动画在用）
+        清不掉，会留着上一件渲染的物品。上下两格在合成模式下根本不画
+        （`TemplateView.visible` 只放中间那格过），发什么都会在切到工厂模式、
+        它们变可见的那一刻露出来——所以这里同样是空行。
+
+        `locked` 仍然由服务端给：客户端不按模式自己推，两份判断迟早分叉，
+        而症状是「点了没反应」。
+        """
+        if config.mode != PATTERN_MODE_CRAFTING:
+            return [_template_slot_row(index, config.cell(GROUP_OUTPUTS, index))
+                    for index in range(OUTPUT_CELL_COUNT)]
+        rows = []
+        for index in range(OUTPUT_CELL_COUNT):
+            # 上下两格恒空（界面不画它们）；中间那格是检测到的产物，
+            # **没检测到就同为空行**——不再发 barrier 占位。
+            if index != CRAFT_PREVIEW_CELL:
+                entry = None
+            else:
+                entry = _entry_of_preview(preview)
+            rows.append(_template_slot_row(index, entry, locked=True))
+        return rows
+
+    def _sync_template_of(self, device_ref):
+        # type: (object) -> object
+        """样板终端的真实槽与虚拟配置（11-05），非样板终端返回 `None`。
+
+        **返回 `None` 与「返回一份空配置」是两回事**：前者是「这台设备不是
+        样板终端」，后者是「你配的东西没了」。
+
+        `input` / `result` 两条各只有一行，因此行里的 `slot` 恒为 0——
+        它表示的是**在各自那一组里的位置**，不是设备槽号；设备槽号由组名
+        给（`input` / `result`），两者不会混。
+        """
+        if not self._is_template_terminal(device_ref):
+            return None
+        # **用 `state_for` 而不是 `get`**：一台刚放下的样板终端也要画得出来。
+        # 与合成终端那边不同——那台的九宫格空着就等于「还没导入」，
+        # 发不发都一样；这台不行：模式、三个输出格（合成模式下中间那格是
+        # 自动检测出来的预览）都是**服务端算出来的**，不发就整块界面空着。
+        # `state_for` 被 `_is_template_terminal` 挡在前面，因此这里不会给
+        # 一台不是样板终端的方块造出状态。
+        state = self.templates.state_for(device_ref)
+        if state is None:
+            return None
+        config = state.config
+        policy = self.template_policy
+        return {
+            "revision": state.revision,
+            "mode": config.mode,
+            "source": [
+                _template_slot_row(index, config.cell(GROUP_SOURCE, index))
+                for index in range(SOURCE_CELL_COUNT)
+            ],
+            "outputs": self._template_output_rows(
+                config, self._template_preview(state)),
+            "input": [_template_slot_row(0, state.slots.entry(INPUT_SLOT))],
+            "result": [_template_slot_row(0, state.slots.entry(RESULT_SLOT))],
+            "limits": {
+                "max_count": policy.max_config_count,
+                "default_count": policy.encode_count_per_cell,
+            },
+        }
+
     def _sync_status_of(self, device_ref):
         # type: (object) -> object
         """一台设备的总体在线/离线（11-08/11-13），没有运行时也照样回答。
@@ -1264,6 +1463,11 @@ class ServerBootstrap(object):
             # 样板提供者状态也从**同一批变化**推导（07）。它按能力判定
             # 谁是提供者，因此非提供者的变化在这里是空操作。
             self.patterns.observe(change)
+            # 样板终端的真实槽也按**同一批变化**处置（11-05）：被拆掉时先把
+            # 实物掉在原地，掉不掉的进孤儿索引。放在这里而不是自己的观察者
+            # 通道，理由与上面三条相同——两条路径分叉就会出「拓扑知道设备
+            # 没了、样板槽还以为在」。
+            self.templates.observe(change)
         if self.change_sink is not None:
             for change in changes:
                 self.change_sink(change)
@@ -1449,6 +1653,15 @@ class ServerBootstrap(object):
             )
         }
         return view
+
+    def template_diagnostics(self):
+        # type: () -> dict
+        """样板终端诊断（11-05）。含策略与仍未定案的条目。
+
+        `orphan_items` 是**没掉成功、还压在孤儿索引里的实物件数**——它只涨
+        不落说明有设备的样板一直没被处理，因此和策略一起报出来。
+        """
+        return self.templates.diagnostics()
 
     def plan_diagnostics(self):
         # type: () -> dict

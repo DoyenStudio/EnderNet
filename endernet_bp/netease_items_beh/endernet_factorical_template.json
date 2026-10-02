@@ -2,7 +2,7 @@
     "format_version": "1.10",
     "minecraft:item": {
         "components": {
-            "minecraft:max_stack_size": 1,
+            "minecraft:max_stack_size": 64,
             "netease:customtips": {
                 "value": "\n§7指定自定义配方\n§7放入总线样板接口使用。"
             }

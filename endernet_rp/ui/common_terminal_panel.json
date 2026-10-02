@@ -236,6 +236,51 @@
                 }
             },
             {
+                "unavailable_mask": {
+                    "type": "input_panel",
+                    "anchor_from": "bottom_middle",
+                    "anchor_to": "bottom_middle",
+                    "size": [
+                        "100%+0px",
+                        "100%+-20px"
+                    ],
+                    "layer": 20,
+                    "is_swallow": true,
+                    "property_bag": {
+                        "#EnderNetTerminal.unavailable": false
+                    },
+                    "bindings": [
+                        {
+                            "binding_type": "global",
+                            "binding_name_override": "#visible",
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetTerminal.unavailable"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "mask_img": {
+                                "type": "image",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "size": [
+                                    "100%+0px",
+                                    "100%+0px"
+                                ],
+                                "alpha": 0.5,
+                                "color": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                ],
+                                "texture": "textures/ui/white_background",
+                                "tiled": true
+                            }
+                        }
+                    ]
+                }
+            },
+            {
                 "sort_method_btn@common.button": {
                     "type": "button",
                     "$control_alpha": 1.0,
@@ -320,51 +365,6 @@
                                     16.0,
                                     16.0
                                 ]
-                            }
-                        }
-                    ]
-                }
-            },
-            {
-                "unavailable_mask": {
-                    "type": "input_panel",
-                    "anchor_from": "bottom_middle",
-                    "anchor_to": "bottom_middle",
-                    "size": [
-                        "100%+0px",
-                        "100%+-20px"
-                    ],
-                    "layer": 20,
-                    "is_swallow": true,
-                    "property_bag": {
-                        "#EnderNetTerminal.unavailable": false
-                    },
-                    "bindings": [
-                        {
-                            "binding_type": "global",
-                            "binding_name_override": "#visible",
-                            "binding_condition": "always",
-                            "binding_name": "#EnderNetTerminal.unavailable"
-                        }
-                    ],
-                    "controls": [
-                        {
-                            "mask_img": {
-                                "type": "image",
-                                "anchor_from": "top_left",
-                                "anchor_to": "top_left",
-                                "size": [
-                                    "100%+0px",
-                                    "100%+0px"
-                                ],
-                                "alpha": 0.5,
-                                "color": [
-                                    0.0,
-                                    0.0,
-                                    0.0
-                                ],
-                                "texture": "textures/ui/white_background",
-                                "tiled": true
                             }
                         }
                     ]
@@ -469,24 +469,6 @@
             }
         ]
     },
-    "main": {
-        "type": "screen",
-        "absorbs_input": true,
-        "button_mappings": [
-            {
-                "to_button_id": "#EnderNetTerminal.close",
-                "from_button_id": "button.menu_cancel",
-                "mapping_type": "pressed"
-            }
-        ],
-        "is_showing_menu": true,
-        "render_game_behind": true,
-        "controls": [
-            {
-                "terminal@common_terminal_panel_ui.content": {}
-            }
-        ]
-    },
     "namespace": "common_terminal_panel_ui",
     "terminal_items_grid": {
         "type": "grid",
@@ -515,7 +497,10 @@
         ]
     },
     "terminal_scroll_background@endernet_ui_common.simple_invisible_button": {
+        "$default_texture": "textures/ui/endernet/backgroud_without_frame",
+        "$hover_texture": "textures/ui/endernet/backgroud_without_frame",
         "$pressed_button_name": "#EnderNetTerminal.quick_store",
+        "$pressed_texture": "textures/ui/endernet/backgroud_without_frame",
         "button_mappings": [
             {
                 "from_button_id": "button.menu_select",
@@ -531,5 +516,15 @@
         "$item_select_button": "#EnderNetTerminal.select",
         "$item_selected_binding": "#EnderNetTerminal.selected",
         "$item_visible_binding": "#EnderNetTerminal.has_item"
+    },
+    "main@common.base_screen": {
+        "absorbs_input": true,
+        "is_showing_menu": true,
+        "render_game_behind": true,
+        "controls": [
+            {
+                "terminal@common_terminal_panel_ui.content": {}
+            }
+        ]
     }
 }

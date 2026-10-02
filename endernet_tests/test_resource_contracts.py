@@ -7,7 +7,7 @@ import testsupport  # noqa: F401
 from endernet.common import protocol
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.resource_key import ResourceKey, canonical_tree, tree_text
-from endernet.common.item_codec import item_key, item_key_from_dict, item_dict_from_key, item_from_key, unbox_engine_value
+from endernet.common.item_codec import item_key, item_key_from_dict, item_dict_for_drop, item_dict_from_key, item_from_key, normalize_engine_item, unbox_engine_value
 from endernet.common.protocol import StorageChanged
 from endernet.common.resource_sync import ResourceDescriptions, ResourceResyncRequired
 from endernet.server.adapters.containers import ContainerEntry
@@ -380,6 +380,7 @@ class SyncMessageTests(unittest.TestCase):
                 "deadbeef",
                 {"name": "minecraft:stick", "aux": 0, "count": 4},
             ),
+            template_message(),
         )
 
     def test_every_registered_kind_is_covered_here(self):
@@ -752,7 +753,9 @@ class EngineUserDataBoxingTests(unittest.TestCase):
     """自有样板载荷读回后带 ModSDK NBT 类型标签，按业务协议解包。
 
     2026-09-25 游戏内实测的形状，逐条钉在这里。少了这一层，
-    样板解码会得到「格式不对」；资源身份比较则仍应保留原始 NBT 表示。
+    样板解码会得到「格式不对」。
+    **身份比较过去刻意保留原始 NBT 表示，那条取舍已于 2026-10-02 反转**
+    ——见 `EngineUserDataIdentityTests` 与 `normalize_user_data` 的说明。
     离线测试此前照不到它：`FakeContainer` 原样存取，而真引擎会包。
     """
 
@@ -812,9 +815,204 @@ class EngineUserDataBoxingTests(unittest.TestCase):
         self.assertEqual(unbox_engine_value(odd), odd)
 
 
+class EngineUserDataIdentityTests(unittest.TestCase):
+    """**写进去的键必须等于读回来的键**——2026-10-02 实测缺陷的回归位。
+
+    引擎对 `userData` 的往返是**变形**的（两条都来自实测，见
+    `plans/technical_notes/resource_identity.md` §2）：
+
+    1. 叶子标量被包成 `{"__type__": T, "__value__": V}`；
+    2. 顶层 `customTips` 被**复制**一份进 `userData["ItemCustomTips"]`。
+
+    过去身份刻意不解包（「解包会丢 NBT 类型信息」），于是「构造的键」与
+    「引擎读回的键」恒不相等。2026-10-02 在样板终端上实测到的后果是
+    **一次复制**：`slot_insert` 写完按资源键回读核对、判 `moved=0`，
+    而东西已经写进那一格，调用方因此不扣来源格。带 `userData` 的样板
+    是第一批撞上它的物品。
+
+    **夹具必须自己造「引擎那份形状」**：喂 `ResourceKey.raw_identity`
+    进去永远绿——离线看到的是裸的，线上看到的是包的。
+    """
+
+    def boxed(self, value):
+        # type: (object) -> object
+        """裸值 → 引擎读回来的形状（叶子标量带 NBT 标签，容器递归）。"""
+        if isinstance(value, dict):
+            return dict((key, self.boxed(item)) for key, item in value.items())
+        if isinstance(value, (list, tuple)):
+            return [self.boxed(item) for item in value]
+        if isinstance(value, bool):
+            return {"__type__": 1, "__value__": 1 if value else 0}
+        if value is None:
+            return {"__type__": 1, "__value__": 2}
+        if isinstance(value, int):
+            return {"__type__": 3, "__value__": value}
+        if isinstance(value, float):
+            return {"__type__": 5, "__value__": value}
+        return {"__type__": 8, "__value__": value}
+
+    def engine_readback(self, key, count=1):
+        # type: (object, int) -> dict
+        """`key` 写进引擎、再读回来时的那份字典（两条变形都照实测做）。"""
+        data = item_dict_from_key(key, count)
+        payload = data.get("userData")
+        tips = data.get("customTips")
+        if isinstance(payload, dict) and payload:
+            payload = self.boxed(payload)
+            if tips:
+                payload["ItemCustomTips"] = {"__type__": 8, "__value__": tips}
+            data["userData"] = payload
+        data["customTips"] = tips or ""
+        return data
+
+    def pattern_key(self):
+        # type: () -> ResourceKey
+        """一件**带 `userData` 载荷**的工厂样板（11-05 编出来的那种）。
+
+        载荷里的字符串全部从这一份键自己派生，因此不引入
+        「unicode 还是字节串」这一层无关变量。
+        """
+        identity = {"custom_tips": None, "durability": None,
+                    "enchant_data": None, "extra_id": None,
+                    "mod_enchant_data": None, "user_data": None}
+        inner = {"aux": 0, "kind": "item", "name": "minecraft:oak_planks",
+                 "schema_version": 1, "identity": identity}
+        return ResourceKey.item(
+            "endernet:factorical_template", 0,
+            custom_tips="ordered 1x planks -> 1x button",
+            user_data={"endernet:pattern": {
+                "format": 1, "mode": "crafting", "returns": [],
+                "inputs": [{"count": 1, "slot": 0, "key": inner}],
+                "outputs": [{"count": 1, "key": inner}],
+            }},
+        )
+
+    def test_the_engine_readback_has_the_same_identity(self):
+        key = self.pattern_key()
+        readback = self.engine_readback(key)
+        self.assertEqual(
+            item_key_from_dict(normalize_engine_item(readback)), key,
+            "写进去的键与读回来的键必须是同一个身份",
+        )
+
+    def test_the_case_bites_without_the_normalizer(self):
+        """**这条用例真的能红**：不走归一化时两个键不相等。
+
+        钉住这一点，是因为身份归一一旦被绕过（或在别处又算一份），
+        症状会以「转移层误报」的形式出现在很远的地方。
+        """
+        key = self.pattern_key()
+        self.assertNotEqual(item_key_from_dict(self.engine_readback(key)), key)
+
+    def test_the_engine_copy_of_custom_tips_is_dropped(self):
+        key = self.pattern_key()
+        normalized = normalize_engine_item(self.engine_readback(key))
+        self.assertNotIn("ItemCustomTips", normalized["userData"])
+        self.assertEqual(normalized["userData"], key.raw_identity["user_data"])
+
+    def test_a_custom_tips_copy_that_differs_is_kept(self):
+        """只丢「引擎复制的那一份」：与顶层 `customTips` 不同的副本留下。
+
+        否则一个第三方模组真把 `ItemCustomTips` 当自己的载荷写，会被
+        我们静默抹掉——那正是 `_check_fields` 那类严格性要防的事。
+        """
+        key = self.pattern_key()
+        readback = self.engine_readback(key)
+        readback["userData"]["ItemCustomTips"] = {"__type__": 8, "__value__": "另一份"}
+        normalized = normalize_engine_item(readback)
+        self.assertEqual(normalized["userData"]["ItemCustomTips"], "另一份")
+
+    def test_an_empty_user_data_is_the_same_as_none(self):
+        """引擎对空 `userData` 直接回 `None`；空字典必须归一到同一个身份。"""
+        data = {"newItemName": "minecraft:stone", "newAuxValue": 0,
+                "count": 1, "showInHand": True, "enchantData": [],
+                "modEnchantData": [], "customTips": "", "extraId": "",
+                "userData": {"ItemCustomTips": {"__type__": 8, "__value__": ""}},
+                "durability": 0}
+        self.assertIsNone(normalize_engine_item(data)["userData"])
+
+    def test_a_plain_payload_passes_through_unchanged(self):
+        """解包对**已经是裸的**载荷是恒等的，构造侧因此不需要第二份形状。"""
+        key = self.pattern_key()
+        normalized = normalize_engine_item(self.engine_readback(key))
+        self.assertEqual(normalized["userData"],
+                         item_key_from_dict(normalized).raw_identity["user_data"])
+
+
+class DropItemShapeTests(unittest.TestCase):
+    """`CreateEngineItemEntity` 要的物品字典形状（2026-10-02 真机逐字段二分）。
+
+    三条都不是风格问题，**给错就一件也掉不出来**：引擎抛 `TypeError`，
+    而 `TemplateStore._drop_real_slots` 把它接成「一件也没掉」——症状是
+    拆了方块、格子里的东西不掉出来，日志干净、东西留在孤儿索引里。
+    """
+
+    def test_old_style_keys_are_used(self):
+        data = item_dict_for_drop(ResourceKey.item("minecraft:stone"), 3)
+        self.assertEqual("minecraft:stone", data["itemName"])
+        self.assertEqual(0, data["auxValue"])
+        self.assertEqual(3, data["count"])
+        self.assertNotIn("newItemName", data)
+        self.assertNotIn("newAuxValue", data)
+
+    def test_the_three_fields_the_engine_refuses_none_are_filled(self):
+        """`customTips` / `extraId` 要字符串、`durability` 要整数。
+
+        真机逐字段二分：给 `None` 直接抛（前两个报
+        「expected string or Unicode object」，最后一个报
+        「an integer is required」）。
+        """
+        data = item_dict_for_drop(ResourceKey.item("minecraft:stone"), 1)
+        self.assertEqual("", data["customTips"])
+        self.assertEqual("", data["extraId"])
+        self.assertEqual(0, data["durability"])
+        # 其余身份字段给 `None` 也能生成实体，因此**不补**：补了反而多一处
+        # 与读回归一不一致的地方。
+        for engine in ("enchantData", "modEnchantData", "userData"):
+            self.assertIsNone(data[engine], engine)
+
+    def test_a_payload_survives_and_the_identity_round_trips(self):
+        """掉落的字典里 `userData` 原样带着；捡回来仍是同一个身份。"""
+        key = ResourceKey.item("endernet:factorical_template", 0,
+                               custom_tips="配置", user_data={"endernet:pattern": {"format": 1}})
+        data = item_dict_for_drop(key, 1)
+        self.assertEqual(key.raw_identity["user_data"], data["userData"])
+        self.assertEqual(key.raw_identity["custom_tips"], data["customTips"])
+
+    def test_the_empty_writings_are_what_the_reader_normalizes_back(self):
+        """补进去的 `""` / `0` 正是 `_EMPTY_IDENTITY` 归一回 `None` 的那两个写法。
+
+        两边必须成对：改了一边，掉落物捡回来后身份就与放进去时不同。
+        """
+        data = item_dict_for_drop(ResourceKey.item("minecraft:stone"), 1)
+        data["newItemName"] = data.pop("itemName")
+        data["newAuxValue"] = data.pop("auxValue")
+        self.assertEqual(ResourceKey.item("minecraft:stone"),
+                         item_key_from_dict(normalize_engine_item(data)))
+
+
 def craft_slots():
     return [{"slot": slot, "canonical": "", "count": 0, "name": "", "aux": 0}
             for slot in range(protocol.CRAFT_SLOT_COUNT)]
+
+
+def template_rows(count, locked=False):
+    """样板状态的一行（`locked` 每行都带，因此这里也要有）。"""
+    return [{"slot": slot, "canonical": "", "count": 0, "name": "", "aux": 0,
+             "locked": locked}
+            for slot in range(count)]
+
+
+def template_message(revision=5, mode="crafting"):
+    return protocol.TemplateStateMessage(
+        revision,
+        mode,
+        template_rows(protocol.TEMPLATE_SOURCE_CELLS),
+        template_rows(protocol.TEMPLATE_OUTPUT_CELLS, locked=mode == "crafting"),
+        template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+        template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+        {"max_count": 65535, "default_count": 1},
+    )
 
 
 class CraftStateTests(unittest.TestCase):
@@ -934,6 +1132,158 @@ class TerminalCommandRecipeField(unittest.TestCase):
     def test_it_reaches_the_service_payload(self):
         self.assertEqual("deadbeef", self.command("deadbeef").payload()["recipe"])
         self.assertNotIn("recipe", self.command().payload())
+
+
+class TerminalCommandCellField(unittest.TestCase):
+    """`cell` 是 11-05 加到命令上的**唯一**新字段（样板终端的虚格下标）。
+
+    **与 `slot` 分开是刻意的**：交接明令「不将虚格下标当作玩家或设备真实槽号」，
+    两个下标空间共用一个字段会让「这个数属于哪个空间」逐动作去猜。
+    """
+
+    def command(self, cell=None):
+        return protocol.TerminalCommand(
+            "r1", "template_cell_put", None,
+            {"kind": "item", "name": "minecraft:stick"},
+            1, None, None, None, None, None, None, cell,
+        )
+
+    def test_the_field_is_on_the_declared_list(self):
+        self.assertIn("cell", protocol.TerminalCommand.FIELDS)
+        self.assertIn("cell", protocol.TerminalCommand.__slots__)
+
+    def test_it_survives_the_round_trip(self):
+        envelope = protocol.SyncEnvelope(self.command(4), "s1")
+        restored = protocol.SyncEnvelope.from_dict(envelope.to_dict(), None)
+        self.assertEqual(4, restored.message.cell)
+
+    def test_absent_is_none_and_still_serialised(self):
+        payload = protocol.SyncEnvelope(self.command(), "s1").to_dict()
+        self.assertIn("cell", payload["message"])
+        self.assertIsNone(payload["message"]["cell"])
+        restored = protocol.SyncEnvelope.from_dict(payload, None)
+        self.assertIsNone(restored.message.cell)
+
+    def test_a_missing_field_is_refused_not_defaulted(self):
+        payload = protocol.SyncEnvelope(self.command(), "s1").to_dict()
+        del payload["message"]["cell"]
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.SyncEnvelope.from_dict(payload, None)
+
+    def test_a_non_count_cell_is_refused(self):
+        for bad in (True, -1, "1"):
+            payload = protocol.SyncEnvelope(self.command(1), "s1").to_dict()
+            payload["message"]["cell"] = bad
+            with self.assertRaises((ValueError, TypeError)):
+                protocol.SyncEnvelope.from_dict(payload, None)
+
+    def test_it_reaches_the_service_payload(self):
+        self.assertEqual(4, self.command(4).payload()["cell"])
+        self.assertNotIn("cell", self.command().payload())
+
+    def test_the_cell_never_lands_in_the_slot_field(self):
+        """两个下标空间必须各走各的字段——串了就是搬错格子。"""
+        payload = self.command(4).payload()
+        self.assertEqual(4, payload["cell"])
+        self.assertNotIn("slot", payload)
+
+
+class TemplateStateTests(unittest.TestCase):
+    """11-05 的样板终端状态消息。
+
+    四组行同形，因此**边界检查只有一份**（与 `CraftStateMessage` 共用
+    `_require_slot_row`）：格数、槽号连续、空位写法、`locked` 的类型、
+    `limits` 的形状。
+    """
+
+    def test_it_pins_the_four_groups_to_their_own_sizes(self):
+        self.assertEqual(9, protocol.TEMPLATE_SOURCE_CELLS)
+        self.assertEqual(3, protocol.TEMPLATE_OUTPUT_CELLS)
+        self.assertEqual(2, protocol.TEMPLATE_REAL_SLOTS)
+        self.assertEqual(1, protocol.TEMPLATE_REAL_SLOT_ROWS)
+        with self.assertRaises(ValueError):
+            protocol.TemplateStateMessage(
+                1, "crafting",
+                template_rows(protocol.TEMPLATE_SOURCE_CELLS - 1),
+                template_rows(protocol.TEMPLATE_OUTPUT_CELLS),
+                template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+                template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+                {"max_count": 64, "default_count": 1})
+
+    def test_the_slot_indices_must_be_in_order(self):
+        rows = template_rows(protocol.TEMPLATE_SOURCE_CELLS)
+        rows[3]["slot"] = 7
+        with self.assertRaises(ValueError):
+            protocol.TemplateStateMessage(
+                1, "crafting", rows,
+                template_rows(protocol.TEMPLATE_OUTPUT_CELLS),
+                template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+                template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+                {"max_count": 64, "default_count": 1})
+
+    def test_a_key_without_a_name_is_refused(self):
+        rows = template_rows(protocol.TEMPLATE_SOURCE_CELLS)
+        rows[0] = {"slot": 0, "canonical": "item|minecraft:stick|0|...",
+                   "count": 1, "name": "", "aux": 0, "locked": False}
+        with self.assertRaises(ValueError):
+            protocol.TemplateStateMessage(
+                1, "crafting", rows,
+                template_rows(protocol.TEMPLATE_OUTPUT_CELLS),
+                template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+                template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+                {"max_count": 64, "default_count": 1})
+
+    def test_locked_must_be_a_bool_not_a_number(self):
+        for bad in (0, 1, None, "true"):
+            rows = template_rows(protocol.TEMPLATE_OUTPUT_CELLS)
+            rows[0]["locked"] = bad
+            with self.assertRaises((ValueError, TypeError)):
+                protocol.TemplateStateMessage(
+                    1, "crafting",
+                    template_rows(protocol.TEMPLATE_SOURCE_CELLS), rows,
+                    template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+                    template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+                    {"max_count": 64, "default_count": 1})
+
+    def test_an_unknown_mode_is_refused(self):
+        with self.assertRaises(ValueError):
+            template_message(mode="smelting")
+
+    def test_the_limits_must_be_sane(self):
+        for limits in ({"max_count": 64}, {"max_count": 64, "default_count": 1,
+                                           "extra": 1},
+                       {"max_count": 0, "default_count": 1},
+                       {"max_count": 4, "default_count": 9},
+                       {"max_count": True, "default_count": 1}):
+            with self.assertRaises((ValueError, TypeError)):
+                protocol.TemplateStateMessage(
+                    1, "crafting",
+                    template_rows(protocol.TEMPLATE_SOURCE_CELLS),
+                    template_rows(protocol.TEMPLATE_OUTPUT_CELLS),
+                    template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS),
+                    template_rows(protocol.TEMPLATE_REAL_SLOT_ROWS), limits)
+
+    def test_it_survives_the_round_trip_whole(self):
+        envelope = protocol.SyncEnvelope(
+            template_message(7, "factory"), "s1", "net", "epoch-1")
+        restored = protocol.SyncEnvelope.from_dict(envelope.to_dict(), None)
+        message = restored.message
+        self.assertEqual(7, message.revision)
+        self.assertEqual("factory", message.mode)
+        self.assertEqual(protocol.TEMPLATE_SOURCE_CELLS, len(message.source))
+        self.assertEqual(protocol.TEMPLATE_OUTPUT_CELLS, len(message.outputs))
+        self.assertEqual(protocol.TEMPLATE_REAL_SLOT_ROWS, len(message.result))
+        self.assertEqual(65535, message.limits["max_count"])
+
+    def test_unknown_fields_are_refused_outright(self):
+        payload = template_message().to_dict()
+        payload["extra"] = 1
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.decode_sync_message(payload)
+
+    def test_it_needs_a_session_like_every_other_push(self):
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.SyncEnvelope(template_message(), "", "net", "epoch-1")
 
 
 if __name__ == "__main__":

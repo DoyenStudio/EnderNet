@@ -284,14 +284,32 @@ class TestMatchOrdered(unittest.TestCase):
         ))
         self.assertIsNone(found)
 
-    def test_an_item_outside_the_bounding_box_is_ignored(self):
-        # 包围盒之外摆了什么，原版一概不看。
+    def test_an_item_outside_the_bounding_box_blocks_the_match(self):
+        # 原版拿整张工作台去比配方，图案矩形之外按「空」这一味配料逐格比。
+        # 曾经这里只查矩形那一块，于是多摆的那件**参与匹配却被无视**：
+        # 预览亮着、点下去照做，多出来的物品既没进产物也没被吃掉
+        # （User 2026-10-02 报告的就是这个）。
         found = match_ordered(self.recipe, cells(
             ("minecraft:oak_planks", 0, 1), ("minecraft:oak_planks", 0, 1), None,
             ("minecraft:oak_planks", 0, 1), ("minecraft:oak_planks", 0, 1), None,
             ("minecraft:stone", 0, 1), None, None,
         ))
-        self.assertIsNotNone(found)
+        self.assertIsNone(found)
+
+    def test_an_item_outside_the_bounding_box_blocks_every_offset(self):
+        # 平移要枚举全部偏移，但「矩形之外必须空」对**每一个**候选偏移都成立：
+        # 把多出来的那件挪到另一处不会突然匹配得上。
+        for slot in range(SLOT_COUNT):
+            if slot in (0, 1, 3, 4):
+                continue
+            layout = [None] * SLOT_COUNT
+            for filled in (0, 1, 3, 4):
+                layout[filled] = ("minecraft:oak_planks", 0, 1)
+            layout[slot] = ("minecraft:stone", 0, 1)
+            self.assertIsNone(
+                match_ordered(self.recipe, tuple(layout)),
+                "第 %d 格多摆一件却仍然匹配" % (slot,),
+            )
 
     def test_a_wrong_ingredient_blocks_the_match(self):
         found = match_ordered(self.recipe, cells(
@@ -375,6 +393,40 @@ class TestMatchShapeless(unittest.TestCase):
             None, None, None, None, None, None,
         ))
         self.assertIsNone(found)
+
+    def test_an_extra_item_blocks_the_match(self):
+        # 配料都摆齐了，但旁边多出一件。原版比的是「非空格数 == 配料条目数」，
+        # 多出来的那件让整条配方不成立——它既不会进产物，也不该被无视。
+        found = match_shapeless(self.recipe, cells(
+            ("minecraft:paper", 0, 3), ("minecraft:leather", 0, 1),
+            ("minecraft:diamond", 0, 1),
+            None, None, None, None, None, None,
+        ))
+        self.assertIsNone(found)
+
+    def test_an_extra_item_blocks_the_match_wherever_it_sits(self):
+        # 无序配方不看位置，但「不许有剩货」对每一格都成立。
+        for slot in range(SLOT_COUNT):
+            if slot in (0, 1):
+                continue
+            layout = [None] * SLOT_COUNT
+            layout[0] = ("minecraft:paper", 0, 3)
+            layout[1] = ("minecraft:leather", 0, 1)
+            layout[slot] = ("minecraft:diamond", 0, 1)
+            self.assertIsNone(
+                match_shapeless(self.recipe, tuple(layout)),
+                "第 %d 格多摆一件却仍然匹配" % (slot,),
+            )
+
+    def test_a_bigger_stack_than_asked_for_is_not_extra(self):
+        # 「多摆一件」按**格子**算，不按数量算：一格里有 5 张纸而配方要 3 张，
+        # 仍然是「一格纸」，剩下 2 张留在格子里，不是多出来的第二件配料。
+        found = match_shapeless(self.recipe, cells(
+            ("minecraft:paper", 0, 5), ("minecraft:leather", 0, 1),
+            None, None, None, None, None, None, None,
+        ))
+        self.assertIsNotNone(found)
+        self.assertEqual(((0, 3), (1, 1)), found.consumed)
 
 
 class TestAuxPolicy(unittest.TestCase):

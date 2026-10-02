@@ -36,12 +36,32 @@ from ...common.protocol import (
     TransferStatus,
 )
 from ...common.crafting_recipe import match
+from ...common.definitions import (
+    ITEM_TEMPLATES,
+    PATTERN_MODE_CRAFTING,
+    PATTERN_MODES,
+    TEMPLATE_PANEL_ITEM_ID,
+)
 from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
 from ..crafting.workbench import (
     IMPORT_REFUSE,
     CraftingPolicy,
     WorkbenchContainer,
     plan_import,
+)
+from ..crafting.patterns import PatternStack, PatternValidationError
+from ..crafting.template_terminal import (
+    CELL_COUNT_OF,
+    GROUP_OUTPUTS,
+    GROUP_SOURCE,
+    GROUPS,
+    INPUT_SLOT,
+    PUT_COUNT_ONE,
+    RESULT_SLOT,
+    TemplatePolicy,
+    detect_crafting_output,
+    encode_template_item,
+    pattern_from_config,
 )
 from ..devices.io import (
     FILTER_MODES,
@@ -79,6 +99,12 @@ from .transfer import (
     anchored_insert_endpoint,
     receipt_result,
 )
+
+
+try:
+    INTEGER_TYPES = (int, long)
+except NameError:
+    INTEGER_TYPES = (int,)
 
 
 #: `NetworkNode.has_capability` 用的能力名。与 `devices/capabilities.py` 一致。
@@ -196,9 +222,11 @@ class StorageService(NetworkService):
         recipes=None,
         crafting_policy=None,
         grid_stack_limit=None,
+        templates=None,
+        template_policy=None,
     ):
         # type: (object, object, object, object, object, object, object, object,
-        #        object, object, object, object) -> None
+        #        object, object, object, object, object, object) -> None
         #: 驱动器状态集合与介质权威表，由启动层注入（架构 §3）。
         #: **裸构造是合法的**（`default_stand_ins()` 会用 `None` 构造每个槽位），
         #: 此时 `is_ready()` 为假，一切业务给 `SERVICE_NOT_READY`——
@@ -236,6 +264,14 @@ class StorageService(NetworkService):
             crafting_policy if crafting_policy is not None else CraftingPolicy()
         )
         self.grid_stack_limit = grid_stack_limit
+        #: 样板终端的状态集合（11-05）。与 `workbench` 同一地位：两个真实
+        #: 样板槽里是真物品，不能因为运行时重建就没了。未接线时为 None，
+        #: 样板命令一律 `SERVICE_NOT_READY`。
+        self.templates = templates
+        #: 样板终端的未定口径（`template_terminal.TemplatePolicy`）。
+        self.template_policy = (
+            template_policy if template_policy is not None else TemplatePolicy()
+        )
         #: 借出后放不回去／产物收回失败的次数。**应当恒为 0**：
         #: 它不为零就说明有一条路径在做了一半，得去查是哪一次。
         self.craft_undo_failures = 0
@@ -1388,6 +1424,15 @@ class StorageService(NetworkService):
             "craft_import": self._cmd_craft_import,
             "craft_take": self._cmd_craft_take,
             "craft_clear": self._cmd_craft_clear,
+            # 样板终端（11-05）
+            "template_mode": self._cmd_template_mode,
+            "template_cell_put": self._cmd_template_cell_put,
+            "template_cell_clear": self._cmd_template_cell_clear,
+            "template_cell_count": self._cmd_template_cell_count,
+            "template_encode": self._cmd_template_encode,
+            "template_input_put": self._cmd_template_input_put,
+            "template_input_take": self._cmd_template_input_take,
+            "template_output_take": self._cmd_template_output_take,
         }
         handler = handlers.get(action)
         if handler is None:
@@ -2385,6 +2430,496 @@ class StorageService(NetworkService):
             "returned": returned,
             "kept": list(kept),
             "grid": self._craft_grid_payload(grid),
+        })
+
+    # -- 样板终端（11-05）----------------------------------------------
+
+    def _template_state_for(self, command):
+        # type: (object) -> tuple
+        """取这台设备的样板终端状态。返回 `(state, refusal)`。
+
+        走 `state_for` 而不是 `of`：对**不是样板终端的方块**返回 `None`，
+        于是「这台方块没有样板槽」是一条明确的拒绝，而不是凭空变出一台空的。
+        """
+        if self.templates is None:
+            return None, CommandResult.blocked(
+                command.request_id,
+                [BlockReason(Reason.SERVICE_NOT_READY, "存储服务未接入样板终端状态")],
+            )
+        state = self.templates.state_for(command.device_ref)
+        if state is None:
+            return None, self._reject(
+                command, Reason.UNSUPPORTED, "该设备没有样板槽（不是样板终端）"
+            )
+        return state, None
+
+    def _template_state_payload(self, state):
+        # type: (object) -> dict
+        """状态的只读投影，附在回执里让客户端立刻刷新。
+
+        与 `_craft_grid_payload` 同一分工：**只给下标与数量，不给资源名**。
+        带名字的那种投影是同步层的活（`bootstrap._sync_template_of`），
+        它手上有定义表；回执这份只回答「刚才那一下之后，格子在哪几个、
+        各有多少」。
+        """
+        return {
+            "revision": state.revision,
+            "mode": state.config.mode,
+            "source": list(state.config.occupied(GROUP_SOURCE)),
+            "outputs": list(state.config.occupied(GROUP_OUTPUTS)),
+            "input": state.slots.count_at(INPUT_SLOT),
+            "result": state.slots.count_at(RESULT_SLOT),
+        }
+
+    def _template_gate(self, command, payload, state):
+        # type: (object, dict, object) -> object
+        """配置编辑的过期闸。返回一条拒绝或 `None`。
+
+        **只对虚拟配置的编辑生效**：真实槽那三条命令的 `slot_version` 是
+        背包槽锚，意思完全不同。
+
+        客户端把「最后一次收到的配置修订号」回填进来，并**每发出一条编辑
+        就把它加一**（服务端每成功改一次也只加一）。因此连续快速点击不会
+        互相判死，而真正过期的客户端（别人刚改过）会被挡住，
+        等界面重新同步再改。
+        """
+        expected = payload.get("slot_version")
+        if expected is None:
+            return self._reject(
+                command, Reason.BAD_PARAMETER, "配置编辑需要带上配置修订号"
+            )
+        if expected != state.revision:
+            return self._reject(
+                command, Reason.STALE_VERSION,
+                "配置已经被改过（当前修订 %d），等界面同步后再改"
+                % (state.revision,),
+            )
+        return None
+
+    def _template_cell_of(self, command, payload):
+        # type: (object, dict) -> tuple
+        """读出一条虚格编辑指向哪一组、哪一格。返回 `(group, index, refusal)`。
+
+        分组走 `target` 字段（`source` / `outputs`），下标走 `cell`——
+        **两者都不与真实槽号共用字段**：交接明令不把虚格下标当作真实槽号，
+        共用的代价是「这个数属于哪个空间」逐动作去猜。
+        """
+        group = payload.get("target")
+        if group not in GROUPS:
+            return None, None, self._reject(
+                command, Reason.BAD_PARAMETER,
+                "虚格编辑要给出分组（%s）" % ("、".join(GROUPS),),
+            )
+        cell = payload.get("cell")
+        count = CELL_COUNT_OF[group]
+        if (isinstance(cell, bool) or not isinstance(cell, INTEGER_TYPES)
+                or not 0 <= cell < count):
+            return None, None, self._reject(
+                command, Reason.OUT_OF_RANGE,
+                "%s 的虚格下标要在 0 到 %d 之间" % (group, count - 1),
+            )
+        return group, cell, None
+
+    def _template_count_of(self, command, payload, default=None):
+        # type: (object, dict, object) -> tuple
+        """读数量。返回 `(count, refusal)`。缺席时用 `default`。"""
+        count = payload.get("count")
+        if count is None:
+            if default is None:
+                return None, self._reject(
+                    command, Reason.BAD_PARAMETER, "这条命令需要给出数量")
+            return default, None
+        if (isinstance(count, bool) or not isinstance(count, INTEGER_TYPES)
+                or not 1 <= count <= self.template_policy.max_config_count):
+            return None, self._reject(
+                command, Reason.OUT_OF_RANGE,
+                "数量要在 1 到 %d 之间" % (self.template_policy.max_config_count,),
+            )
+        return count, None
+
+    def _template_detect(self, state):
+        # type: (object) -> tuple
+        """合成模式当前摆位能做出什么。返回 `(preview, blocked)`。
+
+        工厂模式不看它（产物由玩家自己配），直接给 `(None, None)`。
+
+        **适配器炸了不当作「没有配方」。** 那条路会把一次查询故障表现成
+        「你摆的东西没有配方」，玩家只会去改配方——与 `_craft_recipes_for`
+        同一个理由。
+        """
+        if state.config.mode != PATTERN_MODE_CRAFTING:
+            return None, None
+        if self.recipes is None:
+            return None, CommandResult.blocked(
+                "", [BlockReason(Reason.NO_ADAPTER, "存储服务未接入配方来源")],
+            )
+        try:
+            return detect_crafting_output(
+                state.config.cells(GROUP_SOURCE), self.recipes), None
+        except Exception as error:
+            return None, CommandResult.blocked(
+                "", [BlockReason(Reason.NO_ADAPTER, "配方来源不可用：%s" % (error,))],
+            )
+
+    def _cmd_template_mode(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """切换合成／工厂样板（11-05）。
+
+        **保留输入九宫格、只清输出格**（User 2026-10-02 定）——两个模式的
+        输入配方基本通用，而与模式绑定的输出格必须跟着走。重复点当前模式
+        什么都不改，因此也不推新修订号（不推就不会白让客户端收一条推送）。
+        """
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        mode = payload.get("target")
+        if mode not in PATTERN_MODES:
+            return self._reject(
+                command, Reason.BAD_PARAMETER,
+                "样板模式必须是 %s" % ("、".join(sorted(PATTERN_MODES)),),
+            )
+        gate = self._template_gate(command, payload, state)
+        if gate is not None:
+            return gate
+        state.config.set_mode(mode, self.template_policy)
+        return CommandResult.ok(command.request_id, {
+            "action": "template_mode",
+            "state": self._template_state_payload(state),
+        })
+
+    def _cmd_template_cell_put(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """把一个物品放进虚格（或覆盖已有配置）。
+
+        **虚格里的东西是配置，不是实物**：这一下不进网络、不进背包，
+        也不生成任何物品（交接第 1 节）。覆盖是允许的（User 2026-10-02）。
+        """
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        group, cell, refusal = self._template_cell_of(command, payload)
+        if refusal is not None:
+            return refusal
+        gate = self._template_gate(command, payload, state)
+        if gate is not None:
+            return gate
+        if state.config.locked(group, cell):
+            return self._reject(
+                command, Reason.TEMPLATE_CELL_LOCKED,
+                "这一格在当前模式下不能改（合成的产物由服务端检测）",
+            )
+        raw_key = payload.get("key")
+        if not isinstance(raw_key, dict):
+            return self._reject(command, Reason.BAD_PARAMETER, "放入虚格需要给出 key")
+        try:
+            key = ResourceKey.from_dict(raw_key)
+        except (KeyError, TypeError, ValueError):
+            return self._reject(command, Reason.BAD_PARAMETER, "key 不合法")
+        count, refusal = self._template_count_of(
+            command, payload, self.template_policy.encode_count_per_cell)
+        if refusal is not None:
+            return refusal
+        invalid = self._template_stack_error(state, group, cell, key, count)
+        if invalid is not None:
+            return self._reject(command, Reason.PATTERN_INVALID, invalid)
+        state.config.set_cell(group, cell, key, count)
+        return CommandResult.ok(command.request_id, {
+            "action": "template_cell_put",
+            "state": self._template_state_payload(state),
+        })
+
+    def _template_stack_error(self, state, group, cell, key, count):
+        # type: (object, str, int, object, int) -> object
+        """这一格能不能装下这个东西。装不下返回一句说明，能装返回 `None`。
+
+        **用一个真条目试一遍**，而不是在这里重写一遍规则：合成样板的输入
+        带槽位摆放，流体不能占槽位、槽位不能重复……那些判据全在
+        `PatternStack` 与 `PatternDefinition` 里。放进去之后才在编码那一步
+        报错的话，玩家会先看到格子上了图标、再被告知「不行」。
+        """
+        try:
+            if state.config.mode == PATTERN_MODE_CRAFTING:
+                stack = PatternStack(key, count, slot=cell)
+            else:
+                stack = PatternStack(key, count)
+        except PatternValidationError as error:
+            return "%s（%s）" % (error.detail or "这个物品不能进样板", error.code)
+        except (TypeError, ValueError) as error:
+            return "这个物品不能进样板：%s" % (error,)
+        return None
+
+    def _cmd_template_cell_clear(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """清空一格虚格。**空格子算成功**——重复点不该报错。"""
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        group, cell, refusal = self._template_cell_of(command, payload)
+        if refusal is not None:
+            return refusal
+        gate = self._template_gate(command, payload, state)
+        if gate is not None:
+            return gate
+        if state.config.locked(group, cell):
+            return self._reject(
+                command, Reason.TEMPLATE_CELL_LOCKED,
+                "这一格在当前模式下不能改（合成的产物由服务端检测）",
+            )
+        state.config.clear_cell(group, cell)
+        return CommandResult.ok(command.request_id, {
+            "action": "template_cell_clear",
+            "state": self._template_state_payload(state),
+        })
+
+    def _cmd_template_cell_count(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """改一格虚格的数量（长按虚格 → 数量窗 → 确认）。"""
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        group, cell, refusal = self._template_cell_of(command, payload)
+        if refusal is not None:
+            return refusal
+        gate = self._template_gate(command, payload, state)
+        if gate is not None:
+            return gate
+        if state.config.locked(group, cell):
+            return self._reject(
+                command, Reason.TEMPLATE_CELL_LOCKED,
+                "这一格在当前模式下不能改（合成的产物由服务端检测）",
+            )
+        count, refusal = self._template_count_of(command, payload)
+        if refusal is not None:
+            return refusal
+        if state.config.cell(group, cell) is None:
+            return self._reject(
+                command, Reason.BAD_PARAMETER, "格子是空的，没有数量可以改")
+        state.config.set_count(group, cell, count)
+        return CommandResult.ok(command.request_id, {
+            "action": "template_cell_count",
+            "state": self._template_state_payload(state),
+        })
+
+    def _cmd_template_encode(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """点「OK」：把当前配置编码进输入槽那块样板，输出到产物槽（11-05）。
+
+        已确认的执行顺序（交接第 5 节「服务端须在执行时重新检查」）：
+
+        1. 组一份 `PatternDefinition`——合成模式**有序**取玩家摆的格子、
+           产物取服务端检测到的那一个；工厂模式**无序**、产物取玩家配的
+           输出格（第一格主产物，其余副产物，那只是显示顺序）；
+        2. 输入槽必须是**工厂样板**且够扣；
+        3. 产物槽**空，或已有样板与本次配置完全相同且有空间**（User
+           2026-10-02）——「配置相同」直接用资源键比：`customTips` 与
+           `userData` 都进身份，同一份配置编两次得到同一个键；
+        4. **先造产物、再扣输入**（同 `_cmd_craft_take`）：反过来的话，
+           产物槽放不下时就会「原料扣了、样板没出来」。
+        """
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        gate = self._template_gate(command, payload, state)
+        if gate is not None:
+            return gate
+        preview, blocked = self._template_detect(state)
+        if blocked is not None:
+            return blocked
+        try:
+            definition = pattern_from_config(
+                state.config, preview, self.template_policy)
+        except PatternValidationError as error:
+            return self._reject(
+                command, Reason.TEMPLATE_CONFIG_INVALID,
+                "当前配置还构不成一块样板：%s（%s）"
+                % (error.detail or "配置不完整", error.code),
+            )
+
+        entry = state.slots.entry(INPUT_SLOT)
+        cost = self.template_policy.encode_input_cost
+        if entry is None:
+            return self._reject(
+                command, Reason.OUT_OF_RANGE, "输入槽是空的，先放一块工厂样板",
+            )
+        if entry[0].name != TEMPLATE_PANEL_ITEM_ID:
+            return self._reject(
+                command, Reason.PATTERN_KIND_MISMATCH,
+                "输入槽里不是工厂样板（是 %s）" % (entry[0].name,),
+            )
+        if entry[1] < cost:
+            return self._reject(
+                command, Reason.OUT_OF_RANGE, "输入槽里的样板不够扣",
+            )
+
+        key, _item = encode_template_item(definition)
+        room = self.templates.room_for(state, RESULT_SLOT, key)
+        result = state.slots.entry(RESULT_SLOT)
+        if result is not None and result[0] != key:
+            return self._reject(
+                command, Reason.SLOT_OCCUPIED,
+                "产物槽里是另一块样板；先取走再制作",
+            )
+        if room < self.template_policy.encode_output_count:
+            return self._reject(
+                command, Reason.NO_CAPACITY, "产物槽放不下这一块样板",
+            )
+
+        added = state.slots.add_at(
+            RESULT_SLOT, key, self.template_policy.encode_output_count)
+        if added < self.template_policy.encode_output_count:
+            # 走到这里说明「有空间」那个判断与实际不符——**不吞原料**。
+            state.slots.take_at(RESULT_SLOT, added)
+            self.craft_undo_failures += 1
+            return self._reject(
+                command, Reason.NO_CAPACITY, "产物槽放不下这一块样板",
+            )
+        state.slots.take_at(INPUT_SLOT, cost)
+        return CommandResult.ok(command.request_id, {
+            "action": "template_encode",
+            "template": {"name": key.name, "count": self.template_policy.encode_output_count},
+            "digest": definition.digest(),
+            "state": self._template_state_payload(state),
+        })
+
+    def _template_template_error(self, item_key):
+        # type: (object) -> tuple
+        """放入输入槽的物品是不是本模组的样板。返回 `(reason, detail)`。"""
+        if item_key.name == TEMPLATE_PANEL_ITEM_ID:
+            return None, ""
+        if item_key.name in ITEM_TEMPLATES:
+            return (Reason.PATTERN_KIND_MISMATCH,
+                    "输入槽只收工厂样板，%s 是另一种样板" % (item_key.name,))
+        return (Reason.PATTERN_NOT_A_TEMPLATE,
+                "%s 不是本模组的样板" % (item_key.name,))
+
+    def _cmd_template_input_put(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """把背包里的一块工厂样板放进输入槽。
+
+        源是**玩家背包**（User 2026-10-02）：`slot` + `slot_version` 是背包槽锚，
+        因此这条命令**不走**配置修订号那道闸。
+
+        **空白与已编码的样板都收**（User 2026-10-02）：放一块已编码的进去就是
+        「打算更新它」。但类型必须对——合成样板不收。
+        """
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        raw_key = payload.get("key")
+        if not isinstance(raw_key, dict):
+            return self._reject(command, Reason.BAD_PARAMETER, "放入样板槽需要给出 key")
+        try:
+            item_key = ResourceKey.from_dict(raw_key)
+        except (KeyError, TypeError, ValueError):
+            return self._reject(command, Reason.BAD_PARAMETER, "key 不合法")
+        reason, detail = self._template_template_error(item_key)
+        if reason is not None:
+            return self._reject(command, reason, detail)
+        anchor = self._anchor_of(payload)
+        if anchor is None or anchor.slot is None:
+            return self._reject(
+                command, Reason.BAD_PARAMETER, "放入样板槽需要给出背包槽号")
+        endpoint, refusal = self._inventory_endpoint_for(command, payload)
+        if refusal is not None:
+            return refusal
+
+        current = state.slots.entry(INPUT_SLOT)
+        if current is not None and current[0] != item_key:
+            return self._reject(
+                command, Reason.SLOT_OCCUPIED, "输入槽里已经是另一块样板")
+        room = self.templates.room_for(state, INPUT_SLOT, item_key)
+        if room <= 0:
+            return self._reject(command, Reason.SLOT_OCCUPIED, "输入槽已经满了")
+        want = room
+        if self.template_policy.device_slot_put_count == PUT_COUNT_ONE:
+            want = 1
+
+        op_id = payload.get("op_id") or command.request_id
+        # **拿回执说话**：客户端说的是「那一格里有几块」，实不实由端点核对。
+        receipt = endpoint.anchored_extract(op_id, anchor, want)
+        if receipt.moved <= 0:
+            # 同 `_template_slot_take`：如实回带端点给的原因，别一律说成
+            # 「那一格是空的」——被拒的真实理由可能是槽里的东西换了。
+            return self._reject(
+                command,
+                receipt.reason or Reason.INSUFFICIENT_STOCK,
+                "这块样板没能从背包里取出来（%s）"
+                % (receipt.reason or "端点未给原因",),
+            )
+        added = state.slots.add_at(INPUT_SLOT, item_key, receipt.moved)
+        if added < receipt.moved:
+            # 放不进去的**原路还回背包**：留下来的那半件对不上任何东西。
+            back = endpoint.anchored_insert(
+                "%s:undo" % (op_id,), anchor, receipt.moved - added)
+            if back.moved < receipt.moved - added:
+                self.craft_undo_failures += 1
+        return CommandResult.ok(command.request_id, {
+            "action": "template_input_put",
+            "moved": added,
+            "state": self._template_state_payload(state),
+        })
+
+    def _cmd_template_input_take(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """把输入槽那块样板取回背包。"""
+        return self._template_slot_take(command, payload, INPUT_SLOT)
+
+    def _cmd_template_output_take(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """把产物槽那块已配置的样板取回背包。"""
+        return self._template_slot_take(command, payload, RESULT_SLOT)
+
+    def _template_slot_take(self, command, payload, index):
+        # type: (object, dict, int) -> CommandResult
+        """真实槽 → 背包的公共实现。
+
+        顺序与 `_cmd_craft_take` 相同：**先把东西放进背包、再扣格子**。
+        反过来的话，背包满了就会出现「格子空了、东西也没拿到」。
+        给出背包槽锚时放进那一格，否则由端点自己找第一个装得下的。
+        """
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        key = state.slots.key_at(index)
+        count = state.slots.count_at(index)
+        if key is None or count <= 0:
+            return self._reject(command, Reason.OUT_OF_RANGE, "这一格是空的")
+        endpoint, refusal = self._inventory_endpoint_for(command, payload)
+        if refusal is not None:
+            return refusal
+        op_id = payload.get("op_id") or command.request_id
+        anchor = self._anchor_of(payload)
+        if anchor is not None and anchor.slot is not None:
+            # **锚上的 key 必须换成「要放进去的那一件」。** `anchored_insert`
+            # 把 `expected_key` 同时当**插入物**与**目标槽的指纹**用
+            # （见 `transfer.anchored_insert` → `slot_insert` 的 `resource_key`）。
+            # 而客户端在「选中背包槽 → 点产物槽」时报上来的 key 是**那一格
+            # 现在装着的东西**（它想表达的是「放进这一格，我看到的它是这个」）。
+            # 两者在 06 的搬运里天然相同，在这里**不同**：东西从设备这一格来。
+            # 不换的话，插入物就成了目标格里那件无关物品——玩家的东西被复制
+            # 一份、设备里的样板同时被扣掉（2026-10-02 读代码发现，未上机复现）。
+            # 槽号与版本锚原样保留：目标格现在装着别的东西时，`slot_insert`
+            # 仍会拒绝（`slot_occupied`），那一格空着则照常放入。
+            anchor = SlotAnchor(anchor.slot, key, anchor.expected_version)
+            receipt = endpoint.anchored_insert(op_id, anchor, count)
+        else:
+            receipt = endpoint.commit_insert(op_id, key, count)
+        if receipt.moved <= 0:
+            # **如实回带端点说的原因**，不统一写成「放不下」：端点拒绝的理由
+            # 有四种（槽被占、槽里的东西换了、容器不确定、确实放不下），
+            # 一句话盖住全部会让排障从「看一眼回执」变成「猜」。
+            # 2026-10-02 就是这么被误导过一次。
+            return self._reject(
+                command,
+                receipt.reason or Reason.NO_CAPACITY,
+                "这块样板没能放进背包（%s）" % (receipt.reason or "端点未给原因",),
+            )
+        state.slots.take_at(index, receipt.moved)
+        return CommandResult.ok(command.request_id, {
+            "action": "template_input_take" if index == INPUT_SLOT
+            else "template_output_take",
+            "moved": receipt.moved,
+            "state": self._template_state_payload(state),
         })
 
     def _cmd_inv_take(self, command, payload):

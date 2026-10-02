@@ -224,7 +224,7 @@
             }
         ]
     },
-    "main@common.inventory_screen_common": {
+    "main@common.base_screen": {
         "$screen_content": "factoric_terminal_panel_ui.content"
     },
     "namespace": "factoric_terminal_panel_ui",
@@ -236,77 +236,6 @@
         ],
         "layer": 1,
         "controls": [
-            {
-                "interact_btn@common.button": {
-                    "type": "button",
-                    "$control_alpha": 1.0,
-                    "$default_texture": "textures/ui/endernet/background_panel_2_flat",
-                    "$hover_texture": "textures/ui/endernet/background_panel_2_flat",
-                    "$is_new_nine_slice": false,
-                    "$label_color": [
-                        1,
-                        1,
-                        1
-                    ],
-                    "$label_font_scale_factor": 1.0,
-                    "$label_font_size": "large",
-                    "$label_layer": 3,
-                    "$label_offset": [
-                        0,
-                        0
-                    ],
-                    "$label_text": "Button",
-                    "$nine_slice_buttom": 0,
-                    "$nine_slice_left": 0,
-                    "$nine_slice_right": 0,
-                    "$nine_slice_top": 0,
-                    "$nineslice_size": [
-                        0,
-                        0,
-                        0,
-                        0
-                    ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
-                    "$pressed_texture": "textures/ui/endernet/background_panel_2_flat",
-                    "$texture_layer": 2,
-                    "layer": 2,
-                    "button_mappings": [],
-                    "default_control": "default",
-                    "hover_control": "hover",
-                    "is_handle_button_move_event": true,
-                    "pressed_control": "pressed",
-                    "bindings": [
-                        {
-                            "binding_type": "collection_details",
-                            "binding_collection_name": "",
-                            "binding_condition": "always_when_visible"
-                        }
-                    ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {
-                                "color": [
-                                    1,
-                                    1,
-                                    1
-                                ]
-                            }
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {
-                                "color": [
-                                    0.6667,
-                                    1,
-                                    1
-                                ]
-                            }
-                        }
-                    ]
-                }
-            },
             {
                 "res_item_name": {
                     "type": "label",
@@ -418,6 +347,77 @@
                     "property_bag": {
                         "#item_id_aux": 131072
                     }
+                }
+            },
+            {
+                "interact_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "textures/ui/endernet/background_panel_2_flat",
+                    "$hover_texture": "textures/ui/endernet/background_panel_2_flat",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        1,
+                        1,
+                        1
+                    ],
+                    "$label_font_scale_factor": 1.0,
+                    "$label_font_size": "large",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0,
+                        0
+                    ],
+                    "$label_text": "Button",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_texture": "textures/ui/endernet/background_panel_2_flat",
+                    "$texture_layer": 2,
+                    "layer": 2,
+                    "button_mappings": [],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {
+                                "color": [
+                                    1,
+                                    1,
+                                    1
+                                ]
+                            }
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {
+                                "color": [
+                                    0.6667,
+                                    1,
+                                    1
+                                ]
+                            }
+                        }
+                    ]
                 }
             }
         ]
@@ -692,7 +692,7 @@
         "clip_direction": "left",
         "clip_ratio": 0.0,
         "color": [
-            0.7843137254901961,
+            1.0,
             1.0,
             0.7843137254901961
         ],

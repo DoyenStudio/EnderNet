@@ -17,6 +17,8 @@
 
 import time
 
+from . import slot_layout
+
 #: 物品图标画多大（像素）。**几何计算的单一事实来源。**
 #:
 #: 槽位面板是 18×18，而槽里那张图标是 16×16、**在槽位里居中**——两份槽位
@@ -121,13 +123,19 @@ class FlyingItemAnimator(object):
 
     def _lookup(self):
         # type: () -> object
-        """解析一次控件，成败都记下（见类文档）。"""
+        """解析一次控件，成败都记下（见类文档）。
+
+        **两条路径都交给 `slot_layout.control` 解析**，不自己拼字符串：四台
+        终端面板有两种屏幕挂法（见 `slot_layout._candidates`），同一个控件
+        在两个命名空间里。各解各的就会出现「图标找对了、原点按另一条候选算」，
+        而那个错的症状是**图标整块偏移**，看起来像缓动写错了。
+        """
         if self._resolved:
             return self._control
         self._resolved = True
         try:
-            control = self.screen.GetBaseUIControl(self.control_path)
-            origin = self.screen.GetBaseUIControl(self.origin_path)
+            control = slot_layout.control(self.screen, self.control_path)
+            origin = slot_layout.control(self.screen, self.origin_path)
         except Exception:
             self.errors += 1
             return None

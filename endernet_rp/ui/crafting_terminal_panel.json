@@ -213,7 +213,8 @@
                     "size": [
                         162,
                         36
-                    ]
+                    ],
+                    "visible": false
                 }
             },
             {
@@ -756,6 +757,21 @@
                     "anchor_to": "top_left",
                     "visible": false
                 }
+            },
+            {
+                "device_status_popup@endernet_windows.device_status_window_basic": {
+                    "anchor_from": "center",
+                    "anchor_to": "center",
+                    "bindings": [
+                        {
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetDeviceStatus.popup_visible",
+                            "binding_name_override": "#visible",
+                            "binding_type": "global"
+                        }
+                    ],
+                    "layer": 40
+                }
             }
         ]
     },
@@ -883,7 +899,7 @@
             }
         ]
     },
-    "main@common.inventory_screen_common": {
+    "main@common.base_screen": {
         "$screen_content": "crafting_terminal_panel_ui.content"
     },
     "namespace": "crafting_terminal_panel_ui",
@@ -1139,7 +1155,10 @@
         ]
     },
     "terminal_scroll_background@endernet_ui_common.simple_invisible_button": {
+        "$default_texture": "textures/ui/endernet/backgroud_without_frame",
+        "$hover_texture": "textures/ui/endernet/backgroud_without_frame",
         "$pressed_button_name": "#EnderNetTerminal.quick_store",
+        "$pressed_texture": "textures/ui/endernet/backgroud_without_frame",
         "button_mappings": [
             {
                 "from_button_id": "button.menu_select",

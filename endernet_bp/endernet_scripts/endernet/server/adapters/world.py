@@ -21,6 +21,7 @@
 """
 
 from ...common.identity import ChunkKey, NodeKey  # noqa: F401 (NodeKey 仅用于 # type: 注释)
+from ...common.item_codec import item_dict_for_drop
 
 
 class ToolDeltaWorldAdapter(object):
@@ -128,6 +129,44 @@ class ToolDeltaWorldAdapter(object):
 
         for block_id in sorted(block_ids):
             AddBlocksToBlockRemoveListener(set([block_id]))
+
+    def drop_items_at(self, node_key, items):
+        # type: (tuple, list) -> int
+        """把几件物品掉在一个位置上。返回**真的生成出实体**的件数。
+
+        参数是 `(维度, x, y, z)`（**不是 `NodeKey`**）：调用方是设备被拆时
+        的那条路径，它手上只有存档键的前四项，而引擎要的也正是这四个数。
+
+        `items` 是 `((ResourceKey, 数量), ...)`——**不是引擎物品字典**。
+        掉落的字典形状是这一层的事：`CreateEngineItemEntity` 要**旧式键名**
+        `itemName` / `auxValue`，而且 `customTips` / `durability` **不接受
+        `None`**（2026-10-02 真机逐字段二分；见 `item_dict_for_drop`）。
+        形状不对时引擎抛 `TypeError`，而 `TemplateStore` 把异常接成
+        「一件也没掉」——**症状是拆了方块东西不掉、日志干净**。
+        把构造放在这里，领域层就没机会拼错。
+
+        引擎面是 `ServerSystem.CreateEngineItemEntity(itemDict, dimensionId, pos)`：
+        **没有 tooldelta 封装**（`tooldelta/api/server/` 下没有它），因此这里
+        直接走 `tooldelta.internal.GetServer()`。**没有改 vendored 子模块**——
+        那是上游的东西，本仓库不维护。
+
+        **返回值是判据**：写出去了但没生成实体（位置被占、维度不存在）是真实
+        存在的一支，把它当成成功就是凭空少物。因此调用方按这个数决定哪些
+        格子算清空了。
+        """
+        from ....tooldelta.internal import GetServer
+
+        dimension, x, y, z = node_key
+        # 方块中心：落在整格坐标上会让掉落物嵌在方块里。
+        position = (x + 0.5, y + 0.5, z + 0.5)
+        server = GetServer()
+        spawned = 0
+        for key, count in items or ():
+            entity_id = server.CreateEngineItemEntity(
+                item_dict_for_drop(key, count), dimension, position)
+            if entity_id is not None:
+                spawned += 1
+        return spawned
 
     def diagnostics(self):
         # type: () -> dict

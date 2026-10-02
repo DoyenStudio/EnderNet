@@ -54,16 +54,30 @@ from endernet.common.definitions import (  # noqa: E402
 #: NetEase 物品 JSON 的格式版本。与 SkyblueTech 的可用物品保持一致。
 ITEM_FORMAT_VERSION = "1.10"
 
-#: 物品的堆叠上限。**两类物品都必须是 1，理由各自成立。**
+#: **没有自带堆叠上限的**物品的默认值：介质。
 #:
-#: - 介质要携带自己的身份与内容；允许堆叠的话，一叠 64 个会共享同一份物品
-#:   数据，拔出其中一个就无法确定它到底是哪一块盘。
-#: - 样板把配方**编码在自己的 `userData` 里**（任务 07），因此一叠 64 块
-#:   只会剩下其中一块的配方——而玩家看到的是一叠。这一条比介质那条更硬：
-#:   介质至少还能靠世界侧的记录兜底，样板没有别的地方可查。
+#: 介质要携带自己的身份与内容；允许堆叠的话，一叠 64 个会共享同一份物品
+#: 数据，拔出其中一个就无法确定它到底是哪一块盘。SkyblueTech 的同类物品
+#: 同样取 1。
 #:
-#: SkyblueTech 的两类同类物品同样取 1。
+#: **样板不读这个默认值**：它们各自带 `TemplateSpec.max_stack_size`
+#: （`definitions.py`，2026-10-02 由 User 定：合成样板 1、工厂样板 64）。
+#: 工厂样板取 64 是为样板终端的输入槽能一次放一叠，代价是一条**尚未验证**的
+#: 引擎风险——配方编码在 `userData` 里，若引擎会把 `userData` 不同的物品并成
+#: 一叠，两块不同配置的样板会互相覆盖。安全的机制是「引擎本就按 `userData`
+#: 分堆」。见 `plans/items.md` 的样板一节与 `plans/tasks/11-交付说明.md`。
 ITEM_MAX_STACK_SIZE = 1
+
+
+def max_stack_size_of(spec):
+    # type: (object) -> int
+    """该物品的堆叠上限。样板自带，其余退回 `ITEM_MAX_STACK_SIZE`。
+
+    用 `getattr` 而不是给两种规格都加字段：`MediumSpec` 的堆叠上限是**常量**
+    （没有一件介质不是 1），给每个规格对象复制一份只会让「哪里才是那个数」
+    多出一个副本。
+    """
+    return getattr(spec, "max_stack_size", ITEM_MAX_STACK_SIZE)
 
 
 def item_file_name(item_id):
@@ -118,7 +132,7 @@ def build_behavior_json(spec, tip):
         "format_version": ITEM_FORMAT_VERSION,
         "minecraft:item": {
             "components": {
-                "minecraft:max_stack_size": ITEM_MAX_STACK_SIZE,
+                "minecraft:max_stack_size": max_stack_size_of(spec),
                 "netease:customtips": {"value": tip},
             },
             "description": {

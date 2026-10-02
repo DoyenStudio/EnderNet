@@ -413,9 +413,14 @@ class DeviceDefinition(object):
 class TemplateSpec(object):
     """一种样板的静态定义，逐项取自 items.md 的「样板」一节。
 
-    **没有数值字段是有意的。** items.md 对两类样板只给了标识与用途，没给容量、
-    堆叠或耐久之类的数值——它不是存储介质，而是一件纯资源产物。凭空加一个
-    `capacity` 字段就等于替 R09 定案了一条从未被决定的玩法规则。
+    **除堆叠上限外没有数值字段，这是有意的。** items.md 对两类样板只给了标识、
+    用途与堆叠上限，没给容量、耐久之类的数值——它不是存储介质，而是一件纯
+    资源产物。凭空补一个 `capacity` 字段就等于替 R09 定案了一条从未被决定的
+    玩法规则。
+
+    `max_stack_size` 是 2026-10-02 由 User 明确给出的**玩法数值**（工厂样板 64，
+    样板终端的输入槽要能一次放一叠），因此记在这里、由 `gen_items.py` 读走；
+    不是替身、也不进 `unresolved_report()`。
 
     `mode` 的取值域与 `server/crafting/patterns.py` 是同一套词汇（常量在本文件，
     那边 import 过去）。**样板物品的类型就是它能承载的配方模式**，两者不可能
@@ -423,15 +428,21 @@ class TemplateSpec(object):
     而那正是 `PatternPolicy.kind_scope` 要拒绝的东西。
     """
 
-    __slots__ = ("id", "label", "mode", "usage")
+    __slots__ = ("id", "label", "mode", "usage", "max_stack_size")
 
-    def __init__(self, template_id, label, mode, usage):
-        # type: (str, str, str, str) -> None
+    def __init__(self, template_id, label, mode, usage, max_stack_size=1):
+        # type: (str, str, str, str, int) -> None
         if mode not in PATTERN_MODES:
             raise ValueError("未知样板模式: %r" % (mode,))
+        if isinstance(max_stack_size, bool) or not isinstance(max_stack_size, int):
+            raise ValueError("堆叠上限必须是整数: %r" % (max_stack_size,))
+        if max_stack_size < 1:
+            raise ValueError("堆叠上限必须为正: %r" % (max_stack_size,))
         self.id = template_id
         self.label = label
         self.mode = mode
+        #: 堆叠上限。见类 docstring：这是 User 给的玩法数值，不是替身。
+        self.max_stack_size = max_stack_size
         #: 用途说明，进物品说明与诊断，不参与任何判定。
         #:
         #: **只写「指定什么配方」那半句**：items.md 的原句还有后半段
@@ -674,8 +685,8 @@ ITEM_MEDIUMS = (
 
 #: 两类样板，逐项取自 items.md 的「样板」一节。
 #:
-#: **没有数值字段是有意的**：items.md 只给了标识与用途，没给容量或堆叠数，
-#: 凭空补一个就等于替 R09 定案。真实数值补齐之前，这里只有足以做出物品、
+#: **除堆叠上限外没有数值字段，这是有意的**：items.md 只给了标识、用途与堆叠
+#: 上限，凭空补别的（容量、耐久）就等于替 R09 定案。这里只有足以做出物品、
 #: 做出版本校验、以及判「这块样板该进哪台设备」的信息。
 PATTERN_TEMPLATES = (
     TemplateSpec(
@@ -683,14 +694,28 @@ PATTERN_TEMPLATES = (
         "合成样板",
         PATTERN_MODE_CRAFTING,
         "指定工作台合成配方",
+        max_stack_size=1,
     ),
     TemplateSpec(
         "endernet:factorical_template",
         "工厂样板",
         PATTERN_MODE_FACTORY,
         "指定自定义配方",
+        max_stack_size=64,
     ),
 )
+
+#: **样板终端编出来的样板物品标识**（11-05）。恒为工厂样板，与模式无关。
+#:
+#: 为什么不能按 `item_id_for_template_mode()` 反查：那条映射是给**样板接口／
+#: 装配仓**那 9 格用的（物品类型就是它能承载的模式），而样板终端两种模式都
+#: 只产出这一种物品——**模式记在 `userData` 的 pattern 里，不记在物品类型上**。
+#: 这是 User 2026-10-02 定的（见 `plans/ui/template_terminal_panel.md` 第 5 节
+#: 「两种模式的输入槽都仅接受工厂样板物品」）。
+#:
+#: 写成常量而不是散在命令层，是因为它一旦被「顺手统一」成按模式反查，
+#: 合成模式产出的物品会**静默**从工厂样板变成合成样板，而界面上看不出来。
+TEMPLATE_PANEL_ITEM_ID = "endernet:factorical_template"
 
 #: **已注册为游戏物品**的样板。与 `ITEM_MEDIUMS` 同一地位、同一理由：
 #: 规格表与「已经做出来了」是两件事。本次两类样板都已做出物品，
@@ -723,24 +748,25 @@ def devices_for_mode(mode):
 #: 右键哪个终端方块打开哪个界面（11-03 / 11-04）。
 #:
 #: **四个终端方块都在 `DEVICES` 里、都带 `CAP_TERMINAL_ENDPOINT`，但这里只
-#: 映射两个。** 这不是遗漏，而是有意的：客户端目前只注册了
-#: `common_terminal_panel_ui.main` 与 `crafting_terminal_panel_ui.main`
-#: 两个屏幕（`client/ui/__init__.py`），而样板／工厂终端各自属于 11-05 之后的
-#: 子任务。
+#: 映射三个。** 这不是遗漏，而是有意的：客户端目前只注册了
+#: `common_terminal_panel_ui.main`、`crafting_terminal_panel_ui.main` 与
+#: `template_terminal_panel_ui.main` 三个屏幕（`client/ui/__init__.py`），
+#: 而工厂终端属于 11-06。
 #:
-#: 另外两个**不映射、不打开、也不回退到通用终端**——把它们接到通用终端就是
-#: 替那些子任务悄悄定案（全局约束 7）。在此之前右键它们静默无反应，这条
+#: 工厂终端**不映射、不打开、也不回退到通用终端**——把它接到通用终端就是
+#: 替那个子任务悄悄定案（全局约束 7）。在此之前右键它静默无反应，这条
 #: 限制记在 `plans/tasks/11-交付说明.md` 里。
 #:
 #: **只有屏幕真的注册了才写进来**：`PushUIRequest` 拿这个值在客户端查屏幕，
 #: 查不到时 `tooldelta/ui/event_handler.py` 会**抛异常**——先加映射只会让
 #: 右键炸掉（11-04 的客户端接上之前，合成终端那一行就是这么被压着的）。
-#: 因此这两条与 `client/ui/__init__.py` 的 `register_screens()` 必须同步增删。
+#: 因此这几条与 `client/ui/__init__.py` 的 `register_screens()` 必须同步增删。
 #:
 #: 值必须与 `@RegistToolDeltaScreen(...)` 注册的键**逐字相同**。
 TERMINAL_SCREENS = {
     "endernet:common_terminal_panel": "common_terminal_panel_ui.main",
     "endernet:crafting_terminal_panel": "crafting_terminal_panel_ui.main",
+    "endernet:template_terminal_panel": "template_terminal_panel_ui.main",
 }
 
 #: 哪些容器类方块**有挂上去的脚本屏**（11-07）。键是方块 id，值是屏幕名。

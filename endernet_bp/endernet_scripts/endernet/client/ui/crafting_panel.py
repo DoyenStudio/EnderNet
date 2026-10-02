@@ -153,6 +153,21 @@ RECIPE_ROW_HEIGHT = 64.0
 RECIPE_MAX_ROWS = 3
 
 
+def _text(value):
+    # type: (object) -> object
+    """把过线来的字节串转成文本，其余原样。
+
+    与 `terminal_panel._text` 同一份东西，本模块各留一份的理由与该文件里
+    `INTEGER_TYPES` / `TEXT_TYPE` 相同：客户端每个界面模块自己带常量，
+    不跨模块 import 私有名。
+    """
+    if isinstance(value, TEXT_TYPE):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return value
+
+
 def _cell_of(row):
     # type: (object) -> object
     """一行的线上形状 → 内部形状；空位返回 `None`。
@@ -172,12 +187,21 @@ def _cell_of(row):
     count = row.get("count")
     if not canonical or not isinstance(count, INTEGER_TYPES) or count <= 0:
         return None
-    name = row.get("name")
+    # **名字要过一遍 `_text`**：服务端那一侧 `ResourceKey.name` 是 unicode，
+    # 但过一趟线（msgpack / JSON 往返）回来就是 `str`。只认 `unicode` 的写法
+    # 会把好好的名字换成空串，`id_aux` 随之恒为 0——**格子里有原料、画面上
+    # 没有图标**，而界面上看不出是没数据还是没渲染。
+    #
+    # 2026-10-02 在样板终端上真机撞到，11-04 这两行是同一份写法（它从没上过
+    # 机，所以一直没暴露）。离线用例照不出来，因为夹具喂的是 `ResourceKey.name`。
+    name = _text(row.get("name"))
+    if not isinstance(name, TEXT_TYPE):
+        name = u""
     aux = row.get("aux")
     return {
         "canonical": canonical,
         "count": int(count),
-        "name": name if isinstance(name, TEXT_TYPE) else u"",
+        "name": name,
         "aux": aux if isinstance(aux, INTEGER_TYPES) and not isinstance(aux, bool)
         else 0,
     }
