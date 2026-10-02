@@ -303,9 +303,12 @@ class ScreenBase(object):
 REGISTERED_KEYS = []
 
 
-def _registrable(key):
+def _registrable(key, is_proxy=False):
     def decorate(cls):
         cls._screen_key = key
+        #: 真 `RegistToolDeltaScreen` 的第二个开关（11-07）。设备屏走
+        #: `is_proxy=True`（引擎开的原生屏，脚本挂代理），终端屏走默认。
+        cls._td_is_proxy = is_proxy
         REGISTERED_KEYS.append(key)
         return cls
     return decorate
@@ -1147,6 +1150,28 @@ class TestPanelEntry(unittest.TestCase):
                 types.SimpleNamespace(kind=MSG_DEVICE_STATUS))
         self.assertEqual(len(applied), 1)
 
+    def test_losing_an_idle_session_hides_online_status_and_popup(self):
+        from endernet_bp.endernet_scripts.endernet.common.protocol import DeviceStatusMessage
+        panel, screen, port = self.make(
+            {"device_ref": REF.to_dict(), "dimension": 0})
+        self.addCleanup(panel.OnDestroy)
+        client = self.ready(panel)
+        message = DeviceStatusMessage(
+            "endernet:crafting_terminal", REF.generation, True, "在线",
+            "ok", "runnable", "可运行", 1)
+        client.receive(SyncEnvelope(message, client.session_id, "n1", "e1").to_dict())
+        panel.OnDeviceStatusClick()
+        self.assertEqual(panel.device_status_text(), "在线")
+        self.assertTrue(panel.device_status_popup_visible())
+        panel.OnTicking()
+        self.assertTrue(panel.device_status_visible())
+        client.drop_session()
+        panel.OnTicking()
+        self.assertIsNone(panel.status)
+        self.assertFalse(panel.device_status_visible())
+        self.assertFalse(panel.device_status_popup_visible())
+        panel.OnTicking()
+
     def test_destroy_closes_both_halves_and_clears_the_handlers(self):
         panel, screen, port = self.make(
             {"device_ref": REF.to_dict(), "dimension": 0})
@@ -1227,8 +1252,13 @@ class TestRegistration(unittest.TestCase):
         from endernet_bp.endernet_scripts.endernet.client.ui.terminal_panel import (
             CommonTerminalPanel,
         )
-        self.assertEqual(register_screens(),
+        # 11-07 起元组里还跟着四个容器类设备的代理屏。它们的键、旗标与
+        # `CONTAINER_SCREENS` 的对账归 `test_device_panels.py`；这里只钉住
+        # **两个终端屏在最前面且顺序不变**（调用方与既有用例都按位置读）。
+        registered = register_screens()
+        self.assertEqual(registered[:2],
                          (CommonTerminalPanel, crafting_panel.CraftingPanel))
+        self.assertTrue(all(cls._td_is_proxy is False for cls in registered[:2]))
 
 
 class TestJsonContract(unittest.TestCase):

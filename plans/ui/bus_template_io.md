@@ -121,3 +121,7 @@ main → bus_template_io_ui.content
 - [ ] 游戏验证：满槽／满网络、样板更换、关闭重开、卸载恢复与重复回执。
 
 2026-09-29：完成最新 JSON 与公共容器模板的静态核对；JSON 解析及 [9, 2]／18 项上限检查通过，相关文件 `git diff --check` 通过。`python -B endernet_tests/run_tests.py` 通过 2263 项测试，76 个源码文件通过 Python 2.7 语法门禁。以上为当前工作区离线结果，不代表产物回流已接入；未进行游戏验证。
+
+2026-10-02（11-07 **只读接入**）：代理 Screen 已挂上（`client/ui/device_panels.py` 的 `@RegistToolDeltaScreen("bus_template_io_ui.main", is_proxy=True)`），`stat_bar` 在线/离线与详情弹窗接上了，`content` 里补了一条 `device_status_popup@endernet_windows.device_status_window_basic` 实例。**代理拿不到构造参数**（设备身份由服务端推来，见 `common/device_identity.py`）。**仍未做**：样板槽与产物回流槽的取放、格子数 18 与方块容器 9 的差异（属界面结构，不由脚本侧改）。
+
+**2026-10-02 当日稍后：本界面是四台里唯一逐台右键实测过的一台。** 真人右键 (20,68,−6) 那台之后：代理的 `__init__`/`OnCreate`/`OnTicking`/`OnDestroy` 全部触发；身份被认领并开出会话（`s2`）；**截图确认渲染出绿色信号图标 + 绿字「在线」**，点状态栏弹出「设备状态」两行绿勾；会话在 4655 个渲染帧里发了 46 条 `keepalive`，关屏时服务端**显式关闭**（`closed` +1、`expired` 不变）。单元格子本身的取放仍未测。逐条见 [11 交付说明](../tasks/11-交付说明.md) 第二十三节。

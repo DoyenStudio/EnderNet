@@ -153,3 +153,5 @@ UI 交接：待填写；脚本接入：待填写；游戏验证：未进行。
 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
 
 静态核对记录（非游戏验证，不计入上方复选框）：`endernet_rp/ui/assemble_chamber.json` 可解析，已在 `_ui_defs.json` 登记；所有继承引用均可解析到本仓库或原版 `ui_common.json`；4 个纹理所指文件存在；本地化键 `tile.endernet:assemble_chamber.name` 在 `zh_CN.lang` 存在。2026-09-27 的改动（补 `netease:block_container`、补 `clip_direction`）之后复跑 `python -B endernet_tests/run_tests.py` 全通过（2158 项，含 Python 2.7 语法门禁），`python -B scripts/gen_blocks.py --check` 无差异。以上仅为文件级检查，**未在游戏内打开过本界面**。
+
+2026-10-02（11-07 **只读接入**）：本界面的代理 Screen 已挂上（`client/ui/device_panels.py` 的 `@RegistToolDeltaScreen("assemble_chamber_ui.main", is_proxy=True)`），`stat_bar` 在线/离线与详情弹窗接上了，`content` 里补了一条 `device_status_popup@endernet_windows.device_status_window_basic` 实例。**只用到了本文件已交接的 `stat_bar` 与公共弹窗**（两者的交接在 [endernet_ui_common](endernet_ui_common.md) 与 [endernet_windows](endernet_windows.md)），本文件 §5～§7 仍为待填写，因此装配仓自己的交互一律没接。**游戏内一次都没跑过**——代理回调与容器右键机制**当日稍后已在 `bus_template_io` 那台上验掉**（本界面共用同一份注册与绑定），但**本界面没有逐台右键过**，装配仓自己的格子和进度条仍然一个都没验。逐条见 [11 交付说明](../tasks/11-交付说明.md) 第二十三节。

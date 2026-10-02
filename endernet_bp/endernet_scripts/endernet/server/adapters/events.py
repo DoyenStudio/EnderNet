@@ -16,9 +16,15 @@
   只能用于资源回收，因此这里**只**用来做区块卸载标记。
 """
 
-from ...common.definitions import TERMINAL_OPEN_LIMIT_SECONDS, TERMINAL_SCREENS
+from ...common.definitions import (
+    CONTAINER_SCREENS,
+    TERMINAL_OPEN_LIMIT_SECONDS,
+    TERMINAL_SCREENS,
+)
+from ...common.device_identity import identity_payload
 from ...common.rate_limit import PlayerRateLimiter
 from ...common.identity import ChunkKey, NodeKey
+from .device_identity import send_device_identity
 from ..runtime.events import EventKind, NormalizedEvent, WakeSet
 
 
@@ -678,6 +684,10 @@ class ServerEventBinder(object):
         block_name = getattr(event, "blockName", "")
         if not block_name:
             return
+        container_key = CONTAINER_SCREENS.get(block_name)
+        if container_key is not None:
+            self._on_container_block_use(event, container_key)
+            return
         ui_key = TERMINAL_SCREENS.get(block_name)
         if ui_key is None:
             # 本模组的其它方块或原版方块被右键：正常现象，不计入诊断，
@@ -710,6 +720,36 @@ class ServerEventBinder(object):
             ui_key,
             {"device_ref": record.ref.to_dict(), "dimension": dimension},
         )
+
+    def _on_container_block_use(self, event, ui_key):
+        """玩家右键一台**容器类**设备 → 推一条「这个界面是哪台设备」。
+
+        与终端那一条的分工只有一个区别：容器类的屏幕由**引擎**按方块组件
+        （`netease:block_container`）自动打开，脚本侧只是挂在它上面的代理，
+        因此这里**不 `PushUI`**——代理类没有可推的屏（`_screen_cls` 为
+        `None`，`PushUI` 必抛），只把权威身份推过去让屏幕自己认领。
+
+        身份仍然**只从注册表取**，理由与终端那一条完全相同：代次不能由
+        客户端编，否则每一帧的 `_check_target` 都会判它过期。
+
+        **不限速。** 这条推送是幂等的（客户端 latch 后写覆盖先写），不像
+        `PushUIRequest` 会真的多开一个界面，因此不该消耗 `_open_limiter`
+        的窗口——否则「先点终端、0.2 秒内再点取货口」会白丢一次身份。
+        代价是自己一组计数桶，实机上分开看。
+        """
+        self._count("block_use_container")
+        dimension = getattr(event, "dimensionId", 0)
+        node_key = NodeKey(dimension, event.x, event.y, event.z)
+        record = self.registry.get(node_key)
+        if record is None:
+            self._count("block_use_container_unknown")
+            return
+        player_id = getattr(event, "playerId", "")
+        if not player_id:
+            return
+        payload = identity_payload(ui_key, record.ref, dimension)
+        if send_device_identity(player_id, payload):
+            self._count("container_identity_pushed")
 
     def _notify_ui(self, player_id, ui_key, params):
         # type: (str, str, dict) -> None

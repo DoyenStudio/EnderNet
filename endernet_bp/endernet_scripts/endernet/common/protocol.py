@@ -1033,6 +1033,17 @@ SYNC_SCHEMA_VERSION = 1
 SYNC_CHANNEL_C2S = "endernet:terminal_request"
 SYNC_CHANNEL_S2C = "endernet:terminal_sync"
 
+#: 「这台设备是哪个实例」的下行通道（11-07）。
+#:
+#: **不搭在同步通道上**，因为容器类设备（总线接口、装配仓一类）的界面由
+#: **引擎**按方块组件自动打开，脚本侧的屏幕是挂上去的代理（`is_proxy=True`），
+#: 它**拿不到任何参数**，也就不知道自己对应哪台方块。身份必须由服务端在
+#: 玩家右键那一刻查到注册表后推过去，而那一刻**还没有会话**（会话要等屏
+#: 挂上代理、客户端采纳身份之后才开），因此它不能是一条会话内的消息。
+#:
+#: 载荷形状见 `common/device_identity.py`；事件名两侧必须逐字相同。
+DEVICE_IDENTITY_CHANNEL_S2C = "endernet:device_identity"
+
 #: 视图种类。`order` **是已知种类**（消息词汇里为它留了位置），但尚无生产者，
 #: 因此与「客户端发来一个我们不认识的种类」必须给出不同的拒绝理由——
 #: 前者是 `Reason.UNSUPPORTED`（还没做），后者是协议错误（发错了）。
@@ -1045,6 +1056,11 @@ MSG_SESSION_OPEN = "session_open"
 MSG_SESSION_CLOSE = "session_close"
 MSG_SNAPSHOT_REQUEST = "snapshot_request"
 MSG_ACK = "ack"
+#: 「我还开着，别回收」（11-07）。**只读的设备屏一条命令都不发**，而会话按
+#: 「多久没有 C2S 消息」回收（`SessionPolicy.session_ttl_frames`，出厂 600 帧
+#: ≈20 秒），于是状态栏会在 20 秒后失效——与 D-08 同一根因。这条消息只让
+#: 服务端刷新该会话的 `last_seen_frame`，**不改 TTL、不产生任何业务**。
+MSG_KEEPALIVE = "keepalive"
 MSG_SESSION_READY = "session_ready"
 MSG_INVENTORY_SNAPSHOT = "inventory_snapshot"
 MSG_SNAPSHOT_BEGIN = "snapshot_begin"
@@ -1061,7 +1077,14 @@ MSG_DEVICE_STATUS = "device_status"
 MSG_CRAFT_STATE = "craft_state"
 
 CLIENT_TO_SERVER_KINDS = frozenset(
-    [MSG_SESSION_OPEN, MSG_SESSION_CLOSE, MSG_SNAPSHOT_REQUEST, MSG_ACK, MSG_COMMAND]
+    [
+        MSG_SESSION_OPEN,
+        MSG_SESSION_CLOSE,
+        MSG_SNAPSHOT_REQUEST,
+        MSG_ACK,
+        MSG_KEEPALIVE,
+        MSG_COMMAND,
+    ]
 )
 SERVER_TO_CLIENT_KINDS = frozenset(
     [
@@ -1356,6 +1379,38 @@ class Ack(SyncMessage):
         require_text(data["transfer_id"], "transfer_id")
         require_count(data["sequence"], "sequence")
         return cls(data["request_id"], data["transfer_id"], data["sequence"])
+
+
+class KeepaliveMessage(SyncMessage):
+    """「这个会话还在被看着」——**唯一的用途是刷新服务端的空闲计时**。
+
+    **不带任何业务字段**，也不带 `cursor` / 版本之类的可选位：它不表达
+    「客户端手上有什么」，只表达「这一刻客户端还活着」。因此服务端收到它
+    除了 `touch()` 之外什么都不做，也不回包——回一条 ack 只会让客户端的
+    在途账本涨一条永远没人取走的记录。
+
+    `request_id` 照其它 C2S 消息给：服务端在会话失效时用它回一条 `error`，
+    没有它那条错误就成了一条无名无姓的通知。
+    """
+
+    kind = MSG_KEEPALIVE
+    __slots__ = ("request_id",)
+
+    def __init__(self, request_id):
+        if settings.DEBUG:
+            require_text(request_id, "request_id")
+        self.request_id = request_id
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {"kind": self.kind, "request_id": self.request_id}
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> KeepaliveMessage
+        _require_fields(data, ("kind", "request_id"), "keepalive")
+        require_text(data["request_id"], "request_id")
+        return cls(data["request_id"])
 
 
 class SessionReady(SyncMessage):
@@ -2312,6 +2367,7 @@ _SYNC_MESSAGE_TYPES = _build_sync_message_types(
         SessionClose,
         SnapshotRequest,
         Ack,
+        KeepaliveMessage,
         SessionReady,
         SnapshotBegin,
         SnapshotChunk,

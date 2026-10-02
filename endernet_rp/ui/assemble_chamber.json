@@ -35,6 +35,21 @@
                 }
             },
             {
+                "device_status_popup@endernet_windows.device_status_window_basic": {
+                    "anchor_from": "center",
+                    "anchor_to": "center",
+                    "bindings": [
+                        {
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetDeviceStatus.popup_visible",
+                            "binding_name_override": "#visible",
+                            "binding_type": "global"
+                        }
+                    ],
+                    "layer": 40
+                }
+            },
+            {
                 "root_panel@common.root_panel": {
                     "controls": [
                         {

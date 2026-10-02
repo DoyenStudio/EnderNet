@@ -42,9 +42,19 @@ class ClientBootstrap(object):
 
     def diagnostics(self):
         # type: () -> dict
+        from .device_identity import get_device_identity
+
+        service = get_device_identity()
         return {
             "started": self.started,
             "subscriptions": len(self.subscriptions),
+            # 设备身份下行（11-07）。`rejected` 涨而 `accepted` 不涨 = 服务端
+            # 推过来了但两边的形状已经分家；`accepted` 涨而 `taken` 不涨 =
+            # 屏没认领（多半是屏幕名对不上）。**这是那条链路的第一个落点**，
+            # 因此挂在这里而不是只留在模块里。
+            "device_identity": (
+                service.diagnostics() if service is not None else None
+            ),
             "scope_note": "客户端不持有权威状态；界面与订阅属于任务 11。",
         }
 
@@ -58,9 +68,14 @@ def start_client():
     # type: () -> ClientBootstrap
     """由 `modMain.OnClientInited` 调用。"""
     global _CLIENT
+    from .device_identity import start_device_identity
     from .ui import register_screens
 
     register_screens()
+    # 设备身份下行（11-07）：容器类设备的屏拿不到参数，身份由服务端推过来，
+    # 这条监听必须在屏可能被打开之前就挂上——因此它在启动时起，而不是在
+    # 某个屏的 `OnCreate` 里起（那时推送可能已经发过了）。
+    start_device_identity()
     if _CLIENT is not None:
         _CLIENT.stop()
     _CLIENT = ClientBootstrap()
@@ -71,6 +86,9 @@ def start_client():
 def stop_client():
     # type: () -> None
     global _CLIENT
+    from .device_identity import stop_device_identity
+
+    stop_device_identity()
     if _CLIENT is not None:
         _CLIENT.stop()
         _CLIENT = None

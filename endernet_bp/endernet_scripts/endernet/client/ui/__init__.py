@@ -16,6 +16,19 @@ def register_screens():
     查不到**，`PushUIRequest` 一到就抛异常（右键合成终端什么都不开）。
     """
     from .crafting_panel import CraftingPanel
+    from .device_panels import (
+        AssembleChamberPanel,
+        BusItemInputPanel,
+        BusItemOutputPanel,
+        BusTemplatePanel,
+    )
     from .terminal_panel import CommonTerminalPanel
 
-    return CommonTerminalPanel, CraftingPanel
+    return (
+        CommonTerminalPanel,
+        CraftingPanel,
+        BusItemOutputPanel,
+        BusItemInputPanel,
+        BusTemplatePanel,
+        AssembleChamberPanel,
+    )

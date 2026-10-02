@@ -68,6 +68,7 @@ from ..common.protocol import (
     VIEW_ITEM,
     STATUS_REJECTED,
     Ack,
+    KeepaliveMessage,
     SessionClose,
     SessionOpen,
     SnapshotRequest,
@@ -608,6 +609,32 @@ class NetworkClient(object):
         self._send(
             SyncEnvelope(
                 Ack(request_id, transfer_id, sequence),
+                session_id=self.session_id,
+                network_id=self.network_id,
+                epoch=self.epoch,
+                view_kind=self.view_kind,
+            )
+        )
+        return request_id
+
+    def keepalive(self):
+        # type: () -> str
+        """告诉服务端「这个会话还开着」，返回 `request_id`。
+
+        **唯一的用途是不让会话被空闲回收。** 服务端按「多久没有 C2S 消息」
+        回收会话（`SessionPolicy.session_ttl_frames`，出厂 600 帧 ≈20 秒），
+        而只读的设备屏一条命令都不发——不发它，状态栏会在 20 秒后失效
+        （与 D-08 同一根因）。
+
+        **不需要会话之外的任何东西**，服务端也不回包；因此这里不往
+        `_in_flight` 记（记了只会涨出一条永远没人取走的在途记录，
+        然后界面的「有没有命令没回来」会一直说有）。
+        """
+        self._require_session("保活")
+        request_id = self._next_request_id()
+        self._send(
+            SyncEnvelope(
+                KeepaliveMessage(request_id),
                 session_id=self.session_id,
                 network_id=self.network_id,
                 epoch=self.epoch,

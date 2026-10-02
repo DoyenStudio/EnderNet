@@ -185,3 +185,4 @@ show_item_list_window(self, current_filter_item_ids, max_filter_items, list_titl
 | --- | --- | --- | --- |
 | 2026-09-27 | 离线解析 JSON，核对公共模板、玩法文档和列表窗口接口 | 文档按重新保存的控件名及最新缓冲规则填写；记录继承网格上限与业务容量的差异 | 仅修改文档，未运行全量代码测试；未进行游戏内验证 |
 | 2026-09-29 | User 定案 + 离线核对 JSON 与 `blocks.md` | 缓冲槽数由 9 更正为 **5**（以 JSON 的 `grid_dimensions=[5,1]` 为准）；方块侧补网易容器，与领域层槽数同源于 `ITEM_INTAKE_PORT_SLOT_COUNT` | 仍**未做游戏内验证**：右键打开、5 格填充、吸取与入网都未在真机上跑过 |
+| 2026-10-02 | 11-07 只读接入（离线） | 代理 Screen 已挂上（`@RegistToolDeltaScreen("bus_item_input_io_ui.main", is_proxy=True)`），`stat_bar` 在线/离线与详情弹窗接线；`content` 补了 `device_status_popup` 实例 | 代理回调与容器右键机制**已于当日稍后在真机上验掉**（打的是 `bus_template_io` 那一台，本界面共用同一份代码）；**本界面仍没有逐台右键过**，过滤模式、名单编辑、`settings_window` 一律未接。见 [11 交付说明](../tasks/11-交付说明.md) 第二十三节 |

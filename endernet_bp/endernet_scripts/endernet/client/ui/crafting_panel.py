@@ -69,7 +69,6 @@ from ...common.identity import DeviceRef
 from ...common.protocol import (
     CRAFT_SLOT_COUNT,
     MSG_CRAFT_STATE,
-    MSG_DEVICE_STATUS,
     STATUS_OK,
     Reason,
 )
@@ -927,20 +926,6 @@ class CraftingPanel(TerminalPanelBase):
             receipt_sink=self._on_receipts,
         )
         client.open_session(device_ref, dimension)
-
-    def _make_status_handler(self, client):
-        # type: (object) -> object
-        """收设备状态的回调。与 `CommonTerminalPanel` 那一份逐条相同。"""
-        def on_status_message(envelope, message):
-            # type: (object, object) -> None
-            if message is None or message.kind != MSG_DEVICE_STATUS:
-                return
-            if envelope.session_id != client.session_id:
-                return
-            if self.status is not None:
-                self.status.apply(message)
-
-        return on_status_message
 
     def _make_craft_handler(self, client):
         # type: (object) -> object

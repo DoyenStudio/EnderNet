@@ -200,7 +200,12 @@ class ScreenTests(unittest.TestCase):
 
         ui.ToolDeltaScreen = ScreenStub
         ui.Binder = BinderStub
-        ui.RegistToolDeltaScreen = lambda name: lambda screen: screen
+        # 两个参数都要收：11-07 起设备屏用 `is_proxy=True` 注册。本文件今天
+        # 只按路径加载 `terminal_panel`、碰不到那三个模块，但少一个参数就是
+        # 一颗定时弹——哪天这条导入链伸长到 `device_panels` 就会在
+        # `setUpClass` 上炸，而全量跑时它可能被前一个文件缓存的模块盖住。
+        ui.RegistToolDeltaScreen = (
+            lambda name, is_proxy=False: lambda screen: screen)
         prefix_path = "endernet.client.ui."
         path = os.path.join(ROOT, "endernet_bp", "endernet_scripts", "endernet", "client", "ui")
         spec = importlib.util.spec_from_file_location(

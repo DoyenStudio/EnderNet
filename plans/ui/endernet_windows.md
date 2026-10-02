@@ -142,3 +142,9 @@ User 先填写字段含义及已有 JSON 配置，脚本接入方核对后补充
 ## 流体列表窗口补充（2026-09-28）
 
 新增 `fluid_list_window`、`fluid_list_grid`、`fluid_can_be_selected`，沿用物品列表布局，独立使用 `endernet_fluid_list` collection 和 `#EnderNetFluidList.*` 绑定。调用、关闭、参数及验证记录见 [流体列表窗口](../technical_notes/fluid_list_window.md)。
+
+## 设备状态弹窗在四台设备屏上的实例化（2026-10-02）
+
+11-07 给四台容器类设备的界面（`bus_item_output_io` / `bus_item_input_io` / `bus_template_io` / `assemble_chamber`）各补了一条 `device_status_popup@endernet_windows.device_status_window_basic` 实例，参数与 `common_terminal_panel.json` 里那一条**逐字相同**（层号 40、居中、`#EnderNetDeviceStatus.popup_visible → #visible`）——**只实例化、没有新建模板**，本文件一个字节没改。离线断言钉住两件事：四份实例都在且层号高于**该屏其它所有控件**；模板本身的绑定名不变。
+
+**2026-10-02 当日稍后已上机**（`bus_template_io` 那台，真人右键）：点状态栏那一行**真的弹出了「设备状态」详情窗**，两行各带绿勾——`已连接控制器` / `带宽满足，能源满足`，即 `interact_btn` → `device_status_window_basic` 这条交互也是通的（截图见 [11 交付说明](../tasks/11-交付说明.md) 第二十三节）。**仍有未验**：弹窗开着时点面板其它按钮会不会穿透（本轮点开弹的是真实点击，但没专门试穿透）、另外三台设备、移动端。

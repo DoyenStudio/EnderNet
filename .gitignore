@@ -27,6 +27,14 @@ dev*
 # 只有提交时悄悄不存在（`git check-ignore -v` 已确认命中规则 18）。
 !endernet_bp/endernet_scripts/endernet/server/sync/device_status.py
 !endernet_bp/endernet_scripts/endernet/client/ui/widgets/device_status.py
+# 11-07 的设备屏交付物：同一类坑，命中五个基名（`device_identity.py` 三处、
+# `device_panels.py`、`device_status_bindings.py`）。`git check-ignore -v`
+# 已逐条确认命中规则 18；漏掉哪一条，哪一条就只在提交时悄悄不存在。
+!endernet_bp/endernet_scripts/endernet/common/device_identity.py
+!endernet_bp/endernet_scripts/endernet/server/adapters/device_identity.py
+!endernet_bp/endernet_scripts/endernet/client/device_identity.py
+!endernet_bp/endernet_scripts/endernet/client/ui/device_panels.py
+!endernet_bp/endernet_scripts/endernet/client/ui/widgets/device_status_bindings.py
 TODO
 AGENTS.md
 CLAUDE.md

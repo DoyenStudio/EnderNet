@@ -228,17 +228,6 @@
             {
                 "unavailable_mask": {
                     "type": "input_panel",
-                    "bindings": [
-                        {
-                            "binding_name": "#EnderNetTerminal.unavailable",
-                            "binding_name_override": "#visible",
-                            "binding_type": "global",
-                            "binding_condition": "always"
-                        }
-                    ],
-                    "property_bag": {
-                        "#EnderNetTerminal.unavailable": false
-                    },
                     "anchor_from": "bottom_middle",
                     "anchor_to": "bottom_middle",
                     "size": [
@@ -247,6 +236,17 @@
                     ],
                     "layer": 20,
                     "visible": false,
+                    "property_bag": {
+                        "#EnderNetTerminal.unavailable": false
+                    },
+                    "bindings": [
+                        {
+                            "binding_type": "global",
+                            "binding_name_override": "#visible",
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetTerminal.unavailable"
+                        }
+                    ],
                     "controls": [
                         {
                             "mask_img": {
@@ -374,9 +374,9 @@
                     "layer": 2,
                     "button_mappings": [
                         {
+                            "to_button_id": "$pressed_button_name",
                             "from_button_id": "button.menu_select",
-                            "mapping_type": "pressed",
-                            "to_button_id": "$pressed_button_name"
+                            "mapping_type": "pressed"
                         }
                     ],
                     "default_control": "default",
@@ -466,9 +466,9 @@
                     "layer": 2,
                     "button_mappings": [
                         {
+                            "to_button_id": "$pressed_button_name",
                             "from_button_id": "button.menu_select",
-                            "mapping_type": "pressed",
-                            "to_button_id": "$pressed_button_name"
+                            "mapping_type": "pressed"
                         }
                     ],
                     "default_control": "default",
@@ -562,9 +562,9 @@
                     "layer": 2,
                     "button_mappings": [
                         {
+                            "to_button_id": "$pressed_button_name",
                             "from_button_id": "button.menu_select",
-                            "mapping_type": "pressed",
-                            "to_button_id": "$pressed_button_name"
+                            "mapping_type": "pressed"
                         }
                     ],
                     "default_control": "default",
@@ -716,9 +716,9 @@
                     "layer": 2,
                     "button_mappings": [
                         {
+                            "to_button_id": "$pressed_button_name",
                             "from_button_id": "button.menu_select",
-                            "mapping_type": "pressed",
-                            "to_button_id": "$pressed_button_name"
+                            "mapping_type": "pressed"
                         }
                     ],
                     "default_control": "default",
@@ -752,12 +752,28 @@
             },
             {
                 "flying_item@endernet_container_common.flying_item_renderer": {
-                    "visible": false,
                     "anchor_from": "top_left",
-                    "anchor_to": "top_left"
+                    "anchor_to": "top_left",
+                    "visible": false
                 }
             }
         ]
+    },
+    "craft_output_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "endernet_craft_output",
+        "$item_count_binding": "#EnderNetCraft.output_item_count",
+        "$item_id_aux_binding": "#EnderNetCraft.output_item_id_aux",
+        "$item_select_button": "#EnderNetCraft.take",
+        "$item_selected_binding": "#EnderNetCraft.output_selected",
+        "$item_visible_binding": "#EnderNetCraft.output_visible"
+    },
+    "craft_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "crafting_grid",
+        "$item_count_binding": "#EnderNetCraft.grid_item_count",
+        "$item_id_aux_binding": "#EnderNetCraft.grid_item_id_aux",
+        "$item_select_button": "#EnderNetCraft.grid_click",
+        "$item_selected_binding": "#EnderNetCraft.grid_selected",
+        "$item_visible_binding": "#EnderNetCraft.grid_visible"
     },
     "load_recipe_window": {
         "type": "panel",
@@ -871,6 +887,13 @@
         "$screen_content": "crafting_terminal_panel_ui.content"
     },
     "namespace": "crafting_terminal_panel_ui",
+    "recipe_list": {
+        "type": "panel",
+        "size": [
+            "100%",
+            "default"
+        ]
+    },
     "recipe_section": {
         "type": "panel",
         "size": [
@@ -1089,71 +1112,48 @@
             }
         ]
     },
-    "craft_output_slot@endernet_windows.item_can_be_selected": {
-        "$item_collection_name": "endernet_craft_output",
-        "$item_visible_binding": "#EnderNetCraft.output_visible",
-        "$item_id_aux_binding": "#EnderNetCraft.output_item_id_aux",
-        "$item_selected_binding": "#EnderNetCraft.output_selected",
-        "$item_count_binding": "#EnderNetCraft.output_item_count",
-        "$item_select_button": "#EnderNetCraft.take"
-    },
-    "craft_slot@endernet_windows.item_can_be_selected": {
-        "$item_collection_name": "crafting_grid",
-        "$item_visible_binding": "#EnderNetCraft.grid_visible",
-        "$item_id_aux_binding": "#EnderNetCraft.grid_item_id_aux",
-        "$item_selected_binding": "#EnderNetCraft.grid_selected",
-        "$item_count_binding": "#EnderNetCraft.grid_item_count",
-        "$item_select_button": "#EnderNetCraft.grid_click"
-    },
-    "recipe_list": {
-        "type": "panel",
-        "size": [
-            "100%",
-            "default"
-        ]
-    },
     "terminal_items_grid": {
         "type": "grid",
+        "size": [
+            162.0,
+            "default"
+        ],
         "collection_name": "terminal_slots",
         "grid_dimensions": [
             9,
             2
         ],
         "grid_item_template": "crafting_terminal_panel_ui.terminal_slot",
-        "maximum_grid_items": 30,
         "grid_rescaling_type": "horizontal",
-        "size": [
-            162.0,
-            "default"
-        ],
-        "bindings": [
-            {
-                "binding_name": "#EnderNetTerminal.count",
-                "binding_name_override": "#maximum_grid_items",
-                "binding_type": "global",
-                "binding_condition": "always"
-            }
-        ],
+        "maximum_grid_items": 30,
         "property_bag": {
             "#maximum_grid_items": 0
-        }
+        },
+        "bindings": [
+            {
+                "binding_type": "global",
+                "binding_name_override": "#maximum_grid_items",
+                "binding_condition": "always",
+                "binding_name": "#EnderNetTerminal.count"
+            }
+        ]
     },
     "terminal_scroll_background@endernet_ui_common.simple_invisible_button": {
+        "$pressed_button_name": "#EnderNetTerminal.quick_store",
         "button_mappings": [
             {
                 "from_button_id": "button.menu_select",
                 "mapping_type": "pressed",
                 "to_button_id": "$pressed_button_name"
             }
-        ],
-        "$pressed_button_name": "#EnderNetTerminal.quick_store"
+        ]
     },
     "terminal_slot@endernet_windows.item_can_be_selected": {
         "$item_collection_name": "terminal_slots",
-        "$item_visible_binding": "#EnderNetTerminal.has_item",
-        "$item_id_aux_binding": "#EnderNetTerminal.item_id_aux",
-        "$item_selected_binding": "#EnderNetTerminal.selected",
         "$item_count_binding": "#EnderNetTerminal.item_count",
-        "$item_select_button": "#EnderNetTerminal.select"
+        "$item_id_aux_binding": "#EnderNetTerminal.item_id_aux",
+        "$item_select_button": "#EnderNetTerminal.select",
+        "$item_selected_binding": "#EnderNetTerminal.selected",
+        "$item_visible_binding": "#EnderNetTerminal.has_item"
     }
 }

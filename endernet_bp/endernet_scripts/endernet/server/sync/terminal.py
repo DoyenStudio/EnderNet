@@ -65,6 +65,7 @@ from ...common.protocol import (
     SyncError,
     MSG_ACK,
     MSG_COMMAND,
+    MSG_KEEPALIVE,
     MSG_SESSION_CLOSE,
     MSG_SESSION_OPEN,
     MSG_SNAPSHOT_REQUEST,
@@ -636,6 +637,10 @@ class TerminalSyncHub(object):
             #: 推出去的工作台状态条数（11-04）。**只数真的发出去的**：
             #: 去重命中不算，因此这个数涨就说明格子或预览真的变了。
             "craft_states": 0,
+            #: 收到多少条保活（11-07）。**它涨而 `expired` 不涨**，就是
+            #: 「只读设备屏真的把会话养住了」这句话在实机上的判据；反过来
+            #: 「设备屏开着不动、`expired` 照涨」说明屏根本没在发。
+            "keepalives": 0,
         }
 
     # -- 装配 ----------------------------------------------------------
@@ -754,6 +759,16 @@ class TerminalSyncHub(object):
             return self._on_snapshot_request(session, envelope.message, frame)
         if kind == MSG_ACK:
             return self._on_ack(session, envelope.message, frame)
+        if kind == MSG_KEEPALIVE:
+            # 「我还开着」。上面那句 `session.touch(frame)` 已经把空闲计时
+            # 推掉了，本分支**不改变任何业务**，也**不回包**——回一条只会
+            # 让客户端的在途账本涨一条永远没人取走的记录。
+            #
+            # 它走的是与其它消息同一条复核路径（`_revalidate`）：玩家走远、
+            # 换维度、设备被换掉时，保活同样会把会话关掉，而不是让它靠
+            # 「有人说话」苟着。
+            self.stats["keepalives"] += 1
+            return None
         if kind == MSG_COMMAND:
             return self._on_command(session, envelope.message, frame)
         return self._error(

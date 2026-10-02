@@ -345,6 +345,7 @@ class SyncMessageTests(unittest.TestCase):
             protocol.SessionClose("r2"),
             protocol.SnapshotRequest("r3", 7),
             protocol.Ack("r4", "transfer-1", 3),
+            protocol.KeepaliveMessage("r4b"),
             protocol.SessionReady(11, 12),
             protocol.InventorySnapshot(36, [
                 {"slot": slot, "canonical": "", "count": 0, "slot_version": 1}

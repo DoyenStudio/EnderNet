@@ -313,8 +313,18 @@ class ScreenBase(object):
         pass
 
 
-def _registrable(key):
-    return lambda cls: cls
+def _registrable(key, is_proxy=False):
+    """`RegistToolDeltaScreen` 的替身。**两个参数都要收**：11-07 起设备屏用
+    `is_proxy=True` 注册，签名少一个就是导入期 `TypeError`（`register_screens`
+    一调就炸）。这里顺带记下旗标，代理那一类的断言靠它。
+    """
+
+    def decorate(cls):
+        cls._screen_key = key
+        cls._td_is_proxy = is_proxy
+        return cls
+
+    return decorate
 
 
 def _install_stubs():
@@ -2449,6 +2459,81 @@ class TestRerenderAndAnchoring(PanelFixture):
         feed(ItemDelta("b1", 0, 1, SNAPSHOT_VERSION, DELTA_VERSION, ((ZINC, 5, 0),), ()))
         view.tick()
         self.assertEqual(view.rows[0].key, ZINC)
+
+
+class TestStatusSessionLifecycle(PanelFixture):
+    def online(self):
+        from endernet_bp.endernet_scripts.endernet.common.protocol import DeviceStatusMessage
+        model = device_status.DeviceStatusModel(REF)
+        model.apply(DeviceStatusMessage(
+            "endernet:common_terminal", REF.generation, True, "在线",
+            "ok", "runnable", "可运行", 1))
+        self.panel.status = model
+        self.panel.OnDeviceStatusClick()
+        self.assertEqual(self.panel.device_status_text(), "在线")
+        self.assertTrue(self.panel.device_status_popup_visible())
+        return model
+
+    def test_idle_terminal_clears_status_and_popup_when_session_is_lost(self):
+        self.online()
+        self.assertEqual(self.view._action_requests, {})
+        self.client.drop_session()
+        self.panel.OnTicking()
+        self.assertIsNone(self.panel.status)
+        self.assertFalse(self.panel.device_status_visible())
+        self.assertFalse(self.panel.device_status_popup_visible())
+        self.assertEqual(self.panel.device_status_color(), device_status.COLOR_OFFLINE)
+        self.panel.OnTicking()  # 重复收尾安全。
+
+    def test_status_is_cleared_even_without_a_backpack(self):
+        self.online()
+        self.view.backpack = None
+        self.client.drop_session()
+        self.view.tick()
+        self.assertIsNone(self.panel.status)
+
+    def test_active_session_keeps_online_status_and_popup(self):
+        model = self.online()
+        self.panel.OnTicking()
+        self.assertIs(self.panel.status, model)
+        self.assertTrue(self.panel.device_status_visible())
+        self.assertTrue(self.panel.device_status_popup_visible())
+
+    def test_status_handler_rejects_another_device_generation(self):
+        from endernet_bp.endernet_scripts.endernet.common.protocol import DeviceStatusMessage
+        model = self.online()
+        handler = self.panel._make_status_handler(self.client)
+        message = DeviceStatusMessage(
+            "endernet:common_terminal", REF.generation + 1, False, "离线",
+            "ok", "master_absent", "无主控", 2)
+        handler(types.SimpleNamespace(session_id=self.client.session_id), message)
+        self.assertEqual(self.panel.device_status_text(), "在线")
+        self.assertEqual(model.stats["dropped"], 1)
+
+    def test_shared_handler_ignores_replaced_models_and_closed_sessions(self):
+        from endernet_bp.endernet_scripts.endernet.common.protocol import MSG_DEVICE_STATUS
+        applied = []
+        self.panel.status = types.SimpleNamespace(apply=applied.append)
+        handler = self.panel._make_status_handler(self.client)
+        envelope = types.SimpleNamespace(session_id=self.client.session_id)
+        message = types.SimpleNamespace(kind=MSG_DEVICE_STATUS)
+        handler(envelope, message)
+        self.assertEqual(applied, [message])
+        handler(types.SimpleNamespace(session_id="s9"), message)
+        handler(envelope, None)
+        handler(envelope, types.SimpleNamespace(kind="craft_state"))
+        self.assertEqual(applied, [message])
+        self.client.drop_session()
+        handler(types.SimpleNamespace(session_id=""), message)
+        self.assertEqual(applied, [message])
+        self.client.session_id = envelope.session_id
+        replacement = []
+        self.panel.status = types.SimpleNamespace(apply=replacement.append)
+        handler(envelope, message)
+        self.assertEqual(replacement, [])
+        self.assertEqual(applied, [message])
+        self.panel.status = None
+        handler(envelope, message)
 
 
 class TestPanelEntry(PanelFixture):

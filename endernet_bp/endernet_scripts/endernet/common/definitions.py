@@ -743,6 +743,33 @@ TERMINAL_SCREENS = {
     "endernet:crafting_terminal_panel": "crafting_terminal_panel_ui.main",
 }
 
+#: 哪些容器类方块**有挂上去的脚本屏**（11-07）。键是方块 id，值是屏幕名。
+#:
+#: **与 `TERMINAL_SCREENS` 是两条不同的路**，不要合并：
+#:
+#: - 终端类：屏幕是本模组自有的，服务端要 `PushUIRequest` 把它**推**开；
+#: - 这一张：屏幕由**引擎**按方块组件自动打开，服务端只推一条**身份**
+#:   （「你打开的这个界面是这台设备」），由屏上的代理自己认领。
+#:   详见 `common/device_identity.py` 与 `plans/technical_notes/netease_container_screens.md`。
+#:
+#: 三条纪律：
+#:
+#: 1. 值必须与 `@RegistToolDeltaScreen(...)` 注册的键**逐字相同**（它是
+#:    `namespace.main` 的屏幕名，也是两侧比对的握手串）；
+#: 2. 与 `TERMINAL_SCREENS` **不相交**——同一台方块不可能两条路都走；
+#: 3. 必须与 `scripts/gen_blocks.py` 的 `CONTAINERS` 对得上（方块确实声明了
+#:    容器组件）。三条都由 `endernet_tests/test_device_panels.py` 钉住。
+#:
+#: **只登记已经写好的屏。** 没登记的容器设备（驱动器、内存槽、`bus_item_io`、
+#: 两个流体口）右键**不推身份**，屏上不会有脚本逻辑——那是有意的，不是遗漏；
+#: 缺的是各自的 UI 交接或（`bus_item_io`）本就未完成的设备。
+CONTAINER_SCREENS = {
+    "endernet:bus_item_output_io": "bus_item_output_io_ui.main",
+    "endernet:bus_item_input_io": "bus_item_input_io_ui.main",
+    "endernet:bus_template_io": "bus_template_io_ui.main",
+    "endernet:assemble_chamber": "assemble_chamber_ui.main",
+}
+
 #: 同一个人两次打开终端界面的最小间隔（秒）。窗口内再右键**静默忽略**。
 #:
 #: User 2026-09-30 定：**0.2 秒**。它只挡高频连点——正常走过去右键一次感觉

@@ -42,28 +42,16 @@ from .backpack_model import (
 )
 from .item_list_model import SORT_COUNT, SORT_NAME
 from .terminal_cache import TerminalCache
+from .widgets import device_status_bindings
 from ..network_client import NetworkClient
 from ...common.identity import DeviceRef
-from ...common.protocol import MSG_DEVICE_STATUS, STATUS_OK
+from ...common.protocol import STATUS_OK
 
-#: 颜色绑定的标志。`Binder` 是**引擎在运行期给的类**
-#: （`clientApi.GetViewBinderCls()`），本仓库此前从没用过 `BF_BindColor`
-#: （只用了 Bool/Int/String/ButtonClickUp/EditChanged），离线也拿不到它的
-#: 属性表。取不到就**不注册这一条**：颜色退回模板里的静态值，界面的其余
-#: 部分照常工作。
-#:
-#: 直接写 `Binder.BF_BindColor` 的代价不对称：引擎一旦没有这个标志，它在
-#: **导入期**就 `AttributeError`，`register_screens()` 失败，客户端半边整个
-#: 起不来——为了一个颜色把模组拖下水，不值。
-_COLOR_BINDING_FLAG = getattr(Binder, "BF_BindColor", None)
-
-
-def _bind_color(func):
-    # type: (object) -> object
-    """给状态文字注册颜色绑定；引擎没有这个标志时原样返回（即不注册）。"""
-    if _COLOR_BINDING_FLAG is None:
-        return func
-    return Binder.binding(_COLOR_BINDING_FLAG, device_status.COLOR_BINDING)(func)
+#: 颜色绑定的旗标。**定义已搬到** `ui/widgets/device_status_bindings.py`
+#: （11-07 让设备代理屏与终端屏共用同一份 `stat_bar` 模板，没有理由留两份），
+#: 这里只把旧名重新导出：`test_terminal_panel.py:2570` 直接读它，
+#: 改名会让那条用例断在导入期。
+_COLOR_BINDING_FLAG = device_status_bindings.COLOR_BINDING_FLAG
 
 #: 背包轮询分频：每这么多帧重读一次引擎背包。
 #:
@@ -162,7 +150,7 @@ def _text(value):
     return value.decode("utf-8")
 
 
-class TerminalPanelBase(ToolDeltaScreen):
+class TerminalPanelBase(device_status_bindings.DeviceStatusBindingsMixin, ToolDeltaScreen):
     """Other terminal screens may inherit this class and reuse terminal_inventory.
 
     槽位是**界面编号**，不是引擎槽号：上方 9x3 是 0..26（背包），下方 9x1 是
@@ -361,91 +349,11 @@ class TerminalPanelBase(ToolDeltaScreen):
         # type: (object) -> str
         return self._slot_item_count(HOTBAR_SEGMENT, index)
 
-    # -- 设备总体状态（11-13）------------------------------------------
-    #
-    # 与列表那一半同一个取向：绑定写在类体里、不随会话生灭，因此每条都必须
-    # 容忍 `self.status` 还没建起来，并给**安全值**。
-    #
-    # 这里给的安全值有一处与格子不同：格子是「空格子也要画」，而状态栏是
-    # 「**没拿到结论就不显示**」——宁可空着，也不先糊一个红色的「离线」上去。
-    # 那是**方向错误**的结论：玩家会去查一个不存在的故障。
-
-    @Binder.binding(Binder.BF_BindString, device_status.TEXT_BINDING)
-    def device_status_text(self):
-        # type: () -> str
-        if self.status is None:
-            return ""
-        return self.status.text()
-
-    @_bind_color
-    def device_status_color(self):
-        # type: () -> list
-        if self.status is None:
-            return device_status.COLOR_OFFLINE
-        return self.status.color()
-
-    @Binder.binding(Binder.BF_BindBool, device_status.VISIBLE_BINDING)
-    def device_status_visible(self):
-        # type: () -> bool
-        if self.status is None:
-            return False
-        return self.status.visible()
-
-    @Binder.binding(Binder.BF_BindString, device_status.ICON_BINDING)
-    def device_status_icon(self):
-        # type: () -> str
-        if self.status is None:
-            return device_status.ICON_OFFLINE
-        return self.status.icon()
-
-    @Binder.binding(Binder.BF_BindString, device_status.MASTER_TEXT_BINDING)
-    def device_status_master_text(self):
-        # type: () -> str
-        if self.status is None:
-            return device_status.MASTER_ROW_MISSING
-        return self.status.master_text()
-
-    @Binder.binding(Binder.BF_BindString, device_status.MASTER_ICON_BINDING)
-    def device_status_master_icon(self):
-        # type: () -> str
-        if self.status is None:
-            return device_status.MASK_OFFLINE
-        return self.status.master_mask()
-
-    @Binder.binding(Binder.BF_BindString, device_status.NET_TEXT_BINDING)
-    def device_status_net_text(self):
-        # type: () -> str
-        if self.status is None:
-            return device_status.NET_ROW_UNKNOWN
-        return self.status.net_text()
-
-    @Binder.binding(Binder.BF_BindString, device_status.NET_ICON_BINDING)
-    def device_status_net_icon(self):
-        # type: () -> str
-        if self.status is None:
-            return device_status.MASK_OFFLINE
-        return self.status.net_mask()
-
-    @Binder.binding(Binder.BF_BindBool, device_status.POPUP_VISIBLE_BINDING)
-    def device_status_popup_visible(self):
-        # type: () -> bool
-        if self.status is None:
-            return False
-        return self.status.popup_visible()
-
-    @Binder.binding(Binder.BF_ButtonClickUp, device_status.OPEN_BINDING)
-    def OnDeviceStatusClick(self, params=None):
-        # type: (object) -> None
-        """点状态栏弹出详情。**幂等**：连点只是重复设为显示，开不出第二个。"""
-        if self.status is not None:
-            self.status.open_popup()
-
-    @Binder.binding(Binder.BF_ButtonClickUp, device_status.CLOSE_BINDING)
-    def OnDeviceStatusClose(self, params=None):
-        # type: (object) -> None
-        """只收起详情，**不关原设备界面**。"""
-        if self.status is not None:
-            self.status.close_popup()
+    # 设备总体状态的十一条绑定**不在这个类体里**——它们已搬到
+    # `ui/widgets/device_status_bindings.py` 的 `DeviceStatusBindingsMixin`
+    # （11-07：设备代理屏与终端屏共用同一份 `stat_bar` 模板与同一组绑定名
+    # `#EnderNetDeviceStatus.*`）。本类继承它，因此 `dir(cls)` 照样看得见、
+    # 引擎照样按名取得着，只是取值逻辑只有一份。
 
     # -- 格子回调（每渲染帧，逐格） ------------------------------------
 
@@ -1445,6 +1353,8 @@ class TerminalListView(object):
         """
         if self.cache.client.has_session():
             return
+        # 状态快照与会话一起失效；即使没有在途动作，也不能残留在线与弹窗。
+        self.screen.status = None
         if self.backpack is None:
             self._action_requests = {}
             return
@@ -1640,32 +1550,6 @@ class CommonTerminalPanel(TerminalPanelBase):
             backpack=self.backpack,
         )
         client.open_session(device_ref, dimension)
-
-    def _make_status_handler(self, client):
-        # type: (object) -> object
-        """收设备状态的那条回调。**闭包持有 `client`**，因为消息本身不带
-        路由之外的身份：判定「这条是不是本会话的」只能拿当前会话来比。
-
-        两道过滤，缺一不可：
-
-        - 会话号对不上就丢——`NetworkClient` 逐条派发，而旧会话的包可能在
-          关掉之后才到；
-        - 代次对不上由模型自己丢（`DeviceStatusModel.accepts`）——这才是
-          「拆掉又在原地放一个」那条路径的落点。
-
-        回调**不抛**：它在 `receive()` 的派发循环里跑，抛出去会连累同一批
-        里的其它消息。
-        """
-        def on_status_message(envelope, message):
-            # type: (object, object) -> None
-            if message is None or message.kind != MSG_DEVICE_STATUS:
-                return
-            if envelope.session_id != client.session_id:
-                return
-            if self.status is not None:
-                self.status.apply(message)
-
-        return on_status_message
 
     def OnTicking(self):
         # **基类的背包轮询要显式调**：本方法没有 `super()`（下面 `tick()` 的
