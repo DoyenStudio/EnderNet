@@ -203,6 +203,7 @@ class ServerEventBinder(object):
         event_api=None,
         patterns=None,
         memory_slots=None,
+        drivers=None,
         player_dimension=None,
     ):
         self.queue = queue
@@ -228,6 +229,10 @@ class ServerEventBinder(object):
         #: 「同一个东西的两个实现」；写成列表的话，将来第三个消费者出现时
         #: 没人说得清列表里谁负责哪一段。
         self.memory_slots = memory_slots
+        #: 容器变更的第三个接收方（存储驱动器，2026-10-04）。**同一份鸭子契约**。
+        #: 驱动器那 10 格是介质物品的**唯一权威**，给它标脏就是「这个位置的
+        #: 槽位读数过期了」；`accepts_put` 则保证非介质物品进不去。
+        self.drivers = drivers
         #: 玩家维度解析。默认是引擎实现；注入替身即可在离线测试里走通
         #: 「自定义容器事件没有维度」那条路径——而插槽拒收正挂在它上面。
         self.player_dimension = (
@@ -570,7 +575,8 @@ class ServerEventBinder(object):
         """
         if dimension is None or position is None:
             return False
-        if self.patterns is None and self.memory_slots is None:
+        stores = self._container_stores()
+        if not stores:
             return False
         try:
             x, y, z = position
@@ -578,12 +584,24 @@ class ServerEventBinder(object):
             return False
         node_key = NodeKey(dimension, x, y, z)
         marked = False
-        for store in (self.patterns, self.memory_slots):
-            if store is None:
-                continue
+        for store in stores:
             if store.mark_dirty(node_key):
                 marked = True
         return marked
+
+    def _container_stores(self):
+        # type: () -> tuple
+        """接收容器变更的领域 store 们。**逐个分发**。
+
+        每个 store 对不属于自己的位置返回 False、对自己不认识的设备一律放行，
+        因此这里不需要先判断「这是谁的容器」——那判断要在领域层再做一遍，
+        而两处判断迟早会分叉。
+        """
+        return tuple(
+            store
+            for store in (self.patterns, self.memory_slots, self.drivers)
+            if store is not None
+        )
 
     def _on_custom_put(self, event):
         # type: (object) -> None
@@ -592,7 +610,7 @@ class ServerEventBinder(object):
         自定义容器的两条玩家事件**都不带维度**，只能从交互的玩家推出来；
         推不出来就放弃这一次（不猜一个维度，见 `_player_dimension`）。
         """
-        if self.patterns is None and self.memory_slots is None:
+        if not self._container_stores():
             return
         dimension = self._player_dimension(event.playerId)
         if dimension is None:
@@ -613,9 +631,9 @@ class ServerEventBinder(object):
         玩家会以为那是漏洞，而它确实是。
 
         判定在领域层（样板口按 `pattern_provider` 能力，内存槽按
-        `CATEGORY_MEMORY` 分类），这里只做翻译：拒收走 `event.cancel()`，
-        放行则标脏等重读。
-        **两个 store 都要问**：各自对不属于自己的设备一律放行，因此
+        `CATEGORY_MEMORY` 分类，驱动器按 `CATEGORY_STORAGE` 分类），这里只做
+        翻译：拒收走 `event.cancel()`，放行则标脏等重读。
+        **每个 store 都要问**：各自对不属于自己的设备一律放行，因此
         「谁拒了」这件事不需要在这里再判一次设备类型。
         """
         record = self.registry.get(node_key)
@@ -629,6 +647,7 @@ class ServerEventBinder(object):
         stores = (
             (self.patterns, "pattern_slot_rejected"),
             (self.memory_slots, "memory_slot_rejected"),
+            (self.drivers, "driver_slot_rejected"),
         )
         for store, counter in stores:
             if store is None:

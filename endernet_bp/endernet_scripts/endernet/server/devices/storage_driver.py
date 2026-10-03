@@ -1,35 +1,56 @@
 # coding=utf-8
 """存储驱动器设备：槽位状态、介质归属与真实的存储提供者实现。
 
-对应任务 05-04 的驱动器侧，以及 12-03 需要的可序列化结构。
-架构要求见 `plans/technical_notes/script_architecture.md` §3（数据所有权）、
-§4（必须接上的现有入口）、§5.1–5.2（设备与介质模型、生命周期）。
+对应任务 05-04 的驱动器侧。
 
-**这一层不是第二个设备注册表。** 位置、区块、朝向、加载状态全部归
-`DeviceRegistry` 管；这里只保存「这台驱动器装了哪几块盘」这一件
-注册表不知道的事，索引键是 `DeviceRef`（带实例代次），因此同位置换方块
-之后旧状态自然失效。
+## 「哪个介质在哪个槽」的唯一权威是方块容器
 
-三条必须成立的性质：
+驱动器方块有 10 格 `netease:block_container`，玩家把介质**物品**放进去、
+拿出来。本模块按位置读那个容器，把认出来的物品挂到槽位上——
+**不再有一份写进存档的槽位表**。
+
+这在 2026-10-04 之前是相反的：那时 `SlotAssignment` 随存档走（12-03），
+因为当时挂载只能由 `mount` 命令凭空发号。真机读出「方块容器内容随方块
+实体落盘」（`persistence_backend.md` §4.1）之后，再存一份就是两份真相——
+玩家在区块没加载时拔走一块盘，存档还挂着它、网络照旧记账。
+
+介质**内容**仍然不在物品里（`persistence_backend.md` §2.2）：物品只携带
+载体 `userData["endernet:medium"] = {"id", "v"}`（`common/medium_item.py`），
+内容按介质 ID 存世界 ExtraData。因此本层的记录**只剩介质表一份**。
+
+读不到容器时**保留上一次的读数**（区块卸载不等于盘被拔了）。变更检测与
+`memory_slot.py` / `crafting/store.py` 同一套：容器事件只当脏标记，去抖后重读。
+
+三条仍然成立的性质：
 
 1. **状态跟随设备生命周期，但不跟随网络。** 驱动器状态由启动层持有，
    网络断开、主控移除、运行时重建都不等于设备和介质消失。
-2. **槽位是权威，`disk_count` 是投影。** 带宽准入读的是
+2. **槽位（读数）是权威，`disk_count` 是投影。** 带宽准入读的是
    `DeviceRecord.config["disk_count"]`，它**只能**由 `project()` 写入；
    任何命令载荷都改不了它。
-3. **介质对象从不被删除。** 卸载只清槽位引用，拆除只标 `orphaned`。
-   因此网络侧的索引不可能指向一个已经被释放的对象。
+3. **介质对象从不被删除。** 拔盘只让引用从容器读数里消失；驱动器被拆
+   也**不**把介质标成孤儿——归属是那件物品本身（见 `StorageDriverStore.drop`）。
 """
 
-from ...common.definitions import UNCONFIGURED
+from ...common import medium_item
+from ...common.definitions import (
+    CATEGORY_STORAGE,
+    STORAGE_DRIVER_SLOT_COUNT,
+    UNCONFIGURED,
+)
 from ...common.identity import DeviceRef, NodeKey, node_key_text  # noqa: F401
+from ...common.item_codec import (
+    is_empty_item,
+    item_dict_from_key,
+    item_key_from_dict,
+)
 from ...common.protocol import (
     ContainerCapabilities,
     Reason,
     TransferReceipt,
     TransferStatus,
 )
-from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
+from ...common.resource_key import ResourceKey
 from ..persistence.repository import Record
 from ..runtime.lifecycle import ChangeKind
 from ..storage.medium import (
@@ -46,12 +67,37 @@ from .capabilities import STORAGE_PROVIDER, CapabilityRegistry  # noqa: F401
 #: 本模块负责的设备标识。
 DRIVER_DEVICE_ID = "endernet:storage_driver"
 
-#: 驱动器存档结构版本。
+#: 驱动器存档结构版本。**已停止使用**：槽位不再进存档（见模块 docstring）。
 DRIVER_SCHEMA_VERSION = 1
 
-#: 存档记录类型。任务 12 接真实后端时按它取记录。
+#: 驱动器记录类型。**只用于读取与删除旧存档**——本轮起不再写出。
+#: 旧记录里是「存档时期的槽位引用」，读回来只报进诊断并删掉，
+#: 不据此造物品（那些介质本来就没有对应物品，见 `restore_from_repository`）。
 DRIVER_RECORD_KIND = "endernet.storage_driver"
 MEDIUM_RECORD_KIND = "endernet.storage_medium"
+
+# -- 重读节拍 --------------------------------------------------------------
+
+#: 收到变更之后再静默这么多帧才重读（一次拖入会派发多条事件、顺序不定）。
+#: 与 `memory_slot.MEMORY_SETTLE_FRAMES`、`crafting/store.PATTERN_SETTLE_FRAMES`
+#: **是三条独立的节拍**：常量各写一份，不跨层 import（会成环）。
+DRIVER_SETTLE_FRAMES = 2
+
+#: 一台驱动器最多这么久没被重读过，**即使变更一直不停**。
+#: 与内存槽同一量级（40 帧 ≈ 1.3 秒 @30Hz）。**不是玩法数值。**
+DRIVER_MAX_STALE_FRAMES = 40
+
+#: 每帧最多重读几台驱动器。重读要读满 10 个槽，是真实的引擎调用。
+#: **照内存槽量级取的未测量值**（规模验收归 14）。
+DRIVER_REFRESH_BUDGET = 4
+
+#: 每帧最多刷新几件介质物品的展示行（容量 Lore）。写回是写引擎容器，
+#: 比读贵，因此预算比重读还小。
+DRIVER_DISPLAY_BUDGET = 2
+
+#: 同一 (位置, 槽) 上「载体写回」最多重试几次。超过只报诊断，
+#: 不再对一块写不进去的槽每帧重试。
+DRIVER_PENDING_MAX_ATTEMPTS = 8
 
 #: 「硬盘个数」（blocks.md 的带宽与能耗计费依据）的计入口径（R10）。
 #: 取「装了东西的槽位数」——驱动器装的是磁带/软盘/硬盘，把软盘排除在外
@@ -85,6 +131,47 @@ def medium_sequence(medium_id):
         return int(medium_id[len(MEDIUM_ID_PREFIX):])
     except (TypeError, ValueError):
         return 0
+
+
+def is_storage_driver(device_id, definitions=None):
+    # type: (str, object) -> bool
+    """这台设备是不是存储驱动器。
+
+    **按分类判定，不按设备名**：分类的真相只有定义表一处。定义表缺失
+    （离线夹具）时退到「标识就叫 `endernet:storage_driver`」——
+    与 `memory_slot.is_memory_slot` 同一形状。
+    """
+    if definitions is not None:
+        definition = definitions.devices.get(device_id)
+        if definition is not None:
+            return definition.category == CATEGORY_STORAGE
+    return device_id == DRIVER_DEVICE_ID
+
+
+def _slot_count_of(adapter, fallback):
+    # type: (object, int) -> int
+    """一个容器适配器有多少格。
+
+    **两个方法名都要试**：`ContainerAdapter.slots_count()` 是通用只读面
+    （假容器实现它），`SlotBackedContainer.slot_count()` 是按槽读写面
+    （引擎容器实现它）。拿不到时退回定义表那条已定案的 10——它同时就是
+    `gen_blocks.py` 写进方块容器的 `container_size`，因此不可能与真实格数分叉。
+    （与 `memory_slot._slot_count_of` 是同一条规则的两份副本，跨层 import 会成环。）
+    """
+    for name in ("slot_count", "slots_count"):
+        counter = getattr(adapter, name, None)
+        if not callable(counter):
+            continue
+        size = counter()
+        if size is None:
+            continue
+        try:
+            size = int(size)
+        except (TypeError, ValueError):
+            continue
+        if size > 0:
+            return size
+    return int(fallback)
 
 
 class DriverPolicy(object):
@@ -124,6 +211,11 @@ class DriverPolicy(object):
             None if accepted_models is None else frozenset(accepted_models)
         )
         self.disk_count_scope = disk_count_scope
+        #: **结构性作废（2026-10-04），字段保留、无代码路径。**
+        #: 槽位权威改成方块容器读数之后，「区块重载后要不要按持久身份恢复槽位」
+        #: 这个问题不再存在——重读容器就是恢复，没有第二份可选的来源。
+        #: 按 S-09 的先例**保留字段并加注**，不静默删除：删掉它是玩法层面的
+        #: 表态，而 R10 是否还需要一个「重载后怎么读」的旋钮没有定案。
         self.recover_slots_on_reload = bool(recover_slots_on_reload)
 
         if disk_count_scope not in (DISK_SCOPE_OCCUPIED, DISK_SCOPE_HARDDISKS_ONLY):
@@ -190,7 +282,8 @@ class DriverPolicy(object):
                 "field": "driver.recover_slots_on_reload",
                 "rule": "05/12",
                 "value": self.recover_slots_on_reload,
-                "note": "区块重载后是否按持久身份恢复槽位；替身取是",
+                "note": "**结构性作废**：槽位权威已是方块容器读数，重读即恢复，"
+                        "没有第二份来源可选（2026-10-04）",
             },
         ]
 
@@ -220,7 +313,11 @@ class DriverPolicy(object):
 
 
 class SlotAssignment(object):
-    """一个槽位里装着什么。空槽用 `None` 表示，不用一个空对象。"""
+    """一个槽位里装着什么。空槽用 `None` 表示，不用一个空对象。
+
+    **这是派生值，不是存档**：每次重读方块容器重建一份。`from_dict` 只为
+    解析**上一版留下的旧存档记录**（读回来只报进诊断，见 `restore_from_repository`）。
+    """
 
     __slots__ = ("slot", "medium_id", "slot_version", "bound_tick")
 
@@ -264,6 +361,9 @@ class DriverState(object):
 
     刻意**不含**位置索引、区块索引或朝向：那些是 `DeviceRegistry` 的事，
     在这里再存一份就是第二个设备注册表。
+
+    `slots` 是**方块容器读数的派生表**（见模块 docstring），因此它由
+    `StorageDriverStore._read_slots` 整体重建，没有任何写槽方法。
     """
 
     __slots__ = (
@@ -272,10 +372,17 @@ class DriverState(object):
         "device_id",
         "slot_count",
         "slots",
+        "invalid",
         "config_version",
         "loaded",
         "recovery",
         "recovery_detail",
+        "unreadable",
+        "dirty_tick",
+        "refresh_tick",
+        "readings",
+        "revision",
+        "stats",
         "capabilities",
         "provider",
         "policy",
@@ -288,12 +395,34 @@ class DriverState(object):
         self.device_id = device_id
         self.slot_count = slot_count
         self.slots = [None] * (slot_count if isinstance(slot_count, int) else 0)
-        #: 槽位配置版本。任何一次装入/取出都推进它，供请求做旧版本拒绝。
+        #: `slot -> {"code", "detail"}`。槽里有东西但**挂不上**：不是介质、
+        #: 载体读不动、载体版本不认识、写回没核对上。**与「空槽」分开**。
+        self.invalid = {}
+        #: 槽位配置版本。每次读数里有净变化就推进它，供请求做旧版本拒绝。
         self.config_version = 0
         self.loaded = True
         #: 恢复状态。`UNCONFIGURED` 槽数也记在这里。
         self.recovery = "ok"
         self.recovery_detail = ""
+        #: 读不到容器的原因（空串表示读得到）。**不清空 `slots`**。
+        self.unreadable = ""
+        #: 最后一次收到变更的帧号。**-1 表示从没收到过**（逻辑时钟可以是 0）。
+        self.dirty_tick = -1
+        #: 最后一次尝试重读的帧号。-1 表示从没试过。**它是「试过」不是「读到」**。
+        self.refresh_tick = -1
+        #: **成功读到过几次。** 与 `refresh_tick` 分开——「从没读到过」与
+        #: 「读到过 0 块盘」是两件事（同 `MemorySlotState`）。
+        self.readings = 0
+        #: 内容版本，每次重读发现变化就 +1。
+        self.revision = 0
+        self.stats = {
+            "refreshes": 0,
+            "changes": 0,
+            "unreadable": 0,
+            "invalid_slots": 0,
+            "forced_refreshes": 0,
+            "errors": 0,
+        }
         #: 挂在这台设备上的**实际能力对象**（架构 §4 要求可查）。
         self.capabilities = CapabilityRegistry()
         self.provider = StorageDriverProvider(self, store)
@@ -307,8 +436,32 @@ class DriverState(object):
 
     def is_usable(self):
         # type: () -> bool
-        """槽位配置读得出来才谈得上装载。"""
+        """定义表配得出槽数才谈得上装载。"""
         return self.recovery == "ok"
+
+    def has_reading(self):
+        # type: () -> bool
+        """**成功**读到过方块容器没有。
+
+        不等于 `refresh_tick >= 0`（那是「试过」），也不等于当前读得到。
+        """
+        return self.readings > 0
+
+    def content_fingerprint(self):
+        # type: () -> tuple
+        """内容指纹，用于判断「这次重读有没有读出不一样的东西」。
+
+        不含 `loaded` / `unreadable` / 帧号：那些是设备状态，不是容器内容。
+        """
+        return (
+            tuple(
+                (item.slot, item.medium_id, item.slot_version)
+                for item in self.occupied()
+            ),
+            tuple(
+                (slot, self.invalid[slot]["code"]) for slot in sorted(self.invalid)
+            ),
+        )
 
     def occupied(self):
         # type: () -> list
@@ -376,116 +529,78 @@ class DriverState(object):
                 return item
         return None
 
-    # -- 槽位变更 ------------------------------------------------------
+    # -- 读数重建（由 StorageDriverStore 调用）-------------------------
 
-    def assign(self, slot, medium_id, expected_slot_version=None, tick=0):
-        # type: (int, str, int, int) -> tuple
-        """把一个介质放进槽位。返回 `(ok, reason, detail)`。
+    def replace_slots(self, slots, invalid, slot_count=None, tick=0):
+        # type: (dict, dict, int, int) -> bool
+        """用一份新的容器读数替换槽位表。返回**是否有净变化**。
 
-        **不查介质是否存在**：那是持有者（`StorageDriverStore`）的事，
-        本对象只管槽位。校验顺序：范围 → 同盘重复 → 旧版本 → 占用。
+        `slots` 是 `slot -> medium_id`，`invalid` 是 `slot -> {"code","detail"}`。
+        `slot_version` 在这里维护：**同槽同盘沿用旧版本号**（不因为多读一次
+        就推进版本），换了盘或由空变占用则 +1。空槽对外报 0——与旧行为一致，
+        且让「基于占用快照的过期请求」在多一次重读之后依然对得上。
+
+        整体替换而不是原地改：半份读数会让剩下的槽看起来是空的
+        （`_read_slots` 中途失败时已经整体作废，这里是最后一道）。
         """
-        if not self.is_usable():
-            return False, self.recovery, self.recovery_detail
-        if isinstance(slot, bool) or not isinstance(slot, int):
-            return False, Reason.OUT_OF_RANGE, "槽号必须是整数"
-        if slot < 0 or slot >= len(self.slots):
-            return False, Reason.OUT_OF_RANGE, "槽号 %r 超出 0..%d" % (
-                slot,
-                len(self.slots) - 1,
-            )
-        if self.slot_of(medium_id) is not None:
-            return False, Reason.MEDIUM_DUPLICATE_MOUNT, "该介质已经装在本驱动器上"
-
-        current = self.slots[slot]
-        current_version = current.slot_version if current is not None else 0
-        if expected_slot_version is not None and int(expected_slot_version) != current_version:
-            return (
-                False,
-                Reason.STALE_VERSION,
-                "槽位版本为 %d，请求依据的是 %r" % (current_version, expected_slot_version),
-            )
-        if current is not None:
-            return False, Reason.SLOT_OCCUPIED, "槽位 %d 已被 %s 占用" % (
-                slot,
-                current.medium_id,
-            )
-
-        self.slots[slot] = SlotAssignment(slot, medium_id, current_version + 1, tick)
-        self.config_version += 1
-        return True, "", ""
-
-    def clear(self, slot, expected_slot_version=None):
-        # type: (int, int) -> tuple
-        """清空槽位。返回 `(ok, reason, detail)`；被清掉的分配从 detail 透出。"""
-        if not self.is_usable():
-            return False, self.recovery, self.recovery_detail
-        if isinstance(slot, bool) or not isinstance(slot, int):
-            return False, Reason.OUT_OF_RANGE, "槽号必须是整数"
-        if slot < 0 or slot >= len(self.slots):
-            return False, Reason.OUT_OF_RANGE, "槽号 %r 超出 0..%d" % (
-                slot,
-                len(self.slots) - 1,
-            )
-        current = self.slots[slot]
-        if current is None:
-            return False, Reason.BAD_PARAMETER, "槽位 %d 本来就是空的" % (slot,)
-        if expected_slot_version is not None and int(expected_slot_version) != current.slot_version:
-            return (
-                False,
-                Reason.STALE_VERSION,
-                "槽位版本为 %d，请求依据的是 %r"
-                % (current.slot_version, expected_slot_version),
-            )
-        self.slots[slot] = None
-        self.config_version += 1
-        return True, "", current.medium_id
-
-    def clear_all(self):
-        # type: () -> tuple
-        """清空全部槽位（拆除用）。返回被清掉的介质 ID。"""
-        out = []
-        for index in range(len(self.slots)):
-            if self.slots[index] is not None:
-                out.append(self.slots[index].medium_id)
-                self.slots[index] = None
-        if out:
+        before = self.content_fingerprint()
+        size = slot_count if isinstance(slot_count, int) and slot_count > 0 else len(self.slots)
+        previous = self.slots
+        new_slots = [None] * size
+        for slot in sorted(slots):
+            if slot < 0 or slot >= size:
+                continue
+            old = previous[slot] if slot < len(previous) else None
+            if old is not None and old.medium_id == slots[slot]:
+                new_slots[slot] = old
+            else:
+                version = old.slot_version if old is not None else 0
+                new_slots[slot] = SlotAssignment(slot, slots[slot], version + 1, tick)
+        self.slot_count = size
+        self.slots = new_slots
+        self.invalid = dict(invalid)
+        self.stats["invalid_slots"] = len(self.invalid)
+        changed = size != len(previous) or self.content_fingerprint() != before
+        if changed:
             self.config_version += 1
-        return tuple(out)
+        return changed
 
-    # -- 序列化 --------------------------------------------------------
+    def evict_slot(self, slot, code, detail):
+        # type: (int, str, str) -> bool
+        """把一个槽位从**读数**里摘掉，并记下原因。**容器里那件物品不碰。**
+
+        只有跨驱动器去重用它：那块盘还在别人的驱动器里，玩家自己取出来。
+        """
+        if slot < 0 or slot >= len(self.slots) or self.slots[slot] is None:
+            return False
+        self.slots[slot] = None
+        self.invalid[slot] = {"code": code, "detail": detail}
+        self.stats["invalid_slots"] = len(self.invalid)
+        self.config_version += 1
+        return True
+
+    # -- 序列化（仅供诊断；槽位不再进存档）-------------------------------
 
     def to_dict(self):
         # type: () -> dict
         return {
-            "schema_version": DRIVER_SCHEMA_VERSION,
-            "node_key": self.node_key.to_dict(),
+            "node_key": self.node_key.as_key(),
             "generation": self.ref.generation,
             "device_id": self.device_id,
             "slot_count": (
                 self.slot_count if isinstance(self.slot_count, int) else None
             ),
             "config_version": self.config_version,
+            "loaded": self.loaded,
+            "readings": self.readings,
+            "revision": self.revision,
+            "unreadable": self.unreadable,
             "slots": [item.to_dict() for item in self.occupied()],
+            "invalid": [
+                {"slot": slot, "error": dict(self.invalid[slot])}
+                for slot in sorted(self.invalid)
+            ],
         }
-
-    @classmethod
-    def from_dict(cls, data, policy, store, device_id=DRIVER_DEVICE_ID):
-        # type: (dict, DriverPolicy, object, str) -> DriverState
-        """从存档还原槽位。
-
-        占位介质**不在这里恢复**：本对象只管槽位引用，介质内容由
-        `StorageDriverStore` 的介质表负责。因此这里只重建引用，
-        调用方随后要核对每一块盘都存在（缺失的保持引用但不参与交易）。
-        """
-        ref = DeviceRef(NodeKey.from_dict(data["node_key"]), data["generation"])
-        state = cls(ref, policy, store, device_id=device_id, slot_count=data["slot_count"])
-        state.config_version = int(data.get("config_version", 0))
-        for item in data.get("slots", ()):
-            assignment = SlotAssignment.from_dict(item)
-            if 0 <= assignment.slot < len(state.slots):
-                state.slots[assignment.slot] = assignment
-        return state
 
     def diagnostics(self):
         # type: () -> dict
@@ -498,6 +613,14 @@ class DriverState(object):
             "occupied": self.occupied_count(),
             "config_version": self.config_version,
             "mediums": list(self.medium_ids()),
+            "unreadable": self.unreadable,
+            "readings": self.readings,
+            "revision": self.revision,
+            "invalid": [
+                {"slot": slot, "error": dict(self.invalid[slot])}
+                for slot in sorted(self.invalid)
+            ],
+            "stats": dict(self.stats),
             "capabilities": list(self.capabilities.names()),
         }
 
@@ -563,43 +686,10 @@ class StorageDriverProvider(object):
             )
         return out
 
-    def mount(self, slot, medium_id, expected_slot_version=None, tick=0):
-        # type: (int, str, object, int) -> tuple
-        """装入。返回 `(ok, reason, detail)`。
-
-        **成功后立刻投影并通知负载重算**。放在这里而不是交给调用方，
-        是因为「先改计数、后交易」是准入的前提：一旦有一条调用路径漏了这步，
-        后续交易就会按旧准入放行。
-        """
-        # **跨驱动器**同 ID 去重。本机重复由 `DriverState.assign` 自己拦
-        # （`slot_of`），但两台驱动器各插一块同 ID 的盘在它那里是合法的——
-        # 那会让一份内容被记两次，而且记账本身不会报错。
-        owner = self.store.medium_slot_owner(medium_id)
-        if owner is not None:
-            other_state, assignment = owner
-            if other_state is not self.state or assignment.slot != slot:
-                return (
-                    False,
-                    Reason.MEDIUM_DUPLICATE_MOUNT,
-                    "介质 %s 已装在 %s 的 %d 号槽；同一块盘不能挂两处"
-                    % (medium_id, node_key_text(other_state.node_key), assignment.slot),
-                )
-        ok, reason, detail = self.state.assign(
-            slot, medium_id, expected_slot_version, tick
-        )
-        if ok:
-            self.store.project(self.state)
-            self.store.note_slots_changed(self.state)
-        return ok, reason, detail
-
-    def unmount(self, slot, expected_slot_version=None):
-        # type: (int, object) -> tuple
-        """取出。返回 `(ok, reason, 被取出的介质 ID)`。"""
-        ok, reason, detail = self.state.clear(slot, expected_slot_version)
-        if ok:
-            self.store.project(self.state)
-            self.store.note_slots_changed(self.state)
-        return ok, reason, detail
+    # **`mount` / `unmount` 已删除**（2026-10-04）：它们直接改内存里的槽位表，
+    # 在「槽位以方块容器为权威」之后那是一次会被下一次重读静默回退的写入。
+    # 装/卸现在只有两条路：玩家动容器（读路径看到），或
+    # `StorageDriverStore.place_medium` / `take_medium`（命令层动容器）。
 
     def slot_views(self):
         # type: () -> list
@@ -666,6 +756,8 @@ class StorageDriverProvider(object):
             # （`medium_lore.md` §3 的「预留/释放、模拟、失败、去重命中不增加
             # 容量展示工作」在存档这一侧的对应物）。
             self.store.note_medium_changed(medium_id)
+            # 展示行（容量 Lore）同批标脏：内容变了，那件物品上的摘要就旧了。
+            self.store.note_display_dirty(medium_id)
         if moved == 0:
             # 计划成立却提交不动，只有两种可能：额度在两次计算之间被吃掉了
             # （`take` 拒绝），或介质在这中间失去了交易资格。分开报，别混成一个原因。
@@ -704,34 +796,41 @@ class StorageDriverStore(object):
         medium_policy=None,
         on_load_changed=None,
         id_source=None,
+        containers=None,
     ):
-        # type: (object, object, DriverPolicy, MediumPolicy, object, object) -> None
+        # type: (object, object, DriverPolicy, MediumPolicy, object, object, object) -> None
         self.definitions = definitions
         self.registry = registry
         self.policy = policy if policy is not None else DriverPolicy()
         self.medium_policy = (
             medium_policy if medium_policy is not None else MediumPolicy()
         )
-        #: 槽位变化后通知带宽重算的钩子（`AdmissionService.note_device_load_changed`）。
+        #: 槽位读数变化后通知带宽重算的钩子（`AdmissionService.note_device_load_changed`）。
         self.on_load_changed = on_load_changed
         #: 介质 ID 的分配器。**默认实现只保证进程内单调**——它不是持久身份，
         #: 任务 12 接真实后端时必须换成从存档推导的来源（架构 §4）。
         self.id_source = id_source if id_source is not None else self._next_medium_id
+        #: `ContainerProvider`：位置 -> ContainerAdapter。**槽位占用的唯一权威**
+        #: 就是它读到的方块容器。可为 None，此时一切需要容器的动作明确报
+        #: 「读不到」，而不是当成空槽（同 `MemorySlotStore`）。
+        self.containers = containers
 
         self._states = {}
         self._mediums = {}
         self._id_counter = 0
         self._orphans = []
-        #: 还没写进存档的介质 ID 与驱动器 `node_key` 文本（12-03）。
-        #: **谁改状态谁标脏**，不由调用方补——漏标一次的表现是「改了没存」，
-        #: 而那种缺陷要等到重进世界才看得见。
+        #: 还没写进存档的**介质 ID**。**谁改内容谁标脏**，不由扫描兜底——
+        #: 漏标一次的表现是「改了没存」，而那种缺陷要等到重进世界才看得见。
+        #: （**驱动器本身不再有脏集**：它不再进存档。）
         self._dirty_mediums = set()
-        self._dirty_drivers = set()
-        #: 已拆除、**待从存档里删掉**的驱动器。
-        self._removed_drivers = set()
-        #: 从存档读回、还没等到对应设备被区块发现时重挂的槽位。
-        #: `node_key 文本 -> [SlotAssignment, ...]`
-        self._pending_slots = {}
+        #: 旧存档留下的驱动器记录：`记录 ID -> [SlotAssignment, ...]`。
+        #: 读回来**只报进诊断**、不据此造物品，处置见 `restore_from_repository`。
+        self._legacy_slots = {}
+        #: 待从存档删掉的旧驱动器记录 ID。
+        self._retired_driver_records = set()
+        #: **信封读不懂**的旧驱动器记录：连删都不删——那份存档不是本构建
+        #: 写的，凭什么断定「这台驱动器现在该从档案里消失」（同 12-03 的纪律）。
+        self._kept_driver_records = set()
         #: **读不懂**、只能原样保留的介质 ID。两个来源：记录信封版本过新
         #: （`Record.read_only`），或载荷本身读不出（`MediumRecovery` 非 OK，
         #: 含型号缺失与损坏）。它们照样接管进内存（内容不能丢），但
@@ -740,32 +839,41 @@ class StorageDriverStore(object):
         #: 第二条是**必须的**，不能只看 `read_only`：信封版本按
         #: `CURRENT_SCHEMA_VERSION` 写，而载荷版本是 `MEDIUM_SCHEMA_VERSION`，
         #: 两者可以不同步；`Medium.to_dict()` 又**没有 `raw_payload` 回退**。
-        #: 只按信封判的话，一块「载荷读不懂」的盘一旦被 `drop()` 标脏，
-        #: 写回去的就是一份 `entries: []` 的**空盘**——内容直接没了。
+        #: 只按信封判的话，一块「载荷读不懂」的盘一旦被标脏，写回去的
+        #: 就是一份 `entries: []` 的**空盘**——内容直接没了。
         self._frozen_mediums = set()
-        #: 同上，但对象是驱动器记录：信封版本过新时槽位照常按最好猜测应用，
-        #: 但**不写回**——写回会把只存在于新版本里的字段抹掉。
-        self._frozen_drivers = set()
-        #: 存档里有、但按当前槽数放不下的槽位（R10 槽数改小、或槽数未配置）。
-        #: **保留而不截断**，逐条报在诊断里。
-        self._unplaced_slots = {}
+        #: 载体还没写回成功、**等下一帧复用同一个号重试**的槽位。
+        #: 键 `(位置文本, 槽)`，值 `{"medium_id", "model_id", "attempts"}`。
+        #: **它在发号之前就落账**，因此重复重读不会重复发号（见 `_materialize_blank`）。
+        self._pending_carriers = {}
+        #: 待刷新展示行（容量 Lore）的介质 ID：`medium_id -> 标脏帧号`。
+        #: 写回是写引擎容器，比读贵，因此单独排队、单独预算（12-04 的
+        #: 「不每 tick 扫描全部介质、显示不变跳过写回」）。
+        self._display_dirty = {}
+        self._display_seen = set()
         #: 介质 ID 是不是「从存档推导」的持久身份（12-02 定案）。
         #: 默认是进程内替身，`use_durable_ids()` 之后才为真。
         self._durable_ids = False
+        self.tick = 0
         self.archive_stats = {
             "medium_writes": 0,
-            "driver_writes": 0,
             "driver_deletes": 0,
             "restored_mediums": 0,
-            "restored_drivers": 0,
+            "legacy_driver_records": 0,
+            "legacy_driver_records_retired": 0,
         }
         self.stats = {
             "created": 0,
             "dropped": 0,
             "load_marks": 0,
+            "marks": 0,
+            "refreshes": 0,
             "mediums_created": 0,
             "mediums_adopted": 0,
             "projections": 0,
+            "carriers_written": 0,
+            "display_writes": 0,
+            "display_skipped": 0,
         }
 
     # -- 驱动器状态 ----------------------------------------------------
@@ -774,64 +882,34 @@ class StorageDriverStore(object):
         # type: () -> object
         return self.policy.resolve_slot_count(self.definitions)
 
-    def ensure(self, ref):
-        # type: (object) -> DriverState
-        """取或建一台驱动器的状态。同一代次重复调用是幂等的。"""
+    def ensure(self, ref, device_id=None):
+        # type: (object, str) -> DriverState
+        """取或建一台驱动器的状态。同一代次重复调用是幂等的。
+
+        **建好立刻读一次**（同 `MemorySlotStore.ensure`）：槽位就是方块容器
+        的读数，不读的话这台设备在下次重读之前一直是空的，刚插进去的盘
+        会像没生效一样。
+        """
         existing = self.get_by_ref(ref)
         if existing is not None:
             return existing
-        record = self.registry.get_by_ref(ref)
-        device_id = record.device_id if record is not None else DRIVER_DEVICE_ID
+        if device_id is None:
+            record = self.registry.get_by_ref(ref)
+            device_id = record.device_id if record is not None else DRIVER_DEVICE_ID
+        if not is_storage_driver(device_id, self.definitions):
+            return None
         state = DriverState(ref, self.policy, self, device_id, self.slot_count())
         self._states[ref.node_key.as_key()] = state
         self.stats["created"] += 1
-        self._apply_pending_slots(state)
+        self.refresh(ref)
         return state
-
-    def _apply_pending_slots(self, state):
-        # type: (DriverState) -> int
-        """把存档里等着这台设备的槽位装上。**只认位置，不认代次。**
-
-        代次不持久（`GenerationAllocator` 重启后从 0 重来），所以按
-        `DeviceRef` 存槽位的话，重进世界时查不到、槽位被静默丢掉——
-        「盘还在驱动器里、东西却没了」正是这样发生的。
-
-        **放不下的槽位保留、不截断、也不写回**（12 验收对样板槽的同一条纪律：
-        「容量或类型不兼容时保留原资源并进入待处理状态，不能静默截断、丢弃」）。
-        这里有两种放不下：槽数被改小（R10 未定案），或槽数本身没配置
-        （`UNCONFIGURED` 时 `slots` 是空表）。留在 `_pending_slots` 里等
-        下次设备被重新发现时再试，并计入 `unplaced_slots` 诊断。
-
-        **不标脏**：标脏会让下一次 `save_to_repository` 把「当前装得下的
-        那几个槽」写回去，档案里那条放不下的引用就**永久没了**。
-        档案维持原样，冲突如实报出来等人处置。
-        """
-        key = node_key_text(state.node_key)
-        assignments = self._pending_slots.get(key)
-        if not assignments:
-            return 0
-        applied = 0
-        leftover = []
-        for assignment in assignments:
-            if 0 <= assignment.slot < len(state.slots) and state.slots[assignment.slot] is None:
-                state.slots[assignment.slot] = assignment
-                applied += 1
-            else:
-                leftover.append(assignment)
-        if applied:
-            self.project(state)
-        if leftover:
-            self._pending_slots[key] = leftover
-            self._unplaced_slots[key] = len(leftover)
-        else:
-            self._pending_slots.pop(key, None)
-            self._unplaced_slots.pop(key, None)
-        return applied
 
     def get(self, node_key):
         # type: (object) -> DriverState
         state = self._states.get(node_key.as_key())
-        return state if state is not None and state.device_id == DRIVER_DEVICE_ID else None
+        if state is None or not is_storage_driver(state.device_id, self.definitions):
+            return None
+        return state
 
     def get_by_ref(self, ref):
         # type: (object) -> DriverState
@@ -843,35 +921,29 @@ class StorageDriverStore(object):
 
     def drop(self, ref):
         # type: (object) -> DriverState
-        """拆除：清空槽位、把介质标为失去归属。**不删除介质**。
+        """拆除：移除读数。**不删介质、也不标孤儿。**
 
-        本轮**不自行决定**掉落还是保管（架构 §6：与 R05、12-03/06 联动），
-        只把它们标成 `orphaned` 并留在介质表里，等后续任务定案。
+        容器权威下介质的归属是**那件物品本身**：方块被拆时容器里的物品
+        按游戏规则处理（掉落或留存），载体还在物品上，插到哪台驱动器都能
+        认回来。把介质标成 `orphaned` 会让一块完好的盘变成不可交易
+        （`is_tradeable()` 为假），方向是错的。
+
+        **拆除时容器里的物品会怎么处理，真机上没有读数**（掉落 / 删除 /
+        留存都可能）。本轮只做到「不 orphan + 诊断里报没人认领的介质」，
+        处置留给 12-06 / R05。
         """
         state = self.get_by_ref(ref)
         if state is None:
             return None
         key = node_key_text(state.node_key)
-        for medium_id in state.clear_all():
-            medium = self._mediums.get(medium_id)
-            if medium is not None:
-                medium.mark_orphaned("驱动器已拆除")
-                self._orphans.append(medium_id)
-                # 失去归属是内容之外的**状态变化**，同样要落盘：
-                # 不然重进世界后它会以「还挂在槽里」的样子回来。
-                # 版本过新的那些照旧不写（见 `_frozen_mediums`）。
-                self.note_medium_changed(medium_id)
         self._states.pop(ref.node_key.as_key(), None)
-        # 驱动器记录**删掉而不是写空**：同位置重放的新实例不得继承旧引用
-        # （12 验收「同一位置拆后重放……不会自动继承」）。介质记录留着，
-        # 它们已经标了孤儿——「拆除后介质怎么处置」是 R05/12-06，不在本轮。
-        self._dirty_drivers.discard(key)
-        self._pending_slots.pop(key, None)
-        self._unplaced_slots.pop(key, None)
-        # 信封读不懂的那些**连删都不删**：那份存档不是本构建写的，
-        # 凭什么断定「这台驱动器现在该从档案里消失」。
-        if key not in self._frozen_drivers:
-            self._removed_drivers.add(key)
+        # 这个位置上还没写回成功的载体请求作废：槽已经不在了。
+        for pending_key in [item for item in self._pending_carriers if item[0] == key]:
+            self._pending_carriers.pop(pending_key, None)
+        if key not in self._kept_driver_records:
+            # 旧存档里那个位置的驱动器记录**删掉而不是留着**：同位置重放的
+            # 新实例不得继承旧引用（12 验收「同一位置拆后重放……不会自动继承」）。
+            self._retired_driver_records.add(key)
         self.stats["dropped"] += 1
         return state
 
@@ -917,27 +989,31 @@ class StorageDriverStore(object):
         """
         kind = change.kind
         if kind == ChangeKind.ADDED:
-            if change.device_id != DRIVER_DEVICE_ID:
+            if not is_storage_driver(change.device_id, self.definitions):
                 return 0
-            state = self.ensure(change.ref)
+            state = self.ensure(change.ref, change.device_id)
+            if state is None:
+                return 0
+            # `ensure` 已经读了一次；这里再投影一次是为了「读不到容器」的设备
+            # 也留下一个明确的 0（与改版前一致，准入读的就是这个字段）。
             self.project(state)
             return 1
         if kind == ChangeKind.REMOVED:
-            if change.device_id != DRIVER_DEVICE_ID:
+            if not is_storage_driver(change.device_id, self.definitions):
                 return 0
             state = self.drop(change.ref)
             if state is None:
                 return 0
             return 1
         if kind in (ChangeKind.LOADED, ChangeKind.UNLOADED):
-            if change.device_id != DRIVER_DEVICE_ID:
+            if not is_storage_driver(change.device_id, self.definitions):
                 return 0
-            if self.mark_loaded(change.node_key, kind == ChangeKind.LOADED):
-                state = self.get(change.node_key)
-                if state is not None:
-                    self.project(state)
-                return 1
-            return 0
+            if not self.mark_loaded(change.node_key, kind == ChangeKind.LOADED):
+                return 0
+            # 重新加载之后容器内容可能已经变了（退出前的手工调整、别的模组），
+            # 因此标脏等下一次重读，而不是信任内存里那一份（同内存槽）。
+            self.mark_dirty(change.node_key)
+            return 1
         # NEIGHBORS_AFFECTED 与 PLACEMENT_REVIEW 是拓扑与交互层的事。
         return 0
 
@@ -1061,9 +1137,10 @@ class StorageDriverStore(object):
         # type: (str) -> object
         """这块介质装在哪台驱动器的哪个槽位。不在任何槽位返回 None。
 
-        **跨驱动器去重的唯一依据。** `DriverState.assign` 只查本机
-        （`slot_of` 看的是自己的 `slots`），两台驱动器各插一块同 ID 的盘
-        在它那里是合法的——那会让一份内容被记两次，而记账本身不会报错。
+        **跨驱动器去重的依据。** `DriverState.slot_of` 只看本机，两台驱动器
+        各插一块同 ID 的盘在它那里是合法的——那会让一份内容被记两次。
+        读路径的 `_resolve_cross_driver_duplicates` 用本方法做确定性裁决，
+        命令层也用它拒绝「已挂在别处」的请求。
         """
         for state in self._states.values():
             assignment = state.find(medium_id)
@@ -1089,141 +1166,611 @@ class StorageDriverStore(object):
             if candidate not in self._mediums:
                 return candidate
 
+    # -- 容器读数（槽位的唯一权威）---------------------------------------
+
+    def container_at(self, node_key):
+        # type: (object) -> object
+        """这台设备的容器适配器；拿不到时返回 `None`（**不是空容器**）。"""
+        if self.containers is None:
+            return None
+        return self.containers.container_at(node_key)
+
+    def accepts_put(self, device_id, item_name):
+        # type: (str, str) -> bool
+        """这个物品能不能放进这台设备的容器。**只答驱动器那一部分。**
+
+        不是驱动器一律放行——别家容器各有各的规则，`events._veto_or_mark`
+        会逐个 store 问。
+
+        **只能按名字判**：放入事件里读不出 `userData`（`events._item_name`
+        只看 `newItemName`），因此这里问不了型号粒度——
+        `DriverPolicy.accepted_models` 那个 R10 替身留在重读路径上。
+        """
+        if not is_storage_driver(device_id, self.definitions):
+            return True
+        if not item_name:
+            # 读不出物品名就不拦（与 `_veto_or_mark` 同一口径）。
+            return True
+        return bool(self.definitions.has_medium(item_name))
+
+    def disk_count_of(self, ref):
+        # type: (object) -> object
+        """能源要的 `unit_count`：硬盘个数；**从没读到过则是 `None`（待确认）**。
+
+        与 `MemorySlotStore.unit_count_of` 同形。返回 `None` 而不是 0 是有意的：
+        判定停在待确认，而不是伪造一个「这台驱动器一块盘都没有、所以不耗电」
+        的结论。读得到时按上一次成功读数给（读不到不清零）。
+        """
+        state = self.get_by_ref(ref)
+        if state is None or not state.has_reading():
+            return None
+        return state.disk_count(self.medium)
+
+    # -- 变更信号 ------------------------------------------------------
+
+    def mark_dirty(self, node_key, tick=None):
+        # type: (object, int) -> bool
+        """这台驱动器的容器变了。**只记一笔**，不在这里读容器。
+
+        引擎无关的入口：适配器把容器事件翻译成位置后调它。不立刻读的两个
+        理由同 `PatternStore.mark_dirty`：事件顺序不可依赖；事件触发时
+        容器内容可能还没落定。
+        """
+        state = self.get(node_key)
+        if state is None:
+            return False
+        state.dirty_tick = self.tick if tick is None else int(tick)
+        self.stats["marks"] += 1
+        return True
+
+    def mark_all_dirty(self):
+        # type: () -> int
+        """把全部驱动器标脏。恢复流程与手动重扫用它重建读数。"""
+        now = self.tick
+        count = 0
+        for state in self._states.values():
+            state.dirty_tick = now
+            count += 1
+        return count
+
+    # -- 重读 ----------------------------------------------------------
+
+    def advance(self, tick):
+        # type: (int) -> int
+        """推进节拍并重读到期的驱动器。返回本帧重读了几台。
+
+        由 `bootstrap.tick()` 每帧调用一次。**没到期的一台都不碰。**
+        """
+        self.tick = int(tick)
+        pending = [
+            state
+            for state in self.states()
+            if state.loaded and self._is_due(state)
+        ]
+        pending = pending[:DRIVER_REFRESH_BUDGET]
+        refreshed = 0
+        for state in pending:
+            # 一台出问题不能连累其余：少了这层兜底，一次意外会让排在后面的
+            # 驱动器永远刷不到——症状是「有的设备同步、有的从不同步」。
+            try:
+                if self.refresh(state.ref):
+                    refreshed += 1
+            except Exception as error:  # pragma: no cover - 防御性
+                state.stats["errors"] = state.stats.get("errors", 0) + 1
+                state.unreadable = u"重读时出错：%s: %s" % (
+                    type(error).__name__,
+                    error,
+                )
+        return refreshed
+
+    def _is_due(self, state):
+        # type: (DriverState) -> bool
+        """这台驱动器现在该不该重读。规则同 `MemorySlotStore._is_due`。"""
+        if state.refresh_tick < 0:
+            # 从没读到过（`ensure` 那一次被拒了，比如当时还没加载）。
+            return True
+        if state.unreadable:
+            # 读不到的要定期重试：一次瞬时失败之后**不会有任何变更事件再来**。
+            return self.tick - state.refresh_tick >= DRIVER_MAX_STALE_FRAMES
+        if state.dirty_tick < 0:
+            # 从没收到过变更，也读得到：没有理由再读一遍。
+            return False
+        if state.refresh_tick > state.dirty_tick:
+            # 这一次变更已被之后的某次重读覆盖过了。**必须是严格大于**：
+            # 同一帧里「先刷新、后收到变更」是常规情形。
+            return False
+        if self.tick - state.dirty_tick >= DRIVER_SETTLE_FRAMES:
+            return True
+        return self.tick - state.refresh_tick >= DRIVER_MAX_STALE_FRAMES
+
+    def refresh(self, ref, force=False):
+        # type: (object, bool) -> bool
+        """立刻重读一台驱动器的容器并重建槽位表。返回是否读到了。
+
+        `force=True` 用于人工重扫与测试：跳过时机判断，直接读。
+        """
+        state = self.get_by_ref(ref)
+        if state is None:
+            return False
+        if not state.loaded and not force:
+            return False
+        if force:
+            state.stats["forced_refreshes"] += 1
+        ok = False
+        try:
+            # **整段都在 `try` 里**，包括最开始那次指纹与最后那几步落地。
+            # `refresh` 的调用方分布在引擎事件与每帧推进两条路径上，任何一处
+            # 抛出去都会作废本帧剩余的事件批次——因此它**保证不抛**。
+            # 这不是「吞异常」：类型与文本记进 `unreadable`，且计数进 `errors`。
+            #
+            # 2026-10-04 真机补：这几步原先在 `try` 外面（指纹在那之前、
+            # 去重/投影/首次读到在那之后），一次偶发失败就真的逃了出去。
+            # 那次的现场是 MCDK 探针（见 05-04 交付说明 §5.5），模组自身路径
+            # 没有发作过，但契约是契约。
+            before = state.content_fingerprint()
+            ok = self._read_slots(state)
+            if ok:
+                state.readings += 1
+                if state.content_fingerprint() != before:
+                    state.revision += 1
+                    state.stats["changes"] += 1
+            if ok:
+                # 跨驱动器去重与投影都放在读数成立之后：`_read_slots` 失败时
+                # 旧读数原样保留，不能拿半份结果去动别人的槽位。
+                self._resolve_cross_driver_duplicates()
+                self.project(state)
+                self._note_first_seen(state)
+        except Exception as error:
+            state.unreadable = u"重读时出错：%s: %s" % (
+                type(error).__name__,
+                error,
+            )
+            state.stats["errors"] += 1
+            ok = False
+        finally:
+            # **帧号用 `finally` 记**：写在 `return` 之前的话，一次抛错就会
+            # 让它停在 -1，于是 `_is_due` 判它「从没读过」、每帧重试。
+            state.refresh_tick = self.tick
+            state.stats["refreshes"] += 1
+            self.stats["refreshes"] += 1
+        return ok
+
+    def _note_first_seen(self, state):
+        # type: (DriverState) -> None
+        """**头一次读到**的介质把展示行标脏（05 的详情增量「恢复核对后更新摘要」）。
+
+        之后内容每变一次也会再标（见 `StorageDriverProvider._transfer`）。
+        只看「读到过没有」，因此一台驱动器每帧重读不会反复标脏。
+        """
+        for medium_id in state.medium_ids():
+            if medium_id in self._display_seen:
+                continue
+            self._display_seen.add(medium_id)
+            self.note_display_dirty(medium_id)
+
+    def refresh_all(self, force=True):
+        # type: (bool) -> int
+        """重读全部驱动器。恢复流程与手动重扫的入口。"""
+        return sum(
+            1 for state in self.states() if self.refresh(state.ref, force=force)
+        )
+
+    def _resolve_cross_driver_duplicates(self):
+        # type: () -> int
+        """同一块介质出现在多台驱动器上：按 `(位置文本, 槽号)` 字典序保留最小的
+        一个，其余就地标成 `duplicate_across_drivers` 并从槽位表里摘掉。
+
+        **这是改版新引入的确定性裁决。** 改版前这件事靠「物理上不可能同时插在
+        两台里」保证（槽位只在命令里写入，`mount` 拒第二个）。改成容器读数之后，
+        两台驱动器可以各插一块同 ID 的盘（创造模式复制、别的模组），
+        必须有确定性的规则，否则同一份内容被记两次、而且结果随读序变化。
+
+        **不碰容器里那件物品**：它还在那儿，玩家自己取出来即可。
+        """
+        entries = []
+        for state in self._states.values():
+            for item in state.occupied():
+                entries.append((node_key_text(state.node_key), item.slot, state, item))
+        entries.sort(key=lambda entry: (entry[0], entry[1]))
+        claimed = {}
+        touched = []
+        evicted = 0
+        for text, slot, state, item in entries:
+            owner = claimed.get(item.medium_id)
+            if owner is None:
+                claimed[item.medium_id] = (text, slot)
+                continue
+            if state.evict_slot(
+                slot,
+                "duplicate_across_drivers",
+                u"介质 %s 已在 %s 的 %d 号槽；同一块盘不能挂两处"
+                % (item.medium_id, owner[0], owner[1]),
+            ):
+                evicted += 1
+                if state not in touched:
+                    touched.append(state)
+        for state in touched:
+            self.project(state)
+        return evicted
+
+    def _read_slots(self, state):
+        # type: (DriverState) -> bool
+        """读一台驱动器的全部格。返回是否真的读到了容器。
+
+        **读不到时保留上一次的槽位、只标 `unreadable`**（区块卸载不等于盘被拔了）。
+        """
+        adapter = self.container_at(state.node_key)
+        if adapter is None:
+            state.unreadable = (
+                "读不到这台设备的方块容器（区块未加载、位置已无方块、"
+                "或该类型尚未登记适配器）"
+            )
+            state.stats["unreadable"] += 1
+            return False
+        if not callable(getattr(adapter, "read_slot", None)):
+            # 没有按槽读取能力就不退化成整表扫描：槽位是**逐槽**的，
+            # 扫描读不出「哪一格插着什么」，会张冠李戴。
+            state.unreadable = "这台设备的容器适配器不支持按槽读取，读不出槽里的介质"
+            state.stats["unreadable"] += 1
+            return False
+        state.unreadable = ""
+        state.slot_count = _slot_count_of(
+            adapter, state.slot_count or STORAGE_DRIVER_SLOT_COUNT.value
+        )
+        slots = {}
+        invalid = {}
+        for slot in range(state.slot_count):
+            medium_id, error = self._read_one(state, adapter, slot)
+            if state.unreadable:
+                # 中途读失败，整次作废：半份结果会让剩下的槽看起来是空的。
+                state.stats["unreadable"] += 1
+                return False
+            if medium_id is None:
+                if error is not None:
+                    invalid[slot] = error
+                continue
+            if medium_id in slots.values():
+                # 本机重复：槽号小的先读到，因此它赢；后到的报重复。
+                invalid[slot] = {
+                    "code": "duplicate_in_driver",
+                    "detail": u"介质 %s 已经在本驱动器的 %d 号槽" % (
+                        medium_id,
+                        min(
+                            index
+                            for index, value in slots.items()
+                            if value == medium_id
+                        ),
+                    ),
+                }
+                continue
+            slots[slot] = medium_id
+        state.replace_slots(slots, invalid, state.slot_count, self.tick)
+        return True
+
+    def _read_one(self, state, adapter, slot):
+        # type: (DriverState, object, int) -> tuple
+        """读一个槽。返回 `(medium_id | None, error | None)`。
+
+        分支与它们的后果（每一条都要有回归位）：
+
+        | 读到的东西 | 处置 |
+        | --- | --- |
+        | 空槽 | 什么都不算 |
+        | 无载体 + 名字是介质 | **空白介质**：发号 + 写回载体（`_materialize_blank`）|
+        | 无载体 + 名字不是介质 | `not_a_medium`（不搬动、不占槽）|
+        | 有载体键但读不出 | `malformed_carrier`（**绝不当空白盘再发号**）|
+        | 载体版本不认识 | `unknown_carrier_version`（不猜新版本语义）|
+        | 载体命中但记录缺失 | 占槽（孤儿）：不发号、不删引用、不当空盘 |
+        | 一格叠了多块 | `stacked_media`（拆开是一道未定规则，本轮不动它）|
+        """
+        try:
+            data = adapter.read_slot(slot)
+        except Exception as error:
+            # **当成读不到容器**，而不是当成空槽——空槽会让这台设备看起来
+            # 「盘被拔了」，而库存会据此归零。
+            state.unreadable = u"读取槽位 %d 时容器读不出来：%s: %s" % (
+                slot,
+                type(error).__name__,
+                error,
+            )
+            return None, None
+        if is_empty_item(data):
+            return None, None
+        try:
+            item_key = item_key_from_dict(data)
+        except (TypeError, ValueError) as error:
+            # 这里**不能 `%s` 那个异常对象**：`str(exc)` 在 py2 上对含
+            # 非 ASCII 的 `args[0]` 会按 ASCII 编码并抛 `UnicodeEncodeError`。
+            return None, {
+                "code": "malformed",
+                "detail": u"槽里的物品字典读不动：%s: %s"
+                % (type(error).__name__, error),
+            }
+        if item_key is None:
+            return None, None
+        name = item_key.name
+        if not self.definitions.has_medium(name):
+            return None, {
+                "code": "not_a_medium",
+                "detail": u"%s 不是本模组的介质（放进来的那一刻就该被拒收，"
+                          u"这是规则生效之前留下的、或由别的模组塞进来的）" % (name,),
+            }
+        count = _item_count(data)
+        if count != 1:
+            # **一格只挂一块。** 空白介质是可以堆叠的（`medium_lore.md` 第 2 节），
+            # 因此「一格 64 块空白磁带」是真会发生的事；要挂载就得把其中一块
+            # 拆出来、并决定剩下那些放哪——那是一道未定规则（R05/R10）。
+            # 本轮**不改动它**，如实报出来等人处置。
+            return None, {
+                "code": "stacked_media",
+                "detail": u"%s × %d 叠在一格：驱动器一格只挂一块，"
+                          u"拆开是一道未定规则（R05/R10）" % (name, count),
+            }
+        user_data = _user_data_of(data)
+        if isinstance(user_data, dict) and medium_item.MEDIUM_CARRIER_KEY in user_data:
+            carrier = medium_item.read_carrier(user_data)
+            if carrier is None:
+                return None, {
+                    "code": "malformed_carrier",
+                    "detail": u"载体读不动（ID 不是纯 ASCII、或格式版本不是整数）；"
+                              u"**不当空白盘处理**——那会把一块有内容的盘重识别成新盘",
+                }
+            medium_id, version = carrier
+            if version != medium_item.CARRIER_VERSION:
+                return None, {
+                    "code": "unknown_carrier_version",
+                    "detail": u"载体格式版本 %r（本版本认得 %d）：不猜新版本的语义"
+                    % (version, medium_item.CARRIER_VERSION),
+                }
+            # 记录缺失 → 孤儿。**占着槽**（`disk_count` 计入、`_transfer` 会以
+            # `MEDIUM_UNRECOVERED` 拒绝交易），但不发号、不当空盘。
+            return medium_id, None
+        return self._materialize_blank(state, adapter, slot, name, self.tick)
+
+    def _materialize_blank(self, state, adapter, slot, model_id, tick):
+        # type: (DriverState, object, int, str, int) -> tuple
+        """给一块**未初始化的空白介质**发号，把载体写进那件物品，再挂上。
+
+        三步都必需，顺序也不能换：
+
+        1. **先在 `_pending_carriers` 落账、再发号**。这是防重复发号的关键：
+           `create_medium` 之后介质立刻进 `_mediums`，但写回要是失败，
+           下一帧重读看到的**还是一块没有载体的空白物品**——没有这条账，
+           每帧都会发一个新号，一口气造出一堆幽灵盘。
+        2. **写回载体，忽略返回值**。真机实测 `SpawnItemToContainer`
+           会写成功却返回 `False`（`resource_identity.md` §2.3）。
+        3. **只认读回核对**。写回的判据是「再读一次，载体是不是我要的那个」。
+        """
+        key = (node_key_text(state.node_key), slot)
+        pending = self._pending_carriers.get(key)
+        if pending is not None and pending.get("model_id") == model_id:
+            medium_id = pending["medium_id"]
+        else:
+            if pending is not None:
+                # 槽里换了型号：旧的待写回作废（那块介质记录留着，不标孤儿）。
+                self._pending_carriers.pop(key, None)
+            medium, reason, detail = self.create_medium(model_id, tick)
+            if medium is None:
+                return None, {"code": "not_a_medium", "detail": detail}
+            medium_id = medium.medium_id
+            pending = {
+                "medium_id": medium_id,
+                "model_id": model_id,
+                "attempts": 0,
+            }
+            self._pending_carriers[key] = pending
+        pending["attempts"] = pending.get("attempts", 0) + 1
+        if pending["attempts"] > DRIVER_PENDING_MAX_ATTEMPTS:
+            # 一块永远写不进去的槽不能每帧重试。**报「写不进」不报「空盘」。**
+            return None, {
+                "code": "carrier_write_unverified",
+                "detail": u"载体写入 %s 号槽连续失败 %d 次，已停止重试；"
+                          u"盘已发号但读不回来" % (slot, pending["attempts"] - 1),
+            }
+        try:
+            writable = item_dict_from_key(ResourceKey.item(model_id, 0), 1)
+            writable["userData"] = medium_item.write_carrier(
+                None, medium_id, medium_item.CARRIER_VERSION
+            )
+            adapter.write_slot(slot, writable)
+        except Exception as error:
+            return None, {
+                "code": "carrier_write_unverified",
+                "detail": u"写入 %s 号槽时出错：%s: %s"
+                % (slot, type(error).__name__, error),
+            }
+        try:
+            after = adapter.read_slot(slot)
+        except Exception as error:
+            return None, {
+                "code": "carrier_write_unverified",
+                "detail": u"写回后读不出 %s 号槽：%s: %s"
+                % (slot, type(error).__name__, error),
+            }
+        carrier = medium_item.read_carrier(_user_data_of(after))
+        if carrier is None or carrier[0] != medium_id:
+            # 写下去了但读回来不是它——**保留 pending**，下一帧用同一个号重试。
+            return None, {
+                "code": "carrier_write_unverified",
+                "detail": u"%s 号槽的载体写回没有核对上（读回来是 %r）"
+                % (slot, carrier),
+            }
+        self._pending_carriers.pop(key, None)
+        self.stats["carriers_written"] += 1
+        self.note_medium_changed(medium_id)
+        self.note_display_dirty(medium_id)
+        return medium_id, None
+
     # -- 存档 ----------------------------------------------------------
 
-    def save_all(self):
-        # type: () -> dict
-        """导出全部驱动器状态与介质载荷。**纯数据**，不含对象引用。"""
-        return {
-            "schema_version": DRIVER_SCHEMA_VERSION,
-            "drivers": [state.to_dict() for state in self.states()],
-            "mediums": [
-                self._mediums[key].to_dict() for key in sorted(self._mediums)
-            ],
-        }
+    # -- 展示写回（介质物品的容量 Lore）-----------------------------------
 
-    def restore(self, payload):
-        # type: (dict) -> dict
-        """从 `save_all()` 的输出恢复。返回统计。
+    def note_display_dirty(self, medium_id):
+        # type: (str) -> None
+        """这件介质物品的展示行该刷新了。**只记一笔**，不在这里写引擎。
 
-        **不重建位置索引**：位置由注册表的区块发现路径恢复，
-        这里只把槽位引用与介质内容装回去，随后由 `add_node` 幂等挂载。
+        写回是写方块容器，比读贵，因此单独排队、单独预算：
+        05 的详情增量明写「不每 tick 扫描全部介质」「显示不变跳过写回」。
         """
-        if not isinstance(payload, dict):
-            return {"drivers": 0, "mediums": 0}
-        mediums = 0
-        for item in payload.get("mediums", ()):
-            self.load_medium(item)
-            mediums += 1
-        drivers = 0
-        for item in payload.get("drivers", ()):
-            state = DriverState.from_dict(item, self.policy, self)
-            self._states[state.node_key.as_key()] = state
-            drivers += 1
-        return {"drivers": drivers, "mediums": mediums}
+        if medium_id in self._mediums and medium_id not in self._frozen_mediums:
+            self._display_dirty[medium_id] = self.tick
 
-    # -- 真实后端（12-03）-----------------------------------------------
+    def advance_display(self, budget=None):
+        # type: (int) -> int
+        """把到期的展示行写回槽里的介质物品。返回写了几件。
+
+        写入前的三道闸（缺一不可，理由见 05 的详情增量与 `medium_lore.md` §4）：
+
+        1. **去抖**：标脏之后静默 `DRIVER_SETTLE_FRAMES` 帧再写，免得一次
+           大额提交过程中反复重写。
+        2. **显示不变跳过**：只比较**管理行**。只比内容版本是不够的——
+           先取后存、取放相抵时内容回原样，而 Lore 本来就没变，不必写。
+        3. **写前核对**：那块盘可能已经被拔走了（那就不写，物品已经离开我们的容器）。
+
+        写回失败**不回滚任何已成功的库存交易**，只保留待刷新状态等下次。
+        """
+        if budget is None:
+            budget = DRIVER_DISPLAY_BUDGET
+        written = 0
+        for medium_id in sorted(self._display_dirty):
+            if written >= budget:
+                break
+            dirty_tick = self._display_dirty.get(medium_id, self.tick)
+            if self.tick - dirty_tick < DRIVER_SETTLE_FRAMES:
+                continue
+            medium = self._mediums.get(medium_id)
+            if medium is None or medium_id in self._frozen_mediums:
+                self._display_dirty.pop(medium_id, None)
+                continue
+            owner = self.medium_slot_owner(medium_id)
+            if owner is None:
+                # 不在任何槽里：物品已经离开我们的容器，没地方写。
+                self._display_dirty.pop(medium_id, None)
+                self.stats["display_skipped"] += 1
+                continue
+            state, assignment = owner
+            adapter = self.container_at(state.node_key)
+            if adapter is None or not callable(getattr(adapter, "read_slot", None)):
+                continue
+            try:
+                data = adapter.read_slot(assignment.slot)
+            except Exception:
+                continue
+            if is_empty_item(data):
+                self._display_dirty.pop(medium_id, None)
+                continue
+            carrier = medium_item.read_carrier(_user_data_of(data))
+            if carrier is None or carrier[0] != medium_id:
+                # 槽里已经不是这块盘了：这次待办作废。
+                self._display_dirty.pop(medium_id, None)
+                continue
+            desired_lines = medium_item.medium_lore_lines(medium)
+            current_lines = _managed_lines_of(data)
+            if tuple(current_lines) == tuple(desired_lines):
+                # **显示不变就跳过写回。**
+                self._display_dirty.pop(medium_id, None)
+                self.stats["display_skipped"] += 1
+                continue
+            writable = dict(data)
+            writable["userData"] = medium_item.materialize_item_user_data(
+                medium, _user_data_of(data)
+            )
+            try:
+                adapter.write_slot(assignment.slot, writable)
+                after = adapter.read_slot(assignment.slot)
+            except Exception:
+                continue
+            if tuple(_managed_lines_of(after)) != tuple(desired_lines):
+                # 没写进去：**保留待刷新状态**，不把显示成功当成完成。
+                continue
+            self._display_dirty.pop(medium_id, None)
+            self.stats["display_writes"] += 1
+            written += 1
+        return written
+
+    def pending_display_writes(self):
+        # type: () -> int
+        return len(self._display_dirty)
+
+    # -- 存档：只剩介质这一半（12-03 接的）--------------------------------
 
     def note_medium_changed(self, medium_id):
         # type: (str) -> None
-        """标脏一块介质。**谁改内容谁调**，不由扫描兜底。
+        """标脏一块介质的内容。**谁改内容谁调**，不由扫描兜底。
 
         版本过新的记录**跳过**：它只能原样保留（见 `_frozen_mediums`）。
+        驱动器**不再有脏集**——槽位是容器读数，不进存档。
         """
         if medium_id in self._mediums and medium_id not in self._frozen_mediums:
             self._dirty_mediums.add(medium_id)
 
-    def note_slots_changed(self, state):
-        # type: (DriverState) -> None
-        """标脏一台驱动器的槽位。信封版本过新的那些**跳过**（见 `_frozen_drivers`）。"""
-        key = node_key_text(state.node_key)
-        if key not in self._frozen_drivers:
-            self._dirty_drivers.add(key)
-
     def pending_archive_writes(self):
         # type: () -> int
-        """还没写进存档的记录数。诊断与预算用。"""
-        return (
-            len(self._dirty_mediums)
-            + len(self._dirty_drivers)
-            + len(self._removed_drivers)
-        )
+        """还没落盘的记录数（脏介质 + 待删的旧驱动器记录）。诊断与预算用。"""
+        return len(self._dirty_mediums) + len(self._retired_driver_records)
 
     def save_to_repository(self, repository, budget=None):
-        # type: (object, int) -> dict
-        """把脏的介质与驱动器写进存档。返回本批写了多少条。
+        # type: (object, int) -> int
+        """把脏的**介质**写进存档，并把退役的旧驱动器记录删掉。返回写了几条。
 
-        **`disk_count` 不写**：它是权威槽位的投影（`project()` 是唯一写入点），
-        存下来再读回去等于给投影造了第二份真相。
-
-        读取器那边只认 `Record.payload`，所以这里写的就是 `to_dict()` 的原样。
+        **只写介质**：槽位是方块容器的读数，存下来再读回去等于给读数造
+        第二份真相（`persistence_backend.md` §4.1）。
         """
         written = 0
-        work = [(MEDIUM_RECORD_KIND, rid) for rid in sorted(self._dirty_mediums)]
-        work += [(DRIVER_RECORD_KIND, rid) for rid in sorted(self._dirty_drivers)]
-        # 驱动器按位置文本建一次索引。逐条线性扫 `_states` 的话，
-        # 一批 n 台就是 O(n²)——驱动器台数上去之后这里是纯浪费。
-        drivers_by_text = dict(
-            (node_key_text(state.node_key), state) for state in self._states.values()
-        )
-
-        for kind, record_id in work:
+        for medium_id in sorted(self._dirty_mediums):
             if budget is not None and written >= budget:
                 break
-            if kind == MEDIUM_RECORD_KIND:
-                if record_id in self._frozen_mediums:
-                    # 第二道闸：冻结判断在恢复期就做完了，这里再挡一次，
-                    # 免得将来多出一条标脏路径就绕过去了。
-                    self._dirty_mediums.discard(record_id)
-                    continue
-                medium = self._mediums.get(record_id)
-                payload = None if medium is None else medium.to_dict()
-                dirty = self._dirty_mediums
-            else:
-                if record_id in self._frozen_drivers:
-                    self._dirty_drivers.discard(record_id)
-                    continue
-                state = drivers_by_text.get(record_id)
-                payload = None if state is None else state.to_dict()
-                dirty = self._dirty_drivers
+            if medium_id in self._frozen_mediums:
+                # 第二道闸：冻结判断在恢复期就做完了，这里再挡一次，
+                # 免得将来多出一条标脏路径就绕过去了。
+                self._dirty_mediums.discard(medium_id)
+                continue
+            medium = self._mediums.get(medium_id)
+            payload = None if medium is None else medium.to_dict()
             if payload is not None:
-                repository.write(Record(kind, record_id, payload))
-                if kind == MEDIUM_RECORD_KIND:
-                    self.archive_stats["medium_writes"] += 1
-                else:
-                    self.archive_stats["driver_writes"] += 1
+                repository.write(Record(MEDIUM_RECORD_KIND, medium_id, payload))
+                self.archive_stats["medium_writes"] += 1
             # **写成功之后才摘脏。** `repository.write` 抛异常（故障注入、
             # 版本过新）时这一行走不到，记录留在脏里等下一轮重试——
             # 先摘脏再写会让那次改动永远丢掉。
-            dirty.discard(record_id)
+            self._dirty_mediums.discard(medium_id)
             written += 1
 
-        for record_id in sorted(self._removed_drivers):
+        for record_id in sorted(self._retired_driver_records):
+            if record_id in self._kept_driver_records:
+                # 信封读不懂的旧记录**连删都不删**（见 `restore_from_repository`）。
+                self._retired_driver_records.discard(record_id)
+                continue
             if budget is not None and written >= budget:
                 break
             repository.delete(DRIVER_RECORD_KIND, record_id)
-            self._removed_drivers.discard(record_id)
+            self._retired_driver_records.discard(record_id)
             self.archive_stats["driver_deletes"] += 1
             written += 1
-
         return written
 
     def restore_from_repository(self, repository):
         # type: (object) -> dict
-        """从存档读回介质与驱动器槽位。返回统计。
+        """恢复介质记录；旧驱动器记录**只报进诊断并退役**。
 
-        **介质立刻接管，槽位延后到设备被区块发现时再挂**：位置是稳定的，
-        而设备代次不是（`GenerationAllocator` 重启后从 0 重来），所以
-        槽位进 `_pending_slots`，等 `ensure()` 拿到新代次时按 `node_key` 装上。
+        **介质立刻接管**（内容不能丢；读不懂的照样接管，但冻结、永不写回）。
+        槽位不恢复——它由方块容器的读数决定，设备被区块发现时读一次就有。
 
-        介质记录读不懂照样接管（内容与原始载荷都保留），只是不可交易——
-        `Medium.from_dict` 已经给出那个语义，这里不重复判断。
+        **旧驱动器记录不物化。** 上一版把槽位存在 `endernet.storage_driver/<位置>`
+        里，可那时挂载只能由 `mount` 命令凭空发号——那些介质**本来就没有对应
+        物品**。凭空在世界里造一批物品就是替未定玩法定案（全局约束 7），
+        因此这里只把内容报进 `diagnostics()["legacy_driver_records"]`，
+        记录本身删掉。那些介质记录留在 ExtraData 里，处置归 12-06 / R05。
 
-        **没有预算参数：恢复是一次读完的。** 分帧恢复属 12-05
-        （「阶段未完成不接受新存取」那套闸门），本轮不做。因此**大批量存档
-        会在启动那一帧堆出一次尖峰**——本轮只验过 1~2 块介质，规模没有读数。
+        **没有预算参数：恢复是一次读完的**（12-05 的分帧恢复不在此列）。
         """
-        stats = {"mediums": 0, "drivers": 0, "missing": 0, "reused_ids": 0, "frozen": 0}
+        stats = {
+            "mediums": 0,
+            "legacy_drivers": 0,
+            "missing": 0,
+            "reused_ids": 0,
+            "frozen": 0,
+        }
 
         for medium_id in repository.list_ids(MEDIUM_RECORD_KIND):
             record = repository.load(MEDIUM_RECORD_KIND, medium_id)
@@ -1241,7 +1788,7 @@ class StorageDriverStore(object):
             # **记录的键是权威**，载荷里那个 `medium_id` 只是副本。
             # 不改的话，读不懂的载荷会全用 `Medium._unreadable` 的占位 ID
             # `"unreadable"` 去接管——第二条就撞上「已被接管」，异常从
-            # 恢复循环里逃出去，后面**连槽位都恢复不了**。
+            # 恢复循环里逃出去，后面连介质都恢复不了。
             medium.medium_id = medium_id
             self.adopt_medium(medium)
             if record.read_only or medium.recovery != MediumRecovery.OK:
@@ -1253,44 +1800,193 @@ class StorageDriverStore(object):
                 stats["frozen"] += 1
             stats["mediums"] += 1
 
-        restored_slots = []
         for record_id in repository.list_ids(DRIVER_RECORD_KIND):
             record = repository.load(DRIVER_RECORD_KIND, record_id)
-            if record is None or not isinstance(record.payload, dict):
+            if record is None:
                 stats["missing"] += 1
                 continue
-            if record.read_only:
-                self._frozen_drivers.add(record_id)
-                stats["frozen"] += 1
+            stats["legacy_drivers"] += 1
+            self.archive_stats["legacy_driver_records"] += 1
+            payload = record.payload if isinstance(record.payload, dict) else {}
             assignments = []
-            for item in record.payload.get("slots", ()):
+            for item in payload.get("slots", ()):
                 try:
                     assignments.append(SlotAssignment.from_dict(item))
                 except (KeyError, TypeError, ValueError):
                     continue
-            if assignments:
-                self._pending_slots[record_id] = assignments
-                restored_slots.extend(assignments)
-            stats["drivers"] += 1
-
-        # 槽位引用到的介质**没有记录**：那只可能是存档不完整，不是「空盘」。
-        # 这里只如实计数——引用本身保留在 `_pending_slots` 里，装进驱动器后
-        # 那块介质查不到，`StorageDriverProvider._transfer` 会以
-        # `MEDIUM_UNRECOVERED` 拒绝交易（`medium is None` 那条分支）。
-        # `orphaned` 标记**不在这里改**：它来自记录，是拆除时写下的结论。
-        #
-        # 只数**本次**读回来的那批：把 `_pending_slots` 整个扫一遍会把
-        # 之前几次恢复留下的、还没等到设备被发现的引用重复计进去。
-        for assignment in restored_slots:
-            if assignment.medium_id not in self._mediums:
-                stats["missing"] += 1
+            self._legacy_slots[record_id] = assignments
+            if record.read_only:
+                # 那份存档不是本构建写的，凭什么断定它该消失。
+                self._kept_driver_records.add(record_id)
+                stats["frozen"] += 1
+                continue
+            self._retired_driver_records.add(record_id)
+            self.archive_stats["legacy_driver_records_retired"] += 1
 
         self.archive_stats["restored_mediums"] += stats["mediums"]
-        self.archive_stats["restored_drivers"] += stats["drivers"]
         return stats
+
+    # -- 装/卸（命令层动容器）-------------------------------------------
+
+    def place_medium(self, state, slot, medium_id, expected_slot_version=None):
+        # type: (DriverState, int, str, object) -> tuple
+        """把一块**已有**介质放进某个槽。返回 `(ok, reason, detail)`。
+
+        它做的就是把那件物品写进方块容器——**槽位读数是容器的结果，不是原因**。
+        写完立刻重读，因此调用方拿到 `ok` 时权威槽位表已经对上了。
+        """
+        if not state.is_usable():
+            return False, state.recovery, state.recovery_detail
+        if isinstance(slot, bool) or not isinstance(slot, int):
+            return False, Reason.OUT_OF_RANGE, "槽号必须是整数"
+        if slot < 0 or slot >= state.slot_count:
+            return False, Reason.OUT_OF_RANGE, "槽号 %r 超出 0..%d" % (
+                slot,
+                state.slot_count - 1,
+            )
+        medium = self.medium(medium_id)
+        if medium is None:
+            return False, Reason.MEDIUM_NOT_MOUNTED, "没有 %s 这块介质的记录" % (
+                medium_id,
+            )
+        owner = self.medium_slot_owner(medium_id)
+        if owner is not None:
+            other_state, assignment = owner
+            if other_state is not state or assignment.slot != slot:
+                return (
+                    False,
+                    Reason.MEDIUM_DUPLICATE_MOUNT,
+                    "介质 %s 已装在 %s 的 %d 号槽；同一块盘不能挂两处"
+                    % (medium_id, node_key_text(other_state.node_key), assignment.slot),
+                )
+        current = state.assignment(slot)
+        current_version = current.slot_version if current is not None else 0
+        if expected_slot_version is not None and int(expected_slot_version) != current_version:
+            return (
+                False,
+                Reason.STALE_VERSION,
+                "槽位版本为 %d，请求依据的是 %r" % (current_version, expected_slot_version),
+            )
+        if current is not None and current.medium_id != medium_id:
+            return False, Reason.SLOT_OCCUPIED, "槽位 %d 已被 %s 占用" % (
+                slot,
+                current.medium_id,
+            )
+        adapter = self.container_at(state.node_key)
+        if adapter is None:
+            return False, Reason.DRIVER_UNLOADED, "读不到这台驱动器的方块容器"
+        if not callable(getattr(adapter, "write_slot", None)):
+            return False, Reason.UNSUPPORTED, "这台设备的容器适配器不支持按槽写入"
+        try:
+            writable = item_dict_from_key(ResourceKey.item(medium.model_id, 0), 1)
+            writable["userData"] = medium_item.materialize_item_user_data(
+                medium, writable.get("userData")
+            )
+            adapter.write_slot(slot, writable)
+        except Exception as error:
+            return False, Reason.CONTAINER_REFUSED, u"写入 %s 号槽时出错：%s: %s" % (
+                slot,
+                type(error).__name__,
+                error,
+            )
+        try:
+            after = adapter.read_slot(slot)
+        except Exception as error:
+            return False, Reason.CONTAINER_UNCERTAIN, u"写回后读不出 %s 号槽：%s: %s" % (
+                slot,
+                type(error).__name__,
+                error,
+            )
+        carrier = medium_item.read_carrier(_user_data_of(after))
+        if carrier is None or carrier[0] != medium_id:
+            # 写下去了但读回来不是它——**什么都不回滚**，如实报不确定。
+            return False, Reason.CONTAINER_UNCERTAIN, u"写回没有核对上（读回来是 %r）" % (
+                carrier,
+            )
+        self.refresh(state.ref, force=True)
+        if state.slot_of(medium_id) is None:
+            return False, Reason.CONTAINER_UNCERTAIN, "写进去了，但重读后槽位里不是它"
+        return True, "", ""
+
+    def inspect_slot(self, state, slot):
+        # type: (DriverState, int) -> object
+        """**只读**地看一眼槽里那件物品的原始字典。读不到或空槽返回 `None`。
+
+        命令层在「取出来」之前用它算去向（背包放不放得下）——
+        没有这一步就得先取后算，而取出来没地方放就等于销毁那件物品。
+        """
+        adapter = self.container_at(state.node_key)
+        if adapter is None or not callable(getattr(adapter, "read_slot", None)):
+            return None
+        try:
+            data = adapter.read_slot(slot)
+        except Exception:
+            return None
+        if is_empty_item(data):
+            return None
+        return data
+
+    def take_medium(self, state, slot, expected_slot_version=None):
+        # type: (DriverState, int, object) -> tuple
+        """把某个槽里的介质物品**取出来**。返回 `(ok, reason, 物品字典)`。
+
+        **取出来必须有去向**：本方法只把物品从容器里摘掉并原样交出来，
+        调用方若不落地它（塞进背包或掉在原地），那件物品就没了。
+        因此调用方必须自己保证「有一个能放下它的地方」再来取。
+        """
+        if not state.is_usable():
+            return False, state.recovery, state.recovery_detail
+        if isinstance(slot, bool) or not isinstance(slot, int):
+            return False, Reason.OUT_OF_RANGE, "槽号必须是整数"
+        if slot < 0 or slot >= state.slot_count:
+            return False, Reason.OUT_OF_RANGE, "槽号 %r 超出 0..%d" % (
+                slot,
+                state.slot_count - 1,
+            )
+        current = state.assignment(slot)
+        current_version = current.slot_version if current is not None else 0
+        if expected_slot_version is not None and int(expected_slot_version) != current_version:
+            return (
+                False,
+                Reason.STALE_VERSION,
+                "槽位版本为 %d，请求依据的是 %r" % (current_version, expected_slot_version),
+            )
+        if current is None:
+            return False, Reason.BAD_PARAMETER, "槽位 %d 本来就是空的" % (slot,)
+        adapter = self.container_at(state.node_key)
+        if adapter is None:
+            return False, Reason.DRIVER_UNLOADED, "读不到这台驱动器的方块容器"
+        try:
+            data = adapter.read_slot(slot)
+        except Exception as error:
+            return False, Reason.CONTAINER_UNCERTAIN, u"读不出 %s 号槽：%s: %s" % (
+                slot,
+                type(error).__name__,
+                error,
+            )
+        if is_empty_item(data):
+            # 读数说它在这儿、容器说它是空的：以容器为准，**不当成取到了**。
+            self.refresh(state.ref, force=True)
+            return False, Reason.CONTAINER_UNCERTAIN, "容器里那一格已经是空的"
+        try:
+            adapter.write_slot(slot, None)
+            after = adapter.read_slot(slot)
+        except Exception as error:
+            return False, Reason.CONTAINER_UNCERTAIN, u"清空 %s 号槽时出错：%s: %s" % (
+                slot,
+                type(error).__name__,
+                error,
+            )
+        if not is_empty_item(after):
+            return False, Reason.CONTAINER_UNCERTAIN, "取出后那一格仍然有东西"
+        self.refresh(state.ref, force=True)
+        return True, "", data
 
     def diagnostics(self):
         # type: () -> dict
+        claimed = set()
+        for state in self._states.values():
+            claimed.update(state.medium_ids())
         report = dict(self.stats)
         report.update(
             {
@@ -1300,19 +1996,67 @@ class StorageDriverStore(object):
                 "drivers": len(self._states),
                 "mediums": len(self._mediums),
                 "orphans": list(self._orphans),
-                "pending_slots": sorted(self._pending_slots),
-                #: 读不懂、只能原样保留的介质与驱动器。**它们不进任何写回路径。**
+                #: 读不懂容器、只能沿用上一次读数的驱动器（区块未加载等）。
+                "unreadable": [
+                    state.node_key.as_key()
+                    for state in self.states()
+                    if state.unreadable
+                ],
+                #: **从没成功读到过**容器的驱动器：槽位与 `disk_count` 都不作数。
+                "never_read": [
+                    state.node_key.as_key()
+                    for state in self.states()
+                    if not state.has_reading()
+                ],
+                #: 槽里有东西但挂不上（不是介质 / 载体读不动 / 版本不认识 / 叠了多块）。
+                "invalid_slots": dict(
+                    (node_key_text(state.node_key), state.diagnostics()["invalid"])
+                    for state in self.states()
+                    if state.invalid
+                ),
+                #: 占了槽、但存档里没有对应记录（载体有 ID、记录缺失）。
+                "orphan_slots": dict(
+                    (node_key_text(state.node_key), [
+                        medium_id
+                        for medium_id in state.medium_ids()
+                        if self.medium(medium_id) is None
+                    ])
+                    for state in self.states()
+                    if any(
+                        self.medium(medium_id) is None
+                        for medium_id in state.medium_ids()
+                    )
+                ),
+                #: 存档里有、但没有任何槽引用的介质（旧 `mount` 造的无物品介质、
+                #: 被拔走之后记录还留着的盘）。**处置归 12-06 / R05**，这里只报。
+                "unclaimed_mediums": sorted(
+                    medium_id for medium_id in self._mediums
+                    if medium_id not in claimed
+                ),
+                #: 读不懂、只能原样保留的介质。**它们不进任何写回路径。**
                 "frozen_mediums": sorted(self._frozen_mediums),
-                "frozen_drivers": sorted(self._frozen_drivers),
-                #: 存档里有、但按当前槽数放不下的槽位。**保留未截断**，等人处置。
-                "unplaced_slots": dict(self._unplaced_slots),
+                #: 旧存档留下的驱动器记录：**只报不物化**，见 `restore_from_repository`。
+                "legacy_driver_records": dict(
+                    (record_id, [item.to_dict() for item in assignments])
+                    for record_id, assignments in self._legacy_slots.items()
+                ),
+                #: 信封读不懂、连删都不删的旧驱动器记录。
+                "kept_driver_records": sorted(self._kept_driver_records),
+                #: 载体还没写回成功、等下一帧重试的槽位（`(位置, 槽)` 文本）。
+                "pending_carriers": dict(
+                    ("%s#%d" % (key[0], key[1]), value["medium_id"])
+                    for key, value in self._pending_carriers.items()
+                ),
+                "pending_display_writes": self.pending_display_writes(),
                 "pending_archive_writes": self.pending_archive_writes(),
                 #: 介质 ID 是不是持久的。`use_durable_ids()` 之后为真——
                 #: 在此之前它只保证进程内单调，不能当「重进世界找回同一块盘」的依据。
                 "durable_medium_ids": self._durable_ids,
             }
         )
-        report.update(dict(("archive_" + key, value) for key, value in self.archive_stats.items()))
+        report.update(
+            dict(("archive_" + key, value) for key, value in self.archive_stats.items())
+        )
         return report
 
     def __repr__(self):
@@ -1320,3 +2064,45 @@ class StorageDriverStore(object):
             len(self._states),
             len(self._mediums),
         )
+
+
+def _user_data_of(data):
+    # type: (object) -> object
+    """引擎物品字典里的 `userData`；不是字典就返回 `None`。"""
+    if not isinstance(data, dict):
+        return None
+    return data.get("userData")
+
+
+def _item_count(data):
+    # type: (object) -> int
+    """引擎物品字典里的个数。读不出或不是正数时按 1。
+
+    （与 `memory_slot._item_count` 同一份逻辑的两份副本——跨层 import 会成环。
+    这里还多一个用途：**一格叠了多块介质**要被读路径认出来，见 `_read_one`。）
+    """
+    if not isinstance(data, dict):
+        return 1
+    count = data.get("count")
+    if isinstance(count, bool) or not isinstance(count, int):
+        return 1
+    return count if count > 0 else 1
+
+
+def _managed_lines_of(data):
+    # type: (object) -> tuple
+    """一件物品的 `display.Lore` 里**本模组管理的**那些行。
+
+    只用于「显示有没有变」的比较——**只比管理行**，玩家自己的 Lore 一行都不看，
+    否则每加一句自己的说明就会触发一次写回。
+    """
+    user_data = _user_data_of(data)
+    if not isinstance(user_data, dict):
+        return ()
+    display = user_data.get(medium_item.DISPLAY_KEY)
+    if not isinstance(display, dict):
+        return ()
+    lore = display.get(medium_item.LORE_KEY)
+    if not isinstance(lore, (list, tuple)):
+        return ()
+    return tuple(line for line in lore if medium_item.is_managed_line(line))

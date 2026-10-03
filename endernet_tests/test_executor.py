@@ -232,6 +232,9 @@ class ExecutorFixture(unittest.TestCase):
             world=self.world,
             energy_policy=EnergyPolicy.dev_stand_in(),
             container_provider=self.containers,
+            # 卸介质**必须有去向**（2026-10-04）：`unmount` 命令把那件物品交给
+            # 玩家背包，没有背包提供者就一律拒绝。这里给一个最小替身。
+            inventory_provider=testsupport.FakePlayerInventoryProvider(),
             returns_sink=self.sink,
             port_policy=self.port_policy,
             order_policy=self.order_policy,
@@ -306,6 +309,10 @@ class ExecutorFixture(unittest.TestCase):
         # 样板口自己的容器装样板，朝向的那个装「外部机器收到的料」。
         self.containers.boxes[PORT_KEY.as_key()] = self.port_box
         self.containers.boxes[MACHINE_KEY.as_key()] = self.machine
+        # 驱动器那 10 格：**槽位占用的权威是容器**（2026-10-04），装一块盘
+        # 就是往这里写一件物品。
+        self.driver_box = FakeContainer(slots=10, max_stack=1)
+        self.containers.boxes[DRIVER_KEY.as_key()] = self.driver_box
         # 每台内存槽各插一根内存条：**容量是容器的内容，不是方块的台数**。
         self.memory_boxes = {}
         for position in self.memory_positions():

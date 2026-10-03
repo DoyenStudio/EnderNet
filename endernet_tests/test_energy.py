@@ -604,23 +604,23 @@ class TestAssembly(unittest.TestCase):
 class TestBootstrappedEnergy(unittest.TestCase):
     """接进启动层之后的判定（仍不碰引擎）。"""
 
-    def test_driver_mount_and_unmount_update_energy_without_a_tick(self):
-        server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
+    def test_driver_place_and_take_update_energy_without_a_tick(self):
+        server = self.build_with_containers(EnergyPolicy.dev_stand_in())
         state = server.drivers.get(key(0, 65))
         energy = server.runtimes.runtime_of(state.node_key).services.get(ServiceId.ENERGY)
         before = energy.diagnostics()["totals"]["demand_total"]
         medium, reason, detail = server.drivers.create_medium("endernet:harddisk_1k")
         self.assertIsNotNone(medium, (reason, detail))
-        self.assertTrue(state.provider.mount(0, medium.medium_id)[0])
+        self.assertTrue(server.drivers.place_medium(state, 0, medium.medium_id)[0])
         self.assertEqual(energy.diagnostics()["totals"]["demand_total"], before + 1)
-        self.assertTrue(state.provider.unmount(0)[0])
+        self.assertTrue(server.drivers.take_medium(state, 0)[0])
         self.assertEqual(energy.diagnostics()["totals"]["demand_total"], before)
 
     def test_energy_rebuild_reads_slots_not_the_config_projection(self):
-        server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
+        server = self.build_with_containers(EnergyPolicy.dev_stand_in())
         state = server.drivers.get(key(0, 65))
         medium, _, _ = server.drivers.create_medium("endernet:harddisk_1k")
-        self.assertTrue(state.provider.mount(0, medium.medium_id)[0])
+        self.assertTrue(server.drivers.place_medium(state, 0, medium.medium_id)[0])
         runtime = server.runtimes.runtime_of(state.node_key)
         energy = runtime.services.get(ServiceId.ENERGY)
         record = server.registry.get(state.node_key)
@@ -634,7 +634,9 @@ class TestBootstrappedEnergy(unittest.TestCase):
         self.assertEqual(row.gap, "")
 
     def test_driver_count_changes_the_power_verdict_immediately(self):
-        server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
+        server = self.build_with_containers(EnergyPolicy.dev_stand_in())
+        server.push(NormalizedEvent.place(key(2), CREATIVE))
+        server.tick()
         state = server.drivers.get(key(0, 65))
         runtime = server.runtimes.runtime_of(state.node_key)
         energy = runtime.services.get(ServiceId.ENERGY)
@@ -645,20 +647,22 @@ class TestBootstrappedEnergy(unittest.TestCase):
         energy.add_node(NetworkNode.from_record(server.definitions, server.registry.get(key(2))))
         self.assertIs(energy.power_ok(state.node_key), True)
         medium, _, _ = server.drivers.create_medium("endernet:harddisk_1k")
-        self.assertTrue(state.provider.mount(0, medium.medium_id)[0])
+        self.assertTrue(server.drivers.place_medium(state, 0, medium.medium_id)[0])
         self.assertIs(energy.power_ok(state.node_key), False)
         self.assertEqual(power_blocker(runtime.services, state.node_key).code, Reason.BROWNOUT)
-        self.assertTrue(state.provider.unmount(0)[0])
+        self.assertTrue(server.drivers.take_medium(state, 0)[0])
         self.assertIs(energy.power_ok(state.node_key), True)
 
     def test_replaced_driver_does_not_inherit_the_old_count(self):
-        server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
+        server = self.build_with_containers(EnergyPolicy.dev_stand_in())
         state = server.drivers.get(key(0, 65))
         medium, _, _ = server.drivers.create_medium("endernet:harddisk_1k")
-        self.assertTrue(state.provider.mount(0, medium.medium_id)[0])
+        self.assertTrue(server.drivers.place_medium(state, 0, medium.medium_id)[0])
         old_ref = state.ref
         server.push(NormalizedEvent.remove(state.node_key, DRIVER))
         server.tick()
+        # 方块被拆掉 → 它那个容器也随方块实体消失；原地放回的是一台**空**驱动器。
+        server.drivers.container_at(state.node_key).write_slot(0, None)
         server.push(NormalizedEvent.place(state.node_key, DRIVER))
         server.tick()
         energy = server.runtimes.runtime_of(state.node_key).services.get(ServiceId.ENERGY)
@@ -676,26 +680,37 @@ class TestBootstrappedEnergy(unittest.TestCase):
             energy.power_ok(key(0, 65))
         self.assertEqual(energy.stats["settles"], before)
 
-    def test_an_unreadable_memory_slot_is_unknown_while_an_empty_driver_is_known_zero(self):
-        """**「读不到」与「确实是空的」是两回事。**
+    def test_without_a_container_both_the_driver_and_the_memory_slot_are_unknown(self):
+        """**读不到容器 = 待确认**，驱动器与内存槽同形（2026-10-04）。
 
-        驱动器没有容器这一层，空盘就是已知的 0；内存槽的根数要读方块容器，
-        而这份夹具**没有容器提供者**（离线默认），因此它的根数不可知——
-        判定停在待确认，而不是伪造一个「这台内存槽不耗电」的结论。
+        这两台设备的读数都要**读方块容器**才拿得到，而这份夹具没有容器
+        提供者（离线默认），因此两者的数量都不可知——判定停在待确认，
+        而不是伪造一个「这台设备一个都不占、所以不耗电」的结论。
 
-        容器读得到的那一侧见 `test_an_empty_memory_slot_is_known_zero`
-        （2026-10-03 补：内存条根数已接线，这条从「还没接线」变成「读不到」）。
+        容器读得到的那一侧见 `test_an_empty_memory_slot_is_known_zero` 与
+        `test_an_empty_driver_with_a_readable_container_is_known_zero`。
+        改版前驱动器「空盘就是已知的 0」，那是**它当时没有容器这一层**的
+        产物；现在它也有了。
         """
         server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
         server.push(NormalizedEvent.place(key(1, 63), MEMORY_SLOT))
         server.tick()
         runtime = server.runtimes.runtime_of(key(0, 65))
         energy = runtime.services.get(ServiceId.ENERGY)
-        self.assertEqual(energy._members[key(0, 65)].unit_count, 0)
-        self.assertEqual(energy._members[key(0, 65)].gap, "")
+        driver = energy._members[key(0, 65)]
+        self.assertIsNone(driver.unit_count)
+        self.assertEqual(driver.gap, GAP_UNWIRED_INPUTS)
         memory = energy._members[key(1, 63)]
         self.assertIsNone(memory.unit_count)
         self.assertEqual(memory.gap, GAP_UNWIRED_INPUTS)
+
+    def test_an_empty_driver_with_a_readable_container_is_known_zero(self):
+        """读得到容器、并且确实是空的 → **已知 0 块盘**，不是「待确认」。"""
+        server = self.build_with_containers(EnergyPolicy.dev_stand_in())
+        energy = server.runtimes.runtime_of(key(0, 65)).services.get(ServiceId.ENERGY)
+        driver = energy._members[key(0, 65)]
+        self.assertEqual(driver.unit_count, 0)
+        self.assertEqual(driver.gap, "")
 
     def test_an_empty_memory_slot_is_known_zero(self):
         """读得到容器、并且确实是空的 → **已知 0 根**，不是「待确认」。"""

@@ -1879,6 +1879,9 @@ class BootstrapFixture(unittest.TestCase):
         self.place(key(1, 65), "endernet:tiny_network_endpoint")
         self.place(key(0, 65), "endernet:creative_energy_source")
         self.place(key(2, 65), "endernet:storage_driver")
+        # 驱动器那 10 格：**槽位占用的权威是容器**（2026-10-04）。
+        self.disk_box = FakeContainer(slots=10, max_stack=1)
+        self.containers.boxes[key(2, 65).as_key()] = self.disk_box
         self.place(key(offset), port_device)
         if port_device in (INPUT, OUTPUT_DEVICE, TEMPLATE_DEVICE):
             self.world.facing[key(offset).as_key()] = "east"

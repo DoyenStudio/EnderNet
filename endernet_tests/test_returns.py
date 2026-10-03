@@ -1019,6 +1019,10 @@ class ReturnsFixture(unittest.TestCase):
         self.containers.boxes[PORT_KEY.as_key()] = self.port_box
         self.containers.boxes[MACHINE_KEY.as_key()] = self.machine
         self.containers.boxes[MEMORY_KEY.as_key()] = self.memory_box
+        # 驱动器那 10 格：**槽位占用的权威是容器**（2026-10-04）。
+        self.containers.boxes[DRIVER_KEY.as_key()] = FakeContainer(
+            slots=10, max_stack=1
+        )
         self.server.tick()
         self.mount_a_disk()
         self.accrue_quota()

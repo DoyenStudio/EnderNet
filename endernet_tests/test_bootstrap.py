@@ -1614,6 +1614,59 @@ class TestPatternContainerEvents(unittest.TestCase):
         )
         self.assertFalse(event.cancelled)
 
+    # -- 驱动器只收介质（2026-10-04）------------------------------------
+
+    def test_only_mediums_go_into_a_driver(self):
+        """那 10 格只放介质物品；别的模组的东西一律在放入那一刻拒收。"""
+        self.place(DRIVER, 8)
+        for name in ("minecraft:stone", "endernet:memory_128b",
+                     "endernet:crafting_template"):
+            event = _PutEvent(name, 8, 64, 0)
+            self.api.dispatch(
+                self.api.event("PlayerTryPutCustomContainerItemServerEvent"), event
+            )
+            self.assertTrue(event.cancelled, name)
+
+    def test_a_medium_is_accepted_into_a_driver(self):
+        ref = self.place(DRIVER, 8)
+        event = _PutEvent("endernet:singleside_tape", 8, 64, 0)
+        self.api.dispatch(
+            self.api.event("PlayerTryPutCustomContainerItemServerEvent"), event
+        )
+        self.assertFalse(event.cancelled)
+        self.assertGreater(self.server.drivers.get_by_ref(ref).dirty_tick, -1)
+
+    def test_a_hopper_cannot_bypass_the_driver_rejection(self):
+        """漏斗是第二条放入路径，规则必须同样生效。"""
+        self.place(DRIVER, 8)
+        event = _PutEvent("minecraft:stone", 8, 64, 0)
+        event.dimension = 0
+        self.api.dispatch(
+            self.api.event("ItemPushInCustomContainerServerEvent"), event
+        )
+        self.assertTrue(event.cancelled)
+        self.assertEqual(
+            self.server.pattern_diagnostics()["container_events"][
+                "driver_slot_rejected"
+            ],
+            1,
+        )
+
+    def test_the_driver_rejection_counter_is_separate(self):
+        """三台设备的拒收**分开计数**，否则答不出「哪条规则真的生效了」。"""
+        self.place(TEMPLATE_IO, 7)
+        self.place(MEMORY_SLOT, 8)
+        self.place(DRIVER, 9)
+        for x in (7, 8, 9):
+            self.api.dispatch(
+                self.api.event("PlayerTryPutCustomContainerItemServerEvent"),
+                _PutEvent("minecraft:stone", x, 64, 0),
+            )
+        counts = self.server.pattern_diagnostics()["container_events"]
+        self.assertEqual(counts["pattern_slot_rejected"], 1)
+        self.assertEqual(counts["memory_slot_rejected"], 1)
+        self.assertEqual(counts["driver_slot_rejected"], 1)
+
     def test_rejections_are_counted_for_diagnostics(self):
         self.place(TEMPLATE_IO, 7)
         self.api.dispatch(

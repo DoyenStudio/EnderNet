@@ -273,9 +273,16 @@ def materialize_item_user_data(medium, user_data):
 
     = 写回载体 + 用最新权威摘要替换容量行。**保留其他一切字段**（名称、
     其他 Lore、`customTips` 与非本模组的 `userData` 键）。
+
+    **给 `apply_capacity_lines` 的必须是没带标记的原文**（`capacity_lines()`），
+    不是 `medium_lore_lines()`——后者已经加过标记，再传进去会被
+    `apply_capacity_lines` **再加一次**，行尾变成 `§1§2§3§1§2§3`。
+    这个重复直到 2026-10-04 驱动器接上展示写回、第一次真的调用本函数才现形：
+    在那之前它一个调用方都没有（`medium_lore.md` §6 一直写着「没有任何代码
+    在真机上把载体写进物品」）。
     """
     return apply_capacity_lines(
-        carrier_of(medium, user_data), medium_lore_lines(medium)
+        carrier_of(medium, user_data), medium.capacity_lines()
     )
 
 

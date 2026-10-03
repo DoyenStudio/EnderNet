@@ -164,6 +164,87 @@ class FakeEventsModule(object):
         self.DelServerPlayerEvent = DelServerPlayerEvent
 
 
+class FakeSlotContainerProvider(object):
+    """位置 -> 按槽可读写的假容器。**每个位置一个独立容器**。
+
+    存储驱动器从 2026-10-04 起以**方块容器的读数为槽位权威**，因此凡是要
+    装一块盘进驱动器的夹具都必须给它一个容器——本类就是那个容器。
+    默认 10 格，与 `STORAGE_DRIVER_SLOT_COUNT` 和方块自己的
+    `container_size` 同值。
+    """
+
+    def __init__(self, slots=10):
+        self.slots = int(slots)
+        self.by_position = {}
+
+    def container_at(self, node_key):
+        from endernet.server.adapters.containers import FakeContainer
+
+        position = node_key.as_key()
+        if position not in self.by_position:
+            self.by_position[position] = FakeContainer(
+                slots=self.slots, max_stack=1
+            )
+        return self.by_position[position]
+
+    def diagnostics(self):
+        return {"fake": True, "cached": len(self.by_position)}
+
+
+class FakeInventoryEndpoint(object):
+    """最小背包端点：只实现存储服务的卸载路径用到的四件事。"""
+
+    def __init__(self, capacity=64):
+        self.capacity = int(capacity)
+        self.items = []
+
+    def endpoint_id(self):
+        return "fake-inventory"
+
+    def holder_id(self):
+        return "fake-player"
+
+    def can_read(self):
+        return True
+
+    def probe_space(self, resource_key, count):
+        return self.capacity
+
+    def commit_insert(self, op_id, resource_key, count, owner_id="", origin=None):
+        from endernet.common.protocol import TransferReceipt, TransferStatus
+
+        moved = max(0, min(count, self.capacity))
+        if moved <= 0:
+            return TransferReceipt(
+                op_id, count, 0, TransferStatus.REFUSED, "", resource_key
+            )
+        self.capacity -= moved
+        self.items.append((resource_key, moved))
+        if moved == count:
+            return TransferReceipt(
+                op_id, count, moved, TransferStatus.COMPLETE, "", resource_key
+            )
+        return TransferReceipt(
+            op_id, count, moved, TransferStatus.PARTIAL, "", resource_key
+        )
+
+
+class FakePlayerInventoryProvider(object):
+    """`位置 -> 背包` 的替身。**按玩家缓存**，与生产实现同一生命周期。"""
+
+    def __init__(self, capacity=64):
+        self.capacity = int(capacity)
+        self.by_player = {}
+
+    def endpoint_of(self, player_id):
+        if player_id not in self.by_player:
+            self.by_player[player_id] = FakeInventoryEndpoint(self.capacity)
+        return self.by_player[player_id]
+
+    def diagnostics(self):
+        return {"fake": True, "players": len(self.by_player)}
+
+
 class StorageStand(object):
     """一套最小的驱动器 + 存储服务，供需要**真实库存**的用例复用。
 
@@ -194,12 +275,16 @@ class StorageStand(object):
             else MediumPolicy(frames_per_second=frames_per_second)
         )
         self.driver_policy = DriverPolicy()
+        #: 驱动器那 10 格的假容器提供方。**槽位占用的权威就是它**
+        #: （2026-10-04）：没有它，驱动器读不到任何槽位，`new_medium` 装不进去。
+        self.containers = FakeSlotContainerProvider()
         self.store = StorageDriverStore(
             self.definitions,
             self.registry,
             policy=self.driver_policy,
             medium_policy=self.medium_policy,
             on_load_changed=self.loads.append,
+            containers=self.containers,
         )
         self.service = StorageService(drivers=self.store, policy=self.medium_policy)
         #: `seed()` 下一次要用的帧号。**由它自己往上走**，因为额度是按帧
@@ -241,11 +326,16 @@ class StorageStand(object):
 
     def new_medium(self, model="endernet:singleside_tape", slot=0):
         # type: (str, int) -> object
-        """新建一块盘并装进槽位，返回介质。"""
+        """新建一块盘并装进槽位，返回介质。
+
+        **装 = 把介质物品写进方块容器**（2026-10-04）：驱动器随后重读，
+        槽位读数是那次写入的结果。因此这里走 `place_medium` 而不是
+        往内存里塞一个槽位。
+        """
         medium, reason, detail = self.store.create_medium(model)
         if medium is None:
             raise AssertionError("造不出介质 %s：%s / %s" % (model, reason, detail))
-        ok, reason, detail = self.state.provider.mount(slot, medium.medium_id)
+        ok, reason, detail = self.store.place_medium(self.state, slot, medium.medium_id)
         if not ok:
             raise AssertionError("装不进槽位：%s / %s" % (reason, detail))
         self.medium = medium
@@ -453,6 +543,62 @@ ENGINE_ITEM_SHAPE = {
     "auxValue": 0,
     "showInHand": True,
 }
+
+
+def item_dict_with_carrier(name, medium_id, count=1, version=None):
+    # type: (str, str, int, object) -> dict
+    """一件**带着载体**的介质物品字典——我方写进方块容器的那种形状。
+
+    载体的格式版本默认取 `medium_item.CARRIER_VERSION`；显式给一个别的值
+    用来测「版本不认识」那条分支。
+    """
+    from endernet.common import medium_item
+    from endernet.common.item_codec import item_dict_from_key
+    from endernet.common.resource_key import ResourceKey
+
+    data = item_dict_from_key(ResourceKey.item(name, 0), count)
+    if version is None:
+        version = medium_item.CARRIER_VERSION
+    data["userData"] = medium_item.write_carrier(None, medium_id, version)
+    return data
+
+
+def carrier_of_item(data):
+    # type: (object) -> object
+    """一件物品字典上的载体，等价于 `medium_item.read_carrier(userData)`。"""
+    from endernet.common import medium_item
+
+    if not isinstance(data, dict):
+        return None
+    return medium_item.read_carrier(data.get("userData"))
+
+
+def managed_lines_of(data):
+    # type: (object) -> tuple
+    """一件物品的 `display.Lore` 里**本模组管理的**那些行。"""
+    from endernet.common import medium_item
+
+    if not isinstance(data, dict):
+        return ()
+    user_data = data.get("userData")
+    if not isinstance(user_data, dict):
+        return ()
+    display = user_data.get(medium_item.DISPLAY_KEY)
+    if not isinstance(display, dict):
+        return ()
+    lore = display.get(medium_item.LORE_KEY)
+    if not isinstance(lore, (list, tuple)):
+        return ()
+    return tuple(line for line in lore if medium_item.is_managed_line(line))
+
+
+def item_dict_without_carrier(name, count=1):
+    # type: (str, int) -> dict
+    """一件**没有载体**的介质物品字典 = 一块未初始化的空白介质。"""
+    from endernet.common.item_codec import item_dict_from_key
+    from endernet.common.resource_key import ResourceKey
+
+    return item_dict_from_key(ResourceKey.item(name, 0), count)
 
 
 def engine_item(name, count, **identity):

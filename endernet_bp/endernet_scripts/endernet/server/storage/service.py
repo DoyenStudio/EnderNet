@@ -36,6 +36,7 @@ from ...common.protocol import (
     TransferStatus,
 )
 from ...common.crafting_recipe import match
+from ...common.item_codec import item_key_from_dict
 from ...common.definitions import (
     ITEM_TEMPLATES,
     PATTERN_MODE_CRAFTING,
@@ -1607,6 +1608,14 @@ class StorageService(NetworkService):
 
     def _cmd_mount(self, command, payload):
         # type: (object, dict) -> CommandResult
+        """把一块介质装进某个槽。
+
+        **「装上了」的含义是「容器里那一格确实是它」**（2026-10-04）：命令层
+        往方块容器写那件物品，驱动器随后重读、把槽位读数对上。因此这里不再
+        直接改内存里的槽位表——那样写进去的槽位会被下一次重读静默回退。
+
+        `model_id` 表示「造一块新的空白介质」：发号 + 把载体写进那件物品。
+        """
         state, refusal = self._driver_state_of(command)
         if refusal is not None:
             return refusal
@@ -1628,9 +1637,8 @@ class StorageService(NetworkService):
                 return self._reject(command, reason, detail)
             medium_id = medium.medium_id
 
-        provider = state.provider
-        ok, reason, detail = provider.mount(
-            slot, medium_id, payload.get("expected_slot_version"), self._now()
+        ok, reason, detail = self.drivers.place_medium(
+            state, slot, medium_id, payload.get("expected_slot_version")
         )
         if not ok:
             return self._refuse_mount(command, reason, detail)
@@ -1643,8 +1651,9 @@ class StorageService(NetworkService):
             slot_version=state.slot_view(slot)["slot_version"],
         )
         if not mounted:
-            # 驱动器已经装上了但网络侧挂不上去：**回滚槽位**，不留半完成状态。
-            provider.unmount(slot)
+            # 物品已经在容器里了，只是网络侧这一次挂不上。**不回滚那件物品**：
+            # 它就是权威读数，下一帧 `add_node` 会按它收敛；强行取回来反而要
+            # 给它找一个新的去向，而这里没有可靠的去向。
             return self._refuse_mount(command, mount_reason, mount_detail)
         return CommandResult.ok(
             command.request_id,
@@ -1660,27 +1669,78 @@ class StorageService(NetworkService):
 
     def _cmd_unmount(self, command, payload):
         # type: (object, dict) -> CommandResult
+        """把某个槽里的介质物品取出来，交给玩家背包。
+
+        **取出来必须有去向。** 本命令目前只支持 `into="player"`：先探一次
+        背包放不放得下，**放不下就不取**——绝不静默把那件物品销毁掉。
+        （玩家直接用手把介质从驱动器里拿出来是另一条路，不经过这里。）
+        """
         state, refusal = self._driver_state_of(command)
         if refusal is not None:
             return refusal
         slot = payload.get("slot")
         if isinstance(slot, bool) or not isinstance(slot, int):
             return self._reject(command, Reason.BAD_PARAMETER, "slot 必须是整数")
-
+        if payload.get("into", "player") != "player":
+            return self._reject(
+                command,
+                Reason.BAD_PARAMETER,
+                "取出来的物品必须有去向：本命令目前只支持 into='player'",
+            )
         assignment = state.assignment(slot)
-        ok, reason, detail = state.provider.unmount(
-            slot, payload.get("expected_slot_version")
+        if assignment is None:
+            return self._reject(
+                command, Reason.BAD_PARAMETER, "槽位 %d 本来就是空的" % (slot,)
+            )
+        data = self.drivers.inspect_slot(state, slot)
+        if data is None:
+            return self._refuse_mount(
+                command, Reason.CONTAINER_UNCERTAIN, "读不出 %d 号槽里那件物品" % (slot,)
+            )
+        try:
+            key = item_key_from_dict(data)
+        except (TypeError, ValueError):
+            return self._reject(command, Reason.SLOT_CHANGED, "槽里的物品字典读不动")
+        if key is None:
+            return self._reject(
+                command, Reason.BAD_PARAMETER, "槽位 %d 是空的" % (slot,)
+            )
+        endpoint, refusal = self._inventory_endpoint_for(command, payload)
+        if refusal is not None:
+            return refusal
+        count = 1
+        space = endpoint.probe_space(key, count)
+        if space is not None and space < count:
+            return self._reject(
+                command, Reason.NO_CAPACITY, "背包放不下这一件；先腾出空间再来取"
+            )
+        ok, reason, taken = self.drivers.take_medium(
+            state, slot, payload.get("expected_slot_version")
         )
         if not ok:
-            return self._refuse_mount(command, reason, detail)
-        if assignment is not None:
-            self.unmount_medium(assignment.medium_id, reason="取出介质")
+            return self._refuse_mount(command, reason, taken)
+        receipt = endpoint.commit_insert(command.request_id or "", key, count)
+        if receipt.moved < count:
+            # 探过之后仍然没全收下：**如实报不确定**，不当作成功，
+            # 也不能把那件物品再塞回容器（读数已经变了，塞回去是第二次写）。
+            return CommandResult.rejected(
+                command.request_id,
+                [
+                    BlockReason(
+                        Reason.CONTAINER_UNCERTAIN,
+                        "介质已从驱动器取出，但背包只收下 %d 件；请核对背包"
+                        % (receipt.moved,),
+                    )
+                ],
+            )
+        self.unmount_medium(assignment.medium_id, reason="取出介质")
         return CommandResult.ok(
             command.request_id,
             {
                 "action": "unmount",
                 "slot": slot,
-                "medium_id": detail,
+                "medium_id": assignment.medium_id,
+                "into": "player",
                 "session_slots": state.slot_views(),
                 "config_version": state.config_version,
                 "disk_count": state.disk_count(self.drivers.medium),

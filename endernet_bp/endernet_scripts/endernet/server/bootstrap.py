@@ -99,7 +99,11 @@ from .devices.io import (
 )
 from .devices.registry import DeviceRegistry
 from .devices.memory_slot import MemorySlotStore
-from .devices.storage_driver import DriverPolicy, StorageDriverStore
+from .devices.storage_driver import (
+    DriverPolicy,
+    StorageDriverStore,
+    is_storage_driver,
+)
 from .persistence.repository import ExtraDataRepository, Record
 from .persistence.recovery import (
     RecoveryGate,
@@ -804,6 +808,10 @@ class ServerBootstrap(object):
             policy=self.driver_policy,
             medium_policy=self.medium_policy,
             on_load_changed=self._note_driver_load_changed,
+            # 驱动器那 10 格方块容器是「哪个介质在哪个槽」的**唯一权威**
+            # （2026-10-04）。没有这个提供方，驱动器读不到任何槽位——
+            # 与内存槽同一条纪律：读不到就报「读不到」，不当成空槽。
+            containers=self.containers,
         )
         #: 接口状态集合（06）。与 `drivers` 同一地位：接口缓冲里的东西不能
         #: 因为网络断开、主控被移除或运行时重建而消失（06 验收明写
@@ -1002,6 +1010,9 @@ class ServerBootstrap(object):
             event_api=event_api,
             patterns=self.patterns,
             memory_slots=self.memory_slots,
+            # 驱动器槽位的容器事件（2026-10-04）：玩家往驱动器里放/取介质物品时
+            # 标脏，并拒收非介质物品。三条链路共用同一份鸭子契约。
+            drivers=self.drivers,
             # 玩家维度解析同样可注入：自定义容器的玩家事件不带维度，
             # 而插槽拒收挂在那条路径上——不注入的话它只能进游戏试。
             # 同一个解析器也交给同步端口（见下面 `AdapterSyncPort` 那一段）。
@@ -1227,7 +1238,15 @@ class ServerBootstrap(object):
         # 推进之后**：容量是下一帧 `refresh_capacity()` 的事，本帧的服务
         # 推进用的是本帧开头那份容量，这一点与样板索引一致（都晚一帧）。
         memory_reads = self.memory_slots.advance(self.clock.current_tick())
-        # 落盘是**本帧最后一个动作**，与上面两条同一理由：本帧服务的账、
+        # 驱动器槽位同为零存读数（2026-10-04）：方块容器是「哪个介质在哪个槽」
+        # 的唯一权威，重读即恢复。**放在内存槽之后**：两者都读方块容器、
+        # 都不依赖本帧的网络账；本帧读到的挂载由下一帧的 `add_node` 收敛
+        # （与容量晚一帧同一形状）。
+        driver_reads = self.drivers.advance(self.clock.current_tick())
+        # 展示行（容量 Lore）写回排在读数之后：先知道槽里有什么、内容是什么，
+        # 再决定要写什么。它自己有去抖与预算，空闲帧的代价是遍历一遍待办表。
+        display_writes = self.drivers.advance_display()
+        # 落盘是**本帧最后一个动作**，与上面几条同一理由：本帧服务的账、
         # 样板的账、内存的账都算完了，再决定哪些要写出去。
         persisted = self.advance_persistence()
 
@@ -1258,6 +1277,10 @@ class ServerBootstrap(object):
             "pattern_reads": pattern_reads,
             #: 本帧重读了几台内存槽（2026-10-03）。口径同 `pattern_reads`。
             "memory_reads": memory_reads,
+            #: 本帧重读了几台驱动器、写回了几件介质物品的展示行（2026-10-04）。
+            #: 口径同上；`display_writes` 恒为 0 是正常的（显示不变就跳过）。
+            "driver_reads": driver_reads,
+            "display_writes": display_writes,
             #: 本帧写进存档的记录数与提交次数（12-03）。恒为 0 是正常的——
             #: 没有脏记录时一次 `SaveExtraData()` 都不发。
             "persisted_records": persisted["records"],
@@ -1573,8 +1596,12 @@ class ServerBootstrap(object):
         if runtime is not None and state is not None:
             energy = runtime.services.get(ServiceId.ENERGY)
             if isinstance(energy, EnergyService):
+                # 取 `disk_count_of`：**从没读到过容器**时送 `None` 过去，
+                # 与内存槽同形——判定停在待确认，而不是伪造一个「一块盘都没有」。
+                # （`set_device_state` 的既有语义是「`None` 表示不改变」，
+                # 因此由读得到变成读不到时，上一次的个数会被保留到重挂为止。）
                 energy.set_device_state(
-                    state.ref, unit_count=state.disk_count(self.drivers.medium))
+                    state.ref, unit_count=self.drivers.disk_count_of(state.ref))
         return changed
 
     def _note_memory_load_changed(self, node_key):
@@ -1606,10 +1633,10 @@ class ServerBootstrap(object):
     def _energy_inputs_of(self, runtime, ref, device_id):
         # type: (object, object, str) -> dict
         """只读权威设备状态，不用可被配置命令改写的数量投影。"""
-        if device_id == "endernet:storage_driver":
-            state = self.drivers.get_by_ref(ref)
-            return {"unit_count": (
-                state.disk_count(self.drivers.medium) if state is not None else None)}
+        if is_storage_driver(device_id, self.definitions):
+            # 硬盘个数来自容器读数（2026-10-04）。**没读到过就是 `None`（待确认）**，
+            # 与内存槽同形——读不到不等于一块盘都没有。
+            return {"unit_count": self.drivers.disk_count_of(ref)}
         category = self.definitions.get(device_id).category
         if category == CATEGORY_MEMORY:
             # 内存槽的根数来自它自己的容器（2026-10-03）。**没读到过就是
@@ -2249,6 +2276,10 @@ class ServerBootstrap(object):
             #: 内存槽（2026-10-03）：**内存容量的权威在这里**。它给的是合计与
             #: 读数状态，「网络里能用的内存」在 `order` 那一节（那是租约台账）。
             "memory_slots": self.memory_slots.diagnostics(),
+            #: 驱动器槽位（2026-10-04）：**槽位占用的权威是方块容器的读数**。
+            #: 这里能看到谁读不到、谁从没读到过、槽里哪些东西挂不上、
+            #: 以及旧存档留下的驱动器记录（只报不物化）。
+            "drivers": self.drivers.diagnostics(),
             "plan": self.plan_diagnostics(),
             "order": self.order_diagnostics(),
             "energy": self.energy_diagnostics(),
@@ -2328,11 +2359,15 @@ class ServerBootstrap(object):
             "介质挂载、汇总索引、预留与受控读写已实现并通过离线断言；"
             "驱动器/介质（12-03）与接口/网络台账（12-04）已接真实存档后端，"
             "界面同步（11）已接入；接口接触真实引擎那一段仍只有部分游戏内证据。"
-            "**06 的转移协调器已经可用，但介质装卸还没有改走它**："
-            "`mount` 仍按 05 的路径（`create_medium(model_id)` + `provider.mount`），"
-            "因为「介质物品如何携带身份」是 12-02 尚未做出的决定——"
-            "在没有那个决定之前把装卸接到转移层，等于悄悄定案。"
-            "接口侧的状态见 diagnostics()[\"io\"]。"
+            "**介质装卸自 2026-10-04 起以驱动器那 10 格方块容器为权威**："
+            "玩家把介质物品放进去，驱动器重读容器就能认出它（载体写在物品上，"
+            "内容按介质 ID 存 ExtraData）；槽位不再进存档。"
+            "`mount` / `unmount` 命令改成操作容器，**卸介质必须指定去向**"
+            "（本命令目前只支持交给玩家背包）。"
+            "**真机上一次都没验过**（`player_swap` / 破坏驱动器时容器物品的去向"
+            "都还没有读数），因此这一段只能当离线结论读。"
+            "接口侧的状态见 diagnostics()[\"io\"]，驱动器的读数见本节的 "
+            "`never_read` / `unreadable` / `invalid_slots` / `pending_carriers`。"
         )
         return report
 
@@ -2395,10 +2430,11 @@ class ServerBootstrap(object):
                 "custom_container_remove",
                 "custom_container_push_in",
                 "custom_container_pull_out",
-                # 两个拒收计数器**分开报**（2026-10-03）：合成一个数之后，
-                # 「哪条规则在真机上真的生效了」就再也答不出来。
+                # 三个拒收计数器**分开报**（2026-10-03 / 2026-10-04）：合成一个
+                # 数之后，「哪条规则在真机上真的生效了」就再也答不出来。
                 "pattern_slot_rejected",
                 "memory_slot_rejected",
+                "driver_slot_rejected",
             )
         }
         return view
