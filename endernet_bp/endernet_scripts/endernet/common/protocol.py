@@ -1877,8 +1877,9 @@ class OrderStateMessage(SyncMessage):
     - `memory`：`{capacity, used, available, slots}`，**单位是字节（B）**。
       任务文档（[11. 终端与客户端同步.md]「11-06 的已确认显示需求」）写的就是
       字节，JSON 里那句静态「0KB」是占位文案，以这里为准。
-      `slots` 是内存条格数，与 `capacity` 不是一回事（前者是设备数、后者
-      是它换算出来的上限）。
+      `slots` 是**插入的内存条根数**（2026-10-03 起；在那之前报的是内存槽的
+      台数，而那时容量正是按台数换算的），与 `capacity` 不是一回事——
+      后者是这些内存条的字节合计。
     - `orders`：活跃订单摘要，**非终态**（已完成的订单不再是「运行中」）。
       主产物身份四个字段 `canonical / name / aux / amount` 的理由同
       `_require_slot_row`：客户端画图标只能靠服务端把资源名带过来。

@@ -487,6 +487,42 @@ class MediumSpec(object):
         return "MediumSpec(%s)" % (self.id,)
 
 
+class MemorySpec(object):
+    """一种内存条的静态定义，取自 items.md 的「内存」一节。
+
+    **只有一个数值字段，而且它是已定案值，不是替身。**（User 2026-10-03 定，
+    见 `plans/items.md` 的内存一节。）在它出现之前，内存容量算不出来：
+    R04 记着「内存条容量仍待定」，`capacity.OrderPolicy.bytes_per_memory_slot`
+    只能拿 1024 B 当替身、按内存槽**方块个数**估。现在容量有了权威来源，
+    替身随之下线。
+
+    **不带 `unresolved` 标签、也不进 `unresolved_report()`**：items.md 是玩法的
+    单一事实来源，写进那里的型号与容量就是定案，不需要再挂一个未定标记。
+    这与 `MediumSpec` 不同——介质那份表在 items.md 里带省略号（R10 未列全），
+    所以「规格存在」与「已注册为物品」是两张表；内存这一节没有省略号。
+
+    堆叠上限**不在这里**，走 `gen_items.ITEM_MAX_STACK_SIZE`（= 1，与介质同档）：
+    内存条不携带 `userData`，取 1 的理由是「与同类小件物品一致」，
+    不是「怕一叠共享同一份物品数据」。
+    """
+
+    __slots__ = ("id", "label", "capacity_bytes")
+
+    def __init__(self, memory_id, label, capacity_bytes):
+        # type: (str, str, int) -> None
+        if isinstance(capacity_bytes, bool) or not isinstance(capacity_bytes, int):
+            raise ValueError("内存容量必须是整数: %r" % (capacity_bytes,))
+        if capacity_bytes <= 0:
+            raise ValueError("内存容量必须为正: %r" % (capacity_bytes,))
+        self.id = memory_id
+        self.label = label
+        #: 该型号一根提供多少字节（items.md 的「内存容量 N 字节」）。
+        self.capacity_bytes = capacity_bytes
+
+    def __repr__(self):
+        return "MemorySpec(%s, %d B)" % (self.id, self.capacity_bytes)
+
+
 #: 按装置数量计费的规则。基础能耗为 0 是确定的（没有硬盘就不耗能），
 #: 这里给出的是每增加一个单元的增量，供定义表引用与诊断。
 PER_DISK_ENERGY = Value(1, note="存储驱动器：每块硬盘 1 EN/t（blocks.md）")
@@ -678,6 +714,45 @@ MEDIUMS = (
 ITEM_MEDIUMS = (
     "endernet:singleside_tape",
     "endernet:softdisk_1k",
+)
+
+
+# -- 内存表（items.md）-----------------------------------------------------
+
+#: 内存条型号，逐项取自 items.md 的「内存」一节（User 2026-10-03 定）。
+#:
+#: **容量值就是 items.md 上写的那个数，不在这里另算一套。** 标识与中文名
+#: 逐字照抄——`zh_CN.lang` 里的名字与 `MemorySpec.label` 必须一致，由
+#: `test_assets.TestItemLocalisation` 钉住；物品 JSON 的提示文本由
+#: `scripts/gen_items.py` 的 `memory_tip` 从 `capacity_bytes` 读出。
+#:
+#: 16KB／64KB／256KB 三条在 items.md 里原先都写成「4K 字节」（与型号名矛盾），
+#: 2026-10-03 由 User 确认按型号名修正为 16384／65536／262144，原文已同步。
+MEMORIES = (
+    MemorySpec("endernet:memory_128b", "128B 感应式内存块", 128),
+    MemorySpec("endernet:memory_256b", "256B 感应式内存块", 256),
+    MemorySpec("endernet:memory_512b", "512B 感应式内存块", 512),
+    MemorySpec("endernet:memory_1k", "1KB 集成式内存卡", 1024),
+    MemorySpec("endernet:memory_4k", "4KB 集成式内存卡", 4096),
+    MemorySpec("endernet:memory_16k", "16KB 集成式内存卡", 16384),
+    MemorySpec("endernet:memory_64k", "64KB 集成式内存卡", 65536),
+    MemorySpec("endernet:memory_256k", "256KB 内存条", 262144),
+)
+
+#: **已注册为游戏物品**的内存条型号。与 `ITEM_MEDIUMS` / `ITEM_TEMPLATES`
+#: 同一地位、同一理由：规格表与「已经做出来了」是两件事。
+#:
+#: 内存这一节在 items.md 里**没有省略号**，八条型号是列全的，因此这里八条全注册
+#: （介质那边相反：表里有省略号，只注册了容量最小的两个）。
+ITEM_MEMORIES = (
+    "endernet:memory_128b",
+    "endernet:memory_256b",
+    "endernet:memory_512b",
+    "endernet:memory_1k",
+    "endernet:memory_4k",
+    "endernet:memory_16k",
+    "endernet:memory_64k",
+    "endernet:memory_256k",
 )
 
 
@@ -1090,16 +1165,22 @@ class DefinitionSet(object):
         item_mediums=None,
         templates=None,
         item_templates=None,
+        memories=None,
+        item_memories=None,
     ):
-        # type: (tuple, tuple, dict, tuple, tuple, tuple) -> None
+        # type: (tuple, tuple, dict, tuple, tuple, tuple, tuple) -> None
         self.devices = {}
         self.mediums = {}
         self.templates = {}
+        self.memories = {}
         self.item_mediums = tuple(
             ITEM_MEDIUMS if item_mediums is None else item_mediums
         )
         self.item_templates = tuple(
             ITEM_TEMPLATES if item_templates is None else item_templates
+        )
+        self.item_memories = tuple(
+            ITEM_MEMORIES if item_memories is None else item_memories
         )
         self.config = dict(self.DEFAULT_CONFIG)
         self.config.update(config or {})
@@ -1109,6 +1190,8 @@ class DefinitionSet(object):
             self._add_unique(self.mediums, spec.id, spec, "介质")
         for template in templates if templates is not None else PATTERN_TEMPLATES:
             self._add_unique(self.templates, template.id, template, "样板")
+        for memory in memories if memories is not None else MEMORIES:
+            self._add_unique(self.memories, memory.id, memory, "内存条")
         # 只在用默认表时校验：测试常传自制的子集来构造夹具，那时
         # 「物品注册表里的型号必须存在」这条约束并不适用（它约束的是
         # 交付出去的这份真实定义表）。
@@ -1123,6 +1206,12 @@ class DefinitionSet(object):
                 if template_id not in self.templates:
                     raise ValueError(
                         "已注册为物品的样板不在样板表中: %s" % (template_id,)
+                    )
+        if memories is None:
+            for memory_id in self.item_memories:
+                if memory_id not in self.memories:
+                    raise ValueError(
+                        "已注册为物品的内存条型号不在内存表中: %s" % (memory_id,)
                     )
 
     @staticmethod
@@ -1195,21 +1284,71 @@ class DefinitionSet(object):
         """已注册为物品的样板规格，顺序与 `item_templates` 一致。"""
         return [self.get_template(item) for item in self.item_templates]
 
+    # -- 内存条 --------------------------------------------------------
+
+    def has_memory(self, memory_id):
+        # type: (str) -> bool
+        """这个标识是不是一种**已注册为游戏物品**的内存条。
+
+        领域层（`server/devices/memory_slot.py`）用它判「槽里这根算不算内存」，
+        因此**判的是物品在游戏里真的存在**，不是「规格表里提过一嘴」——
+        与 `get_item_medium` 的口径一致。写内存条时也按它反查，两处同源。
+        """
+        return memory_id in self.item_memories
+
+    def get_memory(self, memory_id):
+        # type: (str) -> MemorySpec
+        try:
+            return self.memories[memory_id]
+        except KeyError:
+            raise KeyError("未注册的内存条标识: %s" % (memory_id,))
+
+    def get_item_memory(self, memory_id):
+        # type: (str) -> MemorySpec
+        """取**已注册为游戏物品**的内存条规格。与 `get_item_medium` 同一分工。"""
+        if memory_id not in self.item_memories:
+            raise KeyError("内存条 %s 尚未注册为游戏物品" % (memory_id,))
+        return self.get_memory(memory_id)
+
+    def item_memory_specs(self):
+        # type: () -> list
+        """已注册为物品的内存条规格，顺序与 `item_memories` 一致。"""
+        return [self.get_memory(memory_id) for memory_id in self.item_memories]
+
+    def memory_bytes(self, memory_id):
+        # type: (str) -> int
+        """一根该型号内存条的字节数。**不是内存条型号时返回 0**。
+
+        返回 0 而不是抛异常，是给读容器的那条路径用的：槽里可能是任何东西，
+        「不是内存条」是常规情形（拒收只管新放进去的），调用方不该为此写
+        try/except。要区分「不存在」请用 `has_memory`。
+        """
+        spec = self.memories.get(memory_id)
+        return 0 if spec is None else spec.capacity_bytes
+
     def item_specs(self):
         # type: () -> list
-        """**全部已注册为游戏物品的规格**（介质 + 样板）。
+        """**全部已注册为游戏物品的规格**（介质 + 样板 + 内存条）。
 
         资产检查与物品生成器读这一份：两边各维护一张清单的话，新增一类物品
         时总有一处会漏，而漏掉的表现是「游戏里有这件物品、但没人检查它的贴图」
         或者反过来「检查报缺文件、其实这件物品还没做」。
-        两种规格都带 `id` 与 `label`，这正是那两处用到的全部字段。
+        三种规格都带 `id` 与 `label`，这正是那两处用到的全部字段。
         """
-        return self.item_medium_specs() + self.item_template_specs()
+        return (
+            self.item_medium_specs()
+            + self.item_template_specs()
+            + self.item_memory_specs()
+        )
 
     def item_keys(self):
         # type: () -> tuple
         """全部已注册为游戏物品的标识。"""
-        return tuple(self.item_mediums) + tuple(self.item_templates)
+        return (
+            tuple(self.item_mediums)
+            + tuple(self.item_templates)
+            + tuple(self.item_memories)
+        )
 
     def item_id_for_template_mode(self, mode):
         # type: (str) -> str

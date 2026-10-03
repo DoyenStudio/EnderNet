@@ -8,6 +8,30 @@
         "endernet:factorical_template": {
             "textures": "textures/items/endernet_factorical_template"
         },
+        "endernet:memory_128b": {
+            "textures": "textures/items/endernet_memory_128b"
+        },
+        "endernet:memory_16k": {
+            "textures": "textures/items/endernet_memory_16k"
+        },
+        "endernet:memory_1k": {
+            "textures": "textures/items/endernet_memory_1k"
+        },
+        "endernet:memory_256b": {
+            "textures": "textures/items/endernet_memory_256b"
+        },
+        "endernet:memory_256k": {
+            "textures": "textures/items/endernet_memory_256k"
+        },
+        "endernet:memory_4k": {
+            "textures": "textures/items/endernet_memory_4k"
+        },
+        "endernet:memory_512b": {
+            "textures": "textures/items/endernet_memory_512b"
+        },
+        "endernet:memory_64k": {
+            "textures": "textures/items/endernet_memory_64k"
+        },
         "endernet:singleside_tape": {
             "textures": "textures/items/endernet_singleside_tape"
         },

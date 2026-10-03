@@ -36,11 +36,14 @@ from endernet.common.definitions import (
     Value,
 )
 from endernet.common.identity import NodeKey
+from endernet.common.item_codec import item_dict_from_key
 from endernet.common.protocol import (
     BlockReason,
     Reason,
     STATUS_OK,
 )
+from endernet.common.resource_key import ResourceKey
+from endernet.server.adapters.containers import FakeContainer
 from endernet.server.bootstrap import ServerBootstrap
 from endernet.server.devices.registry import DeviceRegistry
 from endernet.server.network.controller import (
@@ -83,6 +86,21 @@ OPEN_SOURCE = "endernet:test_open_source"
 
 def key(x, y=64, z=0, dimension=0):
     return NodeKey(dimension, x, y, z)
+
+
+class MemoryBoxProvider(object):
+    """位置 -> 一个可读可写的假容器。内存槽的根数要**读方块容器**才拿得到
+    （2026-10-03 起），因此验能源那一侧的夹具必须给得出一个容器。"""
+
+    def __init__(self, slots=10):
+        self.boxes = {}
+        self.slots = slots
+
+    def container_at(self, node_key):
+        position = node_key.as_key()
+        if position not in self.boxes:
+            self.boxes[position] = FakeContainer(slots=self.slots, max_stack=1)
+        return self.boxes[position]
 
 
 class FakeWorld(object):
@@ -658,7 +676,16 @@ class TestBootstrappedEnergy(unittest.TestCase):
             energy.power_ok(key(0, 65))
         self.assertEqual(energy.stats["settles"], before)
 
-    def test_initial_empty_driver_is_known_zero_but_memory_is_still_unknown(self):
+    def test_an_unreadable_memory_slot_is_unknown_while_an_empty_driver_is_known_zero(self):
+        """**「读不到」与「确实是空的」是两回事。**
+
+        驱动器没有容器这一层，空盘就是已知的 0；内存槽的根数要读方块容器，
+        而这份夹具**没有容器提供者**（离线默认），因此它的根数不可知——
+        判定停在待确认，而不是伪造一个「这台内存槽不耗电」的结论。
+
+        容器读得到的那一侧见 `test_an_empty_memory_slot_is_known_zero`
+        （2026-10-03 补：内存条根数已接线，这条从「还没接线」变成「读不到」）。
+        """
         server = self.build(EnergyPolicy.dev_stand_in(), CREATIVE)
         server.push(NormalizedEvent.place(key(1, 63), MEMORY_SLOT))
         server.tick()
@@ -669,6 +696,55 @@ class TestBootstrappedEnergy(unittest.TestCase):
         memory = energy._members[key(1, 63)]
         self.assertIsNone(memory.unit_count)
         self.assertEqual(memory.gap, GAP_UNWIRED_INPUTS)
+
+    def test_an_empty_memory_slot_is_known_zero(self):
+        """读得到容器、并且确实是空的 → **已知 0 根**，不是「待确认」。"""
+        server = self.build_with_containers(EnergyPolicy.dev_stand_in())
+        energy = server.runtimes.runtime_of(key(0, 65)).services.get(ServiceId.ENERGY)
+        memory = energy._members[key(1, 63)]
+        self.assertEqual(memory.unit_count, 0)
+        self.assertEqual(memory.gap, "")
+
+    def test_inserting_a_stick_reprices_the_memory_slot(self):
+        """`blocks.md`：「耗能 (内存条个数 × 8)EN/t」——**按根数，不按台数**。"""
+        server = self.build_with_containers(EnergyPolicy.dev_stand_in())
+        energy = server.runtimes.runtime_of(key(0, 65)).services.get(ServiceId.ENERGY)
+        self.assertEqual(energy._members[key(1, 63)].demand, 0)
+        box = server.memory_slots.container_at(key(1, 63))
+        box.write_slot(
+            0,
+            item_dict_from_key(ResourceKey.item("endernet:memory_128b"), 1),
+        )
+        server.memory_slots.refresh(server.registry.get(key(1, 63)).ref, force=True)
+        server.tick()
+        memory = energy._members[key(1, 63)]
+        self.assertEqual(memory.unit_count, 1)
+        self.assertEqual(memory.demand, 8)
+        box.write_slot(1, item_dict_from_key(ResourceKey.item("endernet:memory_1k"), 1))
+        server.memory_slots.refresh(server.registry.get(key(1, 63)).ref, force=True)
+        server.tick()
+        self.assertEqual(energy._members[key(1, 63)].unit_count, 2)
+        self.assertEqual(energy._members[key(1, 63)].demand, 16)
+
+    def build_with_containers(self, policy):
+        # type: (object) -> object
+        """与 `build` 同一条网络，但**接上一个可读的容器**给内存槽。"""
+        server = ServerBootstrap(
+            world=FakeWorld(),
+            energy_policy=policy,
+            container_provider=MemoryBoxProvider(),
+        )
+        server.start(bind_engine=False)
+        for node_key, device_id in (
+            (key(0), BB8),
+            (key(1), BB8),
+            (key(1, 65), TINY),
+            (key(0, 65), DRIVER),
+            (key(1, 63), MEMORY_SLOT),
+        ):
+            server.push(NormalizedEvent.place(node_key, device_id))
+        server.tick()
+        return server
 
     def build(self, policy, *extra):
         # type: (object, tuple) -> object

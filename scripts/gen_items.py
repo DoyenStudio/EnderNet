@@ -1,15 +1,17 @@
 # coding=utf-8
-"""由定义表生成物品 JSON 与物品图集（存储介质 + 两类样板）。
+"""由定义表生成物品 JSON 与物品图集（存储介质 + 两类样板 + 内存条）。
 
     python scripts/gen_items.py          # 生成
     python scripts/gen_items.py --check  # 只检查是否与当前文件一致（CI 用）
 
 单一事实来源是 `endernet_bp/endernet_scripts/endernet/common/definitions.py`：
 
-- **哪些物品已经做出来了**由 `ITEM_MEDIUMS` / `ITEM_TEMPLATES` 决定；
+- **哪些物品已经做出来了**由 `ITEM_MEDIUMS` / `ITEM_TEMPLATES` /
+  `ITEM_MEMORIES` 决定；
 - 介质的容量、类型数、读写速度从各自的 `MediumSpec` 读出，
   因此游戏内提示里的数字不可能与领域层的规格分叉；
-- 样板的用途说明从 `TemplateSpec.usage` 读出（items.md 的原文）。
+- 样板的用途说明从 `TemplateSpec.usage` 读出（items.md 的原文）；
+- 内存条的容量从 `MemorySpec.capacity_bytes` 读出，同理不会分叉。
 
 产物三份：
 
@@ -126,6 +128,16 @@ def template_tip(spec, definitions):
     return "\n§7%s\n§7放入%s使用。" % (spec.usage, where)
 
 
+def memory_tip(spec):
+    # type: (object) -> str
+    """内存条说明。容量取自定义表，不在这里另写一份。
+
+    提示里**不重复型号名**（物品名已经写着「16KB 集成式内存卡」），
+    只给字节数——它是玩法数值，也是内存槽实际记账用的那个单位。
+    """
+    return "\n§7内存容量 %d 字节" % (spec.capacity_bytes,)
+
+
 def build_behavior_json(spec, tip):
     """行为包物品定义。`tip` 由调用方按物品类型给出。"""
     return {
@@ -202,13 +214,15 @@ def missing_textures(definitions):
 
 def item_tips(definitions):
     # type: (object) -> list
-    """`(规格, 提示文本)` 清单。**两种物品的提示规则不同，但只有这一处分派**：
-    介质给容量与读写速度，样板给用途与「放进哪台设备」。"""
+    """`(规格, 提示文本)` 清单。**三类物品的提示规则不同，但只有这一处分派**：
+    介质给容量与读写速度，样板给用途与「放进哪台设备」，内存条给字节容量。"""
     out = []
     for spec in definitions.item_medium_specs():
         out.append((spec, medium_tip(spec)))
     for spec in definitions.item_template_specs():
         out.append((spec, template_tip(spec, definitions)))
+    for spec in definitions.item_memory_specs():
+        out.append((spec, memory_tip(spec)))
     return out
 
 
@@ -235,7 +249,9 @@ def main(argv=None):
         changed.append(os.path.relpath(RP_ITEM_TEXTURE, REPO))
 
     missing = missing_textures(definitions)
-    total = len(definitions.item_mediums) + len(definitions.item_templates)
+    # **总数从 `item_keys()` 派生**，不在这里把三类再数一遍：数漏一类的话
+    # `--check` 照旧报「已是最新」，而那正是「新物品没生成」最难发现的一处。
+    total = len(definitions.item_keys())
 
     if args.check:
         if changed:

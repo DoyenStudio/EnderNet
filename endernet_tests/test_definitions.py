@@ -28,7 +28,12 @@ from endernet.common.definitions import (
     DefinitionSet,
     DeviceDefinition,
     EnergySpec,
+    ITEM_MEDIUMS,
+    ITEM_MEMORIES,
+    ITEM_TEMPLATES,
     MEDIUMS,
+    MEMORIES,
+    MemorySpec,
     PATTERN_MODES,
     PATTERN_TEMPLATES,
     PER_DISK_ENERGY,
@@ -442,6 +447,92 @@ class TestMediums(unittest.TestCase):
             DefinitionSet().get_medium("endernet:floppy_from_nowhere")
 
 
+class TestMemorySpecs(unittest.TestCase):
+    """内存条逐项对应 items.md 的「内存」一节（User 2026-10-03 定）。
+
+    **这一节没有省略号**，八条型号是列全的，因此「规格表」与「已注册为物品」
+    两张表在这里内容相同——与介质那边（表里有省略号、只注册了两个）不同。
+    """
+
+    #: 型号 -> `(中文名, 字节数)`。数字就是 items.md 上写的那个。
+    #:
+    #: 16KB／64KB／256KB 三条原文都写着「4K 字节」（与型号名矛盾，是同一次
+    #: 复制粘贴留下的），2026-10-03 由 User 确认按型号名修正，文档已同步；
+    #: `test_capacity_matches_the_model_name` 就是防它再犯的那一条。
+    EXPECTED = {
+        "endernet:memory_128b": ("128B 感应式内存块", 128),
+        "endernet:memory_256b": ("256B 感应式内存块", 256),
+        "endernet:memory_512b": ("512B 感应式内存块", 512),
+        "endernet:memory_1k": ("1KB 集成式内存卡", 1024),
+        "endernet:memory_4k": ("4KB 集成式内存卡", 4096),
+        "endernet:memory_16k": ("16KB 集成式内存卡", 16384),
+        "endernet:memory_64k": ("64KB 集成式内存卡", 65536),
+        "endernet:memory_256k": ("256KB 内存条", 262144),
+    }
+
+    def test_all_documented_memories_present(self):
+        self.assertEqual(set(m.id for m in MEMORIES), set(self.EXPECTED))
+
+    def test_each_spec_matches_document(self):
+        defs = DefinitionSet()
+        for memory_id, (label, capacity) in self.EXPECTED.items():
+            spec = defs.get_memory(memory_id)
+            self.assertEqual(spec.label, label, memory_id)
+            self.assertEqual(spec.capacity_bytes, capacity, memory_id)
+
+    def test_capacity_matches_the_model_name(self):
+        """型号名里的数字与容量必须一致。
+
+        名字与数字分叉过一次（16KB 的内存卡写着「4K 字节」），而那种错误
+        在界面上看不出来——玩家只会觉得「这根 16K 的怎么没比 4K 的多多少」。
+        """
+        for spec in MEMORIES:
+            token = spec.label.split(" ", 1)[0]
+            if token.endswith("KB"):
+                named = int(token[:-2]) * 1024
+            else:
+                self.assertTrue(token.endswith("B"), spec.label)
+                named = int(token[:-1])
+            self.assertEqual(named, spec.capacity_bytes, spec.label)
+
+    def test_all_eight_are_registered_as_items(self):
+        defs = DefinitionSet()
+        self.assertEqual(set(defs.item_memories), set(self.EXPECTED))
+        self.assertEqual(len(defs.item_memory_specs()), len(self.EXPECTED))
+
+    def test_has_memory_only_for_registered_memory_items(self):
+        """判据是「这件物品在游戏里真的存在」，不是「规格表里提过一嘴」。"""
+        defs = DefinitionSet()
+        self.assertTrue(defs.has_memory("endernet:memory_128b"))
+        self.assertFalse(defs.has_memory("minecraft:iron_ingot"))
+        self.assertFalse(defs.has_memory("endernet:singleside_tape"))
+        self.assertFalse(defs.has_memory("endernet:crafting_template"))
+
+    def test_memory_bytes_of_a_non_memory_is_zero(self):
+        """读容器那条路径靠它：槽里不是内存条是常规情形，不该抛异常。"""
+        defs = DefinitionSet()
+        self.assertEqual(defs.memory_bytes("endernet:memory_16k"), 16384)
+        self.assertEqual(defs.memory_bytes("minecraft:iron_ingot"), 0)
+
+    def test_unknown_memory_rejected_loudly(self):
+        with self.assertRaises(KeyError):
+            DefinitionSet().get_memory("endernet:memory_from_nowhere")
+
+    def test_a_memory_without_a_spec_is_rejected(self):
+        with self.assertRaises(KeyError):
+            DefinitionSet().get_item_memory("endernet:memory_from_nowhere")
+
+    def test_a_registered_memory_must_have_a_spec(self):
+        """注册清单指向一个不存在的规格时，构造定义表就要炸。"""
+        with self.assertRaises(ValueError):
+            DefinitionSet(item_memories=("endernet:memory_from_nowhere",))
+
+    def test_capacity_must_be_a_positive_integer(self):
+        for bad in (0, -1, 128.0, True):
+            with self.assertRaises(ValueError):
+                MemorySpec("endernet:x", "x", bad)
+
+
 class TestPatternTemplates(unittest.TestCase):
     """两类样板逐项对应 items.md 的「样板」一节（任务 07-01/07-02）。"""
 
@@ -469,17 +560,20 @@ class TestPatternTemplates(unittest.TestCase):
         self.assertNotIn("endernet:factory_template", defs.templates)
 
     def test_both_templates_are_registered_as_items(self):
+        """**两份样板都在「已注册为物品」的清单里。**
+
+        **断言写成派生式**（三类注册表之并），不写死那串标识：写死的话，
+        每加一件物品都要来改一次这条，而改的人只会把数字加上去——
+        那时它拦不住任何东西，只是又多一处需要同步的副本。
+        写死「某个标识在不在」的用例另有其人（`test_the_documented_spelling_is_kept`）。
+        """
         defs = DefinitionSet()
         self.assertEqual(
-            sorted(defs.item_keys()),
-            [
-                "endernet:crafting_template",
-                "endernet:factorical_template",
-                "endernet:singleside_tape",
-                "endernet:softdisk_1k",
-            ],
+            set(defs.item_keys()),
+            set(ITEM_MEDIUMS) | set(ITEM_TEMPLATES) | set(ITEM_MEMORIES),
         )
-        self.assertEqual(len(defs.item_specs()), 4)
+        self.assertTrue(set(ITEM_TEMPLATES).issubset(set(defs.item_keys())))
+        self.assertEqual(len(defs.item_specs()), len(defs.item_keys()))
 
     def test_unknown_template_rejected_loudly(self):
         with self.assertRaises(KeyError):

@@ -37,6 +37,7 @@
 from ..common.crafting_recipe import SLOT_COUNT
 from ..common.definitions import (
     CATEGORY_ASSEMBLY,
+    CATEGORY_MEMORY,
     CATEGORY_PROCESSOR,
     PATTERN_MODE_CRAFTING,
     DefinitionSet,
@@ -92,6 +93,7 @@ from .devices.io import (
     port_blocker,
 )
 from .devices.registry import DeviceRegistry
+from .devices.memory_slot import MemorySlotStore
 from .devices.storage_driver import DriverPolicy, StorageDriverStore
 from .network.admission import AdmissionService
 from .network.energy import DEVICE_IDLE, DEVICE_WORK, EnergyPolicy, EnergyService
@@ -341,7 +343,10 @@ def _order_memory(factory):
 
     `available` 与 `capacity` 一并给：界面上那根条的分子与分母各要一个。
     `used` 给出来是为了让「分子+已用=总量」在诊断里可以自核。
-    `slots` 是内存条格数（设备数），与字节数不是一回事。
+    `slots` 是**插入的内存条根数**（2026-10-03 起；在那之前报的是内存槽的
+    台数，而那时容量就是台数换算来的），与字节数不是一回事。线上字段名沿用
+    `slots` 不改——改字段名要同时动协议、客户端与三份测试，而它本来就是
+    「几个格子/几根」那个意义上的占位词。
     """
     ledger = getattr(factory, "memory", None)
     view = ledger.describe() if ledger is not None else {}
@@ -349,7 +354,7 @@ def _order_memory(factory):
         "capacity": int(view.get("capacity") or 0),
         "used": int(view.get("used") or 0),
         "available": int(view.get("available") or 0),
-        "slots": int(getattr(factory, "memory_slots", 0) or 0),
+        "slots": int(getattr(factory, "memory_sticks", 0) or 0),
     }
 
 
@@ -427,8 +432,8 @@ def _returns_port_for(returns, runtime):
 
 
 def _factory_builder(policy, planner, patterns, ports, returns=None, on_slots_changed=None,
-                     preview_policy=None):
-    # type: (object, object, object, object, object, object, object) -> object
+                     preview_policy=None, memory_store=None):
+    # type: (object, object, object, object, object, object, object, object) -> object
     """把规划器、样板索引与接口状态集合绑进工厂服务的构造器。
 
     这三样都是**全进程一份**的（它们本来就跨网络：样板装在方块里、
@@ -476,6 +481,9 @@ def _factory_builder(policy, planner, patterns, ports, returns=None, on_slots_ch
             template_role=PORT_TEMPLATE_ROLE,
             on_slots_changed=notify_slots if on_slots_changed is not None else None,
             previews=previews,
+            # 内存容量的来源（2026-10-03）：**全进程一份**，与样板索引同理
+            # ——内存条装在方块容器里，不能因为网络断开、主控被移除而消失。
+            memory_store=memory_store,
         )
 
     return build
@@ -757,6 +765,17 @@ class ServerBootstrap(object):
             factory_of=self._factory_of,
         )
         self.patterns.assembly.on_changed = self._note_assembly_energy_changed
+        #: 内存槽状态集合（2026-10-03）。与上面三份同一地位：内存条是**方块
+        #: 容器里的实物**，网络断开、主控移除、运行时重建都不等于它被拔了。
+        #: 它替换掉了「内存容量 = 内存槽台数 × 1024 B」那个替身
+        #: （`crafting/capacity.py` 的旧口径），因此**它是内存容量的唯一来源**。
+        #: 读数变化时把根数推给能源（`blocks.md` 的「内存条个数 × 8 EN/t」）。
+        self.memory_slots = MemorySlotStore(
+            self.definitions,
+            self.registry,
+            containers=self.containers,
+            on_load_changed=self._note_memory_load_changed,
+        )
         #: 合成规划（08）。**它不是一个网络服务槽位**：规划是只读计算，
         #: 没有节点、没有生命周期、也不需要主控签发的许可。真正的调用方是
         #: 任务的 09（订单与执行），它会拿到同一个对象；在那之前，
@@ -800,6 +819,7 @@ class ServerBootstrap(object):
                         self.returns_sink,
                         self._note_factory_energy_changed,
                         self.preview_policy,
+                        self.memory_slots,
                     ),
                 }
             )
@@ -915,6 +935,7 @@ class ServerBootstrap(object):
             clock=self.clock,
             event_api=event_api,
             patterns=self.patterns,
+            memory_slots=self.memory_slots,
             # 玩家维度解析同样可注入：自定义容器的玩家事件不带维度，
             # 而插槽拒收挂在那条路径上——不注入的话它只能进游戏试。
             # 同一个解析器也交给同步端口（见下面 `AdapterSyncPort` 那一段）。
@@ -1064,6 +1085,9 @@ class ServerBootstrap(object):
         self.drivers.mark_all_unloaded()
         self.ports.mark_all_unloaded()
         self.patterns.mark_all_unloaded()
+        # 内存槽同理：**不清读数、不写任何一份存档**。内存条是容器里的实物，
+        # 停机不是「把它们拔了」的时机。
+        self.memory_slots.mark_all_unloaded()
         self._backfill_generator = None
         self._backfill_finished = False
         self.started = False
@@ -1107,6 +1131,10 @@ class ServerBootstrap(object):
         # `advance` 只负责「够了静默期就重读」，放在帧尾是为了让它成为
         # 本帧最后一个动作——语义上「本帧的账都算完了，再去看看容器」。
         pattern_reads = self.patterns.advance(self.clock.current_tick())
+        # 内存槽的重读同为帧尾动作、同样读方块容器。**它必须在本帧的服务
+        # 推进之后**：容量是下一帧 `refresh_capacity()` 的事，本帧的服务
+        # 推进用的是本帧开头那份容量，这一点与样板索引一致（都晚一帧）。
+        memory_reads = self.memory_slots.advance(self.clock.current_tick())
 
         return {
             "tick": self.tick_count,
@@ -1133,6 +1161,8 @@ class ServerBootstrap(object):
             #: 本帧重读了几台样板提供者（07）。恒为 0 是正常的——
             #: 只有收到容器变更且过了静默期才会读。
             "pattern_reads": pattern_reads,
+            #: 本帧重读了几台内存槽（2026-10-03）。口径同 `pattern_reads`。
+            "memory_reads": memory_reads,
             "runtimes": len(self.runtimes.runtimes()),
             "queue": self.queue.stats(),
         }
@@ -1218,6 +1248,32 @@ class ServerBootstrap(object):
                     state.ref, unit_count=state.disk_count(self.drivers.medium))
         return changed
 
+    def _note_memory_load_changed(self, node_key):
+        # type: (object) -> None
+        """内存条插拔后把根数回填给能源（blocks.md：`内存条个数 × 8 EN/t`）。
+
+        镜像 `_note_driver_load_changed`，但有**两处刻意的不同**：
+
+        - **不调 `admission.note_device_load_changed`**：内存槽的带宽是定义表
+          里的固定 2u，不随根数变化。跟着调一次只会白白重算一遍负载域名额。
+        - 值取 `MemorySlotStore.unit_count_of`，因此「从没读到过容器」会送
+          `None` 过去而不是 0——判定停在「待确认」，而不是伪造一个
+          「这台设备一根内存条都没有、所以不耗电」的结论。
+          **注意 `set_device_state` 的既有语义是「`None` 表示不改变」**，
+          因此容器由读得到变成读不到时，上一次的根数会被保留到重挂为止
+          （由 `_energy_inputs_of` 重读，与驱动器同形）。
+        """
+        runtimes = getattr(self, "runtimes", None)
+        runtime = runtimes.runtime_of(node_key) if runtimes is not None else None
+        state = self.memory_slots.get(node_key)
+        if runtime is None or state is None:
+            return
+        energy = runtime.services.get(ServiceId.ENERGY)
+        if isinstance(energy, EnergyService):
+            energy.set_device_state(
+                state.ref, unit_count=self.memory_slots.unit_count_of(state.ref)
+            )
+
     def _energy_inputs_of(self, runtime, ref, device_id):
         # type: (object, object, str) -> dict
         """只读权威设备状态，不用可被配置命令改写的数量投影。"""
@@ -1226,6 +1282,10 @@ class ServerBootstrap(object):
             return {"unit_count": (
                 state.disk_count(self.drivers.medium) if state is not None else None)}
         category = self.definitions.get(device_id).category
+        if category == CATEGORY_MEMORY:
+            # 内存槽的根数来自它自己的容器（2026-10-03）。**没读到过就是
+            # `None`（待确认）**，与驱动器「空盘已知零、读不到才未知」同形。
+            return {"unit_count": self.memory_slots.unit_count_of(ref)}
         if category == CATEGORY_ASSEMBLY:
             return {"state": DEVICE_WORK if self.patterns.assembly.is_working(ref) else DEVICE_IDLE}
         if category == CATEGORY_PROCESSOR:
@@ -1796,6 +1856,9 @@ class ServerBootstrap(object):
             # 样板提供者状态也从**同一批变化**推导（07）。它按能力判定
             # 谁是提供者，因此非提供者的变化在这里是空操作。
             self.patterns.observe(change)
+            # 内存槽状态同理（2026-10-03）：它按分类判定，非内存槽的变化
+            # 在这里是空操作，因此两处并存不会互相干扰。
+            self.memory_slots.observe(change)
             # 样板终端的真实槽也按**同一批变化**处置（11-05）：被拆掉时先把
             # 实物掉在原地，掉不掉的进孤儿索引。放在这里而不是自己的观察者
             # 通道，理由与上面三条相同——两条路径分叉就会出「拓扑知道设备
@@ -1854,6 +1917,9 @@ class ServerBootstrap(object):
             "storage": self.storage_diagnostics(),
             "io": self.io_diagnostics(),
             "pattern": self.pattern_diagnostics(),
+            #: 内存槽（2026-10-03）：**内存容量的权威在这里**。它给的是合计与
+            #: 读数状态，「网络里能用的内存」在 `order` 那一节（那是租约台账）。
+            "memory_slots": self.memory_slots.diagnostics(),
             "plan": self.plan_diagnostics(),
             "order": self.order_diagnostics(),
             "energy": self.energy_diagnostics(),
@@ -1982,7 +2048,10 @@ class ServerBootstrap(object):
                 "custom_container_remove",
                 "custom_container_push_in",
                 "custom_container_pull_out",
+                # 两个拒收计数器**分开报**（2026-10-03）：合成一个数之后，
+                # 「哪条规则在真机上真的生效了」就再也答不出来。
                 "pattern_slot_rejected",
+                "memory_slot_rejected",
             )
         }
         return view

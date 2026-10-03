@@ -534,14 +534,19 @@ class TestOrderPolicy(unittest.TestCase):
         fields = set(
             item["field"] for item in capacity.OrderPolicy().unresolved_report()
         )
+        #
+        # `order.bytes_per_memory_slot` **已从这份清单里删掉**（2026-10-03）：
+        # 它不再是替身，而是被删除了——内存容量现在来自内存槽容器里插着的
+        # 内存条（`MemorySpec.capacity_bytes`），定义表与 items.md 都已定案。
+        # 删掉它**不是**放宽验收：`assert_settled()` 仍然会为其余四项拒绝盖章。
         for name in (
-            "order.bytes_per_memory_slot",
             "order.returns_block_completion",
             "order.submit_plan_budget",
             "order.plan_budget_per_tick",
             "order.orders_per_tick",
         ):
             self.assertIn(name, fields)
+        self.assertNotIn("order.bytes_per_memory_slot", fields)
 
     def test_assert_settled_refuses_to_stamp_an_unsettled_policy(self):
         with self.assertRaises(AssertionError):
@@ -554,7 +559,6 @@ class TestOrderPolicy(unittest.TestCase):
 
     def test_non_positive_knobs_are_refused_at_construction(self):
         for kwargs in (
-            {"bytes_per_memory_slot": 0},
             {"plan_budget_per_tick": 0},
             {"orders_per_tick": 0},
             {"max_orders": 0},
@@ -768,21 +772,42 @@ class TestCapacitySources(unittest.TestCase):
         self.assertEqual(idle, [])
 
     def test_memory_comes_from_loaded_memory_devices(self):
+        """**容量来自容器里的内存条，不是内存槽的台数。**
+
+        这条用例的断言语义与旧版一致（未加载的不计入），变的是「数从哪来」：
+        旧版按台数乘一个替身字节数，新版问 `MemorySlotStore` 每台插了几根、
+        合计多少字节。因此这里的替身 store 是**按位置给读数**的。
+        """
+
         class FakeNode(object):
-            def __init__(self, category, loaded):
+            def __init__(self, position, category, loaded):
+                self.node_key = position
                 self.category = category
                 self.loaded = loaded
 
+        class FakeStore(object):
+            """两台已加载的内存槽各插一根，未加载那台即使有读数也不计入。"""
+
+            def bytes_of(self, node_key):
+                return {"a": 3, "b": 5, "c": 1024}[node_key]
+
+            def sticks_of(self, node_key):
+                return 1
+
         members = [
-            FakeNode("memory", True),
-            FakeNode("memory", True),
-            FakeNode("memory", False),
-            FakeNode("baseband", True),
+            FakeNode("a", "memory", True),
+            FakeNode("b", "memory", True),
+            FakeNode("c", "memory", False),
+            FakeNode("d", "baseband", True),
         ]
-        policy = capacity.OrderPolicy(bytes_per_memory_slot=3)
-        total, count = capacity.memory_capacity(members, None, policy)
-        self.assertEqual(count, 2)
-        self.assertEqual(total, 6)
+        total, count = capacity.memory_capacity(members, FakeStore())
+        self.assertEqual(count, 2, "未加载那台不该计入")
+        self.assertEqual(total, 8)
+        self.assertEqual(
+            capacity.memory_capacity([FakeNode("a", "memory", True)], FakeStore())[1],
+            1,
+            "根数与台数是两个数：一台可以插很多根",
+        )
 
     def test_slot_and_memory_shortfalls_are_two_different_reasons(self):
         """槽位用尽与内存不够**是两件事，报两条不同的原因**。

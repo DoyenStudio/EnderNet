@@ -55,6 +55,7 @@ BB8 = "endernet:network_baseband_8"
 TEMPLATE_IO = "endernet:bus_template_io"
 PASSIVE_IO = "endernet:bus_item_io"
 DRIVER = "endernet:storage_driver"
+MEMORY_SLOT = "endernet:memory_slot"
 
 
 def key(x, y=64, z=0, dimension=0):
@@ -1545,6 +1546,74 @@ class TestPatternContainerEvents(unittest.TestCase):
         )
         self.assertEqual(state.dirty_tick, before)
 
+    # -- 内存槽只收内存条（2026-10-03）--------------------------------
+
+    def test_only_memory_sticks_go_into_a_memory_slot(self):
+        """`items.md`：「内存槽只收内存条，其他物品放入一律拒收」。
+
+        规则住在领域层（`MemorySlotStore.accepts_put`），事件适配器只是翻译；
+        这里验的是**两条路径都真的接上了**——同一份 `_veto_or_mark`。
+        """
+        self.place(MEMORY_SLOT, 7)
+        for name in ("minecraft:stone", "endernet:crafting_template",
+                     "endernet:singleside_tape"):
+            event = _PutEvent(name, 7, 64, 0)
+            self.api.dispatch(
+                self.api.event("PlayerTryPutCustomContainerItemServerEvent"), event
+            )
+            self.assertTrue(event.cancelled, name)
+
+    def test_a_memory_stick_is_accepted(self):
+        ref = self.place(MEMORY_SLOT, 7)
+        event = _PutEvent("endernet:memory_128b", 7, 64, 0)
+        self.api.dispatch(
+            self.api.event("PlayerTryPutCustomContainerItemServerEvent"), event
+        )
+        self.assertFalse(event.cancelled)
+        self.assertGreater(self.server.memory_slots.get_by_ref(ref).dirty_tick, -1)
+
+    def test_a_hopper_cannot_bypass_the_memory_slot_rejection(self):
+        """漏斗是第二条放入路径，规则必须同样生效（同样板槽那条）。"""
+        self.place(MEMORY_SLOT, 7)
+        event = _PutEvent("minecraft:stone", 7, 64, 0)
+        event.dimension = 0
+        self.api.dispatch(
+            self.api.event("ItemPushInCustomContainerServerEvent"), event
+        )
+        self.assertTrue(event.cancelled)
+        self.assertEqual(
+            self.server.pattern_diagnostics()["container_events"][
+                "memory_slot_rejected"
+            ],
+            1,
+        )
+
+    def test_the_two_rejection_counters_are_separate(self):
+        """样板槽与内存槽的拒收**分开计数**：合成一个数之后，
+        「哪条规则在真机上真的生效了」就再也答不出来。"""
+        self.place(TEMPLATE_IO, 7)
+        self.place(MEMORY_SLOT, 8)
+        for x in (7, 8):
+            self.api.dispatch(
+                self.api.event("PlayerTryPutCustomContainerItemServerEvent"),
+                _PutEvent("minecraft:stone", x, 64, 0),
+            )
+        counts = self.server.pattern_diagnostics()["container_events"]
+        self.assertEqual(counts["pattern_slot_rejected"], 1)
+        self.assertEqual(counts["memory_slot_rejected"], 1)
+
+    def test_a_memory_slot_does_not_answer_for_other_containers(self):
+        """反向：内存槽的规则不许外溢到别家容器上。
+
+        误伤的后果与被动接口那条一样重——玩家往总线存石头会被无声挡回去。
+        """
+        self.place(PASSIVE_IO, 8)
+        event = _PutEvent("minecraft:stone", 8, 64, 0)
+        self.api.dispatch(
+            self.api.event("PlayerTryPutCustomContainerItemServerEvent"), event
+        )
+        self.assertFalse(event.cancelled)
+
     def test_rejections_are_counted_for_diagnostics(self):
         self.place(TEMPLATE_IO, 7)
         self.api.dispatch(
@@ -2479,7 +2548,13 @@ class OrderProjectionTests(unittest.TestCase):
         self.assertEqual("order@net-1/master-1/1", rows[0]["order_id"])
 
     def test_memory_is_bytes_not_slot_count(self):
-        """任务文档定的是**字节（B）**；`slots` 是内存条格数，与字节不是一回事。"""
+        """任务文档定的是**字节（B）**；`slots` 报的是**插着的根数**。
+
+        **2026-10-03 起 `slots` 是内存条根数**（在那之前报的是内存槽的台数，
+        而那时容量正是按台数乘替身换算的——两者混在一起才叫这个名字）。
+        它**是透传**：工厂服务报什么，这里就报什么，值本身由
+        `capacity.memory_capacity()` 从内存槽容器里算出来。
+        """
 
         class Ledger(object):
             def describe(self):
@@ -2487,17 +2562,17 @@ class OrderProjectionTests(unittest.TestCase):
 
         class Factory(object):
             memory = Ledger()
-            memory_slots = 4
+            memory_sticks = 3
 
         view = _order_memory(Factory())
         self.assertEqual(3072, view["available"])
         self.assertEqual(4096, view["capacity"])
-        self.assertEqual(4, view["slots"])
+        self.assertEqual(3, view["slots"])
 
     def test_memory_without_a_ledger_is_all_zero_not_a_crash(self):
         class Factory(object):
             memory = None
-            memory_slots = 0
+            memory_sticks = 0
 
         self.assertEqual({"capacity": 0, "used": 0, "available": 0,
                           "slots": 0}, _order_memory(Factory()))
@@ -2558,7 +2633,7 @@ class OrderSyncTests(unittest.TestCase):
         class Factory(object):
             orders = Store()
             memory = None
-            memory_slots = 0
+            memory_sticks = 0
 
         class Runtime(object):
             services = OrderSyncTests.Services(Factory())

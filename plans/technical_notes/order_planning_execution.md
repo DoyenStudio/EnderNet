@@ -139,7 +139,7 @@
 | --- | --- | --- | --- |
 | 08-04、09-02 | **已实现**（离线 + **游戏内实测**，**仅 08 侧**；证据见「复核证据」末节） | 材料库存优先（在选择候选之前就返回）、候选递归预筛（`PlanJob._screen_inputs`，排除会绕回本键的候选并继续试其他候选）、只有全部可用候选都成环才记 `RECURSIVE_CANDIDATES` 缺料；规划器**不再产出** `CYCLE` 判决。做不出计划的请求已改走 `_reject_request`：不建订单、不占名额、不持有任何执行资源 | 09 侧按新原因码（`PLAN_MISSING_MATERIALS` 而非 `PLAN_CYCLE`）处置拒绝，见「本轮改后 09 侧的期望」（09 的 `_reject_request` 已落地且**不按原因码分支**，09 侧代码里没有 `PLAN_CYCLE` 引用，因此换码不需要改它；**但这条路径本轮没有实测**） |
 | 08-05、09 规划入口 | **已实现**（离线） | `PLAN_NODES_PER_TICK = 1`；`PlanJob.step(nodes, frame)` 的预算单位就是配方节点；提交那一帧不吃预算，节点从下一帧起算；同帧重入不重复计算 | 按 tick 限制每订单 1 个逻辑配方节点，禁止同 tick 展开子树 |
-| 08-06、09-02/03 | **已实现**（离线 + **2026-09-28 游戏内实测**，内存不足那组是改替身数值造的条件） | 08：`required_micro_units()`／`required_bytes()`（根原料单位物 × 1 B，`ByteRounding` 取上限）与 `total_recipe_tasks()`；09：`_finish_adoption()` 先按 `plan.required_bytes` **判**再 `memory.claim_order_bytes()` **领**，不足即 `_reject_request`（`ORDER_NO_MEMORY`），**准入不看槽位** | 已落地。`bytes_per_memory_slot`（默认 1024）仍是替身数值，进 `unresolved_report()` |
+| 08-06、09-02/03 | **已实现**（离线 + **2026-09-28 游戏内实测**，内存不足那组是改替身数值造的条件） | 08：`required_micro_units()`／`required_bytes()`（根原料单位物 × 1 B，`ByteRounding` 取上限）与 `total_recipe_tasks()`；09：`_finish_adoption()` 先按 `plan.required_bytes` **判**再 `memory.claim_order_bytes()` **领**，不足即 `_reject_request`（`ORDER_NO_MEMORY`），**准入不看槽位** | 已落地。~~`bytes_per_memory_slot`（默认 1024）仍是替身数值，进 `unresolved_report()`~~ **2026-10-03：该替身已删除**，容量改由内存槽容器里插着的内存条合计（内存条型号容量已定案）；上面那句「改替身数值造的条件」已作废，但当时的实测记录不改 |
 | 09-03/04/06/07 | **已实现**（离线 + **2026-09-28 游戏内实测**） | `SlotLedger.claim_slot(execution_id)` / `release_slot(execution_id)` 逐实例领放（`claim_for_order` 与 `slots_per_order` 已删）；`_dispatch_round()` 按 `rank` 最小的那批未终态步骤**逐实例**派发 | 已落地。`PortState.batch` 仍只有一格，备料段是串行的 |
 | 09-08、12 | 未动 | `_release_everything()` 仍被完成、取消、失败三条路共用 | 完成／手动中止释放内存；异常保留及恢复边界单独处理（**本轮明确没做**） |
 | 09-09、10-06、11-06 | **已实现**（离线 + **2026-09-28 游戏内实测**的进度数；10 侧早已接入） | `Order.progress()` 的 `tasks_total = sum(step.batches)`、完成数按**执行实例**计（**新增** `tasks_*` 一组键，`steps_*` 保留但改答「分几种配方」；`FactoryService.progress()` 只汇总 `tasks_*`）；10 的 `receive_output` 未变 | 已落地。**11 的界面侧仍等 User 交接**，不在本轮 |
@@ -406,7 +406,7 @@ get_server().tick_count                   # 归零 = 实例重建过（干净重
       同一操作 ID 重发不重复计数；两者都不能只按执行实例 ID 去重。
 - [ ] 重启后新建的订单 ID **不与重启前的重复**；同一次执行重试沿用原执行实例 ID。
 
-R04 已确定字节单位、根原料计费、内存持有周期和逐次配方槽位周期；仍未确定各内存条容量、无处理器时的默认槽位等数值。R11 的已有最终产物抵扣、配方选择策略等未被“默认参考 AE2”自动定案。
+R04 已确定字节单位、根原料计费、内存持有周期和逐次配方槽位周期；**各内存条容量已于 2026-10-03 定案**（[items.md](../items.md) 的「内存」一节，容量改由内存槽容器里实际插着的内存条合计，`OrderPolicy.bytes_per_memory_slot` 替身删除）；仍未确定无处理器时的默认槽位等数值。R11 的已有最终产物抵扣、配方选择策略等未被“默认参考 AE2”自动定案。
 
 按字节计费之后**新露出来一条**边界：流体不足 50 mB 时的精确计费与字节取整
 口径。1 mB 恰好 1 微单位，于是 1 mB 的原料会算出 `0.02 B`——规则要求

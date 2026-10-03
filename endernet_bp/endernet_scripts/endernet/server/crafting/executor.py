@@ -2585,6 +2585,7 @@ class FactoryService(NetworkService):
         definitions=None,
         on_slots_changed=None,
         previews=None,
+        memory_store=None,
     ):
         # type: (object, object, object, object, object, object, object, object, str, object, object, object) -> None
         self.service_id = ServiceId.FACTORY
@@ -2612,6 +2613,11 @@ class FactoryService(NetworkService):
         self._energy_signature = None
         self._working_processors = frozenset()
         self.memory = MemoryLedger(self.policy)
+        #: 内存槽状态集合（`devices/memory_slot.py`）。**内存容量的唯一来源**：
+        #: 它读内存槽方块容器里插着的内存条。为 None 时容量恒为 0——
+        #: 那是「没接上」的形状，而不是「内存槽都是空的」的形状，
+        #: 因此装配层一定会传它（见 `bootstrap._factory_builder`）。
+        self.memory_store = memory_store
         #: 每网络的订单集合。**在 attach 时按 component_id 建**，
         #: 因此它不可能串到别的网络上。
         self.orders = None
@@ -2623,7 +2629,13 @@ class FactoryService(NetworkService):
         self.cursor = 0
         #: 最近一次容量重算里「贡献零槽位」的处理器群（诊断用）。
         self.idle_groups = []
-        self.memory_slots = 0
+        #: 最近一次容量重算里，占用的内存**根数**（诊断用）。
+        #:
+        #: **2026-10-03 起语义变了**：以前叫 `memory_slots`、报的是内存槽的
+        #: **台数**（那时容量就是台数乘替身）。现在容量来自容器里的内存条，
+        #: 与它配套的量是**插着的根数**——「一台装了十根」与「十台各装一根」
+        #: 从此分得开。协议字段仍叫 `slots`（见 `_order_memory`）。
+        self.memory_sticks = 0
         #: 下单预览（11 增量）。**每个网络一份**，与订单同寿命。
         #: 注入而不是在这里 new：它要拿规划器、样板索引与只读的存储口，
         #: 而这三样都由装配层给（`_factory_builder` 的说明）。
@@ -2788,7 +2800,8 @@ class FactoryService(NetworkService):
             self.orders.diagnostics() if self.orders is not None else None
         )
         view["idle_processor_groups"] = list(self.idle_groups)
-        view["memory_slots"] = self.memory_slots
+        # **根数**，不是内存槽台数（2026-10-03；诊断键名随之改名）。
+        view["memory_sticks"] = self.memory_sticks
         view["progress"] = self.progress()
         view["policy"] = self.policy.describe()
         view["unresolved"] = self.policy.unresolved_report()
@@ -2856,7 +2869,7 @@ class FactoryService(NetworkService):
                 "slots": self.slots.describe(),
                 "memory": self.memory.describe(),
                 "idle_processor_groups": list(self.idle_groups),
-                "memory_slots": self.memory_slots,
+                "memory_sticks": self.memory_sticks,
             },
             "returns": self.returns.describe(),
             "policy": self.policy.describe(),
@@ -2868,8 +2881,14 @@ class FactoryService(NetworkService):
         # type: () -> None
         """从**权威来源**重算槽位与内存容量。
 
-        槽位来自 02 的处理器群（本模块不自己遍历邻居去数方块），内存来自
-        网络的成员列表。容量缩水**不夺回已有租约**，见 `capacity.py`。
+        槽位来自 02 的处理器群（本模块不自己遍历邻居去数方块）；内存来自
+        网络的成员列表**再落到每台内存槽的容器上**——放一台空的内存槽
+        不再凭空带来容量（2026-10-03）。容量缩水**不夺回已有租约**，
+        见 `capacity.py`。
+
+        **每帧现算，不做推送**：`memory_store` 那边插拔内存条之后自己会标脏、
+        在帧尾重读，这里下一帧读到的就是新值。少一条推送就少一个「推送到达时」
+        与「下次重算时」不一致的时刻（见 `capacity.py` 的模块 docstring）。
         """
         runtime = self.runtime
         if runtime is None:
@@ -2880,9 +2899,9 @@ class FactoryService(NetworkService):
         self.slots.refresh(slots)
         self.idle_groups = idle
         members = runtime.members() if hasattr(runtime, "members") else ()
-        memory, memory_slots = memory_capacity(members, self.definitions, self.policy)
+        memory, memory_sticks = memory_capacity(members, self.memory_store)
         self.memory.refresh(memory)
-        self.memory_slots = memory_slots
+        self.memory_sticks = memory_sticks
 
     def working_processors(self):
         # type: () -> frozenset

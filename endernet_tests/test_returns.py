@@ -28,6 +28,7 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.identity import NodeKey
+from endernet.common.item_codec import item_dict_from_key
 from endernet.common.protocol import (
     ORIGIN_EXTERNAL,
     ORIGIN_INTERNAL,
@@ -70,6 +71,10 @@ MEMORY = "endernet:memory_slot"
 TEMPLATE_DEVICE = "endernet:bus_template_io"
 
 DISK = "endernet:database_compressed_tape"
+#: 夹具里插进内存槽的那根内存条。128 B 对这批订单（2 单位物 = 2 B）绰绰有余，
+#: 取最小的型号是刻意的：容量不够时应当报 `order_no_memory`，而不是被夹具
+#: 悄悄补上——见 `TestCapacity` 那几条真验容量的用例。
+MEMORY_ITEM = "endernet:memory_128b"
 
 
 def key(x, y=64, z=0):
@@ -951,6 +956,13 @@ class ReturnsFixture(unittest.TestCase):
         self.world = FakeWorld()
         self.machine = FakeContainer(slots=27, max_stack=64)
         self.port_box = FakeContainer(slots=9, max_stack=1)
+        #: 内存槽自己的 10 格。**里面有内存条才有容量**（2026-10-03 起：
+        #: 容量读的是容器内容，不再是「有几台内存槽」）。夹具默认插一根
+        #: 128 B，够这批订单用；要验内存不足的用例自己把它拔掉。
+        self.memory_box = FakeContainer(slots=10, max_stack=1)
+        self.memory_box.write_slot(
+            0, item_dict_from_key(ResourceKey.item(MEMORY_ITEM), 1)
+        )
         self.containers = FakeContainerProvider()
         self.sink = self.build_sink()
         self._query_seq = 0
@@ -1006,6 +1018,7 @@ class ReturnsFixture(unittest.TestCase):
         self.world.facing[PORT_KEY.as_key()] = "east"
         self.containers.boxes[PORT_KEY.as_key()] = self.port_box
         self.containers.boxes[MACHINE_KEY.as_key()] = self.machine
+        self.containers.boxes[MEMORY_KEY.as_key()] = self.memory_box
         self.server.tick()
         self.mount_a_disk()
         self.accrue_quota()

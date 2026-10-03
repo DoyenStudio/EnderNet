@@ -202,6 +202,7 @@ class ServerEventBinder(object):
         clock=None,
         event_api=None,
         patterns=None,
+        memory_slots=None,
         player_dimension=None,
     ):
         self.queue = queue
@@ -218,6 +219,15 @@ class ServerEventBinder(object):
         #: 它不该知道什么是样板。判定规则留在领域层，这里只负责把
         #: 引擎给的位置与物品名翻译过去。**可以为 None**（不接样板层的装配）。
         self.patterns = patterns
+        #: 容器变更的另一个接收方（内存槽，2026-10-03）。**与 `patterns`
+        #: 同一份鸭子契约**（`mark_dirty` / `accepts_put`），因此这里不需要
+        #: 再写一遍翻译逻辑——两个 store 各自对不属于自己的位置返回 False /
+        #: 对自己不认识的设备一律放行，谁都不会越界。
+        #:
+        #: **为什么不是一个接收方列表**：这两种设备是并列的两类，而不是
+        #: 「同一个东西的两个实现」；写成列表的话，将来第三个消费者出现时
+        #: 没人说得清列表里谁负责哪一段。
+        self.memory_slots = memory_slots
         #: 玩家维度解析。默认是引擎实现；注入替身即可在离线测试里走通
         #: 「自定义容器事件没有维度」那条路径——而插槽拒收正挂在它上面。
         self.player_dimension = (
@@ -391,7 +401,7 @@ class ServerEventBinder(object):
             # 被动接口不受影响：`accepts_put` 对非提供者一律放行，
             # 而那正是 06「外部物流往本地缓冲里塞东西」的通道。
             self._count("custom_container_push_in")
-            if self.patterns is None:
+            if self.patterns is None and self.memory_slots is None:
                 return
             # `getattr` 而不是直接取：引擎回调里抛异常会一路回到引擎，
             # 而这里离 bootstrap 的兜底很远。字段缺失时按「读不出物品名」
@@ -552,14 +562,28 @@ class ServerEventBinder(object):
 
     def _mark_container_dirty(self, dimension, position):
         # type: (object, object) -> bool
-        """把一个容器位置标脏。维度或坐标拿不到就什么都不做。"""
-        if self.patterns is None or dimension is None or position is None:
+        """把一个容器位置标脏。维度或坐标拿不到就什么都不做。
+
+        **逐个接收方分发**：每个 store 对不属于自己的位置返回 False，
+        因此这里不需要先判断「这是谁的容器」——那判断要在领域层再做一遍，
+        而两处判断迟早会分叉。
+        """
+        if dimension is None or position is None:
+            return False
+        if self.patterns is None and self.memory_slots is None:
             return False
         try:
             x, y, z = position
         except (TypeError, ValueError):
             return False
-        return bool(self.patterns.mark_dirty(NodeKey(dimension, x, y, z)))
+        node_key = NodeKey(dimension, x, y, z)
+        marked = False
+        for store in (self.patterns, self.memory_slots):
+            if store is None:
+                continue
+            if store.mark_dirty(node_key):
+                marked = True
+        return marked
 
     def _on_custom_put(self, event):
         # type: (object) -> None
@@ -568,7 +592,7 @@ class ServerEventBinder(object):
         自定义容器的两条玩家事件**都不带维度**，只能从交互的玩家推出来；
         推不出来就放弃这一次（不猜一个维度，见 `_player_dimension`）。
         """
-        if self.patterns is None:
+        if self.patterns is None and self.memory_slots is None:
             return
         dimension = self._player_dimension(event.playerId)
         if dimension is None:
@@ -588,8 +612,11 @@ class ServerEventBinder(object):
         而另一处照旧放行——症状是「手动放不进去、用漏斗能放进去」，
         玩家会以为那是漏洞，而它确实是。
 
-        判定在领域层（`PatternStore.accepts_put`），这里只做翻译：
-        拒收走 `event.cancel()`，放行则标脏等重读。
+        判定在领域层（样板口按 `pattern_provider` 能力，内存槽按
+        `CATEGORY_MEMORY` 分类），这里只做翻译：拒收走 `event.cancel()`，
+        放行则标脏等重读。
+        **两个 store 都要问**：各自对不属于自己的设备一律放行，因此
+        「谁拒了」这件事不需要在这里再判一次设备类型。
         """
         record = self.registry.get(node_key)
         if record is None:
@@ -599,11 +626,20 @@ class ServerEventBinder(object):
         # 而那与能否读出物品名无关；判不了该不该拦只是不拦而已。
         # 漏掉这一支的后果是「某些改法不进索引」，而它只在物品字典
         # 形状意外时才出现——最难复现的那一类。
-        if item_name and not self.patterns.accepts_put(record.device_id, item_name):
-            event.cancel()
-            self._count("pattern_slot_rejected")
-            return True
-        self.patterns.mark_dirty(node_key)
+        stores = (
+            (self.patterns, "pattern_slot_rejected"),
+            (self.memory_slots, "memory_slot_rejected"),
+        )
+        for store, counter in stores:
+            if store is None:
+                continue
+            if item_name and not store.accepts_put(record.device_id, item_name):
+                event.cancel()
+                self._count(counter)
+                return True
+        for store, _ in stores:
+            if store is not None:
+                store.mark_dirty(node_key)
         return False
 
     def _on_block_entity_tick(self, dimension, x, y, z, block_name):

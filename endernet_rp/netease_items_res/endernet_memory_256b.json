@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:memory_256b"
+        },
+        "description": {
+            "identifier": "endernet:memory_256b"
+        }
+    }
+}

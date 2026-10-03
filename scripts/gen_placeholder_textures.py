@@ -211,6 +211,22 @@ TEMPLATE_GLYPH = (
     "########",
 )
 
+#: 内存条的占位配色与图形。**第三套，与介质、样板都不同**（同 `:199-202` 的
+#: 理由：三样都是拿在手里的物品，同底色就只能靠读名字分辨）。取内存槽方块
+#: 那档金色（`PALETTE[CATEGORY_MEMORY]`），图形画成记忆体的金手指——一排在
+#: 边框内的方点，与介质的「盘」、样板的「网格」都不同形。
+MEMORY_PALETTE = ("#B5A03F", "#5F5320", "#EDDF9C")
+MEMORY_GLYPH = (
+    "########",
+    "#......#",
+    "#.####.#",
+    "#.#..#.#",
+    "#.####.#",
+    "#......#",
+    "#.####.#",
+    "##.##.##",
+)
+
 
 def parse_color(text):
     text = text.lstrip("#")
@@ -317,6 +333,11 @@ def build_template_pixels(index_in_items):
     return render_pixels(TEMPLATE_PALETTE, TEMPLATE_GLYPH, index_in_items)
 
 
+def build_memory_pixels(index_in_items):
+    """内存条的占位图。"""
+    return render_pixels(MEMORY_PALETTE, MEMORY_GLYPH, index_in_items)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="生成 EnderNet 占位贴图")
     parser.add_argument("--force", action="store_true", help="覆盖已存在的贴图")
@@ -346,13 +367,14 @@ def main(argv=None):
     # 物品：文件名与图集键都由 gen_items.py 的命名规则决定，这里保持一致
     # （`item_texture_name(item_id)`），否则图集指向的路径会落空。
     #
-    # 两类物品各用一个 `(清单, 画法)`：序号从 0 重新开始，因此两类物品的
-    # 右上角圆点各数各的；配色与图形不同，再把两类本身也区分开。
+    # 三类物品各用一个 `(清单, 画法)`：序号从 0 重新开始，因此各类物品的
+    # 右上角圆点各数各的；配色与图形不同，再把三类本身也区分开。
     item_written = []
     item_skipped = []
     item_groups = (
         (definitions.item_mediums, build_item_pixels),
         (definitions.item_templates, build_template_pixels),
+        (definitions.item_memories, build_memory_pixels),
     )
     for item_ids, painter in item_groups:
         for index, item_id in enumerate(item_ids):

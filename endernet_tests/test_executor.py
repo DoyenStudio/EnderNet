@@ -15,7 +15,9 @@ import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
 
+from endernet.common.definitions import DefinitionSet, MemorySpec
 from endernet.common.identity import NodeKey
+from endernet.common.item_codec import item_dict_from_key
 from endernet.common.protocol import (
     CommandKind,
     CommandSource,
@@ -205,9 +207,14 @@ class ExecutorFixture(unittest.TestCase):
     #: 额外摆进网络的 `(位置, 方块 id)`。多级配方要更多内存单位，
     #: 子类拿它补设备——**容量是从网络成员真算出来的**，不是夹具里写死的数。
     extra_devices = ()
-    #: 订单策略。默认让 `ServerBootstrap` 造一份；要用**具体的内存字节替身
-    #: 数值**构造准入边界的用例（39 B / 40 B）拿它注入。
+    #: 订单策略。默认让 `ServerBootstrap` 造一份。
     order_policy = None
+    #: 网络里那根内存条的型号。**默认用真实型号**（128 B，够这批订单用）。
+    #: 准入边界那两条用例换成一根**测试规格**的内存条（40 B / 39 B）——
+    #: 真实型号是 2 的幂，写不出「差 1 字节」这种边界。
+    memory_item = "endernet:memory_128b"
+    #: 覆盖定义表里的内存规格；`None` 表示用交付出去的那张真表。
+    memory_specs = None
 
     def setUp(self):
         self.world = FakeWorld()
@@ -221,6 +228,7 @@ class ExecutorFixture(unittest.TestCase):
         #: 而那是「取消之后库存看起来没变」这类假失败最常见的来源。
         self._query_seq = 0
         self.server = ServerBootstrap(
+            definitions=self.build_definitions(),
             world=self.world,
             energy_policy=EnergyPolicy.dev_stand_in(),
             container_provider=self.containers,
@@ -234,6 +242,30 @@ class ExecutorFixture(unittest.TestCase):
         self.service = self.runtime.services.get(ServiceId.FACTORY)
         # 假回流要能真的入库，才能驱动多级配方（见 `FakeReturns.flush`）。
         self.sink.storage = self.runtime.services.get(ServiceId.STORAGE)
+
+    def build_definitions(self):
+        # type: () -> object
+        """定义表。子类用 `memory_specs` 注入**测试规格**的内存条时覆盖它。"""
+        if self.memory_specs is None:
+            return None
+        return DefinitionSet(
+            memories=self.memory_specs,
+            item_memories=tuple(spec.id for spec in self.memory_specs),
+        )
+
+    def memory_positions(self):
+        # type: () -> list
+        """网络里**全部**内存槽的位置：夹具默认那台 + `extra_devices` 补的。
+
+        **每台都要插一根内存条**：容量现在读的是容器内容（2026-10-03），
+        只摆方块等于摆了台空机器——订单会被 `order_no_memory` 挡住，
+        而那是真实的规则，不是夹具该绕过的东西。
+        """
+        positions = [MEMORY_KEY]
+        for node_key, device_id in self.extra_devices:
+            if device_id == MEMORY:
+                positions.append(node_key)
+        return positions
 
     def build_sink(self):
         # type: () -> object
@@ -274,6 +306,16 @@ class ExecutorFixture(unittest.TestCase):
         # 样板口自己的容器装样板，朝向的那个装「外部机器收到的料」。
         self.containers.boxes[PORT_KEY.as_key()] = self.port_box
         self.containers.boxes[MACHINE_KEY.as_key()] = self.machine
+        # 每台内存槽各插一根内存条：**容量是容器的内容，不是方块的台数**。
+        self.memory_boxes = {}
+        for position in self.memory_positions():
+            box = FakeContainer(slots=10, max_stack=1)
+            box.write_slot(
+                0, item_dict_from_key(ResourceKey.item(self.memory_item), 1)
+            )
+            self.containers.boxes[position.as_key()] = box
+            self.memory_boxes[position.as_key()] = box
+        self.memory_box = self.memory_boxes[MEMORY_KEY.as_key()]
         self.server.tick()
         self.mount_a_disk()
         self.accrue_quota()
@@ -739,18 +781,30 @@ class TestCapacity(OneLevel):
         self.assertEqual(self.service.idle_groups, [])
         self.assertIsNotNone(storage)
 
-    def test_memory_bytes_come_from_memory_devices(self):
-        """内存容量的单位是**字节**，与 `required_bytes` 同尺度（R04）。
+    def test_memory_bytes_come_from_the_sticks_in_the_slot(self):
+        """内存容量的单位是**字节**，与 `required_bytes` 同尺度。
 
-        `memory_slots` 仍然报**内存槽的数量**（不是字节）：诊断里要能分辨
-        「只有一根很大的内存条」与「有一堆很小的」。
+        **容量来自内存槽容器里插着的那根内存条**（2026-10-03 起），
+        不再是「有几台内存槽 × 一个替身字节数」。因此这里钉的是
+        「一根 128B 的条 = 128 B」，而 `memory_sticks` 报的是**根数**：
+        诊断里要能分辨「只有一根很大的内存条」与「有一堆很小的」。
         """
-        policy = self.service.policy
-        self.assertEqual(self.service.memory_slots, 1)
+        self.assertEqual(self.service.memory_sticks, 1)
+        self.assertEqual(self.service.memory.capacity, 128)
         self.assertEqual(
-            self.service.memory.capacity, policy.bytes_per_memory_slot
+            self.service.memory.memory_units(), self.service.memory.capacity
         )
-        self.assertEqual(self.service.memory.memory_units(), self.service.memory.capacity)
+
+    def test_an_empty_memory_slot_gives_no_memory_at_all(self):
+        """**摆一台空的内存槽 = 0 字节。** 旧口径下它白送 1024 B——
+        这条用例就是那个口径的墓碑：设备数与容量从此是两个数。"""
+        self.memory_box.write_slot(0, None)
+        self.server.memory_slots.refresh(
+            self.server.registry.get(MEMORY_KEY).ref, force=True
+        )
+        self.service.refresh_capacity()
+        self.assertEqual(self.service.memory_sticks, 0)
+        self.assertEqual(self.service.memory.capacity, 0)
 
     def test_shrinking_capacity_does_not_take_leases_back(self):
         """09-07：「拔处理器/内存时停止超额新派发，现有执行保留状态」。"""
@@ -1549,7 +1603,9 @@ class TestOrderPolicyWiring(ExecutorFixture):
         fields = set(
             item["field"] for item in self.server.policy_bundle().unresolved_report()
         )
-        self.assertIn("order.bytes_per_memory_slot", fields)
+        # `order.bytes_per_memory_slot` 已随替身一起删除（2026-10-03）：
+        # 内存容量改由内存条规格提供，不再是订单策略里的一条未定旋钮。
+        self.assertNotIn("order.bytes_per_memory_slot", fields)
         self.assertIn("order.returns_block_completion", fields)
 
     def test_absent_returns_is_the_library_default(self):
@@ -1633,12 +1689,9 @@ class TestMultipleOrders(OneLevel):
     def two_orders(self):
         self.seed(IRON, 8)
         self.assertEqual(self.service.slots.capacity, 2)
-        # 两根内存槽 × 每根多少字节（R04 的替身规格）。**按字节，不按根数。**
-        self.assertEqual(self.service.memory_slots, 2)
-        self.assertEqual(
-            self.service.memory.capacity,
-            2 * self.service.policy.bytes_per_memory_slot,
-        )
+        # 两根内存条 × 每根 128 B。**按字节，也按根数**——两个数都要对得上。
+        self.assertEqual(self.service.memory_sticks, 2)
+        self.assertEqual(self.service.memory.capacity, 2 * 128)
         first = self.submit_order(request_id="a").payload["order_id"]
         second = self.submit_order(request_id="b").payload["order_id"]
         return first, second
@@ -2033,10 +2086,16 @@ class MemoryFixture(ExecutorFixture):
 
 
 class MemoryBoundary(MemoryFixture):
-    """内存**恰好够**：一根 40 B 的内存条。"""
+    """内存**恰好够**：一根 40 B 的内存条。
+
+    容量是容器的内容，而真实型号一律是 2 的幂（128 B 起步），写不出
+    「恰好差 1 字节」这种边界。因此这里**往定义表里注入一根测试规格**的
+    内存条——构造的是「容量 = 40」这个前提，判定的规则本身一个字没动。
+    """
 
     #: 一根内存条 = 40 B，也就是 10 次配方执行。
-    order_policy = OrderPolicy(bytes_per_memory_slot=40)
+    memory_specs = (MemorySpec("endernet:test_memory_40b", "40B 测试内存条", 40),)
+    memory_item = "endernet:test_memory_40b"
 
     def test_the_order_asks_for_exactly_forty_bytes(self):
         """先钉住这张订单要多少：10 次 × 4 个铁锭 = 40 个物品 = 40 B。"""
@@ -2077,12 +2136,13 @@ class MemoryBoundary(MemoryFixture):
 class MemoryOneByteShort(MemoryFixture):
     """同一份计划、同样的网络，**内存条只给 39 B** → 拒绝下达。
 
-    单独一个类而不是在用例里改策略字段：容量是每帧从网络成员重算出来的
-    （`refresh_capacity`），改一个用例中途的字段会让「这条验的是 39 B」
+    单独一个类而不是在用例里换内存条：容量是每帧从网络成员重算出来的
+    （`refresh_capacity`），中途拔掉一根会让「这条验的是 39 B」
     取决于重算有没有发生。
     """
 
-    order_policy = OrderPolicy(bytes_per_memory_slot=39)
+    memory_specs = (MemorySpec("endernet:test_memory_39b", "39B 测试内存条", 39),)
+    memory_item = "endernet:test_memory_39b"
 
     def test_one_byte_short_is_refused_not_queued(self):
         """39 B 可用、要 40 B → **拒绝**：订单不进订单表，另有一条拒绝记录。

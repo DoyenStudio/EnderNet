@@ -81,13 +81,13 @@ class OrderPolicy(object):
     常数，因为这几条都还没定案（全局约束 7）。`assert_settled()`
     **只应在正式验收时调用**——开发与离线测试不应调用它。
 
-    `bytes_per_memory_slot` 是这里的核心替身：**定义表里没有「一根内存条多大」
-    这个配置**，R04 的「内存条规格」至今未定。它的单位是**字节**——与
-    `planner.CraftPlan.required_bytes()` 同尺度，因此「内存够不够」是这两个
-    数直接比大小，中间不再有第二套换算。取 1024 B 而不是 1：1 B 会让任何
-    真实配方（两个铁锭就是 2 B）在准入时当场被拒，替身必须落在一个能开工的
-    量级上。它照样进 `unresolved_report()`，因此没有任何一条正式验收能带着
-    它盖章。
+    **`bytes_per_memory_slot` 已删除（2026-10-03）。** 它曾是这里的核心替身：
+    定义表里没有「一根内存条多大」，于是只能拿 1024 B 乘以内存槽的**台数**估。
+    内存条物品一落地（`plans/items.md` 的「内存」一节），容量就有了权威来源——
+    `MemorySlotStore` 读内存槽方块容器里插着的内存条，各按 `MemorySpec.capacity_bytes`
+    合计。替身随之消失，**「有几台内存槽」与「有多少内存」从此是两个数**。
+    容量的单位仍是**字节**，与 `planner.CraftPlan.required_bytes()` 同尺度，
+    因此「内存够不够」依旧是两个数直接比大小，中间没有第二套换算。
 
     **`slots_per_order` 与 `memory_units_per_step` 已删除**：前者是「整单领一次
     槽位」的旧口径，后者是「按聚合步骤数估内存」的旧口径，两者都被 R04 的
@@ -95,7 +95,6 @@ class OrderPolicy(object):
     """
 
     __slots__ = (
-        "bytes_per_memory_slot",
         "returns_block_completion",
         "submit_plan_budget",
         "plan_budget_per_tick",
@@ -107,7 +106,6 @@ class OrderPolicy(object):
 
     def __init__(
         self,
-        bytes_per_memory_slot=1024,
         returns_block_completion=True,
         submit_plan_budget=4096,
         plan_budget_per_tick=1024,
@@ -116,10 +114,7 @@ class OrderPolicy(object):
         op_ledger_limit=4096,
         rejected_request_limit=64,
     ):
-        # type: (int, bool, int, int, int, int, int, int) -> None
-        #: **R04**：一个内存槽方块提供多少**字节**。定义表里没有这一项。
-        #: 替身取 1024（见类 docstring：取 1 会让真实配方一律被拒）。
-        self.bytes_per_memory_slot = int(bytes_per_memory_slot)
+        # type: (bool, int, int, int, int, int, int) -> None
         #: **R09**：返还物没到齐算不算「这一步没做完」。
         #: 09 验收原文「所需鱼已回流但空桶未到时步骤仍工作中」是**看得到的
         #: 既定玩法**，因此替身取 `True`（返还物到齐才算完成）。R09 的另一侧
@@ -145,7 +140,6 @@ class OrderPolicy(object):
         self.op_ledger_limit = int(op_ledger_limit)
 
         for name in (
-            "bytes_per_memory_slot",
             "plan_budget_per_tick",
             "orders_per_tick",
             "max_orders",
@@ -160,13 +154,6 @@ class OrderPolicy(object):
     def unresolved_report(self):
         # type: () -> list
         return [
-            {
-                "field": "order.bytes_per_memory_slot",
-                "rule": "R04",
-                "value": self.bytes_per_memory_slot,
-                "note": "一个内存槽方块提供多少字节；定义表里没有这一项，"
-                        "替身取 1024 B（各内存条容量仍未定）",
-            },
             {
                 "field": "order.returns_block_completion",
                 "rule": "R09",
@@ -212,7 +199,6 @@ class OrderPolicy(object):
     def describe(self):
         # type: () -> dict
         return {
-            "bytes_per_memory_slot": self.bytes_per_memory_slot,
             "returns_block_completion": self.returns_block_completion,
             "submit_plan_budget": self.submit_plan_budget,
             "plan_budget_per_tick": self.plan_budget_per_tick,
@@ -535,25 +521,46 @@ def slot_sources(snapshot, component_id):
     return seen, idle
 
 
-def memory_capacity(members, definitions, policy):
-    # type: (object, object, object) -> tuple
-    """从网络成员算出内存**字节**总数。返回 `(内存字节, 内存槽数量)`。
+def memory_capacity(members, store):
+    # type: (object, object) -> tuple
+    """从网络成员算出内存**字节**总数。返回 `(内存字节, 插着的根数)`。
 
-    `members` 是 `NetworkRuntime.members()` 的返回值（`NetworkNode` 列表）。
+    `members` 是 `NetworkRuntime.members()` 的返回值（`NetworkNode` 列表），
+    `store` 是 `devices/memory_slot.py` 的 `MemorySlotStore`（**鸭子类型**，
+    只要求 `bytes_of` / `sticks_of`；测试传替身即可）。
+
     **按定义表的分类筛**，不按方块 id 拼字符串——分类的真相只有定义表一处。
-    区块未加载的成员不计入：它的状态没人能确认，而内存是要拿去开工的。
+    容量来自每台内存槽容器里插着的内存条（2026-10-03 起），**不再按台数估**：
+    放一台空的内存槽，网络的内存就是 0。
 
-    第二个返回值仍然给**内存槽数量**（不是字节）：诊断里要能分辨「只有一根
-    很大的内存条」与「有一堆很小的」，而两者在字节合计上可能一样。
+    **区块未加载的成员不计入**：它的状态没人能确认，而内存是要拿去开工的。
+    这条与 `PatternStore`「读不到就保留上次内容」是**有意的差别**——
+    样板留着旧索引只是让计划晚一拍，内存多算则会让一个跑不动的订单被放行。
+    宁可少算，不可多算。
+
+    第二个返回值是**插着的根数**（不是字节、也不是内存槽台数）：诊断里要能
+    分辨「只有一根很大的内存条」与「有一堆很小的」，而两者在字节合计上可能
+    一样。它同时就是 `OrderMemoryView.memory.slots` 报给终端看的那个数。
     """
-    count = 0
+    if store is None:
+        # **没接上内存槽状态集合就是 0 容量**，而不是抛异常：与「一台内存条
+        # 都没有」在数值上同形，但在方向上一致——宁可少算不可多算
+        # （装配层 `_factory_builder` 一定会传它，因此这只在直接构造
+        # `FactoryService` 的离线夹具上出现）。
+        return 0, 0
+    total_bytes = 0
+    sticks = 0
     for node in members or ():
         if getattr(node, "category", None) != CATEGORY_MEMORY:
             continue
         if not getattr(node, "loaded", False):
             continue
-        count += 1
-    return count * policy.bytes_per_memory_slot, count
+        node_key = getattr(node, "node_key", None)
+        if node_key is None:
+            node_key = node.ref.node_key
+        total_bytes += store.bytes_of(node_key)
+        sticks += store.sticks_of(node_key)
+    return total_bytes, sticks
 
 
 def memory_admission_blockers(memory, required_bytes):
