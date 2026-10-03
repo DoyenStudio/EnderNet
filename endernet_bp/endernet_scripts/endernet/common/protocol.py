@@ -1059,13 +1059,18 @@ SYNC_CHANNEL_S2C = "endernet:terminal_sync"
 #: 载荷形状见 `common/device_identity.py`；事件名两侧必须逐字相同。
 DEVICE_IDENTITY_CHANNEL_S2C = "endernet:device_identity"
 
-#: 视图种类。`order` **是已知种类**（消息词汇里为它留了位置），但尚无生产者，
-#: 因此与「客户端发来一个我们不认识的种类」必须给出不同的拒绝理由——
-#: 前者是 `Reason.UNSUPPORTED`（还没做），后者是协议错误（发错了）。
+#: 视图种类。两种都**是已知种类**，且都已有生产者；与「客户端发来一个我们
+#: 不认识的种类」必须给出不同的拒绝理由——前者是 `Reason.UNSUPPORTED`
+#: （还没做），后者是协议错误（发错了）。
+#:
+#: `order` 的生产者由 11-06（工厂终端）接上：会话按 `VIEW_ORDER` 打开时，
+#: 服务端推 `MSG_ORDER_STATE` 而不是物品快照，`_service_network` 按这个
+#: 字段分流。**在 11-06 之前它只出现在 `VIEW_KINDS` 里**，开会话会被
+#: `sessions.check` 以「尚未接入（依赖 11-06/11-09）」拒掉。
 VIEW_ITEM = "item"
 VIEW_ORDER = "order"
 VIEW_KINDS = (VIEW_ITEM, VIEW_ORDER)
-VIEW_KINDS_WITH_PRODUCER = (VIEW_ITEM,)
+VIEW_KINDS_WITH_PRODUCER = (VIEW_ITEM, VIEW_ORDER)
 
 MSG_SESSION_OPEN = "session_open"
 MSG_SESSION_CLOSE = "session_close"
@@ -1092,6 +1097,15 @@ MSG_DEVICE_STATUS = "device_status"
 MSG_CRAFT_STATE = "craft_state"
 #: 样板终端的真实槽与虚拟配置（11-05）。服务端单向推，见 `TemplateStateMessage`。
 MSG_TEMPLATE_STATE = "template_state"
+#: 工厂终端的活跃订单、剩余内存与配方树进度（11-06）。服务端单向推，
+#: 见 `OrderStateMessage`。**搭在已有的同步通道上**（`view_kind=VIEW_ORDER`），
+#: 不新开通道，也不复用物品快照那套（订单不是库存）。
+MSG_ORDER_STATE = "order_state"
+#: 下单预览的**状态头**与**原料行分片**（11 增量）。服务端单向推。
+#: 见 `PreviewStateMessage` / `PreviewChunkMessage` 与
+#: `plans/technical_notes/terminal_pattern_order_preview.md`。
+MSG_PREVIEW_STATE = "preview_state"
+MSG_PREVIEW_CHUNK = "preview_chunk"
 
 CLIENT_TO_SERVER_KINDS = frozenset(
     [
@@ -1117,6 +1131,9 @@ SERVER_TO_CLIENT_KINDS = frozenset(
         MSG_DEVICE_STATUS,
         MSG_CRAFT_STATE,
         MSG_TEMPLATE_STATE,
+        MSG_ORDER_STATE,
+        MSG_PREVIEW_STATE,
+        MSG_PREVIEW_CHUNK,
     ]
 )
 
@@ -1150,6 +1167,20 @@ def require_text(value, name):
     return value
 
 
+def require_flag(value, name):
+    # type: (object, str) -> bool
+    """线格式布尔校验：**只收真正的 `bool`**。
+
+    与 `require_count` 同一条取向：`1` / `"true"` / `[]` 都能在 `if` 下冒充
+    真值，而它们落到线上之后，对面解出来的就是另一个类型——「快照说这个
+    资源有样板、增量说没有」这类偏差会从一个类型错误开始，
+    却在那条消息的**语义**上表现出来。
+    """
+    if not isinstance(value, bool):
+        raise TypeError("%s 必须是布尔，得到 %r" % (name, value))
+    return value
+
+
 def _require_fields(data, required, label):
     # type: (dict, tuple, str) -> None
     """严格字段检查：**缺项与多项都拒绝**。
@@ -1169,11 +1200,17 @@ def _require_fields(data, required, label):
         raise ValueError("%s 出现未知字段 %r" % (label, sorted(unknown)))
 
 
-def _encode_item(descriptions, key, stored, reserved):
-    # type: (object, ResourceKey, int, int) -> dict
-    """快照与增量**共用**的条目编码，防止两条路径漂移。"""
+def _encode_item(descriptions, key, stored, reserved, has_pattern):
+    # type: (object, ResourceKey, int, int, bool) -> dict
+    """快照与增量**共用**的条目编码，防止两条路径漂移。
+
+    `has_pattern` **刻意没有默认值**：它是「显示来源」而不是库存数量，
+    任何一处调用点漏改都应当是 `TypeError` 而不是静默的 `False`——
+    后者会让「快照带标记、增量丢标记」在线上表现为点击后 `+` 随机消失。
+    """
     require_count(stored, "stored")
     require_count(reserved, "reserved")
+    require_flag(has_pattern, "has_pattern")
     if reserved > stored:
         raise ValueError("Reserved count exceeds stored count")
     if descriptions is None:
@@ -1182,11 +1219,13 @@ def _encode_item(descriptions, key, stored, reserved):
             "resource_description": key.to_dict(),
             "stored": stored,
             "reserved": reserved,
+            "has_pattern": has_pattern,
         }
     return {
         "resource_ref": descriptions.encode(key),
         "stored": stored,
         "reserved": reserved,
+        "has_pattern": has_pattern,
     }
 
 
@@ -1219,15 +1258,28 @@ def _decode_remove(data, descriptions=None):
 
 def _decode_item(data, descriptions=None):
     # type: (dict, object) -> tuple
-    """`_encode_item` 的逆。**所有检查通过后才认这把键。**"""
+    """`_encode_item` 的逆。**所有检查通过后才认这把键。**
+
+    返回四元组（末位是 `has_pattern`）。**它不接受缺项的 `has_pattern`**：
+    与编码侧同一条取向——线上少一个字段就是协议错误，不是「默认没有样板」。
+    """
     if "resource_ref" in data:
-        _require_fields(data, ("resource_ref", "stored", "reserved"), "item entry")
+        _require_fields(
+            data, ("resource_ref", "stored", "reserved", "has_pattern"), "item entry"
+        )
         if descriptions is None:
             raise ValueError("收到资源引用，但当前没有会话描述表")
         key = descriptions.decode(data["resource_ref"])
     else:
         _require_fields(
-            data, ("resource_key", "resource_description", "stored", "reserved"),
+            data,
+            (
+                "resource_key",
+                "resource_description",
+                "stored",
+                "reserved",
+                "has_pattern",
+            ),
             "item entry",
         )
         key = ResourceKey.from_dict(data["resource_description"])
@@ -1237,7 +1289,8 @@ def _decode_item(data, descriptions=None):
     reserved = require_count(data["reserved"], "reserved")
     if reserved > stored:
         raise ValueError("Reserved count exceeds stored count")
-    return key, stored, reserved
+    has_pattern = require_flag(data["has_pattern"], "has_pattern")
+    return key, stored, reserved, has_pattern
 
 
 class SyncMessage(object):
@@ -1705,6 +1758,461 @@ class TemplateStateMessage(SyncMessage):
                    data["limits"])
 
 
+#: 工厂终端配方行的**制作阶段**（11-06）。
+#:
+#: 走线上的是**整数**，中文只在客户端映射：协议层保持语言中立。这条与
+#: `PATTERN_MODES` 同一个地位——两侧共用一份词汇，谁都不许各写一套字符串
+#: 再去比。交接（`plans/ui/factoric_terminal_panel.md` §4）定的是三态：
+#: 等待中 / 制作中 / 已完成。
+ORDER_SOURCE_STAGE_WAITING = 0
+ORDER_SOURCE_STAGE_RUNNING = 1
+ORDER_SOURCE_STAGE_DONE = 2
+ORDER_SOURCE_STAGES = (
+    ORDER_SOURCE_STAGE_WAITING,
+    ORDER_SOURCE_STAGE_RUNNING,
+    ORDER_SOURCE_STAGE_DONE,
+)
+
+#: 配方行的**投料／产物状态**。与阶段分开：阶段说的是这条配方整体走到哪，
+#: 这一说说的是它此刻卡在哪一头（等料下锅 / 等产物出锅）。同样是三态，
+#: 但**不是同一条轴**——合成中且正在等产物的配方，阶段是「制作中」。
+ORDER_SOURCE_FEED_WAITING_INPUTS = 0
+ORDER_SOURCE_FEED_WAITING_OUTPUTS = 1
+ORDER_SOURCE_FEED_DONE = 2
+ORDER_SOURCE_FEEDS = (
+    ORDER_SOURCE_FEED_WAITING_INPUTS,
+    ORDER_SOURCE_FEED_WAITING_OUTPUTS,
+    ORDER_SOURCE_FEED_DONE,
+)
+
+#: 一行订单摘要的字段。**没有 `steps`**：配方树是**另一张扁平表**，
+#: 用 `order_id` 与订单行相认（见 `OrderStateMessage`）。
+ORDER_ROW_FIELDS = (
+    "order_id", "canonical", "name", "aux", "amount", "status",
+    "tasks_completed", "tasks_total", "memory_bytes",
+)
+
+#: 一行配方树节点的字段。`done` / `total` 是**物品数**，不是执行次数——
+#: 交接 §4 明写「两项使用同一物品数量单位，不混用执行次数与产物数量」，
+#: 而订单整体进度那一侧用的才是配方任务数。两个口径各有其名，不许互相顶替。
+SOURCE_ROW_FIELDS = (
+    "order_id", "canonical", "name", "aux", "stage", "feed", "done", "total",
+)
+
+
+def _require_tristate(value, allowed, name):
+    # type: (object, tuple, str) -> int
+    """三态枚举校验。**拒 bool**：`True in (0, 1, 2)` 为真，放过去等于
+    让一个布尔冒充「制作中」。"""
+    if isinstance(value, bool) or value not in allowed:
+        raise ValueError("%s 不在 %r 里，得到 %r" % (name, allowed, value))
+    return value
+
+
+def _order_rows(rows):
+    # type: (object) -> tuple
+    """订单摘要行。行数**不固定**（活跃订单有几条就几条），因此只逐行校验。"""
+    if not isinstance(rows, (list, tuple)):
+        raise TypeError("orders 必须是列表，得到 %r" % (type(rows),))
+    out = []
+    for row in rows:
+        _require_fields(row, ORDER_ROW_FIELDS, "order row")
+        require_text(row["order_id"], "order_id")
+        require_text(row["canonical"], "canonical")
+        # **名字必须给**：客户端的订单行要画主产物图标与名字，而设备侧读不到
+        # 引擎。理由与 `_require_slot_row` 逐字相同，见那里的说明。
+        require_text(row["name"], "name")
+        require_count(row["aux"], "aux")
+        require_count(row["amount"], "amount")
+        require_text(row["status"], "status")
+        require_count(row["tasks_completed"], "tasks_completed")
+        require_count(row["tasks_total"], "tasks_total")
+        if row["tasks_completed"] > row["tasks_total"]:
+            raise ValueError("已完成任务数不能超过总数")
+        require_count(row["memory_bytes"], "memory_bytes")
+        out.append(dict(row))
+    return tuple(out)
+
+
+def _source_rows(rows):
+    # type: (object) -> tuple
+    """配方树行。**行数不固定**：一个订单的树有几条配方就几条。
+
+    `order_id` 必须非空——它是与订单行相认的唯一依据，空串会让这一行
+    落进「没有主人」的名单里，而界面上表现成「详情少了几行」。
+    """
+    if not isinstance(rows, (list, tuple)):
+        raise TypeError("sources 必须是列表，得到 %r" % (type(rows),))
+    out = []
+    for row in rows:
+        _require_fields(row, SOURCE_ROW_FIELDS, "source row")
+        require_text(row["order_id"], "order_id")
+        require_text(row["canonical"], "canonical")
+        require_text(row["name"], "name")
+        require_count(row["aux"], "aux")
+        _require_tristate(row["stage"], ORDER_SOURCE_STAGES, "stage")
+        _require_tristate(row["feed"], ORDER_SOURCE_FEEDS, "feed")
+        require_count(row["done"], "done")
+        require_count(row["total"], "total")
+        if row["done"] > row["total"]:
+            raise ValueError("已完成数量不能超过总数")
+        out.append(dict(row))
+    return tuple(out)
+
+
+class OrderStateMessage(SyncMessage):
+    """工厂终端的订单视图（11-06）。服务端单向推，`view_kind=VIEW_ORDER` 专属。
+
+    **不是一条消息一个订单**：一次推本网络**全部活跃订单**，外加它们的
+    配方树。理由是详情窗口要求「打开期间随事件更新」——若详情要靠一条
+    按需请求，服务端就得为每条会话记一个「他正看着哪一单」，那是第二份
+    状态；而活跃订单本来就受 `max_active_orders` 约束，张数很少。
+
+    - `memory`：`{capacity, used, available, slots}`，**单位是字节（B）**。
+      任务文档（[11. 终端与客户端同步.md]「11-06 的已确认显示需求」）写的就是
+      字节，JSON 里那句静态「0KB」是占位文案，以这里为准。
+      `slots` 是内存条格数，与 `capacity` 不是一回事（前者是设备数、后者
+      是它换算出来的上限）。
+    - `orders`：活跃订单摘要，**非终态**（已完成的订单不再是「运行中」）。
+      主产物身份四个字段 `canonical / name / aux / amount` 的理由同
+      `_require_slot_row`：客户端画图标只能靠服务端把资源名带过来。
+      `status` 是**文本**（`OrderStatus` 的字面值），协议层不为了校验它
+      去 import 领域层的枚举——它是显示提示，不是控制输入。
+    - `sources`：**全量配方树**，扁平一张表，用 `order_id` 认领。每行是
+      订单里的一条配方任务，**已完成的也保留**（交接 §3：全配方树都要显示，
+      不能只显示直接原料）。树形由客户端按 `canonical` / 依赖关系重建展示。
+
+    **它不做去重、也不带版本号**：整条是全量快照，服务端在内容没变时不发
+    （去重在 `TerminalSyncHub._publish_order_state`）。因此客户端拿到就整份
+    替换，不比较新旧。
+    """
+
+    kind = MSG_ORDER_STATE
+    __slots__ = ("memory", "orders", "sources")
+
+    #: 线上字段的唯一清单，构造与解析共用。
+    FIELDS = ("kind", "memory", "orders", "sources")
+
+    #: `memory` 的字段。**四个都要**：界面上那根条的分子是 `available`、
+    #: 分母是 `capacity`，少一个就得让客户端去猜另一端。
+    MEMORY_FIELDS = ("capacity", "used", "available", "slots")
+
+    def __init__(self, memory, orders, sources):
+        if not isinstance(memory, dict):
+            raise TypeError("memory 必须是字典，得到 %r" % (type(memory),))
+        _require_fields(memory, self.MEMORY_FIELDS, "order memory")
+        for name in self.MEMORY_FIELDS:
+            require_count(memory[name], name)
+        if memory["used"] > memory["capacity"]:
+            raise ValueError("已用内存不能超过总量")
+        if memory["available"] > memory["capacity"]:
+            raise ValueError("可用内存不能超过总量")
+        self.memory = dict(memory)
+        self.orders = _order_rows(orders)
+        self.sources = _source_rows(sources)
+
+    def to_dict(self, descriptions=None):
+        return {
+            "kind": self.kind,
+            "memory": dict(self.memory),
+            "orders": [dict(row) for row in self.orders],
+            "sources": [dict(row) for row in self.sources],
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        _require_fields(data, cls.FIELDS, "order_state")
+        return cls(data["memory"], data["orders"], data["sources"])
+
+
+#: 预览原料行的一行。`allocated` 是**本计划分配到的那份库存**（不是全网可用，
+#: 也不允许同一份库存在多行里重复出现）；`planned` 是这一步要制作的量；
+#: `missing` 是这一行最终还差不差料。四个数一个都不能省：少任何一个，
+#: 界面上那三种情形（够 / 靠制作补齐 / 补不上）就有两种长得一样。
+PREVIEW_ROW_FIELDS = (
+    "canonical", "name", "aux", "demand", "allocated", "planned", "missing",
+    "sources",
+)
+
+#: 整单缺料结论里的一条：哪个键缺、缺在哪。`detail` 是给人看的说明。
+PREVIEW_BLOCK_FIELDS = ("canonical", "detail")
+
+
+def _preview_rows(rows):
+    # type: (object) -> tuple
+    """预览原料行。行数**不固定**（计划的账本有几条就几条），只逐行校验。"""
+    if not isinstance(rows, (list, tuple)):
+        raise TypeError("rows 必须是列表，得到 %r" % (type(rows),))
+    out = []
+    for row in rows:
+        _require_fields(row, PREVIEW_ROW_FIELDS, "preview row")
+        require_text(row["canonical"], "canonical")
+        # **名字必须给**：客户端要画图标与名字，而它读不到引擎。理由与
+        # `_require_slot_row` / `_order_rows` 逐字相同。
+        require_text(row["name"], "name")
+        require_count(row["aux"], "aux")
+        for field in ("demand", "allocated", "planned"):
+            require_count(row[field], field)
+        require_flag(row["missing"], "missing")
+        sources = row["sources"]
+        if not isinstance(sources, (list, tuple)):
+            raise TypeError("sources 必须是列表")
+        for canonical in sources:
+            require_text(canonical, "sources 里的 canonical")
+        out.append(dict(row))
+    return tuple(out)
+
+
+def _preview_blocks(blocks):
+    # type: (object) -> tuple
+    """整单缺料结论。**空列表表示「没有缺料」**，不是「算不出来」——
+    后者走 `status`。"""
+    if not isinstance(blocks, (list, tuple)):
+        raise TypeError("blocked 必须是列表，得到 %r" % (type(blocks),))
+    out = []
+    for row in blocks:
+        _require_fields(row, PREVIEW_BLOCK_FIELDS, "preview block")
+        require_text(row["canonical"], "canonical")
+        require_text(row["detail"], "detail")
+        out.append(dict(row))
+    return tuple(out)
+
+
+class PreviewStateMessage(SyncMessage):
+    """下单预览的状态头（11 增量）。**先于原料行到达。**
+
+    **它到了不等于算完了。** 客户端要等**同一 `generation` 的全部分片**
+    到齐才允许提交——契约第 3 节点名的坑正是「收到第一条进度就结束 loading」，
+    而那条进度就是这条消息本身。
+
+    - `status` 用**规划器自己的字符串**（`PlanStatus` 的字面值）加两个服务级
+      取值 `expired` / `error`。不另造一套词汇：`submit_order` 就是按那几个
+      字符串分支的，两边各写一套迟早对不上。
+    - `generation` 每重算一次加一。分片带着它，因此**旧一轮的迟到分片
+      不会被拼进新一轮**。
+    - `submit_ok` 只是给按钮用的**建议**。服务端提交时会独立复核一遍
+      （契约第 4 节末句）；`truncated` 为真时它必定为假，因为被截断的计划
+      说不上「没缺料」。
+    - `inventory_version` / `topology_version` / `plan_digest` 是这次预览
+      **依据的是哪一份世界**。它们不参与准入判断，只回答「这份结论是什么
+      时候算的」。
+    """
+
+    kind = MSG_PREVIEW_STATE
+    __slots__ = (
+        "request_id",
+        "preview_id",
+        "generation",
+        "status",
+        "detail",
+        "submit_ok",
+        "target",
+        "count",
+        "semantics",
+        "inventory_version",
+        "topology_version",
+        "plan_digest",
+        "row_count",
+        "packet_count",
+        "missing",
+        "blocked",
+        "truncated",
+        "spent",
+    )
+
+    FIELDS = (
+        "kind",
+        "request_id",
+        "preview_id",
+        "generation",
+        "status",
+        "detail",
+        "submit_ok",
+        "target",
+        "count",
+        "semantics",
+        "inventory_version",
+        "topology_version",
+        "plan_digest",
+        "row_count",
+        "packet_count",
+        "missing",
+        "blocked",
+        "truncated",
+        "spent",
+    )
+
+    #: 目标身份。三个都要：客户端画图标与名字只能靠服务端带过来。
+    TARGET_FIELDS = ("canonical", "name", "aux")
+
+    def __init__(self, request_id, preview_id, generation, status, detail,
+                 submit_ok, target, count, semantics, inventory_version,
+                 topology_version, plan_digest, row_count, packet_count,
+                 missing, blocked, truncated, spent):
+        require_text(request_id, "request_id")
+        #: **空串是合法的**：`preview_request` 被拒时服务端没有预览号可给，
+        #: 而客户端仍要收到一条「你那条请求没成」。
+        if not isinstance(preview_id, _TEXT_TYPES):
+            raise TypeError("preview_id 必须是文本，得到 %r" % (preview_id,))
+        require_count(generation, "generation")
+        require_text(status, "status")
+        #: 说明文字**允许为空**：正常完成时没有话要说。
+        if not isinstance(detail, _TEXT_TYPES):
+            raise TypeError("detail 必须是文本")
+        require_flag(submit_ok, "submit_ok")
+        if not isinstance(target, dict):
+            raise TypeError("target 必须是字典，得到 %r" % (type(target),))
+        _require_fields(target, self.TARGET_FIELDS, "preview target")
+        require_text(target["canonical"], "canonical")
+        require_text(target["name"], "name")
+        require_count(target["aux"], "aux")
+        require_count(count, "count")
+        if count <= 0:
+            raise ValueError("预览数量必须是正整数，得到 %r" % (count,))
+        require_text(semantics, "semantics")
+        require_count(inventory_version, "inventory_version")
+        require_count(topology_version, "topology_version")
+        if not isinstance(plan_digest, _TEXT_TYPES):
+            raise TypeError("plan_digest 必须是文本")
+        require_count(row_count, "row_count")
+        require_count(packet_count, "packet_count")
+        require_flag(missing, "missing")
+        require_flag(truncated, "truncated")
+        require_count(spent, "spent")
+        self.request_id = request_id
+        self.preview_id = preview_id
+        self.generation = generation
+        self.status = status
+        self.detail = detail
+        self.submit_ok = submit_ok
+        self.target = dict(target)
+        self.count = count
+        self.semantics = semantics
+        self.inventory_version = inventory_version
+        self.topology_version = topology_version
+        self.plan_digest = plan_digest
+        self.row_count = row_count
+        self.packet_count = packet_count
+        self.missing = missing
+        self.blocked = _preview_blocks(blocked)
+        self.truncated = truncated
+        self.spent = spent
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "request_id": self.request_id,
+            "preview_id": self.preview_id,
+            "generation": self.generation,
+            "status": self.status,
+            "detail": self.detail,
+            "submit_ok": self.submit_ok,
+            "target": dict(self.target),
+            "count": self.count,
+            "semantics": self.semantics,
+            "inventory_version": self.inventory_version,
+            "topology_version": self.topology_version,
+            "plan_digest": self.plan_digest,
+            "row_count": self.row_count,
+            "packet_count": self.packet_count,
+            "missing": self.missing,
+            "blocked": [dict(row) for row in self.blocked],
+            "truncated": self.truncated,
+            "spent": self.spent,
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> PreviewStateMessage
+        _require_fields(data, cls.FIELDS, "preview_state")
+        return cls(
+            data["request_id"],
+            data["preview_id"],
+            data["generation"],
+            data["status"],
+            data["detail"],
+            data["submit_ok"],
+            data["target"],
+            data["count"],
+            data["semantics"],
+            data["inventory_version"],
+            data["topology_version"],
+            data["plan_digest"],
+            data["row_count"],
+            data["packet_count"],
+            data["missing"],
+            data["blocked"],
+            data["truncated"],
+            data["spent"],
+        )
+
+
+class PreviewChunkMessage(SyncMessage):
+    """预览原料行的一批（11 增量）。
+
+    **收齐全部分片才算拿到结果**（契约第 3 节：「不能因收到第一条进度或
+    部分行而提前结束 loading」）。`packet_count` 随每片发，因此客户端
+    **不必等最后一片**就能知道还差几片——最后一片丢了也不会一直转圈。
+
+    `generation` 与状态头对齐：旧一轮的迟到分片凭它被丢掉。
+    """
+
+    kind = MSG_PREVIEW_CHUNK
+    __slots__ = ("preview_id", "generation", "packet_index", "packet_count", "rows")
+
+    FIELDS = (
+        "kind",
+        "preview_id",
+        "generation",
+        "packet_index",
+        "packet_count",
+        "rows",
+    )
+
+    def __init__(self, preview_id, generation, packet_index, packet_count, rows):
+        require_text(preview_id, "preview_id")
+        require_count(generation, "generation")
+        require_count(packet_index, "packet_index")
+        require_count(packet_count, "packet_count")
+        if packet_count < 1:
+            raise ValueError("packet_count 至少为 1")
+        if packet_index >= packet_count:
+            raise ValueError("packet_index 越界")
+        self.preview_id = preview_id
+        self.generation = generation
+        self.packet_index = packet_index
+        self.packet_count = packet_count
+        self.rows = _preview_rows(rows)
+
+    def is_last(self):
+        # type: () -> bool
+        return self.packet_index == self.packet_count - 1
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "preview_id": self.preview_id,
+            "generation": self.generation,
+            "packet_index": self.packet_index,
+            "packet_count": self.packet_count,
+            "rows": [dict(row) for row in self.rows],
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> PreviewChunkMessage
+        _require_fields(data, cls.FIELDS, "preview_chunk")
+        return cls(
+            data["preview_id"],
+            data["generation"],
+            data["packet_index"],
+            data["packet_count"],
+            data["rows"],
+        )
+
+
 class SnapshotBegin(SyncMessage):
     kind = MSG_SNAPSHOT_BEGIN
     __slots__ = ("snapshot_id", "item_view_version", "total_items")
@@ -1762,8 +2270,8 @@ class SnapshotChunk(SyncMessage):
             "snapshot_id": self.snapshot_id,
             "chunk_index": self.chunk_index,
             "items": [
-                _encode_item(descriptions, key, stored, reserved)
-                for key, stored, reserved in self.items
+                _encode_item(descriptions, key, stored, reserved, has_pattern)
+                for key, stored, reserved, has_pattern in self.items
             ],
         }
 
@@ -1879,8 +2387,8 @@ class ItemDelta(SyncMessage):
             "base_version": self.base_version,
             "new_version": self.new_version,
             "upserts": [
-                _encode_item(descriptions, key, stored, reserved)
-                for key, stored, reserved in self.upserts
+                _encode_item(descriptions, key, stored, reserved, has_pattern)
+                for key, stored, reserved, has_pattern in self.upserts
             ],
             "removes": [
                 _encode_remove(descriptions, key) for key in self.removes
@@ -2012,10 +2520,18 @@ class TerminalCommand(SyncMessage):
     ## 为什么字段这么多
 
     这条消息要覆盖 `StorageService` 已实现的五个背包动作（`inv_take` /
-    `inv_put` / `inv_split` / `inv_merge` / `inv_quick_move`），每个动作
-    各读几个不同的键（见 `payload()`）。**全部字段无条件序列化**，
-    缺席写 `None`——`_require_fields` 既拒缺项也拒多项，所以「可选字段
-    可以不写」在这里是不成立的。
+    `inv_put` / `inv_split` / `inv_merge` / `inv_quick_move`）与样板终端的
+    八条 `template_*`，每个动作各读几个不同的键（见 `payload()`）。
+    **全部字段无条件序列化**，缺席写 `None`——`_require_fields` 既拒缺项也
+    拒多项，所以「可选字段可以不写」在这里是不成立的。
+
+    ## 它不是只管存取：`order_cancel` 也走这里
+
+    工厂终端（11-06）的取消订单由 `TerminalSyncHub._on_command` 按动作名
+    路由成 `CommandKind.ORDER`，交给网络服务而不是存储服务；因此本消息
+    的**动作集合不限于存储动作**，`action` 也刻意保持自由字符串（客户端
+    不校验动作名）。哪些动作走哪条路由，那张表在 `sync/terminal.py` 里，
+    是**唯一**一处。
 
     这不是负担而是防线：客户端多塞一个字段会**当场**变成协议错误，
     而不是被静静忽略。
@@ -2034,9 +2550,15 @@ class TerminalCommand(SyncMessage):
     - **没有 `player` / `player_id`。** 身份只有引擎在 C2S 事件上附的
       `__id__` 一个起点，服务端从 `session.player_id` 取。定义了这个
       字段，就迟早有一处代码去读它（`SessionOpen` 的文档说得更细）。
-    - **没有 `device_ref` / `target`。** 目标就是 `session.device_ref`，
+    - **没有 `device_ref`。** 目标设备就是 `session.device_ref`，
       而 `sessions._check_target` **每条请求**都已经核对过一次。再带一份
       就是第二个真相源，且给伪造留了口子。
+    - **`target` 不是资源键。** 它 11-05 起是**样板终端的虚格面名**
+      （`source` / `outputs`），11-03 起是快捷转移的落点（`"network"`）。
+      下单与预览要的资源键走 **`key`**（线上就是资源键的字典形式），
+      由 `sync/terminal.py` 的动作表别名成工厂读的 `target`——
+      **两件事不能共用一个字段名**，共用的表现是下单时 `_read_target`
+      收到一个字符串并把它判成坏参数。
     - **没有 `cursor`。** `StorageService._cursor_refusal` 只在
       `payload.get("cursor")` 为真时才拦。不发它 = **没有这只手**，
       这是「缺席」，**不等于**客户端声称「手里没拿东西」——R12 尚未定案
@@ -2075,6 +2597,8 @@ class TerminalCommand(SyncMessage):
         "target",
         "recipe",
         "cell",
+        "order",
+        "preview",
     )
 
     #: 本条消息**允许**出现的字段。`from_dict` 用它做严格检查，
@@ -2093,6 +2617,8 @@ class TerminalCommand(SyncMessage):
         "target",
         "recipe",
         "cell",
+        "order",
+        "preview",
     )
 
     def __init__(
@@ -2109,6 +2635,8 @@ class TerminalCommand(SyncMessage):
         target=None,
         recipe=None,
         cell=None,
+        order=None,
+        preview=None,
     ):
         if settings.DEBUG:
             require_text(request_id, "request_id")
@@ -2129,6 +2657,10 @@ class TerminalCommand(SyncMessage):
                 )
             if cell is not None:
                 require_count(cell, "cell")
+            if order is not None:
+                require_text(order, "order")
+            if preview is not None:
+                require_text(preview, "preview")
         self.request_id = request_id
         self.expected_index_version = expected_index_version
         self.action = action
@@ -2145,6 +2677,16 @@ class TerminalCommand(SyncMessage):
         #: 共用一个字段，会让「这个数属于哪个空间」变成逐动作去猜的事，
         #: 而猜错的表现是搬走玩家没点的那一格。
         self.cell = cell
+        #: **订单标识**（11-06）。与 `slot` / `cell` 同样刻意独立：订单号
+        #: 既不是背包槽号也不是虚格下标，它唯一的用途是「取消这一单」。
+        #: 服务端在 `payload()` 里把它写成 `order_id`——`FactoryService`
+        #: 读的就是那个键（`executor.py` 的 `cancel` 分支）。
+        self.order = order
+        #: **下单预览号**（11 增量）。与 `order` 同样刻意独立：预览号既不是
+        #: 订单号也不是槽号，它唯一的用途是让「下单」这一下认领前面那次预览
+        #: （`executor.py` 的 `_consume_preview` 按它校验并消费）。
+        #: 服务端在 `payload()` 里写成 `preview_id`。
+        self.preview = preview
 
     def payload(self):
         # type: () -> dict
@@ -2175,6 +2717,14 @@ class TerminalCommand(SyncMessage):
             data["recipe"] = self.recipe
         if self.cell is not None:
             data["cell"] = self.cell
+        # 线上叫 `order`、服务端读 `order_id`：**映射只在这一处**（本方法
+        # 的存在理由就是这个）。`FactoryService` 是按 `order_id` 读的。
+        if self.order is not None:
+            data["order_id"] = self.order
+        # 线上叫 `preview`、服务端读 `preview_id`：与上面 `order` 同一条理由，
+        # 映射仍然只在这一处。
+        if self.preview is not None:
+            data["preview_id"] = self.preview
         return data
 
     def to_dict(self, descriptions=None):
@@ -2193,6 +2743,8 @@ class TerminalCommand(SyncMessage):
             "target": self.target,
             "recipe": self.recipe,
             "cell": self.cell,
+            "order": self.order,
+            "preview": self.preview,
         }
 
     @classmethod
@@ -2209,6 +2761,10 @@ class TerminalCommand(SyncMessage):
             require_text(data["recipe"], "recipe")
         if data["cell"] is not None:
             require_count(data["cell"], "cell")
+        if data["order"] is not None:
+            require_text(data["order"], "order")
+        if data["preview"] is not None:
+            require_text(data["preview"], "preview")
         return cls(
             data["request_id"],
             data["action"],
@@ -2222,6 +2778,8 @@ class TerminalCommand(SyncMessage):
             data["target"],
             data["recipe"],
             data["cell"],
+            data["order"],
+            data["preview"],
         )
 
 
@@ -2533,6 +3091,9 @@ _SYNC_MESSAGE_TYPES = _build_sync_message_types(
         DeviceStatusMessage,
         CraftStateMessage,
         TemplateStateMessage,
+        OrderStateMessage,
+        PreviewStateMessage,
+        PreviewChunkMessage,
     )
 )
 

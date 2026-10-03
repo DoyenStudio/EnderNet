@@ -176,6 +176,10 @@ class ScreenTests(unittest.TestCase):
             BF_BindBool = 3
             BF_ButtonClickUp = 4
             BF_EditChanged = 5
+            #: 11-06 起本仓库也用到这两个旗标（工厂终端的进度条与三色背景）。
+            #: 取值与真引擎无关，只要求**各测试文件彼此一致**。
+            BF_BindColor = 7
+            BF_BindFloat = 8
             #: 长按判定的两个相位之一（`inv_split` 的手势）。真引擎的
             #: `ViewBinder` 上确实有它（2026-10-01 用 `dir()` 看过），
             #: 这个桩只是没抄全。

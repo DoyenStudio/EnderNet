@@ -41,6 +41,14 @@ from ..common.definitions import (
     PATTERN_MODE_CRAFTING,
     DefinitionSet,
 )
+from ..common.protocol import (
+    ORDER_SOURCE_FEED_DONE,
+    ORDER_SOURCE_FEED_WAITING_INPUTS,
+    ORDER_SOURCE_FEED_WAITING_OUTPUTS,
+    ORDER_SOURCE_STAGE_DONE,
+    ORDER_SOURCE_STAGE_RUNNING,
+    ORDER_SOURCE_STAGE_WAITING,
+)
 from ..common.resource_key import ResourceKey
 from .adapters.containers_engine import (
     EngineContainerProvider,
@@ -56,9 +64,11 @@ from .application import ApplicationService
 from .devices.catalog import DeviceCatalog
 from .crafting.capacity import OrderPolicy
 from .crafting.executor import AbsentReturns, FactoryService
+from .crafting.jobs import StepStatus
 from .crafting.patterns import PatternPolicy
 from .crafting.planner import PlanPolicy, Planner
 from .crafting.returns import ReturnPolicy, ReturnsService
+from .crafting.preview import PreviewPolicy, PreviewService
 from .crafting.store import PatternStore
 from .crafting.template_terminal import (
     CRAFT_PREVIEW_CELL,
@@ -97,6 +107,7 @@ from .runtime.events import EventQueue
 from .runtime.lifecycle import DeviceLifecycle
 from .runtime.scheduler import LogicalClock, SchedulerPolicy
 from .storage.medium import MediumPolicy
+from .storage.projection import NetworkItemProjection
 from .storage.service import StorageService
 from .storage.transfer import TransferPolicy
 from .sync.sessions import SessionContext, SessionPolicy, SessionRegistry
@@ -205,6 +216,142 @@ def _template_slot_row(index, entry, locked=False):
     return row
 
 
+def _order_resource_of(key, fallback_label):
+    # type: (object, str) -> tuple
+    """一行订单/配方要画的资源身份 `(name, aux)`。
+
+    **取不到活的键时退成 `fallback_label`，不退成空串。** 这是领域层自己的
+    约定（`OrderStep.label` 的 docstring：「取不到名字时退化成 `canonical`，
+    于是界面上显示的是身份文本——难看，但不是空」）——线上那一层
+    （`protocol._order_rows`）要求名字非空，空串会让**整条消息**被判非法、
+    于是一条读不到名字的订单把整张界面拖成不刷新。
+    """
+    if key is None:
+        return (fallback_label or "", 0)
+    return (key.name, key.aux)
+
+
+def _order_row(order):
+    # type: (object) -> dict
+    """一条订单摘要转成线上形状（11-06）。
+
+    `name` / `aux` 与 `canonical` 不是重复，理由同 `_craft_slot_row`：
+    客户端画主产物图标只能靠 `#item_id_aux`，那是
+    `Item(资源名).GetBasicInfo().id_aux`。
+
+    `tasks_completed` **在这里现算**（各步 `completed` 之和），因为它才是
+    `progress()` 的分子；`order.tasks_total` 是准入时定下的分母。
+    """
+    name, aux = _order_resource_of(
+        getattr(order, "target", None), order.canonical)
+    return {
+        "order_id": order.order_id,
+        "canonical": order.canonical,
+        "name": name,
+        "aux": aux,
+        "amount": order.amount,
+        "status": order.status,
+        "tasks_completed": sum(step.completed for step in order.steps),
+        "tasks_total": order.tasks_total,
+        "memory_bytes": order.memory_bytes,
+    }
+
+
+def _order_step_stack_of(step):
+    # type: (object) -> int
+    """一条配方**每批产出几件**该步的主产物。
+
+    主产物就是这条步骤自己的 `canonical`（`OrderStep` 的 docstring：
+    「一个配方节点」）。找不到产出声明时退成 **0**，不是 1：退成 1 会把
+    「每批 1 件」这个**猜出来的**数量写进界面，而退成 0 的后果只是这一条
+    没有数量进度（界面上不画比例），两者之间选那个**不会伪造数量**的。
+    """
+    for canonical, per_batch in step.output_specs:
+        if canonical == step.canonical:
+            return int(per_batch)
+    return 0
+
+
+def _order_step_stage(step):
+    # type: (object) -> int
+    """配方树的**制作阶段**三态（交接 §4：等待中／制作中／已完成）。
+
+    「已完成」取的是**「这一步不会再动了」**：既包括真的跑完，也包括被取消
+    ——三态词汇里没有「已取消」这一档，而把它显示成「制作中」会让一条
+    正在收尾的取消订单看起来还在干活。这个合并是有损的，如实记在这里。
+    """
+    if step.is_terminal_step():
+        return ORDER_SOURCE_STAGE_DONE
+    if step.created > 0 or step.completed > 0:
+        return ORDER_SOURCE_STAGE_RUNNING
+    return ORDER_SOURCE_STAGE_WAITING
+
+
+def _order_step_feed(step):
+    # type: (object) -> int
+    """配方树的**投料／产物状态**三态。
+
+    与阶段分开：阶段说这一步整体走到哪，这一说说它此刻卡在哪一头。判据是
+    `STEP_PHASE_ORDER` 那条链的前半（`waiting_inputs` / `staging` = 还在
+    备料）与后半（`dispatched` / `waiting_outputs` = 料进了机器、等产物）。
+    """
+    if step.is_terminal_step():
+        return ORDER_SOURCE_FEED_DONE
+    status = step.summary_status()
+    if status in (StepStatus.WAITING_INPUTS, StepStatus.STAGING):
+        return ORDER_SOURCE_FEED_WAITING_INPUTS
+    return ORDER_SOURCE_FEED_WAITING_OUTPUTS
+
+
+def _order_source_rows(order):
+    # type: (object) -> list
+    """一个订单的**全量配方树**，扁平一张表（11-06）。
+
+    `done` / `total` 是**物品数**（`每批产出 × 已/总批次数`），不是执行次数
+    ——交接 §4 明写「不混用执行次数与产物数量」，而订单整体进度那一侧用的
+    才是配方任务数。两条口径各有其名，见 `protocol.SOURCE_ROW_FIELDS`。
+
+    **已完成的配方也发**（交接 §3：全配方树都要显示）。树形不在线上表达：
+    客户端按 `canonical` 与依赖关系重建展示，服务端只发扁平行。
+    """
+    rows = []
+    for step in order.steps:
+        name, aux = _order_resource_of(
+            (step.keys or {}).get(step.canonical), step.label)
+        # 每步各算各的：同一条配方与别的配方**每批产出不同**，共用一个
+        # 「每批几件」正是交接点名不许的那件事。
+        stack = _order_step_stack_of(step)
+        rows.append({
+            "order_id": order.order_id,
+            "canonical": step.canonical,
+            "name": name,
+            "aux": aux,
+            "stage": _order_step_stage(step),
+            "feed": _order_step_feed(step),
+            "done": step.completed * stack,
+            "total": step.batches * stack,
+        })
+    return rows
+
+
+def _order_memory(factory):
+    # type: (object) -> dict
+    """网络剩余内存（11-06）。**单位是字节（B）**，任务文档定的口径。
+
+    `available` 与 `capacity` 一并给：界面上那根条的分子与分母各要一个。
+    `used` 给出来是为了让「分子+已用=总量」在诊断里可以自核。
+    `slots` 是内存条格数（设备数），与字节数不是一回事。
+    """
+    ledger = getattr(factory, "memory", None)
+    view = ledger.describe() if ledger is not None else {}
+    return {
+        "capacity": int(view.get("capacity") or 0),
+        "used": int(view.get("used") or 0),
+        "available": int(view.get("available") or 0),
+        "slots": int(getattr(factory, "memory_slots", 0) or 0),
+    }
+
+
 def _entry_of_preview(preview):
     # type: (object) -> object
     """预览（`{name, aux, count}`）转成一行槽位形状要的条目；没有就是 `None`。"""
@@ -278,8 +425,9 @@ def _returns_port_for(returns, runtime):
     return returns
 
 
-def _factory_builder(policy, planner, patterns, ports, returns=None, on_slots_changed=None):
-    # type: (object, object, object, object, object, object) -> object
+def _factory_builder(policy, planner, patterns, ports, returns=None, on_slots_changed=None,
+                     preview_policy=None):
+    # type: (object, object, object, object, object, object, object) -> object
     """把规划器、样板索引与接口状态集合绑进工厂服务的构造器。
 
     这三样都是**全进程一份**的（它们本来就跨网络：样板装在方块里、
@@ -304,6 +452,17 @@ def _factory_builder(policy, planner, patterns, ports, returns=None, on_slots_ch
         port = _returns_port_for(returns, runtime)
         def notify_slots():
             on_slots_changed(runtime)
+        #: **预览每网络一份**，与订单同寿命（`FactoryService.attach` 里
+        #: 按 `component_id` 建订单用的也是这一段）。它拿的是**只读**的
+        #: 存储口（`lambda: runtime.services.get(STORAGE)` 的那个包装在
+        #: `_previews_of` 里），因此不占预留、不碰内存与槽位。
+        previews = PreviewService(
+            runtime,
+            planner=planner,
+            patterns=patterns,
+            storage_of=lambda: runtime.services.get(ServiceId.STORAGE),
+            policy=preview_policy,
+        )
         return FactoryService(
             runtime,
             policy=policy,
@@ -315,6 +474,7 @@ def _factory_builder(policy, planner, patterns, ports, returns=None, on_slots_ch
             port_blocker=port_blocker,
             template_role=PORT_TEMPLATE_ROLE,
             on_slots_changed=notify_slots if on_slots_changed is not None else None,
+            previews=previews,
         )
 
     return build
@@ -378,6 +538,7 @@ class ServerBootstrap(object):
         pattern_policy=None,
         plan_policy=None,
         order_policy=None,
+        preview_policy=None,
         return_policy=None,
         returns_sink=None,
         container_primitives=None,
@@ -553,6 +714,12 @@ class ServerBootstrap(object):
         self.energy_policy = (
             energy_policy if energy_policy is not None else EnergyPolicy()
         )
+        #: 下单预览的未定口径（11 增量）。**全进程一份**：策略里的替身
+        #: 数值必须与实际生效的是同一份，否则诊断报的与真正用的对不上
+        #: （同 `crafting_policy` 的理由）。
+        self.preview_policy = (
+            preview_policy if preview_policy is not None else PreviewPolicy()
+        )
         #: 驱动器状态集合与介质权威表。**由启动层持有并注入网络服务**
         #: （架构 §3）：驱动器与介质的权威状态不能只活在某个网络的存储服务里，
         #: 网络断开、主控移除、运行时重建都不等于设备和库存消失。
@@ -631,6 +798,7 @@ class ServerBootstrap(object):
                         self.ports,
                         self.returns_sink,
                         self._note_factory_energy_changed,
+                        self.preview_policy,
                     ),
                 }
             )
@@ -653,6 +821,11 @@ class ServerBootstrap(object):
         #: 与 `player_dimension` 同一地位：都是**给适配器用的引擎口子**，
         #: 存在的理由也一样——注册路径本身要在游戏外可测。
         self.sync_events = sync_events
+        #: 每网络的**显示投影**缓存（`network_id -> NetworkItemProjection`）。
+        #: 惰性建、建了不拆：它只缓存样板产物键与一个版本号，没有任何引擎
+        #: 引用，运行时被退役重建时靠那两个回调自动跟到新的一份。
+        #: 见 `_sync_storage_of` 与 `server/storage/projection.py`。
+        self._projections = {}
         self.sync = TerminalSyncHub(
             policy=self.sync_policy,
             registry=SessionRegistry(self.session_policy),
@@ -672,6 +845,12 @@ class ServerBootstrap(object):
             # 样板终端的真实槽与虚拟配置（11-05）。同样指向此刻还不存在的
             # `self.templates`——绑定方法在调用时才查属性。
             template_of=self._sync_template_of,
+            # 工厂终端的订单视图（11-06）。**收网络标识**，不是设备引用：
+            # 订单属于网络（见 `_sync_order_of`）。
+            order_of=self._sync_order_of,
+            # 下单预览（11 增量）。同样收网络标识：预览是每网络一份的，
+            # 「哪条会话在看哪一份」由预览服务按 `session_id` 回答。
+            preview_of=self._sync_preview_of,
         )
         if session_check is None:
             # 注入值优先：离线测试与 05/08 的既有用例会自己传探针，
@@ -1158,19 +1337,90 @@ class ServerBootstrap(object):
             return None
         return runtime.services.get(ServiceId.FACTORY)
 
-    def _sync_storage_of(self, network_id):
+    def _storage_service_of(self, network_id):
         # type: (str) -> object
-        """某个网络的存储服务，没有就返回 None。
+        """某个网络的**真实**存储服务，没有就返回 None。
 
         **只读路径：不订阅服务、不碰 `ServiceId.ALL`**（先例见
         `application.py` 的 `debug_query`）。`ServiceRegistry.get` 在缺失时
-        返回 `None`，正好是 hub 要的「这个网络现在读不到库存」；真正的结论
+        返回 `None`，正好是调用方要的「这个网络现在读不到库存」；真正的结论
         （`RESYNC_NO_STORAGE`）由 hub 下，这里不替它判。
+
+        **规划与准入一律走这一个口子**（预览、下单都读真实库存与预留）。
+        终端列表那另一半走 `_sync_storage_of` 的显示投影——两者**必须分开**：
+        投影带着「有样板」这一列与自己的版本号，拿它去规划会把显示来源
+        当成库存来源。
         """
         runtime = self._sync_runtime(network_id)
         if runtime is None:
             return None
         return runtime.services.get(ServiceId.STORAGE)
+
+    def _member_keys_of(self, network_id):
+        # type: (str) -> tuple
+        """某个网络当前的成员位置。取不到运行时就是空元组。
+
+        给显示投影算「本网络的样板产物」用。**现取不缓存**：设备会被拆下来
+        装到别的网络上，存一份快照会让 `+` 标记留在已经不属于它的那张网里。
+        """
+        runtime = self._sync_runtime(network_id)
+        if runtime is None:
+            return ()
+        return tuple(runtime.member_keys())
+
+    def _pattern_products_for(self, members):
+        # type: (object) -> tuple
+        """给一批成员位置，返回它们的样板产物键。**显示用途，不是交易资格。**
+
+        用 `candidates(include_unavailable=True)` 而不是默认口径：契约第 1 节
+        明写「离线提供者的候选可用性与注册存续分开」，`+` 只说「有人能做」，
+        不说「现在做得了」。`_ensure_index` 内部已经排除不可派发的过时样板，
+        因此与规划器看到的那一份一致。
+
+        **不能拿 `output_keys()` 当准入凭据**（交接表专门警告过它的诊断口径），
+        这里只用它当**枚举源**：能派发的产物键有哪些，逐个问谁的提供者在本网络。
+        """
+        store = self.patterns
+        if store is None or not members:
+            return ()
+        out = []
+        for key in store.output_keys():
+            for candidate in store.candidates(key, include_unavailable=True):
+                if candidate["provider"].node_key.as_key() in members:
+                    out.append(key)
+                    break
+        return tuple(out)
+
+    def _sync_storage_of(self, network_id):
+        # type: (str) -> object
+        """某个网络的**显示投影**（11 的物品视图发布口），没有存储服务时 None。
+
+        返回的不是 `StorageService` 本身，而是 `NetworkItemProjection`——
+        它同样满足 `_STORAGE_READ_PORT`，但行里多一列 `has_pattern`，
+        版本也是自己的显示版本。**只有 hub 走这里**；规划与预览读
+        `_storage_service_of`。
+
+        投影因此**成为 `StorageService.take_dirty_keys()` 的唯一消费者**，
+        于是那个方法的 `publish_version` 从此只是它自己的排空计数，
+        不再等于终端看到的物品视图版本。要读终端版本就读
+        `projection.publish_version`。
+        """
+        storage = self._storage_service_of(network_id)
+        if storage is None:
+            return None
+        projection = self._projections.get(network_id)
+        if projection is None:
+            projection = NetworkItemProjection(
+                network_id,
+                storage_of=lambda: self._storage_service_of(network_id),
+                members_of=lambda: self._member_keys_of(network_id),
+                products_of=self._pattern_products_for,
+                # 取不到样板索引时给 `None`：投影退化成「每轮重算产物集合」，
+                # 代价是多扫几次，方向是多算而不是漏算。
+                products_revision=getattr(self.patterns, "product_revision", None),
+            )
+            self._projections[network_id] = projection
+        return projection
 
     def _is_crafting_terminal(self, device_ref):
         # type: (object) -> bool
@@ -1351,6 +1601,65 @@ class ServerBootstrap(object):
                 "default_count": policy.encode_count_per_cell,
             },
         }
+
+    # -- 工厂终端（11-06）----------------------------------------------
+
+    def _sync_order_of(self, network_id):
+        # type: (str) -> object
+        """一条网络的活跃订单、剩余内存与配方树（11-06）；读不到返回 `None`。
+
+        **按网络取，不按设备取。** 订单属于网络（`FactoryService.attach()`
+        按 `component_id` 新建，两张网络绝不共享），两台工厂终端看的是
+        同一份；因此形参是线上网络标识，与 `_sync_storage_of` 同形。
+
+        **`None` 的三种含义只报一种**：没有运行时、工厂服务没挂上、服务
+        还没 `attach`（`orders` 为 None）。三者对界面都是「现在读不到订单」，
+        hub 据此**一条都不发**——发一份空列表会被读成「一单都没有」，
+        而那是另一个结论（同 `_sync_template_of` 的纪律）。
+
+        **只读路径**：不订阅服务、不预留、不推进订单，同 `_sync_storage_of`。
+
+        **视图种类不是权限**：任何一条能开起来的会话都能按 `VIEW_ORDER`
+        读本网络的订单——开关会话的人本来就得站在本网络的一台设备前、
+        距离与维度都复核过（`sessions._check_target`），而订单信息不比对
+        他公开的库存更多。这里因此不按方块型号设卡。
+        """
+        runtime = self._sync_runtime(network_id)
+        if runtime is None:
+            return None
+        factory = runtime.services.get(ServiceId.FACTORY)
+        if factory is None:
+            return None
+        store = getattr(factory, "orders", None)
+        if store is None:
+            return None
+        orders = []
+        sources = []
+        for order in store.live():
+            orders.append(_order_row(order))
+            sources.extend(_order_source_rows(order))
+        return {
+            "memory": _order_memory(factory),
+            "orders": orders,
+            "sources": sources,
+        }
+
+    def _sync_preview_of(self, network_id):
+        # type: (str) -> object
+        """一条网络的下单预览服务（11 增量）；读不到返回 `None`。
+
+        **只读路径**：不订阅服务、不推进预览、不碰 `ServiceId.ALL`
+        （同 `_sync_storage_of`）。`None` 的含义是「这条网络现在没有预览
+        服务」，hub 据此**一条都不发**——发一份空结果会被读成「没有缺料」，
+        而那正是会让玩家点下「下单」的那一个结论。
+        """
+        runtime = self._sync_runtime(network_id)
+        if runtime is None:
+            return None
+        factory = runtime.services.get(ServiceId.FACTORY)
+        if factory is None:
+            return None
+        return getattr(factory, "previews", None)
 
     def _sync_status_of(self, device_ref):
         # type: (object) -> object

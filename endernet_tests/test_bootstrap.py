@@ -15,6 +15,10 @@ from endernet.common.definitions import DefinitionSet
 from endernet.common.identity import ChunkKey, DeviceRef, NodeKey
 from endernet.common.resource_key import ResourceKey
 from endernet.common.protocol import (
+    ORDER_SOURCE_FEED_WAITING_INPUTS,
+    ORDER_SOURCE_STAGE_DONE,
+    ORDER_SOURCE_STAGE_RUNNING,
+    ORDER_SOURCE_STAGE_WAITING,
     CommandKind,
     CommandSource,
     DeviceCommand,
@@ -29,8 +33,14 @@ from endernet.common.protocol import (
     VIEW_ITEM,
 )
 from endernet.server.adapters.containers import FakeContainer
-from endernet.server.bootstrap import ServerBootstrap
+from endernet.server.bootstrap import (
+    ServerBootstrap,
+    _order_memory,
+    _order_row,
+    _order_source_rows,
+)
 from endernet.server.crafting import patterns
+from endernet.server.crafting.jobs import Order, OrderStep
 from endernet.server.crafting.planner import PlanPolicy, TargetSemantics
 from endernet.server.crafting.store import PATTERN_SETTLE_FRAMES
 from endernet.server.network.controller import RunState
@@ -2366,6 +2376,197 @@ class TestTemplateTerminalWiring(unittest.TestCase):
                          self.server.templates.get(ref).revision)
         self.assertIs(self.server.template_policy,
                       self.server.template_policy)
+
+
+class OrderProjectionTests(unittest.TestCase):
+    """11-06 的订单投影：把 09 的 `Order` / `OrderStep` 摊成线上那两张表。
+
+    这是**唯一一处**把领域对象翻成界面数据的代码，而它翻错的每一种方式在
+    界面上都只表现为「某个数字不对」：配方行按执行次数而不是物品数、阶段
+    三态与投料三态串了位置、内存报成格数而不是字节。
+
+    夹具用**真的 `Order` / `OrderStep`**（它们是纯数据、不碰引擎），不是
+    再造一份形状——造形状的代价是「领域层加一个字段，替身没跟着加」，
+    而那种错测试永远照不出来。
+    """
+
+    def order_of(self, steps, tasks_total=8, amount=64, status="running",
+                 memory_bytes=1024):
+        key = ResourceKey.item("minecraft:stone")
+        order = Order("order@net-1/master-1/1", 1, "master-1", key,
+                      key.canonical(), amount)
+        order.steps = steps
+        order.tasks_total = tasks_total
+        order.status = status
+        order.memory_bytes = memory_bytes
+        return order
+
+    def step(self, canonical="minecraft:stone", batches=4, completed=1,
+             per_batch=2):
+        key = ResourceKey.item(canonical)
+        step = OrderStep(0, canonical, {}, batches)
+        step.keys = {canonical: key}
+        step.output_specs = ((canonical, per_batch),)
+        step.completed = completed
+        return step
+
+    def test_the_order_row_carries_what_the_screen_draws(self):
+        row = _order_row(self.order_of([self.step()]))
+        self.assertEqual("order@net-1/master-1/1", row["order_id"])
+        self.assertEqual("minecraft:stone", row["name"])
+        self.assertEqual(64, row["amount"])
+        self.assertEqual("running", row["status"])
+        self.assertEqual(1, row["tasks_completed"])
+        self.assertEqual(8, row["tasks_total"])
+        self.assertEqual(1024, row["memory_bytes"])
+
+    def test_the_order_row_counts_completed_steps_not_batches(self):
+        """分子是**各步已完成的配方任务数之和**（`Order.progress()` 的口径）。"""
+        order = self.order_of([self.step(completed=2), self.step(
+            canonical="minecraft:stick", completed=3)])
+        self.assertEqual(5, _order_row(order)["tasks_completed"])
+
+    def test_the_source_row_counts_items_not_batches(self):
+        """交接第 4 节：配方条目用**物品数**，不混用执行次数。
+
+        `4 批 × 每批 2 件`，已完成 1 批 → `2/8`；写成批次数就是 `1/4`，
+        而界面上那句话会少一个数量级。
+        """
+        rows = _order_source_rows(self.order_of([self.step(
+            batches=4, completed=1, per_batch=2)]))
+        self.assertEqual(2, rows[0]["done"])
+        self.assertEqual(8, rows[0]["total"])
+
+    def test_a_step_with_no_declared_output_shows_no_item_progress(self):
+        """找不到产出声明时退成 **0**，不是 1：退成 1 会把一个猜出来的数量
+        写进界面（见 `_order_step_stack_of`）。"""
+        step = self.step()
+        step.output_specs = ()
+        rows = _order_source_rows(self.order_of([step]))
+        self.assertEqual(0, rows[0]["done"])
+        self.assertEqual(0, rows[0]["total"])
+
+    def test_the_three_stages(self):
+        waiting = self.step(batches=4, completed=0)
+        running = self.step(batches=4, completed=1)
+        running.created = 1
+        done = self.step(batches=4, completed=4)
+        rows = _order_source_rows(self.order_of([waiting, running, done]))
+        self.assertEqual(ORDER_SOURCE_STAGE_WAITING, rows[0]["stage"])
+        self.assertEqual(ORDER_SOURCE_STAGE_RUNNING, rows[1]["stage"])
+        self.assertEqual(ORDER_SOURCE_STAGE_DONE, rows[2]["stage"])
+
+    def test_the_feed_side_is_a_separate_axis_from_the_stage(self):
+        """阶段说这一步整体走到哪，投料说它此刻卡在哪一头——两者不是一条轴
+        （制作中且正在等产物的那一条，`stage` 与 `feed` 会分别落在两档）。"""
+        staging = self.step(batches=4, completed=1)
+        staging.created = 1
+        rows = _order_source_rows(self.order_of([staging]))
+        self.assertEqual(ORDER_SOURCE_STAGE_RUNNING, rows[0]["stage"])
+        self.assertEqual(ORDER_SOURCE_FEED_WAITING_INPUTS, rows[0]["feed"])
+
+    def test_every_step_is_published_including_the_finished_ones(self):
+        """交接第 3 节：**全配方树都要显示**，不能只显示直接原料。"""
+        rows = _order_source_rows(self.order_of([
+            self.step(), self.step(canonical="minecraft:stick",
+                                   batches=2, completed=2)]))
+        self.assertEqual(2, len(rows))
+        self.assertEqual(["minecraft:stone", "minecraft:stick"],
+                         [row["canonical"] for row in rows])
+
+    def test_every_source_row_names_its_order(self):
+        rows = _order_source_rows(self.order_of([self.step()]))
+        self.assertEqual("order@net-1/master-1/1", rows[0]["order_id"])
+
+    def test_memory_is_bytes_not_slot_count(self):
+        """任务文档定的是**字节（B）**；`slots` 是内存条格数，与字节不是一回事。"""
+
+        class Ledger(object):
+            def describe(self):
+                return {"capacity": 4096, "used": 1024, "available": 3072}
+
+        class Factory(object):
+            memory = Ledger()
+            memory_slots = 4
+
+        view = _order_memory(Factory())
+        self.assertEqual(3072, view["available"])
+        self.assertEqual(4096, view["capacity"])
+        self.assertEqual(4, view["slots"])
+
+    def test_memory_without_a_ledger_is_all_zero_not_a_crash(self):
+        class Factory(object):
+            memory = None
+            memory_slots = 0
+
+        self.assertEqual({"capacity": 0, "used": 0, "available": 0,
+                          "slots": 0}, _order_memory(Factory()))
+
+
+class OrderSyncTests(unittest.TestCase):
+    """`_sync_order_of` 的取值路径：**按网络取**，取不到返回 `None`。
+
+    `None` 与「一单都没有」是两回事——前者是「这条网络现在读不到订单」，
+    hub 据此一条都不发（见 `_publish_order_state`）。
+    """
+
+    class Services(object):
+        def __init__(self, factory):
+            self.factory = factory
+
+        def get(self, service_id):
+            return self.factory
+
+    def fake(self, runtime):
+        class Fake(object):
+            _sync_runtime = staticmethod(lambda network_id: runtime)
+            _order_row = staticmethod(_order_row)
+            _order_source_rows = staticmethod(_order_source_rows)
+
+        fake = Fake()
+        from endernet.server.bootstrap import ServerBootstrap
+        fake._sync_order_of = lambda nid: ServerBootstrap._sync_order_of(
+            fake, nid)
+        return fake
+
+    def test_no_runtime_means_none(self):
+        self.assertIsNone(self.fake(None)._sync_order_of("net-1"))
+
+    def test_no_factory_service_means_none(self):
+        class Runtime(object):
+            services = OrderSyncTests.Services(None)
+
+        self.assertIsNone(self.fake(Runtime())._sync_order_of("net-1"))
+
+    def test_a_factory_that_has_not_attached_means_none(self):
+        class Factory(object):
+            orders = None
+            memory = None
+
+        class Runtime(object):
+            services = OrderSyncTests.Services(Factory())
+
+        self.assertIsNone(self.fake(Runtime())._sync_order_of("net-1"))
+
+    def test_an_attached_factory_yields_both_tables(self):
+        projection = OrderProjectionTests()
+
+        class Store(object):
+            def live(self):
+                return (projection.order_of([projection.step()]),)
+
+        class Factory(object):
+            orders = Store()
+            memory = None
+            memory_slots = 0
+
+        class Runtime(object):
+            services = OrderSyncTests.Services(Factory())
+
+        view = self.fake(Runtime())._sync_order_of("net-1")
+        self.assertEqual(1, len(view["orders"]))
+        self.assertEqual(1, len(view["sources"]))
+        self.assertEqual(0, view["memory"]["capacity"])
 
 
 if __name__ == "__main__":

@@ -281,6 +281,64 @@ class StorageStand(object):
 FAKE_MODULE_PREFIX = "endernet_fake_engine_"
 
 
+class DisplayStand(object):
+    """把真实 `StorageService` 包成终端要的**显示投影**，样板来源可控。
+
+    11 的同步层拿到的是 `NetworkItemProjection`（多一列 `has_pattern`、
+    版本也是显示版本），因此驱动 hub 的用例必须喂投影，而不是裸的存储服务。
+    喂裸服务的话，行是三元组、版本是交易版本——测的就不再是线上那一条链。
+
+    `mark` / `unmark` 模拟「本网络的样板提供者能做什么」，`join` / `leave`
+    模拟设备进出这张网。**产物集合与成员集合都是可变的**：纯样板变化、
+    设备换网这两条正是投影要靠轮询看出来的东西，写死了就测不到。
+    """
+
+    def __init__(self, service, network_id="net-1"):
+        # type: (object, str) -> None
+        from endernet.server.storage.projection import NetworkItemProjection
+
+        self.service = service
+        self.members = ()
+        self.products = set()
+        #: 样板内容的修订号。投影靠它判断「要不要重算产物集合」——只改
+        #: 成员集合而修订号不变时，签名那条路仍然要能看出来。
+        self.revision = 0
+        self.projection = NetworkItemProjection(
+            network_id,
+            storage_of=lambda: self.service,
+            members_of=lambda: self.members,
+            products_of=lambda members: tuple(self.products),
+            products_revision=lambda: self.revision,
+        )
+
+    def mark(self, *keys):
+        # type: (object) -> None
+        """让这些产物「本网络有样板」。"""
+        for key in keys:
+            self.products.add(key)
+        self.revision += 1
+
+    def unmark(self, *keys):
+        # type: (object) -> None
+        """撤掉这些产物的样板（库存为零时该行随之消失）。"""
+        for key in keys:
+            self.products.discard(key)
+        self.revision += 1
+
+    def join(self, *node_keys):
+        # type: (object) -> None
+        """设备进网。**不动修订号**：内容没变，只有成员集合变了。"""
+        self.members = tuple(self.members) + tuple(node_keys)
+
+    def leave(self, *node_keys):
+        # type: (object) -> None
+        """设备离网。理由同 `join`。"""
+        drop = set(key.as_key() for key in node_keys)
+        self.members = tuple(
+            key for key in self.members if key.as_key() not in drop
+        )
+
+
 def install_fake_modules(names):
     # type: (list) -> dict
     """把 `names` 里的名字装成空的假模块，返回 `{名字: 模块}`。

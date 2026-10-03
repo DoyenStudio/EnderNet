@@ -1,5 +1,7 @@
 # 数量设置窗口脚本接口
 
+> **2026-10-03 新增需求（待实现）：** 新增共享网络列表调用方：长按带 + 的条目使用 show_number_set_window 选择订单数量，确认回调打开 order_preview_window 并请求服务端预览；取消不发请求。通用数量组件接口不变，业务范围由调用方和服务端校验。 完整规则见 [网络样板标记与下单预览契约](../technical_notes/terminal_pattern_order_preview.md)。
+
 `client/ui/number_set_window.py` 为已有的 `endernet_windows.number_set_window`
 提供可嵌入任意 `ToolDeltaScreen` 的数量编辑窗口，与物品选择窗口使用方式一致。
 

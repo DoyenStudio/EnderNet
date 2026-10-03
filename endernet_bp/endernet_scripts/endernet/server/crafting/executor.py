@@ -68,6 +68,7 @@ from .jobs import (
     StepStatus,
     WaitingLedger,
 )
+from .preview import PreviewService
 
 #: 本模组样板接口的角色名（06 的 `devices/io.py::TEMPLATE`）。由装配层注入，
 #: `crafting/` 不 import 设备模块——注入而不是 import 的理由与 08 把
@@ -299,6 +300,20 @@ class OrderExecutor(object):
         target, amount, reasons = _read_target(payload)
         if reasons is not None:
             return CommandResult.rejected(request_id, reasons)
+        # **下单先认领预览**（11 增量）。位置是刻意的：它必须落在这里，
+        # 也就是**主控准入与去重账本之后**——否则一条重放的包会白烧掉
+        # 一份预览，而玩家那边什么都没发生。
+        #
+        # 通过之后用的是**预览记下来的目标与数量**，不是客户端回显的那一份：
+        # 客户端带上来的 target / amount 只用于相等性核对，从不作规划输入
+        # （契约第 5 节「不把客户端返回的配方树当权威计划」）。
+        preview_id = (payload or {}).get("preview_id") or ""
+        if preview_id:
+            target, amount, reasons = self._consume_preview(
+                preview_id, command, target, amount
+            )
+            if reasons is not None:
+                return CommandResult.rejected(request_id, reasons)
 
         service = self.service
         runtime = service.runtime
@@ -351,6 +366,20 @@ class OrderExecutor(object):
         # 成功——把它也当成失败丢掉，表现是玩家下单「做 1 个铁块」、
         # 库里刚好有，却收到一条 `internal_error`。
         return CommandResult.ok(request_id, order.to_dict())
+
+    def _consume_preview(self, preview_id, command, target, amount):
+        # type: (str, object, object, int) -> tuple
+        """认领一份预览，返回 `(目标, 数量, 拒绝原因)`。
+
+        **六条校验各有各的理由**，都在 `PreviewService.consume` 里；这里
+        只负责把命令来源与时刻递过去。**幂等由两层守**：同一条 `request_id`
+        的重放被主控去重账本挡在门外（因此走不到这里），而
+        **换了 `request_id` 却拿同一份预览再下一次**由「已消费」挡住——
+        后者是去重账本给不了的，它按请求记账，而这两次请求本来就不同。
+        """
+        return self.service.previews.consume(
+            preview_id, command.source, target, amount
+        )
 
     def _start_planning(self, order, tick):
         # type: (object, int) -> None
@@ -2555,6 +2584,7 @@ class FactoryService(NetworkService):
         registry=None,
         definitions=None,
         on_slots_changed=None,
+        previews=None,
     ):
         # type: (object, object, object, object, object, object, object, object, str, object, object, object) -> None
         self.service_id = ServiceId.FACTORY
@@ -2594,6 +2624,12 @@ class FactoryService(NetworkService):
         #: 最近一次容量重算里「贡献零槽位」的处理器群（诊断用）。
         self.idle_groups = []
         self.memory_slots = 0
+        #: 下单预览（11 增量）。**每个网络一份**，与订单同寿命。
+        #: 注入而不是在这里 new：它要拿规划器、样板索引与只读的存储口，
+        #: 而这三样都由装配层给（`_factory_builder` 的说明）。
+        #: 没有注入时用明确报「没接上」的空壳——`request` 会回
+        #: `service_not_ready`，而不是静默地什么都不做。
+        self.previews = previews if previews is not None else PreviewService()
         self.executor = OrderExecutor(self)
         self.stats = {
             "submitted": 0,
@@ -2617,6 +2653,7 @@ class FactoryService(NetworkService):
             self.registry = runtime.registry
         if self.definitions is None:
             self.definitions = runtime.definitions
+        self.previews.attach(runtime)
 
     def detach(self):
         # type: () -> None
@@ -2638,6 +2675,10 @@ class FactoryService(NetworkService):
         if action == "cancel":
             return _with_request(command.request_id, self.executor.cancel(
                 payload.get("order_id") or ""))
+        if action == "preview_request":
+            return self.previews.request(command, payload)
+        if action == "preview_cancel":
+            return self.previews.cancel(command, payload)
         if action == "pause":
             return _with_request(command.request_id, self.executor.pause(
                 payload.get("order_id") or ""))
@@ -2656,15 +2697,22 @@ class FactoryService(NetworkService):
             [
                 BlockReason(
                     Reason.UNSUPPORTED,
-                    u"订单命令支持 submit / cancel / pause / resume / list / detail，"
-                    u"得到 %r" % (action,),
+                    u"订单命令支持 submit / cancel / pause / resume / list / detail /"
+                    u" preview_request / preview_cancel，得到 %r" % (action,),
                 )
             ],
         )
 
     def tick(self, context, budget):
         # type: (dict, int) -> int
-        return self.executor.tick(context, budget)
+        """订单推进 + 预览推进。**两笔开销分开记，但都算在本服务头上。**
+
+        预览**不吃订单预算**（契约第 3 节：它不占活跃订单名额），因此
+        这里加的是它自己花掉的那一份；两笔都返回会让运行时的预算记账
+        如实反映本服务这一帧的开销，而不是把预览藏起来。
+        """
+        cost = self.executor.tick(context, budget)
+        return cost + self.previews.advance(context)
 
     def add_node(self, node, saved_data=None):
         # type: (object, dict) -> bool

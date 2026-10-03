@@ -19,7 +19,10 @@ class BinderStub(object):
     BF_BindBool = 3
     BF_ButtonClickUp = 4
     BF_EditChanged = 5
-
+    #: 11-06 起本仓库也用到这两个旗标（工厂终端的进度条与三色背景）。
+    #: 取值与真引擎无关，只要求**各测试文件彼此一致**。
+    BF_BindColor = 7
+    BF_BindFloat = 8
 
 class ItemStub(object):
     def __init__(self, item_id):

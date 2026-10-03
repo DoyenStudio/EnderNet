@@ -32,7 +32,11 @@ from endernet.common.protocol import (
     CommandResult,
     MSG_COMMAND_RESULT,
     MSG_ERROR,
+    MSG_INVENTORY_SNAPSHOT,
     MSG_ITEM_DELTA,
+    MSG_ORDER_STATE,
+    MSG_PREVIEW_CHUNK,
+    MSG_PREVIEW_STATE,
     MSG_RESYNC_REQUIRED,
     MSG_SNAPSHOT_BEGIN,
     MSG_SNAPSHOT_CHUNK,
@@ -98,6 +102,9 @@ class Fixture(unittest.TestCase):
         #: session_id -> 该会话的资源描述表，用来把发出的包解回来。
         self.descriptions = {}
         self.stands = {}
+        #: `network_id -> DisplayStand`：hub 看到的显示投影（多一列
+        #: `has_pattern`、版本是显示版本）。断言裸仓储时仍用 `self.service`。
+        self.displays = {}
         self.devices = {}
         self.epochs = {}
         #: 每请求复核要读的外部事实。测试改这几个字典就能模拟「玩家走开了」
@@ -137,13 +144,17 @@ class Fixture(unittest.TestCase):
         stand.attach()
         device = DeviceRef(NodeKey(0, x, 64, 0), 1)
         self.stands[network_id] = stand
+        #: hub 拿到的是**显示投影**而不是裸的存储服务（见
+        #: `server/storage/projection.py`）。`self.service` 仍是那份真实仓储，
+        #: 「哪些键脏」「取走后版本怎么走」照样对着它断言。
+        self.displays[network_id] = testsupport.DisplayStand(stand.service, network_id)
         self.devices[network_id] = device
         self.epochs[network_id] = epoch
         return device
 
     def _storage_of(self, network_id):
-        stand = self.stands.get(network_id)
-        return None if stand is None else stand.service
+        display = self.displays.get(network_id)
+        return None if display is None else display.projection
 
     def _submit(self, command):
         # type: (object) -> object
@@ -196,6 +207,20 @@ class Fixture(unittest.TestCase):
         session = self.hub.registry.get(reply.session_id)
         # 会话描述表按会话发号，因此解码必须用**同一个**实例；留着它等价于
         # 客户端手里那张表。
+        self.descriptions[session.session_id] = session.descriptions
+        return session, reply
+
+    def open_order_view(self, player_id="p1", network_id=NETWORK,
+                        request_id="r1"):
+        # type: (str, str, str) -> tuple
+        """开一个**订单视图**会话（11-06 的工厂终端那条路）。"""
+        device = self.devices[network_id]
+        reply = self.hub.handle(
+            SyncEnvelope(SessionOpen(request_id, device, 0),
+                         view_kind=VIEW_ORDER),
+            player_id,
+        )
+        session = self.hub.registry.get(reply.session_id)
         self.descriptions[session.session_id] = session.descriptions
         return session, reply
 
@@ -456,7 +481,7 @@ class TestPublishWindow(Fixture):
             for envelope in self.of_kind(MSG_SNAPSHOT_CHUNK)
             for item in envelope.message.items
         ]
-        self.assertEqual(records, [(STONE, 3, 0)])
+        self.assertEqual(records, [(STONE, 3, 0, False)], "无样板时标记为假")
         self.assertEqual(session.item_view_version, 1)
 
     def test_a_new_session_does_not_also_receive_that_first_window(self):
@@ -480,7 +505,7 @@ class TestPublishWindow(Fixture):
         deltas = self.of_kind(MSG_ITEM_DELTA)
         self.assertEqual(len(deltas), 1)
         message = deltas[0].message
-        self.assertEqual(message.upserts, ((DIRT, 5, 0),))
+        self.assertEqual(message.upserts, ((DIRT, 5, 0, False),))
         self.assertEqual(message.removes, ())
         self.assertEqual(message.packet_count, 1)
 
@@ -493,7 +518,7 @@ class TestPublishWindow(Fixture):
         self.stand.seed(DIRT, 2)
         self.hub.tick()
         message = self.of_kind(MSG_ITEM_DELTA)[0].message
-        self.assertEqual(message.upserts, ((DIRT, 7, 0),))
+        self.assertEqual(message.upserts, ((DIRT, 7, 0, False),))
 
     def test_a_later_commit_uses_the_published_version_as_its_base(self):
         """一次窗口 = 一次版本推进。第二批的基准就是第一批推到的那一版。"""
@@ -556,7 +581,7 @@ class TestPublishWindow(Fixture):
         sent = set()
         for packet in packets:
             self.assertTrue(packet.upserts, "分片不该出现空包")
-            for key, _stored, _reserved in packet.upserts:
+            for key, _stored, _reserved, _has_pattern in packet.upserts:
                 sent.add(key)
         self.assertEqual(sent, set([STONE, DIRT, SAND]))
         self.assertEqual(session.item_view_version, packets[-1].new_version)
@@ -573,7 +598,7 @@ class TestPublishWindow(Fixture):
             for envelope in self.of_kind(MSG_SNAPSHOT_CHUNK)
             for item in envelope.message.items
         ]
-        self.assertEqual(records, [(STONE, 2, 0)], "快照只含物品")
+        self.assertEqual(records, [(STONE, 2, 0, False)], "快照只含物品")
         self.assertIn(WATER, self.service.keys(), "流体确实在索引里")
 
         self.port.sent = []
@@ -972,6 +997,10 @@ class TestSubscriptions(Fixture):
 
         继续发的话客户端每条都会判缺口、反复重取，而每次都因为同一个
         原因失败——表现成「界面永远转圈」。
+
+        **推的是显示版本**：hub 现在对着 `NetworkItemProjection` 发布，
+        「物品视图版本」就是投影的 `publish_version`（见 `projection.py`）。
+        裸仓储的那个计数从投影接管排空之后只是它自己的排空计数。
         """
         session, _ = self.open_view()
         self.settle(session)
@@ -979,14 +1008,15 @@ class TestSubscriptions(Fixture):
 
         # 绕过本模块取走脏键：等价于「别处也发布了同一个视图」。
         self.stand.seed(DIRT, 1)
-        self.service.take_dirty_keys()
+        view = self.displays[NETWORK].projection
+        view.take_dirty_keys()
         self.hub.tick()
 
         self.assertEqual(self.resync_codes(), [sync_terminal.RESYNC_VERSION_GAP])
         self.assertEqual(self.hub.stats["version_chain_breaks"], 1)
         self.assertEqual(
             self.hub.diagnostics()["networks"][NETWORK]["publish_version"],
-            self.service.publish_version,
+            view.publish_version,
             "断链之后基准要跟上去",
         )
 
@@ -1608,11 +1638,17 @@ class TestRefusals(Fixture):
         # **不告诉他这条会话存在**：与「不存在」是同一个回答。
         self.assertEqual(reply.message.code, Reason.SESSION_INVALID)
 
-    def test_an_order_view_session_is_refused_rather_than_opened(self):
-        """`order` 是**已知**种类但还没有生产者：拒绝的理由要和「发错了」分开。
+    def test_an_order_view_session_opens_and_gets_no_item_snapshot(self):
+        """工厂终端按 `VIEW_ORDER` 开会话：**开得起来，且不收物品那张快照**（11-06）。
 
-        混淆这两种的理由会让「订单终端还没做」表现成「你的客户端发错了
-        消息」——排查方向从一开始就是错的。
+        这条在 11-06 之前钉的是「被拒成 `unsupported`」——当时订单视图确实
+        没有生产者。现在它反转，剩下的判据是**分流**：这条夹具没有注入
+        `order_of`（默认 `_no_order`），因此订单状态一条都不发；而物品视图
+        那几条（`inventory_snapshot` / 分片）**同样一条都不该发**——那既是
+        白发的带宽，也会在客户端留下一份没人看的缓存。
+
+        「有 `order_of` 时真的推出 `order_state`」由 `TestOrderPublishing`
+        覆盖（那里才注得进一份订单视图）。
         """
         device = self.devices[NETWORK]
         reply = self.hub.handle(
@@ -1621,11 +1657,14 @@ class TestRefusals(Fixture):
             ),
             "p1",
         )
-        self.assertEqual(reply.message.kind, MSG_ERROR)
-        self.assertEqual(reply.message.code, Reason.UNSUPPORTED)
-        self.assertEqual(reply.message.request_id, "r1")
-        self.assertEqual(self.hub.registry.count(), 0, "不能留下半个会话")
-        self.assertEqual(self.port.sent, [])
+        self.assertEqual(reply.message.kind, MSG_SESSION_READY)
+        self.assertEqual(self.hub.registry.count(), 1)
+
+        self.hub.tick()
+        kinds = [envelope.message.kind for envelope in self.port.sent]
+        self.assertNotIn(MSG_ORDER_STATE, kinds)
+        self.assertNotIn(MSG_INVENTORY_SNAPSHOT, kinds)
+        self.assertNotIn(MSG_SNAPSHOT_BEGIN, kinds)
 
     def test_the_error_envelope_needs_no_session(self):
         """`error` 是「S2C 必须带会话」唯一的例外，否则只能硬编一个假会话。
@@ -2062,6 +2101,285 @@ class TestTemplateStatePublish(Fixture):
         self.assertIn(session.session_id, self.hub._template_sent)
         self.close_view(session)
         self.assertNotIn(session.session_id, self.hub._template_sent)
+
+
+def order_state(available=3072, completed=1):
+    """一条订单视图载荷（装配层 `_sync_order_of` 的产物形状）。"""
+    return {
+        "memory": {"capacity": 4096, "used": 4096 - available,
+                   "available": available, "slots": 4},
+        "orders": [{
+            "order_id": "order@net-1/master-1/1",
+            "canonical": "minecraft:stone",
+            "name": "minecraft:stone",
+            "aux": 0,
+            "amount": 64,
+            "status": "running",
+            "tasks_completed": completed,
+            "tasks_total": 4,
+            "memory_bytes": 1024,
+        }],
+        "sources": [{
+            "order_id": "order@net-1/master-1/1",
+            "canonical": "minecraft:stone",
+            "name": "minecraft:stone",
+            "aux": 0,
+            "stage": 1,
+            "feed": 1,
+            "done": completed * 16,
+            "total": 64,
+        }],
+    }
+
+
+class TestOrderStatePublish(Fixture):
+    """11-06 的订单视图推送与取消路由。
+
+    判据与样板状态那条对应：按整个载荷去重、没接上就不发、读炸了也宁可
+    不发。另加两条 11-06 独有的：**只发给订单视图会话**，以及取消命令
+    被路由成 `CommandKind.ORDER`。
+    """
+
+    def setUp(self):
+        Fixture.setUp(self)
+        self.order = None
+        self.order_calls = []
+        self.order_raises = False
+        #: `Fixture` 建中枢时没有传 `order_of`，而这里要测的正是接上之后的
+        #: 行为，因此换掉那个注入点（与 `TestTemplateStatePublish` 同一种用法）。
+        self.hub._order_of = self._order_of
+
+    def _order_of(self, network_id):
+        self.order_calls.append(network_id)
+        if self.order_raises:
+            raise RuntimeError("factory service exploded")
+        return self.order
+
+    def publish(self, session):
+        self.hub.tick()
+        return self.of_kind(MSG_ORDER_STATE)
+
+    def test_the_state_is_pushed_only_when_it_changes(self):
+        self.order = order_state()
+        session, _ = self.open_order_view()
+        self.settle(session)
+        self.assertIn(session.session_id, self.hub._order_sent, "第一帧发过了")
+        self.port.sent = []
+        self.assertEqual([], self.publish(session), "内容没变就不发")
+        self.order = order_state(available=1024)
+        self.assertEqual(1, len(self.publish(session)), "内存变了就要再发")
+
+    def test_it_is_pushed_by_network_not_by_device(self):
+        """订单属于网络：注入点收到的是**线上网络标识**，不是设备引用。"""
+        self.order = order_state()
+        session, _ = self.open_order_view()
+        self.settle(session)
+        self.assertEqual([NETWORK], self.order_calls)
+
+    def test_an_item_view_session_never_receives_order_state(self):
+        """两条视图互不串：物品终端不该收到订单状态。"""
+        self.order = order_state()
+        session, _ = self.open_view()
+        self.settle(session)
+        self.assertEqual([], self.of_kind(MSG_ORDER_STATE))
+        self.assertEqual([], self.order_calls, "物品视图连读都不该读")
+
+    def test_a_failing_read_never_fakes_an_empty_order_list(self):
+        """**不发**与**发一份空的**是两回事：后者在客户端读出来是
+        「一单都没有」，而真相是「这条网络读不到订单」。"""
+        self.order_raises = True
+        session, _ = self.open_order_view()
+        self.settle(session)
+        self.assertEqual([], self.of_kind(MSG_ORDER_STATE))
+        self.assertEqual(0, self.hub.stats["order_states"])
+
+    def test_a_network_without_a_factory_service_sends_nothing(self):
+        self.order = None
+        session, _ = self.open_order_view()
+        self.settle(session)
+        self.assertEqual([], self.of_kind(MSG_ORDER_STATE))
+
+    def test_closing_the_session_drops_the_dedup_record(self):
+        self.order = order_state()
+        session, _ = self.open_order_view()
+        self.settle(session)
+        self.assertIn(session.session_id, self.hub._order_sent)
+        self.close_view(session)
+        self.assertNotIn(session.session_id, self.hub._order_sent)
+
+    def test_cancel_is_routed_as_an_order_command(self):
+        """取消订单**不属于存储**：它要被路由成 `CommandKind.ORDER`，
+        交给 09 的工厂服务，而不是 05 的库存服务。
+
+        同时钉住动作名的**换名**：线上发的是 `order_cancel`，
+        网络服务认识的是 `cancel`——那张表是唯一一处。
+        """
+        session, _ = self.open_order_view()
+        self.settle(session)
+        order_id = "order@net-1/master-1/1"
+        self.send(session, TerminalCommand(
+            "q-cancel", "order_cancel", order=order_id))
+        self.assertEqual(1, len(self.submissions))
+        command = self.submissions[0]
+        self.assertEqual(CommandKind.ORDER, command.kind)
+        self.assertEqual("cancel", command.payload["action"])
+        self.assertEqual(order_id, command.payload["order_id"])
+
+    def test_a_storage_action_still_routes_to_storage(self):
+        """反例：普通存取命令**没有**被那张表带走。"""
+        session, _ = self.open_view()
+        self.settle(session)
+        self.send(session, TerminalCommand("q-take", "inv_take", count=1))
+        self.assertEqual(CommandKind.STORAGE, self.submissions[0].kind)
+        self.assertEqual("inv_take", self.submissions[0].payload["action"])
+
+
+class TestPreviewPublish(Fixture):
+    """下单预览的两条路：命令路由（11 增量）与发布（状态头 + 分片）。
+
+    **夹具的预览服务是替身**：`PreviewService` 自己那一半（分帧、缺料、
+    提交闸）在 `test_order_preview.py` 里对着真规划器测过了。这里只问
+    中枢那一半——动作怎么路由、载荷怎么改名、分片怎么推、会话没了怎么收尾。
+    """
+
+    class FakePreviews(object):
+        def __init__(self, delivery=None):
+            self.delivery = delivery
+            self.forgotten = []
+            self.requests = []
+
+        def delivery_for(self, session_id):
+            return self.delivery
+
+        def forget_session(self, session_id):
+            self.forgotten.append(session_id)
+            self.delivery = None
+            return 1
+
+        def request(self, command, payload):
+            self.requests.append(payload)
+            return CommandResult.ok(command.request_id, {"preview_id": "pv1"})
+
+    def delivery(self, rows=(), packet_count=0, status="complete",
+                 submit_ok=True):
+        return {
+            "state": {
+                "request_id": "c1", "preview_id": "pv1", "generation": 1,
+                "status": status, "detail": "", "submit_ok": submit_ok,
+                "target": {"canonical": STONE.canonical(),
+                           "name": "minecraft:stone", "aux": 0},
+                "count": 4, "semantics": "hold", "inventory_version": 1,
+                "topology_version": 1, "plan_digest": "d", "row_count": len(rows),
+                "packet_count": packet_count, "missing": False, "blocked": [],
+                "truncated": False, "spent": 3,
+            },
+            "chunks": tuple((row,) for row in rows),
+        }
+
+    def row(self, canonical=STONE.canonical()):
+        return {"canonical": canonical, "name": "minecraft:stone", "aux": 0,
+                "demand": 4, "allocated": 4, "planned": 0, "missing": False,
+                "sources": []}
+
+    def attach(self, previews):
+        """挂上预览服务。
+
+        **必须在 `settle` 之后调**：会话开起来的那几帧里 `_publish_preview`
+        已经跑过了，那时若已经有预览，状态头就已经发出去、`_preview_sent`
+        也记下来了——之后再清端口，看到的就是「一条没发」。
+        """
+        self.hub._preview_of = lambda network_id: previews
+
+    def test_the_action_table_routes_order_submit_to_the_factory(self):
+        """`order_submit` 走订单路由，**并且把 `key` / `count` 改名**。
+
+        线上那两个字段属于资源命令的词汇；不改名的话工厂读到的是
+        `payload["target"]` 缺席（而线上那个 `target` 是样板终端的
+        虚格面名），表现是「下单说坏参数」。
+        """
+        session, _ = self.open_view()
+        self.send(session, TerminalCommand(
+            "s1", "order_submit", key=STONE.to_dict(), count=4, preview="pv1"))
+        command = self.submissions[0]
+        self.assertEqual(CommandKind.ORDER, command.kind)
+        self.assertEqual("submit", command.payload["action"])
+        self.assertEqual(STONE.to_dict(), command.payload["target"])
+        self.assertEqual(4, command.payload["amount"])
+        self.assertEqual("pv1", command.payload["preview_id"])
+
+    def test_a_preview_request_routes_the_same_way(self):
+        session, _ = self.open_view()
+        self.send(session, TerminalCommand(
+            "p1", "preview_request", key=STONE.to_dict(), count=4))
+        command = self.submissions[0]
+        self.assertEqual(CommandKind.ORDER, command.kind)
+        self.assertEqual("preview_request", command.payload["action"])
+        self.assertEqual(STONE.to_dict(), command.payload["target"])
+        self.assertEqual(4, command.payload["amount"])
+
+    def test_cancelling_a_preview_keeps_its_own_action(self):
+        """**取消预览不是取消订单**（契约第 5 节）。"""
+        session, _ = self.open_view()
+        self.send(session, TerminalCommand("p2", "preview_cancel", preview="pv1"))
+        self.assertEqual("preview_cancel", self.submissions[0].payload["action"])
+        self.assertNotEqual("cancel", self.submissions[0].payload["action"])
+
+    def test_the_state_header_arrives_before_the_chunks(self):
+        previews = self.FakePreviews(
+            self.delivery(rows=[self.row(), self.row(DIRT.canonical())],
+                          packet_count=2))
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+        self.attach(previews)
+        for _ in range(4):
+            self.hub.tick()
+        kinds = self.kinds()
+        self.assertEqual(kinds[0], MSG_PREVIEW_STATE, "状态头必须排在分片前面")
+        self.assertEqual(kinds.count(MSG_PREVIEW_CHUNK), 2)
+        header = self.of_kind(MSG_PREVIEW_STATE)[0].message
+        self.assertEqual(header.packet_count, 2)
+        self.assertEqual(header.row_count, 2)
+        self.assertTrue(header.submit_ok)
+        indexes = [e.message.packet_index for e in self.of_kind(MSG_PREVIEW_CHUNK)]
+        self.assertEqual(indexes, [0, 1], "分片按序发，一片不少")
+
+    def test_the_header_is_re_sent_when_the_status_changes(self):
+        """算完那一刻要把状态头再发一次——客户端靠它结束 loading。"""
+        previews = self.FakePreviews(self.delivery(status="running"))
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+        self.attach(previews)
+        self.hub.tick()
+        self.assertEqual(len(self.of_kind(MSG_PREVIEW_STATE)), 1)
+        # 同一份状态不重发。
+        self.hub.tick()
+        self.assertEqual(len(self.of_kind(MSG_PREVIEW_STATE)), 1, "内容没变就不发")
+        previews.delivery = self.delivery(status="complete")
+        self.hub.tick()
+        self.assertEqual(len(self.of_kind(MSG_PREVIEW_STATE)), 2, "状态变了要重发")
+
+    def test_no_preview_service_means_nothing_is_sent(self):
+        """**不发一份空结果**：那会被读成「没有缺料」。"""
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+        self.attach(None)
+        self.hub.tick()
+        self.assertEqual(self.of_kind(MSG_PREVIEW_STATE), [])
+
+    def test_closing_the_session_forgets_the_preview(self):
+        """**逐会话的游标表与会话一起清**，否则关一次界面漏一条。"""
+        previews = self.FakePreviews(self.delivery(status="running"))
+        session, _ = self.open_view()
+        self.settle(session)
+        self.attach(previews)
+        self.hub.tick()
+        self.assertIn(session.session_id, self.hub._preview_sent)
+        self.hub.close_session(session.session_id)
+        self.assertNotIn(session.session_id, self.hub._preview_sent)
+        self.assertEqual(previews.forgotten, [session.session_id])
 
 
 if __name__ == "__main__":

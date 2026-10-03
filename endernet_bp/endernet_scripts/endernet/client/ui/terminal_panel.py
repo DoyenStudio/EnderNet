@@ -45,7 +45,8 @@ except ImportError:
     # `device_status_bindings` 取 `BF_BindColor`（拿不到就不挂颜色绑定）
     # 是同一手法。
     OnKeyPressInGame = None
-from . import flying_item, slot_layout, stack_size
+from . import flying_item, order_preview_window, slot_layout, stack_size
+from .number_set_window import show_number_set_window
 from .widgets import device_status
 from .backpack_model import (
     BACKPACK_COUNT, HOTBAR_COUNT, HOTBAR_START, INTEGER_TYPES, BackpackModel,
@@ -53,7 +54,7 @@ from .backpack_model import (
 )
 from .item_list_model import SORT_COUNT, SORT_NAME
 from .terminal_cache import TerminalCache
-from .widgets import device_status_bindings
+from .widgets import device_status_bindings, order_preview_bindings
 from ..network_client import NetworkClient
 from ...common.identity import DeviceRef
 from ...common.protocol import STATUS_OK
@@ -215,7 +216,9 @@ def _text(value):
     return value.decode("utf-8")
 
 
-class TerminalPanelBase(device_status_bindings.DeviceStatusBindingsMixin, ToolDeltaScreen):
+class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
+                        device_status_bindings.DeviceStatusBindingsMixin,
+                        ToolDeltaScreen):
     """Other terminal screens may inherit this class and reuse terminal_inventory.
 
     槽位是**界面编号**，不是引擎槽号：上方 9x3 是 0..26（背包），下方 9x1 是
@@ -334,6 +337,19 @@ class TerminalPanelBase(device_status_bindings.DeviceStatusBindingsMixin, ToolDe
         # type: (object) -> None
         if self.list_view is not None:
             self.list_view.on_sort_order(params)
+
+    @Binder.binding(Binder.BF_ButtonClickDown, SELECT_BINDING)
+    def terminal_press(self, params):
+        # type: (object) -> None
+        """按下网络列表的一行（11 增量）。**只记资源键与时刻。**
+
+        与抬起那条**挂同一个名字**，照抄背包槽的成例
+        （`OnBackpackPress` / `OnBackpackClick`）——引擎按「标志 + 名字」找
+        回调，因此 JSON 侧一个字都不用改，`item_can_be_selected` 那个共享
+        模板（上半屏与背包也在用）不为这个功能动。
+        """
+        if self.list_view is not None:
+            self.list_view.on_row_press(params)
 
     @Binder.binding(Binder.BF_ButtonClickUp, SELECT_BINDING)
     def terminal_select(self, params):
@@ -736,6 +752,18 @@ class TerminalListView(object):
         self.cache = cache if cache is not None else TerminalCache()
         self.device_ref = device_ref
         self.closed = False
+        #: 时钟。**可注入**：长按判定用真实秒数（`LONG_PRESS_SECONDS`），
+        #: 离线用例没法真的等 0.4 秒，因此让它能换。
+        self._clock = time.time
+        #: 网络列表那一行的长按记录 `({资源键}, 按下时刻)`。见 `on_row_press`：
+        #: **记的是完整资源键，不是行号**——排序或增量一到行号就换了意义。
+        self._row_press = None
+        #: 下单预览窗口（11 增量）。与列表同寿命，挂在宿主屏上供绑定取值。
+        self.preview = order_preview_window.OrderPreviewWindow(screen, self.cache.client)
+        if getattr(screen, "preview", None) is None:
+            screen.preview = self.preview
+        #: 宿主屏的预览模型就是本视图那一份（绑定从 `screen.preview` 取）。
+        self.preview.listen()
         #: 保活计数（帧）。见 `_keepalive`：终端面板一条命令都不发时，
         #: 服务端会在 20 秒后把会话回收，而界面上只表现为「点哪儿都没反应」。
         self._keepalive_frames = 0
@@ -843,16 +871,27 @@ class TerminalListView(object):
 
     def get_item_count(self, index):
         # type: (object) -> str
-        """数量标签显示**可用数**（决策 D4），不是总存量。
+        """数量标签。**有样板与没样板是两套口径**（契约第 1 节）。
 
-        `stored - reserved` 为 1 时留空：物品种类多的时候满屏的「1」只是
-        噪声（同下半屏 `_slot_item_count` 的处理）。**排序仍按总存量**
-        （决策 D7），因此这一列显示的数与排序依据并不是同一个量——那是
-        已知差异，记在 `plans/ui/common_terminal_panel.md` 的待确认段。
+        - **有样板**：`stored` 的十进制文本后加 `+`（`256+`，1 个也是 `1+`）；
+          `stored` 为 0 时只显示 `+`，**不显示 `0+`**。用的是 `stored`
+          而不是可用数——User 指定的是「库存数量」，而预留不该让 `256+`
+          变成 `254+`。**但取物仍然只能用 `available`**（见 `on_select`），
+          `+` 不是可取量的凭据。
+        - **没有样板**：沿用决策 D4 的可用数口径（`stored - reserved`），
+          为 1 时留空——物品种类多的时候满屏的「1」只是噪声。
+
+        两套口径共用「`stored` 才是排序依据」这一条（决策 D7），
+        因此这一列显示的数与排序依据并不总是同一个量，那是已知差异，
+        记在 `plans/ui/common_terminal_panel.md` 的待确认段。
         """
         if not self.has_item(index):
             return ""
         entry = self.rows[index]
+        if entry.has_pattern:
+            if entry.stored <= 0:
+                return "+"
+            return "%d+" % (entry.stored,)
         available = entry.stored - entry.reserved
         if available <= 1:
             return ""
@@ -950,6 +989,70 @@ class TerminalListView(object):
 
     # -- 点击 ----------------------------------------------------------
 
+    def on_row_press(self, params):
+        # type: (object) -> None
+        """按下网络列表的一行：**只记资源键与时刻**（契约第 2 节）。
+
+        **记的是完整资源键。** 契约第 2 节明写「事件捕获时记住完整资源键，
+        后续不能按排序前的 collection_index 重新找目标」——等到抬起时再按
+        行号回查，中间任何一次排序、搜索或增量都可能让那一行换了人，
+        而玩家会对着 A 长按、下单买下 B。
+
+        没有会话、没有列表视图时记成 `None`：那时抬起什么都不该发生。
+        """
+        self._row_press = None
+        index = params.get("#collection_index")
+        if (self.closed or isinstance(index, bool)
+                or not isinstance(index, INTEGER_TYPES)
+                or not 0 <= index < len(self.rows)):
+            return
+        if not self.cache.client.has_session():
+            return
+        entry = self.rows[index]
+        self._row_press = (entry.key, entry.has_pattern, self._clock())
+
+    def _take_long_press(self):
+        # type: () -> object
+        """抬起时判定：这一下算不算**命中长按的下单入口**。
+
+        判据三条，缺一不可：按住够久、按下时记到了键、**那一行有样板**。
+        第三条是契约第 2 节：「长按带 `+` 的网络条目打开数量窗；不带 `+`
+        的条目不触发此下单入口」——按住了没样板的行，它仍然是一次普通短按。
+
+        无论结果如何都把记录清掉：留着它，下一次抬起会拿一个陈旧的时刻
+        去比，表现是「偶尔莫名弹出数量窗」。
+        """
+        press = self._row_press
+        self._row_press = None
+        if press is None:
+            return None
+        key, has_pattern, at = press
+        if not has_pattern:
+            return None
+        if self._clock() - at < LONG_PRESS_SECONDS:
+            return None
+        return key
+
+    def open_quantity(self, key):
+        # type: (object) -> bool
+        """为这个资源打开数量窗，确认后请求预览（契约第 2 节）。
+
+        **数量窗取消不发任何请求**——`show_number_set_window` 的关闭按钮
+        只清窗口、不调确认回调，这里因此不需要额外判一次。
+        """
+        screen = self.screen
+        if screen is None or self.preview is None or self.preview.closed:
+            return False
+
+        def on_confirm(number):
+            # type: (int) -> None
+            self.preview.request(key, number)
+
+        return bool(show_number_set_window(
+            screen, 1, on_confirm, min_number=1,
+            title=order_preview_window.QUANTITY_TITLE,
+        ))
+
     def on_select(self, params):
         # type: (object) -> None
         """点一行。**有选中就存进去，没选中就取出来。**
@@ -977,6 +1080,14 @@ class TerminalListView(object):
         """
         index = params.get("#collection_index")
         if self.closed or isinstance(index, bool) or not isinstance(index, INTEGER_TYPES):
+            return
+        # **先看这一下是不是长按的收尾。** 契约第 2 节：「长按命中后吞掉本次
+        # 释放产生的短按，不能同时存取、取消选中或清空样板配置」。因此命中
+        # 就开数量窗并**在这里返回**——判定放在下标范围与会话检查之前，是因为
+        # 它要的是「刚才那一下按下」，与这一行现在是什么无关。
+        long_key = self._take_long_press()
+        if long_key is not None:
+            self.open_quantity(long_key)
             return
         # **没有会话就什么都不做。** 遮罩虽然会出（`is_unavailable`），但它
         # 拦不拦得住输入**没有实测过**（`plans/ui/common_terminal_panel.md`
@@ -1666,6 +1777,18 @@ class TerminalListView(object):
         # 执行完，要么从来没动过；虚拟空间只是画面上那一份，丢掉它不欠任何
         # 东西（这正是「不写引擎背包、不写网络」换来的）。
         self._action_requests = {}
+        # **预览窗与列表同寿命**：窗口是宿主屏上的一个实例，绑定跟着屏走，
+        # 而屏比会话活得久；因此收尾靠把模型放下（`close` 之后所有回调取到
+        # 的都是安全值：不显示、零行），并把它从宿主屏上摘掉，免得界面重新
+        # 打开时读到一个属于上一个会话的模型。**不发 `preview_cancel`**：
+        # 屏都没了，服务端由会话失效与 TTL 两条路回收。
+        if self.preview is not None:
+            preview = self.preview
+            self.preview = None
+            if getattr(self.screen, "preview", None) is preview:
+                self.screen.preview = None
+            preview.close()
+        self._row_press = None
         self.backpack = None
         self._scroll = None
 

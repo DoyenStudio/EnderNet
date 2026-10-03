@@ -45,7 +45,10 @@ class BinderStub(object):
     BF_ButtonClickUp = 4
     BF_EditChanged = 5
     BF_ButtonClickDown = 6
-
+    #: 11-06 起本仓库也用到这两个旗标（工厂终端的进度条与三色背景）。
+    #: 取值与真引擎无关，只要求**各测试文件彼此一致**。
+    BF_BindColor = 7
+    BF_BindFloat = 8
     @staticmethod
     def binding(flag, name):
         def decorate(func):
@@ -377,7 +380,7 @@ from endernet_bp.endernet_scripts.endernet.client.ui.terminal_cache import (  # 
     TerminalCache,
 )
 from endernet_bp.endernet_scripts.endernet.client.ui.widgets import (  # noqa: E402
-    device_status,
+    device_status, order_preview, order_preview_bindings,
 )
 from endernet_bp.endernet_scripts.endernet.common.protocol import (  # noqa: E402
     STATUS_OK, STATUS_REJECTED, CommandResultMessage, ItemDelta, SessionReady,
@@ -398,6 +401,9 @@ REF = DeviceRef(NodeKey(0, 10, 64, 20), 3)
 STONE = ResourceKey.item("minecraft:stone")
 SAND = ResourceKey.item("minecraft:sand")
 DIRT = ResourceKey.item("minecraft:dirt")
+#: 11 增量用到的第四行：**没有样板**的那一种，用来钉「长按无 `+` 的行
+#: 不触发下单入口」。
+IRON = ResourceKey.item("minecraft:iron_ingot")
 ZINC = ResourceKey.item("minecraft:zinc")
 
 SNAPSHOT_VERSION = 10
@@ -442,7 +448,7 @@ class PanelFixture(unittest.TestCase):
         # 只放「正常显示」的话，`<= 1` 那一支在离线永远是绿的。
         self._batch_serial = 0
         self.feed(SessionReady(7, SNAPSHOT_VERSION))
-        self.snapshot([(STONE, 40, 4), (SAND, 1, 0), (DIRT, 2, 2)])
+        self.snapshot([(STONE, 40, 4, False), (SAND, 1, 0, False), (DIRT, 2, 2, False)])
         self.cache.tick()
         self.backpack = backpack_model.BackpackModel()
         #: 假的引擎背包读数，由 `engine_backpack()` 填。**引擎槽序**：0–8 是
@@ -691,6 +697,203 @@ class TestBindings(PanelFixture):
         # 重复关是安全的（`OnDestroy` 与 `OnDeactive` 都可能走到这里）。
         self.view.close()
         self.assertEqual(self.port.unlistens, 1)
+
+
+class TestPatternMarkedCounts(PanelFixture):
+    """带样板的条目：`stored+` / `+`（契约第 1 节）。
+
+    无样板的条目**一条都不改**——它们仍按可用数显示，可用数 ≤ 1 留空。
+    两套口径混在一起是这一步最容易出的错：把 `+` 的口径套到所有行上，
+    表现是满屏「0+」；把可用数的口径套到样板行上，表现是零库存的样板行
+    看起来跟空行一样，玩家根本不知道能下单。
+    """
+
+    def setUp(self):
+        PanelFixture.setUp(self)
+        # 三行的**样板与库存各占一种情形**：
+        # 有库存有样板（`256+`）、零库存有样板（`+`）、有库存没样板（可用数）。
+        self.snapshot([
+            (STONE, 256, 0, True),
+            (SAND, 0, 0, True),
+            (DIRT, 5, 0, False),
+        ])
+        self.cache.tick()
+        # **视图的行是它自己刷新出来的**：`cache.tick()` 只动模型，
+        # 集合绑定读的是 `self.rows`——不刷的话断言的还是上一次快照的行。
+        self.view.refresh()
+
+    def test_a_stock_row_with_a_pattern_keeps_the_stored_number(self):
+        """用 `stored` 而不是可用数：预留不该把 `256+` 变成 `254+`。
+
+        User 指定的是「库存数量」，而标签本来就不承诺可取量——
+        取物仍走可用数（见 `on_select`）。
+        """
+        self.snapshot([(STONE, 256, 2, True)])
+        self.cache.tick()
+        self.view.refresh()
+        stone = self.names().index("minecraft:stone")
+        self.assertEqual(
+            self.cell(BinderStub.BF_BindString, "item_count", stone), "256+"
+        )
+
+    def test_one_item_still_shows_a_plus(self):
+        """1 个也要显示 `1+`——`<= 1 留空` 那条只属于无样板口径。"""
+        self.snapshot([(STONE, 1, 0, True)])
+        self.cache.tick()
+        self.view.refresh()
+        stone = self.names().index("minecraft:stone")
+        self.assertEqual(
+            self.cell(BinderStub.BF_BindString, "item_count", stone), "1+"
+        )
+
+    def test_a_pattern_only_row_shows_a_bare_plus(self):
+        """零库存有样板：`+`，**不是 `0+`**，而且这一行必须还在。"""
+        sand = self.names().index("minecraft:sand")
+        self.assertEqual(
+            self.cell(BinderStub.BF_BindString, "item_count", sand), "+"
+        )
+        self.assertTrue(self.cell(BinderStub.BF_BindBool, "has_item", sand))
+
+    def test_rows_without_a_pattern_keep_the_available_number(self):
+        """无样板的老口径一字未改：可用数 5 显示 5，可用数 ≤ 1 留空。"""
+        dirt = self.names().index("minecraft:dirt")
+        self.assertEqual(
+            self.cell(BinderStub.BF_BindString, "item_count", dirt), "5"
+        )
+        # 夹具原有的三行里 SAND 可用数为 1、DIRT 可用数为 0，都留空。
+        self.snapshot([(SAND, 1, 0, False), (DIRT, 2, 2, False)])
+        self.cache.tick()
+        self.view.refresh()
+        sand = self.names().index("minecraft:sand")
+        dirt = self.names().index("minecraft:dirt")
+        self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", sand), "")
+        self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", dirt), "")
+
+    def test_a_pattern_only_row_sorts_as_zero_and_survives_a_counting_sort(self):
+        """`+` 单独存在的行按 0 排序，不能因为没有数量就被排到最后之外。"""
+        self.view.sort_field = "count"
+        self.view.on_sort_method()
+        self.cache.tick()
+        self.view.refresh()
+        self.assertIn("minecraft:sand", self.names(), "零库存的样板行要留在列表里")
+
+
+class TestLongPressOrder(PanelFixture):
+    """长按带 `+` 的网络条目 = 开数量窗下单（11 增量，契约第 2 节）。
+
+    **数量窗本身被换成了替身**：它要 `screen.AddElement`，而这套夹具的屏
+    是个只认得绑定表的替身。这一组要钉的是**手势那一半**——按下记了什么、
+    抬起怎么判、短按有没有被吞掉；窗口怎么建在
+    `test_number_set_window.py` 里各自有一份。
+    """
+
+    PATTERN = "minecraft:iron_ingot"
+
+    def setUp(self):
+        PanelFixture.setUp(self)
+        # 时钟注入：用例不必真的等 0.4 秒（同 `inv_split` 的长按用例）。
+        self.now = [1000.0]
+        self.view._clock = lambda: self.now[0]
+        self.opened = []
+        patcher = patch.object(
+            terminal_panel, "show_number_set_window", self._fake_window)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # 一行有样板（`+`）、一行没有。
+        self.snapshot([
+            (STONE, 0, 0, True),
+            (IRON, 5, 0, False),
+        ])
+        self.cache.tick()
+        self.view.refresh()
+
+    def _fake_window(self, screen, number, callback, **kwargs):
+        self.opened.append({"screen": screen, "number": number,
+                            "callback": callback, "kwargs": kwargs})
+        return True
+
+    #: 比门槛多留一截：`1000.0 + 0.4` 减 `1000.0` 是 `0.39999999999986`，
+    #: 拿门槛当推进量会让用例测的是浮点舍入。
+    HOLD = terminal_panel.LONG_PRESS_SECONDS + 0.1
+
+    def index_of(self, name):
+        return self.names().index(name)
+
+    def press(self, ui_index, hold=None):
+        # type: (int, object) -> None
+        """按下再抬起同一行；`hold` 是两次之间流逝的秒数。"""
+        params = {"#collection_index": ui_index}
+        self.bind(BinderStub.BF_ButtonClickDown, "select", params)
+        if hold is not None:
+            self.now[0] += hold
+        self.bind(BinderStub.BF_ButtonClickUp, "select", params)
+
+    def test_a_long_press_on_a_plus_row_opens_the_quantity_window(self):
+        index = self.index_of(STONE.name)
+        self.press(index, hold=self.HOLD)
+        self.assertEqual(len(self.opened), 1, "长按该开一次数量窗")
+        self.assertEqual(self.opened[0]["number"], 1)
+        self.assertEqual(self.opened[0]["kwargs"]["min_number"], 1)
+        self.assertEqual(self.commands(), [], "开窗那一下不发任何命令")
+        self.assertIsNone(self.backpack.selected, "也不能顺手选中")
+
+    def test_the_confirmed_quantity_asks_for_a_preview(self):
+        index = self.index_of(STONE.name)
+        self.press(index, hold=self.HOLD)
+        # 这是**数量窗确认之后**的那一步：开窗、玩家填数、点确认。
+        self.opened[0]["callback"](7)
+        command = self.take_command()
+        self.assertEqual(command["action"], "preview_request")
+        self.assertEqual(command["count"], 7)
+        self.assertEqual(command["key"]["name"], STONE.name)
+        self.assertTrue(self.view.preview.model.loading(), "预览窗立刻进入 loading")
+
+    def test_a_short_press_on_a_plus_row_is_still_a_plain_click(self):
+        """按一下就松开还是**选中**：长按是另一个手势，不能顺手接管短按。"""
+        index = self.index_of(STONE.name)
+        self.press(index, hold=terminal_panel.LONG_PRESS_SECONDS - 0.01)
+        self.assertEqual(self.opened, [])
+        self.assertEqual(self.view.cache.model.selected_key(), STONE)
+
+    def test_a_long_press_on_a_row_without_a_pattern_is_a_plain_click(self):
+        """**不带 `+` 的条目不触发下单入口**（契约第 2 节）。"""
+        index = self.index_of(IRON.name)
+        self.press(index, hold=self.HOLD)
+        self.assertEqual(self.opened, [])
+        self.assertEqual(self.view.cache.model.selected_key(), IRON)
+
+    def test_the_pressed_key_is_remembered_not_the_index(self):
+        """**按下时记住完整资源键**（契约第 2 节明写）。
+
+        中间夹一次重排：抬起时那一行已经换了人。按下时记行号的话，玩家
+        对着 A 长按、下单买下的是 B——而界面上什么异常都没有。
+        """
+        index = self.index_of(STONE.name)
+        params = {"#collection_index": index}
+        self.bind(BinderStub.BF_ButtonClickDown, "select", params)
+        # 重排之后同一个下标换成了另一行。
+        self.view.sort_field = SORT_NAME
+        self.view.sort_descending = not self.view.sort_descending
+        self.view._apply_sort()
+        self.assertNotEqual(self.names()[index], STONE.name, "这一行真的换了人")
+        self.now[0] += self.HOLD
+        self.bind(BinderStub.BF_ButtonClickUp, "select", params)
+        self.assertEqual(len(self.opened), 1)
+        self.opened[0]["callback"](1)
+        self.assertEqual(self.take_command()["key"]["name"], STONE.name)
+
+    def test_a_long_press_without_a_session_does_nothing(self):
+        """没有会话时连数量窗都不该开：开了也只会转圈。"""
+        self.client.drop_session()
+        self.press(self.index_of(STONE.name), hold=self.HOLD)
+        self.assertEqual(self.opened, [])
+
+    def test_losing_the_list_view_drops_the_press(self):
+        """视图拆了之后抬起不该再开窗（记录要跟着一起清）。"""
+        self.view._row_press = (STONE, True, self.now[0])
+        self.view.close()
+        self.view.on_select({"#collection_index": 0})
+        self.assertEqual(self.opened, [])
 
 
 class TestBackpackCellBindings(PanelFixture):
@@ -988,7 +1191,7 @@ class TestBackpackPut(PanelFixture):
         """可用数为 0 时**不发命令**：`inv_put` 的 `count` 必须为正，发一个 0
         只会换来一条「参数越界」，而玩家什么也没做错。"""
         self.engine_backpack((9, "minecraft:stone", 40))
-        self.snapshot([(STONE, 40, 4), (SAND, 3, 3), (DIRT, 2, 0)],
+        self.snapshot([(STONE, 40, 4, False), (SAND, 3, 3, False), (DIRT, 2, 0, False)],
                       version=SNAPSHOT_VERSION + 1, snapshot_id="snap-2")
         # **走 `view.tick()` 而不是 `cache.tick()`**：视图读的是自己那份行快照，
         # 只推缓存不重画的话，点击仍按旧数字去发命令。
@@ -2480,10 +2683,10 @@ class TestRerenderAndAnchoring(PanelFixture):
         calls = []
         original = self.view.refresh
         self.view.refresh = lambda: (calls.append(1), original())[1]
-        self.delta(upserts=((DIRT, 9, 0),))
+        self.delta(upserts=((DIRT, 9, 0, False),))
         self.view.tick()
         self.assertEqual(calls, [])
-        self.delta(upserts=((STONE, 41, 4),), base=DELTA_VERSION, new=DELTA_VERSION + 1)
+        self.delta(upserts=((STONE, 41, 4, False),), base=DELTA_VERSION, new=DELTA_VERSION + 1)
         self.view.tick()
         self.assertEqual(len(calls), 1)
 
@@ -2497,7 +2700,7 @@ class TestRerenderAndAnchoring(PanelFixture):
         scroll = self.screen.scrolls[terminal_panel.SCROLL_PATH]
         scroll.percent = 33
         self.assertEqual(self.names()[0], "minecraft:stone")
-        self.delta(upserts=((ZINC, 5, 0),))
+        self.delta(upserts=((ZINC, 5, 0, False),))
         self.view.tick()
         self.assertEqual(self.names(), ["minecraft:zinc", "minecraft:stone",
                                         "minecraft:sand", "minecraft:dirt"])
@@ -2532,7 +2735,7 @@ class TestRerenderAndAnchoring(PanelFixture):
 
         for message in (SessionReady(7, SNAPSHOT_VERSION),
                         SnapshotBegin("snap-x", SNAPSHOT_VERSION, 1),
-                        SnapshotChunk("snap-x", 0, ((STONE, 1, 0),)),
+                        SnapshotChunk("snap-x", 0, ((STONE, 1, 0, False),)),
                         SnapshotEnd("snap-x", 1)):
             feed(message)
         cache.tick()
@@ -2541,7 +2744,7 @@ class TestRerenderAndAnchoring(PanelFixture):
         view = terminal_panel.TerminalListView(screen, cache=cache)
         self.addCleanup(view.close)
         self.assertIsNone(view._scroll)
-        feed(ItemDelta("b1", 0, 1, SNAPSHOT_VERSION, DELTA_VERSION, ((ZINC, 5, 0),), ()))
+        feed(ItemDelta("b1", 0, 1, SNAPSHOT_VERSION, DELTA_VERSION, ((ZINC, 5, 0, False),), ()))
         view.tick()
         self.assertEqual(view.rows[0].key, ZINC)
 
@@ -2727,11 +2930,21 @@ class TestEngineBindingResolution(unittest.TestCase):
         # 两个行图标、弹窗显隐、打开、关闭）。
         #
         # **颜色那一条只在引擎提供 `BF_BindColor` 时才注册**（`terminal_panel.
-        # _bind_color`）：这个标志在本仓库没有先例，离线桩也没有它，所以本地
-        # 恒少一条。这不是漏了——恰恰是「引擎没有这个标志时不要连累整个客户端
-        # 起不来」那条兜底在起作用。
-        expected = 24 + 11
+        # _bind_color`）：11-06 起离线桩也带上了这个旗标（工厂终端的三色背景
+        # 要用它），因此本地走的是「有」那一支；下面那句留的是「换一个没有这个
+        # 标志的引擎时少一条、而其余照常」——那正是这条兜底存在的理由。
+        # 11 增量再加两条路：
+        #   - **网络列表的长按判定**（`BF_ButtonClickDown` + `select`，与抬起
+        #     那条同名）：契约第 2 节要「按下时记住完整资源键」，因此必须有
+        #     按下那一刻的那条绑定；
+        #   - **下单预览窗十二项**：整窗显隐、loading、按钮可用、状态说明、
+        #     行数（接 `#maximum_grid_items`），四行属性（图标、名字、数量、
+        #     缺料颜色），三个按钮（关闭、取消、下单）。
+        # 预览的缺料颜色与设备状态的颜色用同一个旗标，缺了它两边各少一条。
+        expected = 24 + 11 + 1 + 12
         if terminal_panel._COLOR_BINDING_FLAG is None:
+            expected -= 1
+        if order_preview_bindings.COLOR_BINDING_FLAG is None:
             expected -= 1
         # 少一条的表现是那一格／那一项／那一下点击永远是空的或没反应。
         self.assertEqual(registered, expected)

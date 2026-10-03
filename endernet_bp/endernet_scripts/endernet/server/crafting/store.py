@@ -824,6 +824,23 @@ class PatternStore(object):
         """索引是不是按最新内容建的。False 表示上面那个计数已经过时。"""
         return self._index_revision == self._revision
 
+    def product_revision(self):
+        # type: () -> int
+        """**产物内容**的版本：`_revision` 只增不减，变了说明某个提供者的
+        内容变过（新增、重读后指纹不同、过时、拆除）。
+
+        **不触发索引重建、不推进任何版本**——它只回答「产物集合可能变了」，
+        供显示投影与诊断轮询用（`PatternStore` 没有推送口，见
+        `plans/technical_notes/terminal_pattern_order_preview.md` 第 1 节的
+        「所属网络的样板提供者」）。
+
+        **它刻意不覆盖「上线／离线」。** `mark_loaded` 不动 `_revision`：
+        注册存续与候选可用性是两件事（07 的 `usable_entries` 说明），
+        而显示侧的「有样板」只问前者——离线提供者照旧算有样板，
+        实际可执行性交给规划与正式准入。
+        """
+        return self._revision
+
     # -- 派发前复核 ----------------------------------------------------
 
     def check_dispatch(self, ref, slot, digest, expected_mode=None):

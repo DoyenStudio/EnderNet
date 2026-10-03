@@ -149,16 +149,18 @@ class SessionOpenTests(Fixture):
         # 未知种类连 `VIEW_KINDS` 都进不去，走的是「视图种类」那一支。
         self.assertEqual(result.reason, Reason.UNSUPPORTED)
 
-    def test_order_view_is_known_but_has_no_producer_yet(self):
-        """`order` 是**已知**的种类，只是还没有产出方。
+    def test_order_view_opens_now_that_it_has_a_producer(self):
+        """`order` 在 11-06 之前是「已知但没有产出方」，现在开得起来了。
 
-        两种「不支持」要分得开：协议错误（发错了种类）与功能未接入
-        （11-06/11-09 的事）。这里钉住后者，将来接上订单视图时这条会
-        自然失败，提醒改的人是有意为之。
+        这条要钉的是**两件事合起来**：视图种类仍然只是「已知」的一个元素
+        （不是随便什么字符串都能开），而它已经在产出方名单里——少了后者，
+        工厂终端会在开会话这一步被拒，界面上表现成「右键没反应」。
+        与 `test_unknown_view_kind_is_refused` 成对读：那条钉的是另一种
+        「不支持」（发错了种类，协议错误）。
         """
-        result = self.refusal(view_kind=VIEW_ORDER)
-        self.assertEqual(result.reason, Reason.UNSUPPORTED)
-        self.assertIn("order", result.detail)
+        session = self.open(view_kind=VIEW_ORDER)
+        self.assertEqual(session.view_kind, VIEW_ORDER)
+        self.assertEqual(session.state, SESSION_ACTIVE)
 
     def test_dimension_mismatch_is_refused(self):
         result = self.refusal(dimension=1)

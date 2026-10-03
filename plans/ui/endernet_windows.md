@@ -1,5 +1,10 @@
 # endernet_windows.json：公共弹窗
 
+> **2026-10-03 新增需求（待实现）：** order_preview_window 的用途与行为已由 User 确认：数量确认后显示；服务端分帧计算期间 loading_panel 可见，完整完成后隐藏；order_preview_src_item/bg 缺料为 RGB(255,200,200)，任一步缺料禁用 confirm_btn。现有模板尚待接线，下单与取消不得复用工厂详情关闭／真实订单取消事件。本文笼统“其他弹窗待交接”不再表示本预览的上述行为未确认。 完整规则见 [网络样板标记与下单预览契约](../technical_notes/terminal_pattern_order_preview.md)。
+**2026-10-03 已接线**：模板四行绑定、窗口三个按钮事件、loading 与状态说明绑定、
+网格上限 11→64；三块终端屏各实例化了一条（**只实例化、没新建模板**）。
+逐条与实测见 [11 交付说明 §31／§32](../tasks/11-交付说明.md)。
+
 [返回目录](README.md) · [UI JSON](../../endernet_rp/ui/endernet_windows.json)
 
 对应文件：`endernet_rp/ui/endernet_windows.json`。namespace：`endernet_windows`（从当前资源读取，不表示已交接）。

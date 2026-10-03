@@ -22,6 +22,7 @@ def register_screens():
         BusItemOutputPanel,
         BusTemplatePanel,
     )
+    from .factoric_panel import FactoricPanel
     from .template_panel import TemplatePanel
     from .terminal_panel import CommonTerminalPanel
 
@@ -29,6 +30,7 @@ def register_screens():
         CommonTerminalPanel,
         CraftingPanel,
         TemplatePanel,
+        FactoricPanel,
         BusItemOutputPanel,
         BusItemInputPanel,
         BusTemplatePanel,

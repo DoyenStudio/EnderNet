@@ -60,6 +60,8 @@ R12 的手势映射**（拖拽、长按、鼠标键位与组合键、光标持�
 from ..common.protocol import (
     MSG_COMMAND_RESULT,
     MSG_ERROR,
+    MSG_PREVIEW_CHUNK,
+    MSG_PREVIEW_STATE,
     MSG_SESSION_READY,
     MSG_INVENTORY_SNAPSHOT,
     MSG_SNAPSHOT_BEGIN,
@@ -387,6 +389,12 @@ def next_request_id():
     return "c%d" % (_REQUEST_SERIAL,)
 
 
+#: **不走队列**的 S2C 种类：它们的消费者是窗口控制器（`on_message` 回调），
+#: 不是物品列表模型。放进队列只会让它们在 `TerminalCache` 里被丢掉，
+#: 顺带挤掉一条真正要紧的增量（队列满了丢最旧的）。
+_NON_QUEUED_KINDS = frozenset([MSG_PREVIEW_STATE, MSG_PREVIEW_CHUNK])
+
+
 class NetworkClient(object):
     """客户端侧的会话状态、请求编码与回包分发。
 
@@ -656,8 +664,10 @@ class NetworkClient(object):
         target=None,
         recipe=None,
         cell=None,
+        order=None,
+        preview=None,
     ):
-        # type: (str, object, object, object, object, object, object, object, object, object, object) -> str
+        # type: (str, object, object, object, object, object, object, object, object, object, object, object, object) -> str
         """发一条手动存取命令，返回 `request_id`。
 
         `action` 是 `StorageService.handle` 认识的那几个之一（`inv_take` /
@@ -676,6 +686,21 @@ class NetworkClient(object):
         `cell` 是 11-05 加的：样板终端那条命令里的**虚格下标**。与 `slot`
         **刻意分开**——交接明令不把虚格下标当作真实槽号，共用一个字段会让
         「这个数属于哪个空间」逐动作去猜（见 `TerminalCommand.cell`）。
+
+        `order` 是 11-06 加的：工厂终端的**取消订单**命令带的那一单的标识。
+        `order_*` 这几个动作名由服务端 `_on_command` 的路由表认出来，改走
+        `CommandKind.ORDER` 交给网络服务——**客户端不需要知道这件事**，
+        它照发一条普通命令即可（路由表在服务端是唯一一处）。
+
+        `preview` 是下单预览那几条动作（`preview_request` / `order_submit` /
+        `preview_cancel`）带的**预览号**：`order_submit` 靠它认领前面那次
+        预览，`preview_cancel` 靠它指名取消哪一份。它与 `order` 同样刻意
+        独立——预览号既不是订单号也不是槽号。
+
+        **`preview_request` 的目标走 `key`。** 服务端收到的 `payload` 里那个
+        字段叫 `target`，但**线上那个 `target` 已经被占用了**（样板终端
+        的虚格面名、快捷转移的落点），因此资源键走 `key`、由服务端那张
+        动作表改名（`ORDER_ACTIONS`）——改名表只此一处。
 
         **`key` 收 `ResourceKey`，在这里转成线上形状。** `TerminalCommand`
         的 `key` 字段与线上同形（字典）：它的 `from_dict` 原样转交、`payload()`
@@ -716,6 +741,8 @@ class NetworkClient(object):
                 target=target,
                 recipe=recipe,
                 cell=cell,
+                order=order,
+                preview=preview,
             ),
             session_id=self.session_id,
             network_id=self.network_id,
@@ -820,7 +847,13 @@ class NetworkClient(object):
             self.inventory_revision = message.revision
             return envelope
         self._absorb(envelope)
-        self._enqueue(envelope)
+        # **预览那两条不进队列。** 队列的消费者是 `TerminalCache`，它按
+        # 「物品视图」那一套分派，收到不认识的消息只会丢掉——而白白占一个
+        # 队位可能把真正要紧的增量挤出去（队列有上限，丢的是最旧的）。
+        # 预览的消费者是窗口控制器，它挂 `on_message` 回调，在下面那一段里
+        # 每条都会收到，不需要第二条通道。
+        if envelope.message.kind not in _NON_QUEUED_KINDS:
+            self._enqueue(envelope)
         # **逐个回调各自接住异常。** 一个回调炸了不能让后面的回调收不到这
         # 一条——包已经解析完、状态已经更新、也已经入队了，此时中断只让
         # 「一部分订阅者知道、另一部分不知道」，而那种不一致查起来毫无线索。

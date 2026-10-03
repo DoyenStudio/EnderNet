@@ -745,17 +745,12 @@ def devices_for_mode(mode):
     return PATTERN_DEVICES.get(mode, frozenset())
 
 
-#: 右键哪个终端方块打开哪个界面（11-03 / 11-04）。
+#: 右键哪个终端方块打开哪个界面（11-03 / 11-04 / 11-05 / 11-06）。
 #:
-#: **四个终端方块都在 `DEVICES` 里、都带 `CAP_TERMINAL_ENDPOINT`，但这里只
-#: 映射三个。** 这不是遗漏，而是有意的：客户端目前只注册了
-#: `common_terminal_panel_ui.main`、`crafting_terminal_panel_ui.main` 与
-#: `template_terminal_panel_ui.main` 三个屏幕（`client/ui/__init__.py`），
-#: 而工厂终端属于 11-06。
-#:
-#: 工厂终端**不映射、不打开、也不回退到通用终端**——把它接到通用终端就是
-#: 替那个子任务悄悄定案（全局约束 7）。在此之前右键它静默无反应，这条
-#: 限制记在 `plans/tasks/11-交付说明.md` 里。
+#: **四个终端方块都在 `DEVICES` 里、都带 `CAP_TERMINAL_ENDPOINT`，现在四个
+#: 都映射上了**：工厂终端那一行由 11-06 补上，与它的客户端屏同批落地。
+#: 在此之前它**不映射、不打开、也不回退到通用终端**——把它接到通用终端
+#: 就是替那个子任务悄悄定案（全局约束 7），当时右键它静默无反应。
 #:
 #: **只有屏幕真的注册了才写进来**：`PushUIRequest` 拿这个值在客户端查屏幕，
 #: 查不到时 `tooldelta/ui/event_handler.py` 会**抛异常**——先加映射只会让
@@ -767,6 +762,7 @@ TERMINAL_SCREENS = {
     "endernet:common_terminal_panel": "common_terminal_panel_ui.main",
     "endernet:crafting_terminal_panel": "crafting_terminal_panel_ui.main",
     "endernet:template_terminal_panel": "template_terminal_panel_ui.main",
+    "endernet:factoric_terminal_panel": "factoric_terminal_panel_ui.main",
 }
 
 #: 哪些容器类方块**有挂上去的脚本屏**（11-07）。键是方块 id，值是屏幕名。

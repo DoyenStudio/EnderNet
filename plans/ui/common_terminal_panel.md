@@ -1,5 +1,7 @@
 # common_terminal_panel.json：通用终端
 
+> **2026-10-03 新增需求（待实现）：** 网络列表新增样板产物行；有库存且有样板显示 stored+（如 256+），无库存有样板显示 +。带 + 的行长按打开数量窗口，确认数量后进入分帧订单预览，缺料标红并禁用下单。此规则覆盖本文旧的带样板条目数量口径；背包与短按存取仍复用共享终端组件。 完整规则见 [网络样板标记与下单预览契约](../technical_notes/terminal_pattern_order_preview.md)。
+
 [返回目录](README.md) · [UI JSON](../../endernet_rp/ui/common_terminal_panel.json)
 
 对应 namespace：`common_terminal_panel_ui`；屏幕入口：`common_terminal_panel_ui.main`。

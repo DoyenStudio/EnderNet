@@ -2,6 +2,8 @@
 
 本目录按 UI JSON 分文件记录制作需求、控件功能、交互和脚本使用方法。
 
+2026-10-03 已确认、待实现的共享网络列表与公共订单预览流程见 [网络样板标记与下单预览契约](../technical_notes/terminal_pattern_order_preview.md)，剩余脚本和 JSON UI 工作见 [实现交接表](../tasks/11-网络样板标记与下单预览-实现交接.md)。`order_preview_window` 的已确认行为以该契约为准，其他未交接 UI 仍遵守本目录规则。
+
 ## 命名与填写规则
 
 - 文档与 JSON **同名，仅扩展名不同**：例如 `endernet_rp/ui/common_terminal_panel.json` 对应 `plans/ui/common_terminal_panel.md`。保留大小写及现有拼写，包括 `factoric`。

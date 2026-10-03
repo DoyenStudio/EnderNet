@@ -351,9 +351,9 @@ class SyncMessageTests(unittest.TestCase):
                 {"slot": slot, "canonical": "", "count": 0, "slot_version": 1}
                 for slot in range(36)]),
             protocol.SnapshotBegin("snap-1", 12, 3),
-            protocol.SnapshotChunk("snap-1", 0, [(self.stone, 5, 1)]),
+            protocol.SnapshotChunk("snap-1", 0, [(self.stone, 5, 1, False)]),
             protocol.SnapshotEnd("snap-1", 2),
-            protocol.ItemDelta("batch-1", 0, 2, 12, 13, [(self.stone, 5, 1)], [self.dirt]),
+            protocol.ItemDelta("batch-1", 0, 2, 12, 13, [(self.stone, 5, 1, False)], [self.dirt]),
             protocol.ResyncRequired("stale_version", "缺口已回收"),
             protocol.SyncError("r5", "stale_version", "期望版本过期"),
             protocol.TerminalCommand(
@@ -381,6 +381,9 @@ class SyncMessageTests(unittest.TestCase):
                 {"name": "minecraft:stick", "aux": 0, "count": 4},
             ),
             template_message(),
+            order_message(),
+            preview_state_message(),
+            preview_chunk_message(),
         )
 
     def test_every_registered_kind_is_covered_here(self):
@@ -432,7 +435,7 @@ class SyncMessageTests(unittest.TestCase):
         for count in (0, 1, 64, 2 ** 30, 2 ** 30 + 1, protocol.PROTOCOL_MAX_COUNT):
             sender = ResourceDescriptions("net", "epoch-1")
             receiver = ResourceDescriptions("net", "epoch-1")
-            delta = protocol.ItemDelta("b", 0, 1, 1, 2, [(self.stone, count, 0)])
+            delta = protocol.ItemDelta("b", 0, 1, 1, 2, [(self.stone, count, 0, False)])
             envelope = protocol.SyncEnvelope(delta, "s1", "net", "epoch-1")
             restored = protocol.SyncEnvelope.from_dict(
                 envelope.to_dict(sender), receiver
@@ -537,14 +540,16 @@ class SyncMessageTests(unittest.TestCase):
                     message, "", "", "", protocol.VIEW_ITEM
                 )
 
-    def test_order_view_is_known_but_not_yet_produced(self):
-        """`order` 是**已知**种类却没有生产者，与「发了个不认识的种类」不同。
+    def test_order_view_now_has_a_producer(self):
+        """`order` 从「已知但没人生产」变成「已接入」（11-06）。
 
-        前者要回 `unsupported`（还没做），后者是协议错误（发错了）。
-        把两者混成一条会让人以为订单视图只是坏了，而不是还没接。
+        这条在 11-06 之前钉的是 `assertNotIn`——当时它是一条**如实记录缺口**
+        的用例。工厂终端接上之后它反转：视图种类仍然只是**集合的一个元素**，
+        而生产者名单必须真的包含它，否则开会话会被 `sessions.check` 拒成
+        「尚未接入」，界面上表现成「右键没反应」。
         """
         self.assertIn(protocol.VIEW_ORDER, protocol.VIEW_KINDS)
-        self.assertNotIn(protocol.VIEW_ORDER, protocol.VIEW_KINDS_WITH_PRODUCER)
+        self.assertIn(protocol.VIEW_ORDER, protocol.VIEW_KINDS_WITH_PRODUCER)
         with self.assertRaises(ValueError):
             protocol.SyncEnvelope._validate(
                 protocol.SessionReady(1, 2), "s1", "net", "epoch-1", "no_such_view"
@@ -553,8 +558,8 @@ class SyncMessageTests(unittest.TestCase):
     def test_snapshot_and_delta_share_one_item_encoding(self):
         """快照与增量走同一套条目编码，两条路径不会各自漂移。"""
         for message in (
-            protocol.SnapshotChunk("snap-1", 0, [(self.stone, 5, 1)]),
-            protocol.ItemDelta("b", 0, 1, 1, 2, [(self.stone, 5, 1)]),
+            protocol.SnapshotChunk("snap-1", 0, [(self.stone, 5, 1, False)]),
+            protocol.ItemDelta("b", 0, 1, 1, 2, [(self.stone, 5, 1, False)]),
         ):
             payload = self.envelope_of(message).to_dict(self.sender)
             entries = payload["message"].get("items") or payload["message"]["upserts"]
@@ -563,7 +568,7 @@ class SyncMessageTests(unittest.TestCase):
 
     def test_reserved_above_stored_is_rejected_on_the_wire(self):
         payload = self.envelope_of(
-            protocol.SnapshotChunk("snap-1", 0, [(self.stone, 5, 1)])
+            protocol.SnapshotChunk("snap-1", 0, [(self.stone, 5, 1, False)])
         ).to_dict(self.sender)
         payload["message"]["items"][0]["reserved"] = 6
         with self.assertRaises(ValueError):
@@ -678,7 +683,7 @@ class SyncMessageTests(unittest.TestCase):
 
     def test_full_roundtrip_carries_keys_and_versions(self):
         delta = protocol.ItemDelta(
-            "b", 1, 2, 12, 13, [(self.stone, 2 ** 30, 0)], [self.dirt]
+            "b", 1, 2, 12, 13, [(self.stone, 2 ** 30, 0, False)], [self.dirt]
         )
         envelope = protocol.SyncEnvelope(delta, "s1", "net", "epoch-1")
         restored = protocol.SyncEnvelope.from_dict(
@@ -687,7 +692,7 @@ class SyncMessageTests(unittest.TestCase):
         self.assertEqual(restored.message.base_version, 12)
         self.assertEqual(restored.message.new_version, 13)
         self.assertEqual(restored.message.packet_count, 2)
-        self.assertEqual(restored.message.upserts[0], (self.stone, 2 ** 30, 0))
+        self.assertEqual(restored.message.upserts[0], (self.stone, 2 ** 30, 0, False))
         self.assertEqual(restored.message.removes, (self.dirt,))
         self.assertEqual(restored.epoch, "epoch-1")
         self.assertEqual(restored.direction(), "s2c")
@@ -702,7 +707,7 @@ class SyncMessageTests(unittest.TestCase):
         """
         self.sender.encode(self.stone)  # 登记过了，后续引用只带序号
         payload = self.envelope_of(
-            protocol.ItemDelta("b", 0, 1, 1, 2, [(self.stone, 5, 0)])
+            protocol.ItemDelta("b", 0, 1, 1, 2, [(self.stone, 5, 0, False)])
         ).to_dict(self.sender)
         self.assertNotIn("description", payload["message"]["upserts"][0]["resource_ref"])
         with self.assertRaises(ResourceResyncRequired):
@@ -1003,6 +1008,63 @@ def template_rows(count, locked=False):
             for slot in range(count)]
 
 
+def order_message():
+    """一条带一个订单与两行配方树的订单视图（11-06）。"""
+    return protocol.OrderStateMessage(
+        {"capacity": 4096, "used": 1024, "available": 3072, "slots": 4},
+        [{"order_id": "order@1/2/3", "canonical": "minecraft:stone",
+          "name": "minecraft:stone", "aux": 0, "amount": 64,
+          "status": "running", "tasks_completed": 1, "tasks_total": 4,
+          "memory_bytes": 1024}],
+        [{"order_id": "order@1/2/3", "canonical": "minecraft:stone",
+          "name": "minecraft:stone", "aux": 0,
+          "stage": protocol.ORDER_SOURCE_STAGE_RUNNING,
+          "feed": protocol.ORDER_SOURCE_FEED_WAITING_OUTPUTS,
+          "done": 16, "total": 64}],
+    )
+
+
+def preview_state_message(**overrides):
+    """一条下单预览的状态头（11 增量）。**行数 2、分片 1**，够走完协议。"""
+    fields = dict(
+        request_id="r7", preview_id="pv1", generation=1, status="complete",
+        detail="", submit_ok=True,
+        target={"canonical": "minecraft:stone", "name": "minecraft:stone", "aux": 0},
+        count=64, semantics="hold", inventory_version=12, topology_version=3,
+        plan_digest="abc", row_count=2, packet_count=1, missing=False,
+        blocked=[], truncated=False, spent=5,
+    )
+    fields.update(overrides)
+    return protocol.PreviewStateMessage(
+        fields["request_id"], fields["preview_id"], fields["generation"],
+        fields["status"], fields["detail"], fields["submit_ok"], fields["target"],
+        fields["count"], fields["semantics"], fields["inventory_version"],
+        fields["topology_version"], fields["plan_digest"], fields["row_count"],
+        fields["packet_count"], fields["missing"], fields["blocked"],
+        fields["truncated"], fields["spent"],
+    )
+
+
+def preview_chunk_message(**overrides):
+    """一批预览原料行。**一行缺料、一行不缺**，两种颜色都走到。"""
+    fields = dict(
+        preview_id="pv1", generation=1, packet_index=0, packet_count=1,
+        rows=[
+            {"canonical": "minecraft:iron_ingot", "name": "minecraft:iron_ingot",
+             "aux": 0, "demand": 9, "allocated": 4, "planned": 5, "missing": False,
+             "sources": ["minecraft:iron_block"]},
+            {"canonical": "minecraft:coal", "name": "minecraft:coal", "aux": 0,
+             "demand": 2, "allocated": 0, "planned": 0, "missing": True,
+             "sources": []},
+        ],
+    )
+    fields.update(overrides)
+    return protocol.PreviewChunkMessage(
+        fields["preview_id"], fields["generation"], fields["packet_index"],
+        fields["packet_count"], fields["rows"],
+    )
+
+
 def template_message(revision=5, mode="crafting"):
     return protocol.TemplateStateMessage(
         revision,
@@ -1284,6 +1346,142 @@ class TemplateStateTests(unittest.TestCase):
     def test_it_needs_a_session_like_every_other_push(self):
         with self.assertRaises((ValueError, TypeError)):
             protocol.SyncEnvelope(template_message(), "", "net", "epoch-1")
+
+
+class TerminalCommandOrderField(unittest.TestCase):
+    """`order` 是 11-06 加到命令上的字段（工厂终端的取消目标）。
+
+    **与 `slot` / `cell` 三者彼此独立**：订单号既不是背包槽号也不是虚格下标，
+    共用一个字段会让「这个数属于哪个空间」逐动作去猜——而猜错的表现是
+    **取消掉另一张订单**。
+    """
+
+    def command(self, order=None):
+        return protocol.TerminalCommand(
+            "r1", "order_cancel", order=order)
+
+    def test_the_field_is_on_the_declared_list(self):
+        self.assertIn("order", protocol.TerminalCommand.FIELDS)
+        self.assertIn("order", protocol.TerminalCommand.__slots__)
+
+    def test_it_survives_the_round_trip(self):
+        envelope = protocol.SyncEnvelope(self.command("order@1/2/3"), "s1")
+        restored = protocol.SyncEnvelope.from_dict(envelope.to_dict(), None)
+        self.assertEqual("order@1/2/3", restored.message.order)
+
+    def test_absent_is_none_and_still_serialised(self):
+        payload = protocol.SyncEnvelope(self.command(), "s1").to_dict()
+        self.assertIn("order", payload["message"])
+        self.assertIsNone(payload["message"]["order"])
+
+    def test_a_missing_field_is_refused_not_defaulted(self):
+        payload = protocol.SyncEnvelope(self.command("o"), "s1").to_dict()
+        del payload["message"]["order"]
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.SyncEnvelope.from_dict(payload, None)
+
+    def test_an_empty_order_id_is_refused(self):
+        """空串等于「没说哪一单」，而服务端会拿它去查——**空号不是合法目标**。"""
+        payload = protocol.SyncEnvelope(self.command("o"), "s1").to_dict()
+        payload["message"]["order"] = ""
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.SyncEnvelope.from_dict(payload, None)
+
+    def test_it_reaches_the_service_payload_under_the_name_the_service_reads(self):
+        """线上叫 `order`、服务端 `FactoryService` 读的是 `order_id`：
+        **换名只此一处**（`TerminalCommand.payload()`）。"""
+        self.assertEqual("order@1/2/3", self.command("order@1/2/3").payload()["order_id"])
+        self.assertNotIn("order_id", self.command().payload())
+
+    def test_the_order_never_lands_in_the_slot_or_cell_fields(self):
+        payload = self.command("order@1/2/3").payload()
+        self.assertNotIn("slot", payload)
+        self.assertNotIn("cell", payload)
+
+
+class OrderStateTests(unittest.TestCase):
+    """11-06 的工厂终端订单视图。
+
+    这是第一条**行数不固定**的状态消息（活跃订单有几单就几行，配方树有几条
+    配方就几行），因此它的边界检查不能像九宫格那样用「格数必须等于 N」，
+    只能逐行验形状。
+    """
+
+    def test_it_round_trips(self):
+        message = order_message()
+        restored = protocol.OrderStateMessage.from_dict(
+            message.to_dict(), None)
+        self.assertEqual(1, len(restored.orders))
+        self.assertEqual(1, len(restored.sources))
+        self.assertEqual(4096, restored.memory["capacity"])
+
+    def test_an_empty_table_is_a_valid_message(self):
+        """「一单都没有」是一条**正常答案**，不是「没接」。"""
+        message = protocol.OrderStateMessage(
+            {"capacity": 0, "used": 0, "available": 0, "slots": 0}, [], [])
+        self.assertEqual((), message.orders)
+        self.assertEqual((), message.sources)
+
+    def test_a_memory_block_missing_a_side_is_refused(self):
+        """四个字段一个不能少：界面上那根条**分子分母各要一个**，
+        少一个就得让客户端去猜另一端。"""
+        for missing in ("capacity", "used", "available", "slots"):
+            memory = dict(order_message().memory)
+            del memory[missing]
+            with self.assertRaises((ValueError, TypeError)):
+                protocol.OrderStateMessage(memory, [], [])
+
+    def test_an_impossible_memory_block_is_refused(self):
+        with self.assertRaises(ValueError):
+            protocol.OrderStateMessage(
+                {"capacity": 8, "used": 9, "available": 0, "slots": 1}, [], [])
+        with self.assertRaises(ValueError):
+            protocol.OrderStateMessage(
+                {"capacity": 8, "used": 0, "available": 9, "slots": 1}, [], [])
+
+    def test_a_row_without_a_name_is_refused(self):
+        """**名字必须给**：客户端画图标只能靠它（服务端把资源名一起带过来）。
+        名字为空的行是消息的 bug，不是空位。"""
+        row = order_message().orders[0]
+        row["name"] = ""
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.OrderStateMessage(order_message().memory, [row], [])
+
+    def test_a_completed_count_above_the_total_is_refused(self):
+        row = order_message().orders[0]
+        row["tasks_completed"] = row["tasks_total"] + 1
+        with self.assertRaises(ValueError):
+            protocol.OrderStateMessage(order_message().memory, [row], [])
+
+    def test_a_boolean_stage_is_refused(self):
+        """`True in (0, 1, 2)` 为真——放过去等于让一个布尔冒充「制作中」。"""
+        row = order_message().sources[0]
+        row["stage"] = True
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.OrderStateMessage(order_message().memory, [], [row])
+        row["stage"] = 9
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.OrderStateMessage(order_message().memory, [], [row])
+
+    def test_a_source_row_needs_an_owner(self):
+        """`order_id` 是与订单行相认的唯一依据：空串会让这一行落进
+        「没有主人」的名单里，界面上表现成「详情少了几行」。"""
+        row = order_message().sources[0]
+        row["order_id"] = ""
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.OrderStateMessage(order_message().memory, [], [row])
+
+    def test_an_unknown_field_is_refused(self):
+        row = dict(order_message().orders[0])
+        row["extra"] = 1
+        with self.assertRaises((ValueError, TypeError)):
+            protocol.OrderStateMessage(order_message().memory, [row], [])
+
+    def test_the_row_lists_are_not_fixed_length(self):
+        rows = [dict(order_message().orders[0]),
+                dict(order_message().orders[0])]
+        message = protocol.OrderStateMessage(order_message().memory, rows, [])
+        self.assertEqual(2, len(message.orders))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 # template_terminal_panel.json：样板终端
 
+> **2026-10-03 新增需求（待实现）：** 网络列表继承共享终端的样板标记与长按下单预览规则；长按识别后不得继续触发短按存取或虚格清空。配置区及真实样板槽的原行为继续有效，预览不会生成真实物品。 完整规则见 [网络样板标记与下单预览契约](../technical_notes/terminal_pattern_order_preview.md)。
+
 [返回目录](README.md) · [UI JSON](../../endernet_rp/ui/template_terminal_panel.json) · [通用终端规则](common_terminal_panel.md)
 
 对应 namespace：`template_terminal_panel_ui`；JSON 屏幕入口：`template_terminal_panel_ui.main`。本文按目录规则使用与 JSON 同名的 Markdown 文件名。

@@ -47,7 +47,10 @@ class BinderStub(object):
     BF_ButtonClickUp = 4
     BF_EditChanged = 5
     BF_ButtonClickDown = 6
-
+    #: 11-06 起本仓库也用到这两个旗标（工厂终端的进度条与三色背景）。
+    #: 取值与真引擎无关，只要求**各测试文件彼此一致**。
+    BF_BindColor = 7
+    BF_BindFloat = 8
     @staticmethod
     def binding(flag, name):
         def decorate(func):
@@ -383,9 +386,10 @@ class TestStatusBindings(unittest.TestCase):
         """`BF_BindColor` 取不到时**不注册这一条**（颜色退回模板静态值），
         取得到时必须注册——11-13 已在真机上确认本引擎有这个旗标。
 
-        **本文件的替身没有这个旗标**（`test_terminal_panel` 那一份也没有），
-        因此离线能验的只有「没有它时这一条不出现、而其余十条照常」。
-        真机上有旗标的那一支由 11-13 的实测覆盖。
+        **两支都要留**：11-06 起离线替身也带上了这个旗标（工厂终端的三色
+        背景要用它），因此本地走的是下面那一支；而上面那一支押的是
+        「换一个没有这个旗标的引擎时，客户端半边照样起得来」，那是
+        `device_status_bindings.COLOR_BINDING_FLAG` 存在的全部理由。
         """
         declared = self.declared()
         if device_status_bindings.COLOR_BINDING_FLAG is None:

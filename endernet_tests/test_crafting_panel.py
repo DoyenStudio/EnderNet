@@ -48,7 +48,10 @@ class BinderStub(object):
     BF_ButtonClickUp = 4
     BF_EditChanged = 5
     BF_ButtonClickDown = 6
-
+    #: 11-06 起本仓库也用到这两个旗标（工厂终端的进度条与三色背景）。
+    #: 取值与真引擎无关，只要求**各测试文件彼此一致**。
+    BF_BindColor = 7
+    BF_BindFloat = 8
     @staticmethod
     def binding(flag, name):
         def decorate(func):
@@ -753,7 +756,7 @@ class TestImportFlow(CraftingFixture):
         self.assertIsNotNone(callback)
 
     def cache_feed(self, view):
-        self.snapshot([(STONE, 40, 4), (SAND, 2, 0)])
+        self.snapshot([(STONE, 40, 4, False), (SAND, 2, 0, False)])
         view.cache.tick()
         view.refresh()
 
@@ -1093,8 +1096,9 @@ class TestPanelEntry(unittest.TestCase):
         # 收包在开会话**之前**就挂上了：`session_ready` 与第一份 `craft_state`
         # 都可能比 `OnCreate` 返回还早，晚一步那两份就永远补不上。
         self.assertEqual(port.listens, 1)
-        # 两条回调：设备状态一条、`craft_state` 一条。
-        self.assertEqual(len(panel.craft.client._handlers), 2)
+        # 三条回调：设备状态一条、`craft_state` 一条，外加**下单预览一条**
+        # （11 增量：预览窗与列表同寿命，`TerminalListView.__init__` 里挂上）。
+        self.assertEqual(len(panel.craft.client._handlers), 3)
 
     def test_a_broken_device_ref_pauses_instead_of_opening_a_wrong_session(self):
         for broken in ({"node_key": {"dimension": 0}}, "terminal-1", 7):

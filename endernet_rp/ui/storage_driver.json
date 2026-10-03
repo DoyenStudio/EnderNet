@@ -66,11 +66,11 @@
                                                         "anchor_from": "top_left",
                                                         "anchor_to": "top_left",
                                                         "size": [
-                                                            58.0,
+                                                            66.0,
                                                             16.0
                                                         ],
                                                         "layer": 1,
-                                                        "texture": "textures/ui/endernet/device_title_background_sq",
+                                                        "texture": "textures/ui/endernet/device_title_background",
                                                         "controls": [
                                                             {
                                                                 "title_text": {

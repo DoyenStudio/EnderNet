@@ -1449,13 +1449,13 @@ class TestNetworkClientDescriptions(NetworkClientFixture):
         # 先把序号发出去（真机上就是这一条 `session_ready`），客户端才有表。
         self.open_a_session()
         payload = self.wire(
-            SnapshotChunk("s1", 0, ((stone, 4, 0), (iron, 3, 0))), server
+            SnapshotChunk("s1", 0, ((stone, 4, 0, False), (iron, 3, 0, False))), server
         )
         envelope = self.client.receive(payload)
         self.assertIsNotNone(envelope, "带引用的分片被判成了坏包")
         self.assertEqual(self.client.stats["bad_packets"], 0)
         self.assertEqual(
-            [(key.name, stored) for key, stored, _ in envelope.message.items],
+            [(key.name, stored) for key, stored, _, _p in envelope.message.items],
             [("minecraft:stone", 4), ("minecraft:iron_ingot", 3)],
         )
         self.assertEqual(self.client.diagnostics()["descriptions"], 2)
@@ -1472,12 +1472,12 @@ class TestNetworkClientDescriptions(NetworkClientFixture):
         stone = ResourceKey.item("minecraft:stone")
         self.open_a_session()
         self.assertIsNotNone(
-            self.client.receive(self.wire(SnapshotChunk("s1", 0, ((stone, 4, 0),)), server))
+            self.client.receive(self.wire(SnapshotChunk("s1", 0, ((stone, 4, 0, False),)), server))
         )
         # 序号已经发出去了，服务端这边再发同一个键就只剩引用。
         self.assertNotIn("description", server.encode(stone))
         self.assertIsNotNone(
-            self.client.receive(self.wire(SnapshotChunk("s1", 1, ((stone, 4, 0),)), server))
+            self.client.receive(self.wire(SnapshotChunk("s1", 1, ((stone, 4, 0, False),)), server))
         )
         self.assertEqual(self.client.stats["bad_packets"], 0)
         self.assertEqual(self.client.stats["describe_tables"], 1)
@@ -1497,7 +1497,7 @@ class TestNetworkClientDescriptions(NetworkClientFixture):
         stone = ResourceKey.item("minecraft:stone")
         self.open_a_session()
         self.assertIsNotNone(
-            self.client.receive(self.wire(SnapshotChunk("s1", 0, ((stone, 4, 0),)), first))
+            self.client.receive(self.wire(SnapshotChunk("s1", 0, ((stone, 4, 0, False),)), first))
         )
         self.client.close_session()
         self.assertFalse(self.client.has_session())
@@ -1506,7 +1506,7 @@ class TestNetworkClientDescriptions(NetworkClientFixture):
         second = self.server_table()
         gold = ResourceKey.item("minecraft:gold_ingot")
         envelope = self.client.receive(
-            self.wire(SnapshotChunk("s2", 0, ((gold, 2, 0),)), second, session_id="s2")
+            self.wire(SnapshotChunk("s2", 0, ((gold, 2, 0, False),)), second, session_id="s2")
         )
         self.assertIsNotNone(envelope, "新会话沿用了旧表，序号被解成了别的资源")
         self.assertEqual(envelope.message.items[0][0].name, "minecraft:gold_ingot")
@@ -1536,7 +1536,7 @@ class TestNetworkClientDescriptions(NetworkClientFixture):
         queued = self.client.pending_count()   # 本会话那条 `session_ready`
         self.assertIsNone(
             self.client.receive(
-                self.wire(SnapshotChunk("s9", 0, ((gold, 2, 0),)), theirs,
+                self.wire(SnapshotChunk("s9", 0, ((gold, 2, 0, False),)), theirs,
                           session_id="s9")
             )
         )
@@ -1548,7 +1548,7 @@ class TestNetworkClientDescriptions(NetworkClientFixture):
 
         # 本会话的包**没有**被牵连。
         envelope = self.client.receive(
-            self.wire(SnapshotChunk("s1", 0, ((stone, 4, 0),)), ours)
+            self.wire(SnapshotChunk("s1", 0, ((stone, 4, 0, False),)), ours)
         )
         self.assertIsNotNone(envelope)
         self.assertEqual(envelope.message.items[0][0].name, "minecraft:stone")

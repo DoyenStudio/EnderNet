@@ -466,6 +466,21 @@
                     "anchor_to": "top_left",
                     "visible": false
                 }
+            },
+            {
+                "order_preview@endernet_windows.order_preview_window": {
+                    "anchor_from": "center",
+                    "anchor_to": "center",
+                    "bindings": [
+                        {
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetPreview.visible",
+                            "binding_name_override": "#visible",
+                            "binding_type": "global"
+                        }
+                    ],
+                    "layer": 45
+                }
             }
         ]
     },

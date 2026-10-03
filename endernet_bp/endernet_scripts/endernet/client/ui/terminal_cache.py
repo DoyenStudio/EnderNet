@@ -358,8 +358,8 @@ class TerminalCache(object):
             self._request_snapshot_once("version_gap")
             return
         for packet in order:
-            for key, stored, reserved in packet.upserts:
-                self.model.upsert(key, stored, reserved)
+            for key, stored, reserved, has_pattern in packet.upserts:
+                self.model.upsert(key, stored, reserved, has_pattern)
             for key in packet.removes:
                 self.model.remove(key)
         self._merge(self.model.end_batch(token))

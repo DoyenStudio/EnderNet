@@ -1,5 +1,7 @@
 # crafting_terminal_panel.json：合成终端
 
+> **2026-10-03 新增需求（待实现）：** 网络列表继承共享终端的样板标记与长按下单预览规则；数量确认后才发预览，预览确认才正式提交。它与九宫格即时合成及配方导入是不同入口，不改工作台真实物品语义。 完整规则见 [网络样板标记与下单预览契约](../technical_notes/terminal_pattern_order_preview.md)。
+
 [返回目录](README.md) · [UI JSON](../../endernet_rp/ui/crafting_terminal_panel.json) · [通用终端规则](common_terminal_panel.md)
 
 对应 namespace：`crafting_terminal_panel_ui`；屏幕入口：`crafting_terminal_panel_ui.main`。本文沿用目录中与 JSON 同名的文档名，记录 `crafting_terminal_panel_ui` 的交接约定。

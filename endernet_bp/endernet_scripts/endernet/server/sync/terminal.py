@@ -53,6 +53,9 @@ from ...common.protocol import (
     CommandKind,
     CraftStateMessage,
     DeviceCommand,
+    OrderStateMessage,
+    PreviewChunkMessage,
+    PreviewStateMessage,
     TemplateStateMessage,
     ItemDelta,
     InventorySnapshot,
@@ -71,6 +74,7 @@ from ...common.protocol import (
     MSG_SESSION_OPEN,
     MSG_SNAPSHOT_REQUEST,
     VIEW_ITEM,
+    VIEW_ORDER,
 )
 from ...common.resource_sync import ResourceResyncRequired
 from ..network.runtime import RuntimeChange
@@ -100,6 +104,42 @@ RESYNC_UNKNOWN_TRANSFER = "unknown_transfer"
 RESYNC_RESOURCE_TABLE_FULL = "resource_table_full"
 #: 该网络当前没有可读的存储服务。
 RESYNC_NO_STORAGE = "no_storage"
+
+# -- 命令路由：哪些动作不属于存储 ------------------------------------------
+#
+# `TerminalCommand` 是一条**通用**命令信封，而主控按 `CommandKind` 决定把它
+# 交给哪个网络服务（`application.route_of`）。在此之前这里硬编码
+# `CommandKind.STORAGE`，因为终端只发存储动作；工厂终端的取消订单（11-06）
+# 是第一条**不属于存储**的动作——订单是 09 的工厂服务，不是 05 的库存。
+#
+# 映射写成「客户端动作名 → 网络服务认识的动作名」而不是「客户端也别用
+# 前缀」：`cancel` 单独一个词在存储动作表里虽然没有同名项，但它的归属
+# 靠前缀一眼看得出来，比让下一个人去翻两张表强。**客户端不需要知道路由
+# 这件事**——它照 `NetworkClient.send_command` 发普通命令即可。
+#
+# **这里只放确实属于订单服务的动作。** 存储动作一个都不许进来：`route_of`
+# 按 kind 分派，把 `inv_take` 路由成订单会让库存操作走进工厂服务，
+# 而症状是「点了一下没反应、理由还写着不支持」。
+#: 从**动作名**映射到工厂服务读的那个动作，外加一组**字段改名**。
+#:
+#: 改名是必需的而不是多余的一层：`TerminalCommand.payload()` 发的是
+#: `key` / `count`（资源命令的词汇），而 `FactoryService` 读的是
+#: `target` / `amount`（订单的词汇）。**线上那个 `target` 不能借来用**
+#: ——它 11-05 起是样板终端的虚格面名、11-03 起是快捷转移的落点，
+#: 借用的表现是下单时 `_read_target` 收到一个字符串并判成坏参数。
+#: 改名表放在这里，与 `payload()` 一样是**唯一一处**。
+ORDER_ACTIONS = {
+    # 取消一单。`FactoryService.handle` 的 `cancel` 分支读 `payload["order_id"]`
+    # （由 `TerminalCommand.payload()` 从线上的 `order` 字段映射过去）。
+    "order_cancel": ("cancel", ()),
+    # 正式下单（11 增量）。带 `preview_id` 时先认领那份预览。
+    "order_submit": ("submit", (("key", "target"), ("count", "amount"))),
+    # 下单预览（11 增量）。**只算不建单**：走同一条路由是为了白拿
+    # 身份、距离与去重账本这几道门，代价是它也受写路径的准入
+    # （网络未获准时预览会被拒）——那是记录在案的后果，不是意外。
+    "preview_request": ("preview_request", (("key", "target"), ("count", "amount"))),
+    "preview_cancel": ("preview_cancel", ()),
+}
 
 # -- 运行时变化导致的注销原因 ----------------------------------------------
 #
@@ -563,6 +603,8 @@ class TerminalSyncHub(object):
         status_of=None,
         craft_of=None,
         template_of=None,
+        order_of=None,
+        preview_of=None,
     ):
         self.registry = registry if registry is not None else SessionRegistry()
         self.policy = policy if policy is not None else SyncPolicy()
@@ -579,6 +621,14 @@ class TerminalSyncHub(object):
         self._template_of = (
             template_of if template_of is not None else _no_template
         )
+        #: 工厂终端的订单视图（11-06）。**与前两个都不同**：它按**网络**取，
+        #: 不按设备取——一张网络上的活跃订单属于那条网络，不属于某一台
+        #: 终端（两台工厂终端看的是同一份）。因此形参是 `network_id`。
+        self._order_of = order_of if order_of is not None else _no_order
+        #: 下单预览（11 增量）。**同样按网络取**——预览是每网络一份的，
+        #: 而「哪条会话在看哪一份预览」由预览服务按 `session_id` 回答
+        #: （见 `delivery_for`：一个会话同时只看一份）。
+        self._preview_of = preview_of if preview_of is not None else _no_preview
         self.port = port
         self._subs = {}
         self._inventory_sent = {}
@@ -587,6 +637,13 @@ class TerminalSyncHub(object):
         self._craft_sent = {}
         #: 每会话上一次发出去的样板状态（11-05），同样在 `_forget` 里清。
         self._template_sent = {}
+        #: 每会话上一次发出去的订单视图（11-06）。订单是**全量快照**、
+        #: 内容不变时不发，因此这张表存的是整条 payload，靠相等比较去重。
+        self._order_sent = {}
+        #: 每会话上次发出的预览状态头，**以及分片游标**。
+        #: 游标必须在 `_forget` 里清：它是本模块新开的一张逐会话表，
+        #: 不清就是「每关一次界面漏一条」。见 `_forget` 的说明。
+        self._preview_sent = {}
         #: 设备总体状态（11-08/11-13）。订阅表就是 `registry`，这里只记
         #: 「每会话上一次发出去的是什么」，用来做变化去重。
         self.status = DeviceStatusSubscriptions()
@@ -649,6 +706,13 @@ class TerminalSyncHub(object):
             #: 推出去的样板终端状态条数（11-05）。判据与 `craft_states` 相同：
             #: 去重命中不算，涨就说明真实槽或虚拟配置真的变了。
             "template_states": 0,
+            #: 推出去的订单视图条数（11-06）。判据同上：去重命中不算，
+            #: 涨就说明订单列表、进度或内存真的变了。
+            "order_states": 0,
+            #: 推出去的预览状态头条数与原料行分片数（11 增量）。判据同
+            #: `order_states`：去重命中不算，涨就说明预览真的推进了。
+            "preview_states": 0,
+            "preview_chunks": 0,
             #: 收到多少条保活（11-07）。**它涨而 `expired` 不涨**，就是
             #: 「只读设备屏真的把会话养住了」这句话在实机上的判据；反过来
             #: 「设备屏开着不动、`expired` 照涨」说明屏根本没在发。
@@ -949,9 +1013,23 @@ class TerminalSyncHub(object):
         表现为「按了一次之后这个界面再也发不出命令」。
         """
         self.stats["commands"] += 1
+        payload = dict(message.payload())
+        order_action = ORDER_ACTIONS.get(message.action)
+        if order_action is None:
+            kind = CommandKind.STORAGE
+        else:
+            kind = CommandKind.ORDER
+            payload["action"] = order_action[0]
+            # **字段改名**：线上发的是资源命令的词汇（`key` / `count`），
+            # 工厂读的是订单的词汇（`target` / `amount`）。改名表就在
+            # `ORDER_ACTIONS` 里，与路由同处——分成两处迟早会有一处漏改，
+            # 而漏改的表现是「下单说坏参数」。
+            for source_name, target_name in order_action[1]:
+                if source_name in payload:
+                    payload[target_name] = payload[source_name]
         command = DeviceCommand(
             message.request_id,
-            CommandKind.STORAGE,
+            kind,
             CommandSource(
                 session.player_id,
                 session.device_ref,
@@ -960,7 +1038,7 @@ class TerminalSyncHub(object):
                 session_id=session.session_id,
                 received_tick=frame or 0,
             ),
-            payload=message.payload(),
+            payload=payload,
             topology_version=None,
         )
         try:
@@ -1047,17 +1125,38 @@ class TerminalSyncHub(object):
         **两件事共用一次访问**：传输推进（快照分片、暂存增量落盘、退避
         到期）与发布窗口都要遍历同一批会话，分成两个循环会在两者之间
         插入「刚发完的包又被同一个 tick 重算一遍」的机会。
+
+        ## `view_kind` 在这里第一次真的分流（11-06）
+
+        此前所有会话都是 `VIEW_ITEM`，这个字段只在开会话时当门槛用。
+        工厂终端按 `VIEW_ORDER` 打开，它要的是订单视图**而不是**物品快照
+        ——给一条订单会话推 36 格背包快照，既是白发的带宽，也会在客户端
+        留下一份没人看的缓存。因此物品视图那几条按 `VIEW_ITEM` 分，
+        订单视图按 `VIEW_ORDER` 分。
+
+        **设备状态不在此列**：工厂终端也有 `stat_bar`，那条消息两个视图
+        都要。判据是「这条消息的内容属不属于物品视图」，不是「谁在发」。
         """
         subs = self._subs.get(network_id)
         if subs is None:
             return 0
         for session in subs.ordered_sessions():
             if session.is_open():
-                self._publish_inventory(session)
+                # **用 `elif` 而不是 `else`**：将来再有一种视图时，它落到
+                # 「谁都不发」而不是「当成订单发」。默认值的方向要选安全的那
+                # 一侧——多发一份错视图比少发难查得多。
+                if session.view_kind == VIEW_ITEM:
+                    self._publish_inventory(session)
+                    self._publish_craft_state(session)
+                    self._publish_template_state(session)
+                    self._advance_transfer(session, subs, frame)
+                elif session.view_kind == VIEW_ORDER:
+                    self._publish_order_state(session)
+                # **预览两个视图都发**：它是从网络物品列表长按发起的，
+                # 因此会话是 `VIEW_ITEM`；但将来工厂终端要复用同一个窗口
+                # 也不是不可能，而多发一份空结果的代价只是几字节。
+                self._publish_preview(session)
                 self._publish_device_status(session)
-                self._publish_craft_state(session)
-                self._publish_template_state(session)
-                self._advance_transfer(session, subs, frame)
         return self._publish_network(subs, frame)
 
     def _publish_inventory(self, session):
@@ -1148,6 +1247,110 @@ class TerminalSyncHub(object):
         if self._send(session, message):
             self._template_sent[session.session_id] = payload
             self.stats["template_states"] += 1
+
+    def _publish_order_state(self, session):
+        # type: (object) -> None
+        """把**这条网络的活跃订单与配方树**推给工厂终端（11-06）。
+
+        与前两条发布器的三处不同，逐条都有理由：
+
+        - **按网络取，不按设备取。** 订单属于网络，两台工厂终端看的是
+          同一份；`_order_of` 收的是 `session.network_id`。
+        - **`None` 的含义是「这条网络现在读不到订单」**（没有运行时、
+          工厂服务没挂上），此时一条都不发——发一份空列表会被客户端读成
+          「一单都没有」，而那是**另一个结论**。同 `_sync_template_of` 的纪律。
+        - **去重比的是整条 payload。** 它是全量快照，没有版本号可比；
+          订单、进度、内存任一处变了 payload 就不同。
+
+        读取失败（引擎那边出问题）同样不发：半份数据比旧数据更坏。
+        """
+        try:
+            state = self._order_of(session.network_id)
+        except Exception:
+            return
+        if state is None:
+            return
+        try:
+            message = OrderStateMessage(
+                state["memory"], state["orders"], state["sources"],
+            )
+        except (KeyError, TypeError, ValueError):
+            return
+        payload = message.to_dict()
+        if self._order_sent.get(session.session_id) == payload:
+            return
+        if self._send(session, message):
+            self._order_sent[session.session_id] = payload
+            self.stats["order_states"] += 1
+
+    def _publish_preview(self, session):
+        # type: (object) -> None
+        """把**这条会话正在看的那份下单预览**推给客户端（11 增量）。
+
+        与前三条的四处不同：
+
+        - **按会话取。** 预览是「这个人正在看的那一份」，不是整网的公共
+          状态；`delivery_for` 按 `session_id` 回答，一份会话同时只有一份
+          （界面也只有一个窗口）。
+        - **状态头先发、分片后发，分两笔。** 状态头里带着 `packet_count`，
+          客户端据此知道还差几片——**收齐全部分片才允许提交**，状态头本身
+          不是完成信号（契约第 3 节点名了「收到第一条进度就结束 loading」
+          这个坑，而那条进度就是状态头）。
+        - **游标存在逐会话表里**（`_preview_sent`），且**在 `_forget` 里清**。
+          它按 `(preview_id, generation)` 认领：新一轮一到就从头重发，
+          旧一轮的迟到分片凭 `generation` 被客户端丢掉。
+        - **读取失败不发。** 同 `_publish_order_state`：半份数据比旧数据更坏。
+        """
+        try:
+            previews = self._preview_of(session.network_id)
+        except Exception:
+            return
+        if previews is None:
+            return
+        try:
+            delivery = previews.delivery_for(session.session_id)
+        except Exception:
+            return
+        if delivery is None:
+            return
+        session_id = session.session_id
+        state = delivery["state"]
+        try:
+            message = PreviewStateMessage(**state)
+        except (KeyError, TypeError, ValueError):
+            return
+        track = self._preview_sent.get(session_id)
+        key = (state["preview_id"], state["generation"])
+        if track is None or track["key"] != key or track["status"] != state["status"]:
+            if not self._send(session, message):
+                self._note_failure(session)
+                return
+            track = {"key": key, "status": state["status"], "cursor": -1}
+            self._preview_sent[session_id] = track
+            self.stats["preview_states"] += 1
+        chunks = delivery.get("chunks") or ()
+        packet_count = len(chunks)
+        if packet_count <= 0 or track["cursor"] >= packet_count - 1:
+            return
+        budget = self.policy.snapshot_chunks_per_frame
+        while budget > 0 and track["cursor"] < packet_count - 1:
+            track["cursor"] += 1
+            index = track["cursor"]
+            chunk = PreviewChunkMessage(
+                state["preview_id"],
+                state["generation"],
+                index,
+                packet_count,
+                chunks[index],
+            )
+            if not self._send(session, chunk):
+                self._note_failure(session)
+                # **游标回退一格**：这一片没发出去，下一帧要从它重来。
+                # 不回退的话客户端永远少一片，而 loading 会一直转。
+                track["cursor"] -= 1
+                return
+            self.stats["preview_chunks"] += 1
+            budget -= 1
 
     def _publish_device_status(self, session):
         # type: (object) -> None
@@ -1539,6 +1742,14 @@ class TerminalSyncHub(object):
         self._inventory_sent.pop(session.session_id, None)
         self._craft_sent.pop(session.session_id, None)
         self._template_sent.pop(session.session_id, None)
+        self._order_sent.pop(session.session_id, None)
+        #: 预览的两张逐会话表都要清：状态头那张按整份载荷去重，分片游标
+        #: 那张记着推到第几片。**只清一张的后果**是游标永远停在上一份预览
+        #: 的位置，下一份的末尾几行再也不发——而界面看起来只是「少了几行」。
+        self._preview_sent.pop(session.session_id, None)
+        previews = self._preview_of(session.network_id)
+        if previews is not None:
+            previews.forget_session(session.session_id)
         self.status.drop(session.session_id)
         subs = self._subs.get(session.network_id)
         if subs is None:
@@ -1878,6 +2089,23 @@ def _no_template(device_ref):
     # type: (object) -> None
     """没有接样板终端时的兜底：不发。理由与 `_no_craft` 逐字相同——
     「发一份空配置」在客户端读出来是「你配的东西没了」。"""
+    return None
+
+
+def _no_preview(network_id):
+    # type: (str) -> None
+    """没有接上预览服务时的兜底：**一条都不发**。
+
+    发一份空结果会被读成「没有缺料」——那是另一个结论，而且是会让玩家
+    点下「下单」的那一个。同 `_no_craft` / `_no_order` 的纪律。
+    """
+    return None
+
+
+def _no_order(network_id):
+    # type: (str) -> None
+    """没有接订单视图时的兜底：不发。理由同 `_no_template`——
+    空列表在客户端读出来是「一单都没有」，而真相是「这个功能没接」。"""
     return None
 
 

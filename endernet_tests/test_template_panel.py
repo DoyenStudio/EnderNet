@@ -974,8 +974,9 @@ class TestPanelEntry(unittest.TestCase):
         # 收包在开会话**之前**就挂上了：`session_ready` 与第一份
         # `template_state` 都可能比 `OnCreate` 返回还早。
         self.assertEqual(1, port.listens)
-        # 两条回调：设备状态一条、`template_state` 一条。
-        self.assertEqual(2, len(panel.template.client._handlers))
+        # 三条回调：设备状态一条、`template_state` 一条，外加**下单预览一条**
+        # （11 增量：预览窗与列表同寿命，`TerminalListView.__init__` 里挂上）。
+        self.assertEqual(3, len(panel.template.client._handlers))
 
     def test_a_broken_device_ref_pauses_instead_of_opening_a_wrong_session(self):
         panel, _screen, _port = self.make({"device_ref": {"nonsense": 1}})

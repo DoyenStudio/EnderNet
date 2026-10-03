@@ -140,7 +140,7 @@ class TestSnapshotAssembly(CacheFixture):
     """快照 = 分片重组。**缺一块就整份丢掉**是这个文件的核心断言。"""
 
     def test_a_complete_snapshot_replaces_the_list(self):
-        self.send_snapshot([(STONE, 40, 0), (DIRT, 12, 4), (SAND, 3, 0)])
+        self.send_snapshot([(STONE, 40, 0, False), (DIRT, 12, 4, False), (SAND, 3, 0, False)])
         self.absorb()
         self.assertEqual(self.cache.model.count(), 3)
         self.assertEqual(self.cache.model.version(), SNAPSHOT_VERSION)
@@ -148,7 +148,7 @@ class TestSnapshotAssembly(CacheFixture):
 
     def test_chunks_arriving_out_of_order_assemble_the_same(self):
         """分片按流到达，顺序不保证。按下标存，不按到达顺序拼接。"""
-        records = [(STONE, 1, 0), (DIRT, 2, 0), (SAND, 3, 0), (APPLE, 4, 0)]
+        records = [(STONE, 1, 0, False), (DIRT, 2, 0, False), (SAND, 3, 0, False), (APPLE, 4, 0, False)]
         self.feed(SnapshotBegin("snap-1", SNAPSHOT_VERSION, 4))
         for index in (2, 0, 3, 1):
             self.feed(SnapshotChunk(
@@ -164,9 +164,9 @@ class TestSnapshotAssembly(CacheFixture):
         至少与其余分片来自同一次发送。覆盖会让一份快照里混进另一个时间点的
         数据，且没有任何迹象。"""
         self.feed(SnapshotBegin("snap-1", SNAPSHOT_VERSION, 2))
-        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0),)))
-        self.feed(SnapshotChunk("snap-1", 0, ((DIRT, 2, 0),)))
-        self.feed(SnapshotChunk("snap-1", 1, ((SAND, 3, 0),)))
+        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0, False),)))
+        self.feed(SnapshotChunk("snap-1", 0, ((DIRT, 2, 0, False),)))
+        self.feed(SnapshotChunk("snap-1", 1, ((SAND, 3, 0, False),)))
         self.feed(SnapshotEnd("snap-1", 2))
         self.absorb()
         self.assertEqual(self.cache.stats["duplicate_chunks"], 1)
@@ -180,7 +180,7 @@ class TestSnapshotAssembly(CacheFixture):
         库存去发。
         """
         self.feed(SnapshotBegin("snap-1", SNAPSHOT_VERSION, 2))
-        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0),)))
+        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0, False),)))
         # 只发了一块，`end` 却说总共两块。
         self.feed(SnapshotEnd("snap-1", 2))
         self.absorb()
@@ -191,10 +191,10 @@ class TestSnapshotAssembly(CacheFixture):
     def test_a_truncated_snapshot_replaces_nothing_it_had_before(self):
         """丢掉半成品不等于丢掉**已有的**列表。上一份快照还是好的，界面
         应当继续显示它，而不是因为这一次丢包变成空白。"""
-        self.send_snapshot([(STONE, 1, 0), (DIRT, 2, 0)])
+        self.send_snapshot([(STONE, 1, 0, False), (DIRT, 2, 0, False)])
         self.tick()
         self.feed(SnapshotBegin("snap-2", SNAPSHOT_VERSION + 5, 2))
-        self.feed(SnapshotChunk("snap-2", 0, ((SAND, 9, 0),)))
+        self.feed(SnapshotChunk("snap-2", 0, ((SAND, 9, 0, False),)))
         self.feed(SnapshotEnd("snap-2", 2))
         self.absorb()
         self.assertEqual(self.cache.stats["truncated_snapshots"], 1)
@@ -253,7 +253,7 @@ class TestSnapshotAssembly(CacheFixture):
         for _ in range(4):
             self.feed(SnapshotEnd("snap-gone", 2))
             self.tick()
-        self.send_snapshot([(STONE, 1, 0)])
+        self.send_snapshot([(STONE, 1, 0, False)])
         self.tick()
         self.assertEqual(self.cache.stats["snapshots_applied"], 1)
         # 退避已清：下一次失败又能立刻补一份。
@@ -266,7 +266,7 @@ class TestSnapshotAssembly(CacheFixture):
         """`from_version` 取**模型已应用到的**版本，不是客户端记的那个
         「服务端最近告知的」。增量收了一半时两者不等，用错会补出一份缺了
         那半批的增量。"""
-        self.send_snapshot([(STONE, 1, 0)])
+        self.send_snapshot([(STONE, 1, 0, False)])
         self.tick()
         self.feed(SnapshotEnd("snap-gone", 1))
         self.tick()
@@ -277,7 +277,7 @@ class TestSnapshotAssembly(CacheFixture):
         self.assertNotEqual(SESSION_INDEX_VERSION, SNAPSHOT_VERSION)
 
     def test_chunks_without_a_begin_are_counted_not_applied(self):
-        self.feed(SnapshotChunk("snap-gone", 0, ((STONE, 1, 0),)))
+        self.feed(SnapshotChunk("snap-gone", 0, ((STONE, 1, 0, False),)))
         self.absorb()
         self.assertEqual(self.cache.stats["orphan_chunks"], 1)
         self.assertEqual(self.cache.model.count(), 0)
@@ -286,9 +286,9 @@ class TestSnapshotAssembly(CacheFixture):
         """新 id 顶掉半成品：两份不同快照的分片拼在一起会得到一张
         「哪一半都不是」的表。"""
         self.feed(SnapshotBegin("snap-1", SNAPSHOT_VERSION, 2))
-        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0),)))
+        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0, False),)))
         self.feed(SnapshotBegin("snap-2", SNAPSHOT_VERSION + 1, 1))
-        self.feed(SnapshotChunk("snap-2", 0, ((DIRT, 5, 0),)))
+        self.feed(SnapshotChunk("snap-2", 0, ((DIRT, 5, 0, False),)))
         self.feed(SnapshotEnd("snap-2", 1))
         self.absorb()
         self.assertEqual(self.names(), ["minecraft:dirt"])
@@ -298,9 +298,9 @@ class TestSnapshotAssembly(CacheFixture):
         """同 id 同版本再来一次 `begin` 是允许的（服务端重发），已收的分片
         要接着用，不能白丢重来。"""
         self.feed(SnapshotBegin("snap-1", SNAPSHOT_VERSION, 2))
-        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0),)))
+        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0, False),)))
         self.feed(SnapshotBegin("snap-1", SNAPSHOT_VERSION, 2))
-        self.feed(SnapshotChunk("snap-1", 1, ((DIRT, 2, 0),)))
+        self.feed(SnapshotChunk("snap-1", 1, ((DIRT, 2, 0, False),)))
         self.feed(SnapshotEnd("snap-1", 2))
         self.absorb()
         self.assertEqual(self.cache.model.count(), 2)
@@ -309,9 +309,9 @@ class TestSnapshotAssembly(CacheFixture):
     def test_the_same_snapshot_id_with_a_new_version_restarts(self):
         """同 id 不同版本：这一份换了内容，已收的分片**必须作废**。"""
         self.feed(SnapshotBegin("snap-1", SNAPSHOT_VERSION, 2))
-        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0),)))
+        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0, False),)))
         self.feed(SnapshotBegin("snap-1", SNAPSHOT_VERSION + 1, 1))
-        self.feed(SnapshotChunk("snap-1", 0, ((DIRT, 5, 0),)))
+        self.feed(SnapshotChunk("snap-1", 0, ((DIRT, 5, 0, False),)))
         self.feed(SnapshotEnd("snap-1", 1))
         self.absorb()
         self.assertEqual(self.cache.model.count(), 1)
@@ -321,7 +321,7 @@ class TestSnapshotAssembly(CacheFixture):
         """总数对不上**照常应用**：为了服务端自己报的一个数字拒绝一份完整
         数据，会陷入「永远重取」的死循环——每次重取的结论都一样。"""
         self.feed(SnapshotBegin("snap-1", SNAPSHOT_VERSION, 99))
-        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0), (DIRT, 2, 0))))
+        self.feed(SnapshotChunk("snap-1", 0, ((STONE, 1, 0, False), (DIRT, 2, 0, False))))
         self.feed(SnapshotEnd("snap-1", 1))
         self.absorb()
         self.assertEqual(self.cache.stats["total_items_mismatch"], 1)
@@ -332,7 +332,7 @@ class TestSnapshotAssembly(CacheFixture):
         一个发过去，`_on_ack` 在 `session.outstanding` 里查不到就会判
         `RESYNC_UNKNOWN_TRANSFER` **把会话关掉**——ack 错了不是「没效果」，
         是「把玩家的界面打掉」。"""
-        self.send_snapshot([(STONE, 1, 0), (DIRT, 2, 0)], chunk_size=1)
+        self.send_snapshot([(STONE, 1, 0, False), (DIRT, 2, 0, False)], chunk_size=1)
         self.tick()
         self.assertEqual(self.acks(), [])
         self.assertEqual(self.cache.stats["acks_sent"], 0)
@@ -343,17 +343,17 @@ class TestDeltaBatches(CacheFixture):
 
     def setUp(self):
         CacheFixture.setUp(self)
-        self.send_snapshot([(STONE, 10, 0), (DIRT, 5, 0)])
+        self.send_snapshot([(STONE, 10, 0, False), (DIRT, 5, 0, False)])
         self.tick()
 
     def test_a_single_packet_batch_applies(self):
-        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0)]))
+        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0, False)]))
         result = self.tick()
         self.assertEqual(result.version, SNAPSHOT_VERSION + 1)
         self.assertEqual(self.cache.model.version(), SNAPSHOT_VERSION + 1)
 
     def test_a_multi_packet_batch_applies_only_once_complete(self):
-        self.feed(self.delta(0, 2, upserts=[(STONE, 7, 0)]))
+        self.feed(self.delta(0, 2, upserts=[(STONE, 7, 0, False)]))
         self.assertIsNone(self.tick())
         self.assertEqual(self.cache.model.version(), SNAPSHOT_VERSION)
         self.feed(self.delta(1, 2, removes=[DIRT]))
@@ -363,8 +363,8 @@ class TestDeltaBatches(CacheFixture):
     def test_the_batch_is_applied_in_packet_order(self):
         """按 `packet_index` 写，不按到达顺序：同一批次里两包可能都写同一个
         键，反过来就是「先到的那份说了算」。"""
-        self.feed(self.delta(1, 2, upserts=[(STONE, 99, 0)]))
-        self.feed(self.delta(0, 2, upserts=[(STONE, 1, 0)]))
+        self.feed(self.delta(1, 2, upserts=[(STONE, 99, 0, False)]))
+        self.feed(self.delta(0, 2, upserts=[(STONE, 1, 0, False)]))
         self.tick()
         self.assertEqual(self.stored_of(STONE), 99)
 
@@ -377,8 +377,8 @@ class TestDeltaBatches(CacheFixture):
         self.assertEqual(self.cache.incomplete_batches(), {"b1": (1, 3)})
 
     def test_a_duplicate_packet_is_kept_once(self):
-        self.feed(self.delta(0, 2, upserts=[(STONE, 7, 0)]))
-        self.feed(self.delta(0, 2, upserts=[(STONE, 7, 0)]))
+        self.feed(self.delta(0, 2, upserts=[(STONE, 7, 0, False)]))
+        self.feed(self.delta(0, 2, upserts=[(STONE, 7, 0, False)]))
         self.absorb()
         self.assertEqual(self.cache.stats["duplicate_packets"], 1)
         self.feed(self.delta(1, 2))
@@ -388,8 +388,8 @@ class TestDeltaBatches(CacheFixture):
     def test_an_inconsistent_batch_is_restarted(self):
         """同一个 `batch_id` 的包说着不同的基准版本 → **整个重来**。留着旧的
         那几个包会把两个批次的条目拼成一个，而它们各自的基准不同。"""
-        self.feed(self.delta(0, 2, upserts=[(STONE, 7, 0)]))
-        self.feed(self.delta(0, 2, upserts=[(DIRT, 3, 0)], base=99, new=100))
+        self.feed(self.delta(0, 2, upserts=[(STONE, 7, 0, False)]))
+        self.feed(self.delta(0, 2, upserts=[(DIRT, 3, 0, False)], base=99, new=100))
         self.absorb()
         self.assertEqual(self.cache.stats["inconsistent_batches"], 1)
         self.assertEqual(self.cache.incomplete_batches(), {"b1": (1, 2)})
@@ -399,9 +399,9 @@ class TestDeltaBatches(CacheFixture):
         （`shared_event_classes`），同一批增量会到达两次；第二次的基准已经
         对不上，模型会抛 `ListResyncRequired`——于是一次重复投递换来一次
         白重取快照，每开一次界面都来一遍。"""
-        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0)]))
+        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0, False)]))
         self.tick()
-        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0)]))
+        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0, False)]))
         self.assertIsNone(self.tick())
         self.assertEqual(self.cache.stats["late_packets"], 1)
         self.assertEqual(self.cache.stats["resync_on_batch"], 0)
@@ -410,7 +410,7 @@ class TestDeltaBatches(CacheFixture):
     def test_an_ack_carries_the_batch_id_and_the_last_index(self):
         """`transfer_id` 取 `batch_id`（服务端对增量批传的正是它），
         `sequence` 取最大连续下标；**只有应用之后才发**。"""
-        self.feed(self.delta(0, 2, upserts=[(STONE, 7, 0)]))
+        self.feed(self.delta(0, 2, upserts=[(STONE, 7, 0, False)]))
         self.absorb()
         self.assertEqual(self.acks(), [])
         self.feed(self.delta(1, 2, removes=[DIRT]))
@@ -422,7 +422,7 @@ class TestDeltaBatches(CacheFixture):
     def test_a_version_gap_asks_for_a_snapshot_without_clearing_the_model(self):
         """`ListResyncRequired` → **不清模型**。模型的版本仍然有效，直接拿它
         去补一份就行；清了它，接下来每条增量都会再对不上。"""
-        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0)], base=99, new=100))
+        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0, False)], base=99, new=100))
         self.tick()
         self.assertEqual(self.cache.stats["resync_on_batch"], 1)
         self.assertEqual(self.cache.model.version(), SNAPSHOT_VERSION)
@@ -441,7 +441,7 @@ class TestDeltaBatches(CacheFixture):
     def test_a_batch_for_an_empty_model_still_applies(self):
         """没有快照不代表不能应用：服务端可能只推增量（本地版本本来就是 0）。"""
         fresh = TerminalCache(client=self.client)
-        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0)], base=0, new=1))
+        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0, False)], base=0, new=1))
         self.assertIsNotNone(fresh.tick())
         self.assertEqual(fresh.model.version(), 1)
         self.assertEqual(fresh.model.count(), 1)
@@ -453,7 +453,7 @@ class TestServerResync(CacheFixture):
 
     def setUp(self):
         CacheFixture.setUp(self)
-        self.send_snapshot([(STONE, 10, 0), (DIRT, 5, 0)])
+        self.send_snapshot([(STONE, 10, 0, False), (DIRT, 5, 0, False)])
         self.tick()
 
     def test_resync_clears_the_model_and_does_not_ask(self):
@@ -469,7 +469,7 @@ class TestServerResync(CacheFixture):
 
     def test_resync_drops_half_built_snapshots_and_batches(self):
         self.feed(SnapshotBegin("snap-9", SNAPSHOT_VERSION + 1, 2))
-        self.feed(SnapshotChunk("snap-9", 0, ((SAND, 1, 0),)))
+        self.feed(SnapshotChunk("snap-9", 0, ((SAND, 1, 0, False),)))
         self.absorb()
         # 收尾之前先确认现场非空：否则「丢了半成品」这句话没有对象。
         self.assertTrue(self.cache.diagnostics()["snapshot_in_flight"])
@@ -485,7 +485,7 @@ class TestServerResync(CacheFixture):
         增量的基准还对着清掉之前那一份，写进去就是「用半张表冒充整张表」。"""
         self.feed(ResyncRequired("version_gap", "断了"))
         self.absorb()
-        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0)]))
+        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0, False)]))
         self.assertIsNone(self.tick())
         self.assertEqual(self.cache.stats["deltas_dropped_while_awaiting"], 1)
         self.assertEqual(self.cache.model.count(), 0)
@@ -493,7 +493,7 @@ class TestServerResync(CacheFixture):
     def test_the_new_snapshot_ends_the_waiting_window(self):
         self.feed(ResyncRequired("version_gap", "断了"))
         self.absorb()
-        self.send_snapshot([(APPLE, 4, 0)], version=20, chunk_size=1)
+        self.send_snapshot([(APPLE, 4, 0, False)], version=20, chunk_size=1)
         self.absorb()
         self.assertFalse(self.cache.awaiting_snapshot())
         self.assertEqual(self.cache.model.count(), 1)
@@ -515,14 +515,14 @@ class TestFrameResult(CacheFixture):
 
     def setUp(self):
         CacheFixture.setUp(self)
-        self.send_snapshot([(STONE, 10, 0), (DIRT, 5, 0)])
+        self.send_snapshot([(STONE, 10, 0, False), (DIRT, 5, 0, False)])
         self.tick()
 
     def test_a_quiet_frame_reports_nothing(self):
         self.assertIsNone(self.tick())
 
     def test_the_result_carries_the_changed_keys_and_the_version(self):
-        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0)]))
+        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0, False)]))
         result = self.tick()
         self.assertIn(STONE, result.changed_keys)
         self.assertEqual(result.version, SNAPSHOT_VERSION + 1)
@@ -530,8 +530,8 @@ class TestFrameResult(CacheFixture):
     def test_two_batches_in_one_frame_are_merged(self):
         """**合并的是界面需要知道的东西**：只报最后一批的话，前一批动过的行
         界面就不知道要重画。"""
-        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0)], new=11, batch_id="b1"))
-        self.feed(self.delta(0, 1, upserts=[(DIRT, 2, 0)], base=11, new=12,
+        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0, False)], new=11, batch_id="b1"))
+        self.feed(self.delta(0, 1, upserts=[(DIRT, 2, 0, False)], base=11, new=12,
                              batch_id="b2"))
         result = self.tick()
         self.assertIn(STONE, result.changed_keys)
@@ -550,8 +550,8 @@ class TestFrameResult(CacheFixture):
         第一批只改量（默认按名称排序，改量不重排），第二批插入一个新键
         （任何排序下顺序都变）。只看最后一批的话，这条会得出 False。
         """
-        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0)], new=11, batch_id="b1"))
-        self.feed(self.delta(0, 1, upserts=[(APPLE, 1, 0)], base=11, new=12,
+        self.feed(self.delta(0, 1, upserts=[(STONE, 7, 0, False)], new=11, batch_id="b1"))
+        self.feed(self.delta(0, 1, upserts=[(APPLE, 1, 0, False)], base=11, new=12,
                              batch_id="b2"))
         result = self.tick()
         self.assertTrue(result.reordered)
@@ -560,8 +560,8 @@ class TestFrameResult(CacheFixture):
 
 class TestLifecycle(CacheFixture):
     def test_close_says_goodbye_and_clears_everything(self):
-        self.send_snapshot([(STONE, 1, 0)], chunk_size=1)
-        self.feed(self.delta(0, 2, upserts=[(STONE, 2, 0)]))
+        self.send_snapshot([(STONE, 1, 0, False)], chunk_size=1)
+        self.feed(self.delta(0, 2, upserts=[(STONE, 2, 0, False)]))
         self.absorb()
         # 收尾之前先确认现场非空：否则「清干净了」这句话没有任何内容。
         self.assertEqual(self.cache.model.count(), 1)

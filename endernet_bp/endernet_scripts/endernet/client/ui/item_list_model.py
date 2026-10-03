@@ -101,6 +101,7 @@ class ItemEntry(object):
         "kind",
         "stored",
         "reserved",
+        "has_pattern",
         "sort_name_key",
         "search_text",
     )
@@ -112,6 +113,11 @@ class ItemEntry(object):
         self.kind = key.kind
         self.stored = 0
         self.reserved = 0
+        #: 本网络有没有做得出这个物品的样板（契约第 1 节）。**是显示来源，
+        #: 不是数量**：它既不进 `stored` 也不进 `reserved`，只在数量标签上
+        #: 多一个 `+`，并让零库存的行留得住。排序仍只看 `stored`——
+        #: 只有 `+` 的行 `stored` 就是 0，自然排在数量序的最前面。
+        self.has_pattern = False
         #: 排序用的名称。**小写缓存一次**：每次比较都调 `lower()` 会把
         #: O(n log n) 次比较变成 O(n log n) 次字符串分配（长列表上这是主要
         #: 开销之一）。py2 的 `lower()` 对非 ASCII 是逐字节的，但两侧都过
@@ -420,8 +426,8 @@ class ItemListModel(object):
         }
         return self._batch_serial
 
-    def upsert(self, key, stored, reserved):
-        # type: (ResourceKey, int, int) -> bool
+    def upsert(self, key, stored, reserved, has_pattern=False):
+        # type: (ResourceKey, int, int, bool) -> bool
         """写入一条**绝对量**，返回这一行是否是新出现的。
 
         绝对量而不是增量：增量语义要求「一条都没丢」，而这是网络上的承诺，
@@ -430,6 +436,11 @@ class ItemListModel(object):
 
         **命中已有键、且排序不是按数量时不置脏**——这就是「纯数量变化不
         重排」的落点。放在这里是因为只有这里知道是新增还是改量。
+
+        `has_pattern` **只影响显示，不参与排序键**：只有 `+` 的行 `stored`
+        本来就是 0，数量序里自然垫底（契约第 1 节：「`+` 单独存在的条目
+        按 0 排序」）。把它塞进排序键反而会让「有样板」和「没样板」的
+        同数量行相对次序随服务端返回顺序漂移。
         """
         self._require_key(key)
         require_count(stored, "stored")
@@ -443,6 +454,7 @@ class ItemListModel(object):
             self._order_dirty = True
         entry.stored = stored
         entry.reserved = reserved
+        entry.has_pattern = bool(has_pattern)
         if not fresh and self._sort == SORT_COUNT and self._order is not None:
             # 数量排序下改量会换位置。**只置位不重排**：批次结束时算一次。
             self._order_dirty = True
@@ -518,7 +530,7 @@ class ItemListModel(object):
         """
         require_count(version, "version")
         entries = {}
-        for key, stored, reserved in records:
+        for key, stored, reserved, has_pattern in records:
             self._require_key(key)
             require_count(stored, "stored")
             require_count(reserved, "reserved")
@@ -527,6 +539,7 @@ class ItemListModel(object):
             entry = self._entry_for(key)
             entry.stored = stored
             entry.reserved = reserved
+            entry.has_pattern = bool(has_pattern)
             entries[key] = entry
 
         # 换掉之前先记下「刚才看得见的是哪些」：`removed_keys` 只能从这里来，

@@ -39,10 +39,16 @@ def measure_payload(payload):
 
 def entry_size(entry):
     # type: (tuple) -> int
-    """一条待发条目的上界字节数。`entry` 形如 `(ENTRY_*, key, stored, reserved)`。"""
+    """一条待发条目的上界字节数。
+
+    `entry` 形如 `(ENTRY_*, key, stored, reserved, has_pattern)`。**四个数据位
+    全部要量**——`has_pattern` 虽然只有一个布尔，漏掉它不会让某一条变大，
+    只会让「按字节切」的分片少算一截，于是一批刚好卡在上限附近的条目会
+    超限发出去。分片失效的症状是偶发的丢包，不是报错。
+    """
     if entry[0] == ENTRY_REMOVE:
         return measure_payload(entry[1].to_dict())
-    return measure_payload([entry[1].to_dict(), entry[2], entry[3]])
+    return measure_payload([entry[1].to_dict(), entry[2], entry[3], entry[4]])
 
 
 def _fits(current, size, max_items, max_bytes, current_bytes):
@@ -84,22 +90,23 @@ def split_entries(entries, max_items, max_bytes):
 
 def record_entries(records):
     # type: (tuple) -> tuple
-    """`(key, stored, reserved)` 序列 → 分片用的条目序列。"""
+    """`(key, stored, reserved, has_pattern)` 序列 → 分片用的条目序列。"""
     return tuple(
-        (ENTRY_UPSERT, key, stored, reserved) for key, stored, reserved in records
+        (ENTRY_UPSERT, key, stored, reserved, has_pattern)
+        for key, stored, reserved, has_pattern in records
     )
 
 
 def split_records(records, max_items, max_bytes):
     # type: (tuple, int, int) -> tuple
-    """把快照记录切成分片，返回若干 `(key, stored, reserved)` 元组。
+    """把快照记录切成分片，返回若干 `(key, stored, reserved, has_pattern)` 元组。
 
     快照与增量走的是**同一套切分规则**（`split_entries`）：两条路径各写
     一份的话，改了一处忘了另一处，表现是「快照的分片数量对不上客户端
     收到的」——而那种偏差只在特定条目规模下才出现。
     """
     return tuple(
-        tuple((entry[1], entry[2], entry[3]) for entry in chunk)
+        tuple((entry[1], entry[2], entry[3], entry[4]) for entry in chunk)
         for chunk in split_entries(record_entries(records), max_items, max_bytes)
     )
 
@@ -232,9 +239,11 @@ def build_delta_packets(batch_id, base_version, new_version, upserts, removes,
     upsert 在前、remove 在后，顺序固定；同样的输入永远切出同样的包，
     因此「一批分几包」可以被断言，而不是每帧碰运气。
     """
-    entries = [(ENTRY_UPSERT, key, stored, reserved)
-               for key, stored, reserved in upserts]
-    entries += [(ENTRY_REMOVE, key, 0, 0) for key in removes]
+    entries = [(ENTRY_UPSERT, key, stored, reserved, has_pattern)
+               for key, stored, reserved, has_pattern in upserts]
+    # remove 只带身份：后两位不是数量，是**占位**（`_encode_remove` 的说明）。
+    # `has_pattern` 位同理——一条被删掉的显示行没有「有没有样板」可言。
+    entries += [(ENTRY_REMOVE, key, 0, 0, False) for key in removes]
     chunks = split_entries(tuple(entries), max_items, max_bytes)
     count = len(chunks)
     packets = []
@@ -245,7 +254,7 @@ def build_delta_packets(batch_id, base_version, new_version, upserts, removes,
         for entry in chunk:
             size += entry_size(entry)
             if entry[0] == ENTRY_UPSERT:
-                packet_upserts.append((entry[1], entry[2], entry[3]))
+                packet_upserts.append((entry[1], entry[2], entry[3], entry[4]))
             else:
                 packet_removes.append(entry[1])
         packets.append(

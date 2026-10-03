@@ -58,8 +58,18 @@
             },
             {
                 "close@endernet_ui_common.close_btn": {
+                    "$pressed_button_name": "#EnderNetTerminal.close",
                     "anchor_from": "top_right",
                     "anchor_to": "top_right",
+                    "bindings": [],
+                    "button_mappings": [
+                        {
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed",
+                            "to_button_id": "$pressed_button_name"
+                        }
+                    ],
+                    "layer": 30,
                     "offset": [
                         -4,
                         4
@@ -81,8 +91,19 @@
                         0.2588235294117647
                     ],
                     "font_type": "default",
-                    "text": "活跃订单列表 0/0",
-                    "text_alignment": "center"
+                    "text": "#text",
+                    "text_alignment": "center",
+                    "property_bag": {
+                        "#EnderNetFactoric.active_tip": "活跃订单列表 0/0"
+                    },
+                    "bindings": [
+                        {
+                            "binding_type": "global",
+                            "binding_name_override": "#text",
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetFactoric.active_tip"
+                        }
+                    ]
                 }
             },
             {
@@ -197,13 +218,23 @@
                                     "100%+-4px"
                                 ],
                                 "layer": 1,
+                                "clip_direction": "left",
+                                "clip_ratio": 0.0,
                                 "color": [
                                     0.7568627450980392,
                                     0.7803921568627451,
                                     1.0
                                 ],
                                 "texture": "textures/ui/white_background",
-                                "tiled": true
+                                "tiled": true,
+                                "bindings": [
+                                    {
+                                        "binding_type": "global",
+                                        "binding_name_override": "#clip_ratio",
+                                        "binding_condition": "always",
+                                        "binding_name": "#EnderNetFactoric.memory_ratio"
+                                    }
+                                ]
                             }
                         },
                         {
@@ -216,10 +247,83 @@
                                     0.2588235294117647
                                 ],
                                 "font_type": "default",
-                                "text": "剩余可用内存 0KB"
+                                "text": "#text",
+                                "property_bag": {
+                                    "#EnderNetFactoric.memory_text": "剩余可用内存 0 B"
+                                },
+                                "bindings": [
+                                    {
+                                        "binding_type": "global",
+                                        "binding_name_override": "#text",
+                                        "binding_condition": "always",
+                                        "binding_name": "#EnderNetFactoric.memory_text"
+                                    }
+                                ]
                             }
                         }
                     ]
+                }
+            },
+            {
+                "unavailable_mask": {
+                    "type": "input_panel",
+                    "anchor_from": "bottom_middle",
+                    "anchor_to": "bottom_middle",
+                    "size": [
+                        "100%+0px",
+                        "100%+-20px"
+                    ],
+                    "layer": 20,
+                    "visible": false,
+                    "property_bag": {
+                        "#EnderNetFactoric.unavailable": false
+                    },
+                    "bindings": [
+                        {
+                            "binding_type": "global",
+                            "binding_name_override": "#visible",
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetFactoric.unavailable"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "mask_img": {
+                                "type": "image",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "size": [
+                                    "100%+0px",
+                                    "100%+0px"
+                                ],
+                                "alpha": 0.5,
+                                "clip_direction": "left",
+                                "clip_ratio": 0.0,
+                                "color": [
+                                    0.0,
+                                    0.0,
+                                    0.0
+                                ],
+                                "texture": "textures/ui/white_background",
+                                "tiled": true
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "device_status_popup@endernet_windows.device_status_window_basic": {
+                    "anchor_from": "center",
+                    "anchor_to": "center",
+                    "bindings": [
+                        {
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetDeviceStatus.popup_visible",
+                            "binding_name_override": "#visible",
+                            "binding_type": "global"
+                        }
+                    ],
+                    "layer": 40
                 }
             }
         ]
@@ -235,6 +339,18 @@
             20.0
         ],
         "layer": 1,
+        "property_bag": {
+            "#EnderNetFactoric.order_visible": false
+        },
+        "bindings": [
+            {
+                "binding_name_override": "#visible",
+                "binding_collection_name": "orders",
+                "binding_condition": "always",
+                "binding_type": "collection",
+                "binding_name": "#EnderNetFactoric.order_visible"
+            }
+        ],
         "controls": [
             {
                 "res_item_name": {
@@ -252,8 +368,20 @@
                         0.2588235294117647
                     ],
                     "font_type": "default",
-                    "text": "999 x 某某某",
-                    "text_alignment": "center"
+                    "text": "#text",
+                    "text_alignment": "center",
+                    "property_bag": {
+                        "#EnderNetFactoric.order_name": ""
+                    },
+                    "bindings": [
+                        {
+                            "binding_name_override": "#text",
+                            "binding_collection_name": "orders",
+                            "binding_condition": "always",
+                            "binding_type": "collection",
+                            "binding_name": "#EnderNetFactoric.order_name"
+                        }
+                    ]
                 }
             },
             {
@@ -273,8 +401,20 @@
                     ],
                     "font_size": "small",
                     "font_type": "default",
-                    "text": "100.0%%",
-                    "text_alignment": "center"
+                    "text": "#text",
+                    "text_alignment": "center",
+                    "property_bag": {
+                        "#EnderNetFactoric.order_progress_text": ""
+                    },
+                    "bindings": [
+                        {
+                            "binding_name_override": "#text",
+                            "binding_collection_name": "orders",
+                            "binding_condition": "always",
+                            "binding_type": "collection",
+                            "binding_name": "#EnderNetFactoric.order_progress_text"
+                        }
+                    ]
                 }
             },
             {
@@ -317,13 +457,24 @@
                                 ],
                                 "layer": 4,
                                 "alpha": 0.25,
+                                "clip_direction": "left",
+                                "clip_ratio": 0.0,
                                 "color": [
                                     0.0,
                                     1.0,
                                     1.0
                                 ],
                                 "texture": "textures/ui/white_background",
-                                "tiled": true
+                                "tiled": true,
+                                "bindings": [
+                                    {
+                                        "binding_name_override": "#clip_ratio",
+                                        "binding_collection_name": "orders",
+                                        "binding_condition": "always",
+                                        "binding_type": "collection",
+                                        "binding_name": "#EnderNetFactoric.order_progress"
+                                    }
+                                ]
                             }
                         }
                     ]
@@ -345,8 +496,17 @@
                     ],
                     "layer": 5,
                     "property_bag": {
-                        "#item_id_aux": 131072
-                    }
+                        "#item_id_aux": 0
+                    },
+                    "bindings": [
+                        {
+                            "binding_name_override": "#item_id_aux",
+                            "binding_collection_name": "orders",
+                            "binding_condition": "always",
+                            "binding_type": "collection",
+                            "binding_name": "#EnderNetFactoric.order_item_id_aux"
+                        }
+                    ]
                 }
             },
             {
@@ -379,11 +539,17 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "#EnderNetFactoric.order_click",
                     "$pressed_texture": "textures/ui/endernet/background_panel_2_flat",
                     "$texture_layer": 2,
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
@@ -424,10 +590,13 @@
     },
     "order_description_window": {
         "type": "panel",
+        "anchor_from": "center",
+        "anchor_to": "center",
         "size": [
             180.0,
             200.0
         ],
+        "visible": false,
         "controls": [
             {
                 "bg": {
@@ -460,8 +629,19 @@
                                 "type": "label",
                                 "font_type": "default",
                                 "shadow": true,
-                                "text": "当前正在制作： 未知",
-                                "text_alignment": "center"
+                                "text": "#text",
+                                "text_alignment": "center",
+                                "property_bag": {
+                                    "#EnderNetFactoric.detail_title": ""
+                                },
+                                "bindings": [
+                                    {
+                                        "binding_type": "global",
+                                        "binding_name_override": "#text",
+                                        "binding_condition": "always",
+                                        "binding_name": "#EnderNetFactoric.detail_title"
+                                    }
+                                ]
                             }
                         }
                     ]
@@ -469,8 +649,17 @@
             },
             {
                 "close@endernet_ui_common.close_btn": {
+                    "$pressed_button_name": "#EnderNetFactoric.detail_close",
                     "anchor_from": "top_right",
                     "anchor_to": "top_right",
+                    "bindings": [],
+                    "button_mappings": [
+                        {
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed",
+                            "to_button_id": "$pressed_button_name"
+                        }
+                    ],
                     "size": [
                         16,
                         16
@@ -564,7 +753,7 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "#EnderNetFactoric.cancel",
                     "$pressed_texture": "textures/ui/endernet/button_red_pressed",
                     "$texture_layer": 2,
                     "anchor_from": "bottom_left",
@@ -578,7 +767,13 @@
                         20.0
                     ],
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
@@ -638,7 +833,7 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "#EnderNetFactoric.detail_close",
                     "$pressed_texture": "textures/ui/endernet/button_pressed",
                     "$texture_layer": 2,
                     "anchor_from": "bottom_right",
@@ -652,7 +847,13 @@
                         20.0
                     ],
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
@@ -697,6 +898,30 @@
             0.7843137254901961
         ],
         "texture": "textures/ui/endernet/background_panel_light_flat",
+        "property_bag": {
+            "#EnderNetFactoric.source_visible": false,
+            "#EnderNetFactoric.source_color": [
+                1.0,
+                1.0,
+                0.7843137254901961
+            ]
+        },
+        "bindings": [
+            {
+                "binding_name_override": "#color",
+                "binding_collection_name": "order_sources",
+                "binding_condition": "always",
+                "binding_type": "collection",
+                "binding_name": "#EnderNetFactoric.source_color"
+            },
+            {
+                "binding_name_override": "#visible",
+                "binding_collection_name": "order_sources",
+                "binding_condition": "always",
+                "binding_type": "collection",
+                "binding_name": "#EnderNetFactoric.source_visible"
+            }
+        ],
         "controls": [
             {
                 "progress_bar": {
@@ -720,7 +945,16 @@
                         0.4980392156862745
                     ],
                     "texture": "textures/ui/white_background",
-                    "tiled": true
+                    "tiled": true,
+                    "bindings": [
+                        {
+                            "binding_name_override": "#clip_ratio",
+                            "binding_collection_name": "order_sources",
+                            "binding_condition": "always",
+                            "binding_type": "collection",
+                            "binding_name": "#EnderNetFactoric.source_progress"
+                        }
+                    ]
                 }
             },
             {
@@ -739,8 +973,17 @@
                     ],
                     "layer": 1,
                     "property_bag": {
-                        "#item_id_aux": 131072
-                    }
+                        "#item_id_aux": 0
+                    },
+                    "bindings": [
+                        {
+                            "binding_name_override": "#item_id_aux",
+                            "binding_collection_name": "order_sources",
+                            "binding_condition": "always",
+                            "binding_type": "collection",
+                            "binding_name": "#EnderNetFactoric.source_item_id_aux"
+                        }
+                    ]
                 }
             },
             {
@@ -763,7 +1006,19 @@
                         0.2588235294117647
                     ],
                     "font_type": "default",
-                    "text": "某某物品"
+                    "text": "#text",
+                    "property_bag": {
+                        "#EnderNetFactoric.source_name": ""
+                    },
+                    "bindings": [
+                        {
+                            "binding_name_override": "#text",
+                            "binding_collection_name": "order_sources",
+                            "binding_condition": "always",
+                            "binding_type": "collection",
+                            "binding_name": "#EnderNetFactoric.source_name"
+                        }
+                    ]
                 }
             },
             {
@@ -788,7 +1043,19 @@
                     "font_scale_factor": 1.2,
                     "font_size": "small",
                     "font_type": "default",
-                    "text": "制作中 999/999 等待产物"
+                    "text": "#text",
+                    "property_bag": {
+                        "#EnderNetFactoric.source_stat": ""
+                    },
+                    "bindings": [
+                        {
+                            "binding_name_override": "#text",
+                            "binding_collection_name": "order_sources",
+                            "binding_condition": "always",
+                            "binding_type": "collection",
+                            "binding_name": "#EnderNetFactoric.source_stat"
+                        }
+                    ]
                 }
             }
         ]
@@ -807,7 +1074,18 @@
         ],
         "grid_item_template": "factoric_terminal_panel_ui.order_source_status",
         "grid_rescaling_type": "horizontal",
-        "maximum_grid_items": 14
+        "maximum_grid_items": 14,
+        "property_bag": {
+            "#maximum_grid_items": 0
+        },
+        "bindings": [
+            {
+                "binding_type": "global",
+                "binding_name_override": "#maximum_grid_items",
+                "binding_condition": "always",
+                "binding_name": "#EnderNetFactoric.source_count"
+            }
+        ]
     },
     "orders": {
         "type": "panel",
@@ -831,7 +1109,18 @@
                     ],
                     "grid_item_template": "factoric_terminal_panel_ui.order",
                     "grid_rescaling_type": "horizontal",
-                    "maximum_grid_items": 8
+                    "maximum_grid_items": 8,
+                    "property_bag": {
+                        "#maximum_grid_items": 0
+                    },
+                    "bindings": [
+                        {
+                            "binding_type": "global",
+                            "binding_name_override": "#maximum_grid_items",
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetFactoric.order_count"
+                        }
+                    ]
                 }
             }
         ]
