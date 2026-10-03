@@ -2199,6 +2199,57 @@ class TransferCoordinator(object):
             if op_id in self._pending
         ]
 
+    def export_pending(self):
+        # type: () -> list
+        """待核对台账的快照，**纯数据**（`resource_key` 转成 dict）。存档用。
+
+        与 `pending_reconcile()` 的区别只有一处：那一份把活的 `ResourceKey`
+        原样带出去给诊断看，这一份必须能过 JSON——所以转一次 dict。
+        """
+        out = []
+        for op_id in self._pending_order:
+            entry = self._pending.get(op_id)
+            if entry is None:
+                continue
+            item = dict(entry)
+            raw_key = item.get("resource_key")
+            to_dict = getattr(raw_key, "to_dict", None)
+            item["resource_key"] = to_dict() if callable(to_dict) else None
+            out.append(item)
+        return out
+
+    def import_pending(self, entries):
+        # type: (object) -> int
+        """恢复待核对台账。返回恢复条数。
+
+        **只恢复成「待核对」，绝不重放。** 这张表是给恢复流程看的，
+        不是给重试逻辑看的（06-02 明写「结果不确定不能作为成功，
+        也不能盲目重试」）。恢复之后这些 op_id 仍在 `_pending` 里，
+        业务路径不会去动它们，直到有人显式 `clear_pending`。
+        """
+        restored = 0
+        for raw in entries or ():
+            if not isinstance(raw, dict):
+                continue
+            op_id = raw.get("op_id")
+            if not op_id or op_id in self._pending:
+                continue
+            item = dict(raw)
+            raw_key = item.get("resource_key")
+            if isinstance(raw_key, dict):
+                try:
+                    item["resource_key"] = ResourceKey.from_dict(raw_key)
+                except (KeyError, TypeError, ValueError):
+                    item["resource_key"] = None
+            self._pending[op_id] = item
+            self._pending_order.append(op_id)
+            restored += 1
+        while len(self._pending_order) > self.policy.reconcile_limit:
+            oldest = self._pending_order.pop(0)
+            self._pending.pop(oldest, None)
+            self.stats["reconcile_evicted"] += 1
+        return restored
+
     def clear_pending(self, op_id):
         # type: (str) -> bool
         """核对完成后销掉一条。返回是否真的销掉了。"""

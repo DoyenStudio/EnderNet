@@ -33,6 +33,22 @@ FACING_NAMES = ("up", "down", "north", "south", "west", "east")
 CHUNK_SIZE = 16
 
 
+def node_key_text(node_key):
+    # type: (NodeKey) -> str
+    """`NodeKey` 的存档文本 `"维度,x,y,z"`。**位置才是稳定身份**。
+
+    存档记录的主键用它，而不是 `DeviceRef`：实例代次不持久
+    （`GenerationAllocator` 重启后从 0 重来），拿它当键会让「重进世界」
+    变成「查不到」。驱动器槽位、接口状态、网络记录都按这个键落盘。
+
+    抽到 common 层是因为它现在有**三个引用方**（驱动器、接口、网络记录），
+    各写一份的代价是其中一份改了分隔符而其余两份照旧——那会让重进世界时
+    只有一半的设备找得回自己的记录。
+    """
+    dimension, x, y, z = node_key.as_key()
+    return "%d,%d,%d,%d" % (dimension, x, y, z)
+
+
 def _require_int(value, label):
     # type: (object, str) -> int
     if isinstance(value, bool) or not isinstance(value, _INT_TYPES):

@@ -159,8 +159,9 @@ class NetworkRuntime(object):
         session_check=None,
         repository=None,
         emit=None,
+        recovery_gate=None,
     ):
-        # type: (str, object, object, object, object, object, ServiceFactory, str, object, object, object, object, object) -> None
+        # type: (str, object, object, object, object, object, ServiceFactory, str, object, object, object, object, object, object) -> None
         self.component_id = component_id
         self.definitions = definitions
         self.registry = registry
@@ -172,6 +173,11 @@ class NetworkRuntime(object):
         self.ledger_policy = ledger_policy
         self.session_check = session_check
         self.repository = repository
+        #: 分阶段恢复的闸门（12-05）。**在闸门开放之前不开放业务**：
+        #: `open_if_ready` 会因此拒绝开启，主控停在恢复中，于是包括设备
+        #: 发起的命令在内的所有存取都被准入链拒掉。默认 `None` = 无闸门
+        #: （离线测试与没有存档的装配零差异）。
+        self.recovery_gate = recovery_gate
 
         #: **本运行时私有**的服务集合。工厂为每次创建调用一次，
         #: 因此两个独立网络绝不共享服务实例（验收 #4）。
@@ -380,6 +386,12 @@ class NetworkRuntime(object):
             )
         elif self.master is None:
             reason = "没有主控接管"
+        if not reason and self.recovery_gate is not None:
+            # **恢复闸门未开放时不开启业务**（12-05）。这不是故障，是
+            # 「存档还没读完、设备还没对上」——主控停在恢复中，准入链
+            # 会把每一条存取都拒掉并给出 `master_recovering`。
+            if not self.recovery_gate.is_open():
+                reason = self.recovery_gate.blocker() or "恢复尚未完成"
         if reason:
             self.close(reason)
             return False
@@ -714,6 +726,7 @@ class RuntimeManager(object):
         session_check=None,
         repository=None,
         scheduler_policy=None,
+        recovery_gate=None,
     ):
         # type: (...) -> None
         self.definitions = definitions
@@ -726,6 +739,8 @@ class RuntimeManager(object):
         self.ledger_policy = ledger_policy
         self.session_check = session_check
         self.repository = repository
+        #: 分阶段恢复的闸门（12-05）。原样下发给每个运行时。
+        self.recovery_gate = recovery_gate
 
         self._runtimes = {}
         self._listeners = []
@@ -848,6 +863,7 @@ class RuntimeManager(object):
             session_check=self.session_check,
             repository=self.repository,
             emit=self._buffer_change,
+            recovery_gate=self.recovery_gate,
         )
         runtime._notify(RuntimeChange.CREATED)
         return runtime

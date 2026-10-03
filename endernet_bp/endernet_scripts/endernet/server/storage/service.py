@@ -106,9 +106,24 @@ try:
 except NameError:
     INTEGER_TYPES = (int,)
 
+try:  # pragma: no cover - 仅在 Python 2 下成立
+    _TEXT_TYPES = (str, unicode)
+except NameError:  # pragma: no cover - 仅在 Python 3 下成立
+    _TEXT_TYPES = (str,)
+
 
 #: `NetworkNode.has_capability` 用的能力名。与 `devices/capabilities.py` 一致。
 STORAGE_PROVIDER_CAPABILITY = "storage_provider"
+
+#: 网络级台账的存档结构版本（12-04）。**与节点记录分开**：预留与去重账本
+#: 是网络级的，写进某个节点的记录会在多驱动器网络里存成互相不一致的多份。
+NETWORK_STATE_SCHEMA_VERSION = 1
+
+#: 网络级台账的存档记录类型。主键是主控的**位置文本**（`node_key_text`）。
+#: 位置稳定而主控实例代次不持久，因此按位置找得回「这个位置曾经有一条网络
+#: 台账」；而同位置重放的新主控**不会继承旧身份**——它读到的是一份待复核
+#: 记录，不是可以续跑的状态（12 验收）。
+NETWORK_RECORD_KIND = "endernet.network_state"
 
 
 class MountRecord(object):
@@ -193,6 +208,27 @@ class Reservation(object):
             ],
             "tick": self.tick,
         }
+
+    @classmethod
+    def from_dict(cls, data):
+        # type: (dict) -> Reservation
+        """`to_dict` 的逆。**用于存档审计，不用来复活预留**。
+
+        「复活一份没有主的预留」会让库存被一条已经跑完（或已经作废）的订单
+        永久锁住（见 `StorageService.import_network_state`）。
+        """
+        parts = tuple(
+            (item["medium_id"], int(item["count"]))
+            for item in data.get("parts", ())
+        )
+        return cls(
+            data["reservation_id"],
+            data.get("owner_id"),
+            ResourceKey.from_dict(data["key"]),
+            data["count"],
+            parts,
+            data.get("tick", 0),
+        )
 
     def __repr__(self):
         return "Reservation(%s, %s x%d)" % (self.reservation_id, self.owner_id, self.count)
@@ -303,6 +339,9 @@ class StorageService(NetworkService):
         #: `medium_id -> {ResourceKey: count}`，由 `parts` 派生。
         self._medium_reserved = {}
         self._reservation_seq = 0
+        #: 存档里带回来、但**没有复活**的预留（12-04）。它们不属于任何在跑的
+        #: 订单，复活等于把库存锁给一条永远不会再动的订单。
+        self._archived_reservations = []
         self._clock_tick = 0
         self._ledger = RequestLedger(ledger_policy)
         self.stats = {
@@ -569,6 +608,92 @@ class StorageService(NetworkService):
         """
         return None
 
+    # -- 网络级台账（12-04）--------------------------------------------
+
+    def export_network_state(self):
+        # type: () -> dict
+        """导出**网络级**的存档载荷：预留、待核对转移、预留发号水位。
+
+        与 `save_node_data` 是两条路：那个是「节点私有数据」，按节点存；
+        这个是「整张网络共一份的数据」，按网络存。混在一起会让预留台账
+        在多驱动器网络里存成互相不一致的多份——那正是这里单开一条的理由。
+
+        **去重账本不在这里**：它是「本进程内这次请求有没有做过」的短期记忆
+        （保留期 900 帧），跨重启复活一份旧账本只会让新请求被当成重放。
+        """
+        return {
+            "schema_version": NETWORK_STATE_SCHEMA_VERSION,
+            "network_id": self._network_id(),
+            "reservation_seq": self._reservation_seq,
+            "reservations": [
+                item.to_dict() for item in self._ordered_reservations() if item.active
+            ],
+            "pending_transfers": (
+                self._transfer.export_pending() if self._transfer is not None else []
+            ),
+        }
+
+    def import_network_state(self, payload):
+        # type: (dict) -> dict
+        """读回网络级台账。返回处置统计。
+
+        **预留不复活。** 预留服务于在途订单，而订单一律不跨主控实例续跑
+        （12-04 的保守口径）——一份没有主的预留会把库存永久锁住，比丢了它
+        更糟。这里把存档里的预留**记进诊断等人工处置**，并把
+        `reservation_seq` 水位抬到已见过的最大号之上，避免新预留撞号。
+
+        **待核对转移照常恢复**，但**只恢复成「待核对」，绝不重放**——
+        那正是 12-07 的要求：可能成功但未能确认的记录必须停住等人查。
+        """
+        stats = {
+            "reservations_archived": 0,
+            "pending_restored": 0,
+            "reservation_seq": self._reservation_seq,
+        }
+        if not isinstance(payload, dict):
+            return stats
+        for raw in payload.get("reservations", ()) or ():
+            try:
+                reservation = Reservation.from_dict(raw)
+            except (KeyError, TypeError, ValueError):
+                continue
+            self._archived_reservations.append(reservation.to_dict())
+            stats["reservations_archived"] += 1
+            # 水位抬高：不复活但也不撞号。号里的序号是可以复用的边界，
+            # 撞号会让「同一 owner 的两份预留」共用 ID。
+            sequence = self._reservation_sequence(reservation.reservation_id)
+            if sequence > self._reservation_seq:
+                self._reservation_seq = sequence
+        if self._transfer is not None:
+            stats["pending_restored"] = self._transfer.import_pending(
+                payload.get("pending_transfers", ())
+            )
+        stats["reservation_seq"] = self._reservation_seq
+        return stats
+
+    def _reservation_sequence(self, reservation_id):
+        # type: (str) -> int
+        """从 `"<owner>:<n>"` 里取序号。读不出返回 0。
+
+        **必须同时认 `str` 与 `unicode`**：存档里的字符串是
+        `json.dumps(ensure_ascii=True)` 写出去的，`json.loads` 在 py2 里
+        读回来的是 `unicode`——只判 `str` 的实现会在这里**静默返回 0**，
+        于是水位永远抬不起来，重进世界后的新预留与旧预留撞号。
+        （真机实测撞到过：`archived_reservations` 有记录，而水位是 0。）
+        """
+        if not isinstance(reservation_id, _TEXT_TYPES):
+            return 0
+        _, _, tail = reservation_id.rpartition(":")
+        try:
+            return int(tail)
+        except (TypeError, ValueError):
+            return 0
+
+    def archived_reservations(self):
+        # type: () -> list
+        """存档里带回来、但没有复活的预留（12-04 的待复核记录）。"""
+        return [dict(item) for item in self._archived_reservations]
+
     def status(self):
         # type: () -> dict
         return {
@@ -591,6 +716,9 @@ class StorageService(NetworkService):
                 "keys": len(self.item_totals),
                 "dirty": len(self.dirty_items),
                 "reservations": len(self._reservations),
+                #: 存档带回来、没有复活的预留（12-04）。**非空不等于故障**：
+                #: 它说明上一次退出时还有在途订单压着这些资源，等人工处置。
+                "archived_reservations": len(self._archived_reservations),
                 "index_version": self.index_version,
                 "publish_version": self.publish_version,
                 "clock_tick": self._clock_tick,

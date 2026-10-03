@@ -2759,6 +2759,33 @@ class FactoryService(NetworkService):
         """
         return self.executor.stage_inputs(node_key, key, count, op_id)
 
+    def export_order_book(self):
+        # type: () -> dict
+        """订单簿 + 等待产物台账的**纯数据快照**（12-04）。
+
+        两个台账在同一份载荷里进出，**不单独恢复一个计数**：订单 ID 序号
+        （`seq`）与订单条目一起存，等待台账与它们所等的执行实例一起存。
+        恢复后订单不续跑（保守口径），因此这份快照的用途是**可复核记录**。
+
+        `attach()` 之前 `orders` 为 `None`（服务还没绑到运行时），
+        此时返回一份合法的空簿——不返回 `None`：那会让调用方以为
+        「这个网络没有订单」与「这个网络还没装配」是同一件事。
+        """
+        book = (
+            self.orders.export_book()
+            if self.orders is not None
+            else {"component_id": None, "seq": 0, "orders": []}
+        )
+        book["waiting"] = self.waiting.export_book()
+        book["master_instance_id"] = self._master_instance_id()
+        return book
+
+    def _master_instance_id(self):
+        # type: () -> object
+        runtime = self.runtime
+        master = getattr(runtime, "master", None) if runtime is not None else None
+        return getattr(master, "instance_id", None)
+
     def status(self):
         # type: () -> dict
         return {

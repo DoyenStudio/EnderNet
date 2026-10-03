@@ -35,6 +35,7 @@
 """
 
 from ..common.crafting_recipe import SLOT_COUNT
+from ..common.identity import node_key_text
 from ..common.definitions import (
     CATEGORY_ASSEMBLY,
     CATEGORY_MEMORY,
@@ -43,12 +44,15 @@ from ..common.definitions import (
     DefinitionSet,
 )
 from ..common.protocol import (
+    BlockReason,
+    CommandResult,
     ORDER_SOURCE_FEED_DONE,
     ORDER_SOURCE_FEED_WAITING_INPUTS,
     ORDER_SOURCE_FEED_WAITING_OUTPUTS,
     ORDER_SOURCE_STAGE_DONE,
     ORDER_SOURCE_STAGE_RUNNING,
     ORDER_SOURCE_STAGE_WAITING,
+    Reason,
 )
 from ..common.resource_key import ResourceKey
 from .adapters.containers_engine import (
@@ -96,7 +100,12 @@ from .devices.io import (
 from .devices.registry import DeviceRegistry
 from .devices.memory_slot import MemorySlotStore
 from .devices.storage_driver import DriverPolicy, StorageDriverStore
-from .persistence.repository import ExtraDataRepository
+from .persistence.repository import ExtraDataRepository, Record
+from .persistence.recovery import (
+    RecoveryGate,
+    assert_consistent,
+    consistency_report,
+)
 from .network.admission import AdmissionService
 from .network.energy import DEVICE_IDLE, DEVICE_WORK, EnergyPolicy, EnergyService
 from .network.runtime import RuntimeChange, RuntimeManager
@@ -113,7 +122,11 @@ from .runtime.lifecycle import DeviceLifecycle
 from .runtime.scheduler import LogicalClock, SchedulerPolicy
 from .storage.medium import MediumPolicy
 from .storage.projection import NetworkItemProjection
-from .storage.service import StorageService
+from .storage.service import (
+    NETWORK_RECORD_KIND,
+    NETWORK_STATE_SCHEMA_VERSION,
+    StorageService,
+)
 from .storage.transfer import TransferPolicy
 from .sync.sessions import SessionContext, SessionPolicy, SessionRegistry
 from .sync.terminal import SyncPolicy, TerminalSyncHub
@@ -219,6 +232,20 @@ def _template_slot_row(index, entry, locked=False):
     row = _craft_slot_row(index, entry)
     row["locked"] = bool(locked)
     return row
+
+
+def _recovery_blocked(command, detail):
+    # type: (object, str) -> CommandResult
+    """恢复未完成时对业务命令的统一回答（12-05）。
+
+    **`blocked` 而不是 `rejected`**：这两者的区别是「等一下再来」与
+    「这个请求本身不对」。恢复期拒绝属于前者——玩家再点一次就会通过，
+    给出 `rejected` 会让界面把它当成一条永久失败。
+    """
+    return CommandResult.blocked(
+        getattr(command, "request_id", ""),
+        [BlockReason(Reason.SERVICE_NOT_READY, detail or "恢复尚未完成")],
+    )
 
 
 def _order_resource_of(key, fallback_label):
@@ -612,6 +639,22 @@ class ServerBootstrap(object):
         self.persistence_enabled = repository is not None
         #: 启动恢复失败时的原因。**失败不等于没有存档**——见 `restore_persistence`。
         self.persistence_restore_error = ""
+        #: 分阶段恢复的闸门（12-05）。**未接后端时立即开放**（没有存档要恢复，
+        #: 加一道闸只会给没有存档的装配平白加一帧延迟）；接了后端时，
+        #: 从读记录到第一次完整推进之间业务一律关闭。
+        self.recovery = RecoveryGate()
+        if not self.persistence_enabled:
+            # 没接后端 = 没有恢复这回事。**在构造期就开放**，而不是等
+            # `start()`——离线用例大量地「构造 → 直接推进运行时而从不 start」，
+            # 把开放绑在 start 上会让每一张这样的用例都多欠一帧。
+            self.recovery.mark_ready(0)
+        #: 从存档读回、还没应用到某个运行时的网络级台账。
+        #: `主控位置文本 -> 载荷`。运行时的主控一旦出现在那个位置就应用一次
+        #: （预留归档、待核对转移恢复成「待核对」），之后不再重复应用。
+        self.archived_networks = {}
+        self._network_state_applied = set()
+        #: 最近一次一致性检查的报告（`consistency_diagnostics()` 的缓存）。
+        self._consistency = None
         #: 调度策略（04-03 的轮转旋钮与 04-02 的退避数值）。
         #: **全进程只有这一份对象**：跨网轮转（`RuntimeManager`）与每个网络的
         #: `SchedulerService` 都读它。各存一份的代价是
@@ -927,6 +970,7 @@ class ServerBootstrap(object):
             session_check=session_check,
             repository=repository,
             scheduler_policy=self.scheduler_policy,
+            recovery_gate=self.recovery,
         )
         self.application = ApplicationService(
             self.runtimes,
@@ -1018,8 +1062,13 @@ class ServerBootstrap(object):
         # **恢复必须在区块发现之前。** 区块加载会带来本模组方块，
         # 每一个都走 `_emit` → `drivers.observe(ADDED)` → `ensure()`；
         # 等那些跑完再恢复，槽位就已经在空状态上建好了，介质得靠
-        # 「权威槽位里已没有它」那条路径被反复卸挂。先读记录，随后
+        # 「权威槽位里没有它」那条路径被反复卸挂。先读记录，随后
         # 区块发现幂等接管，才不会造出第二份。
+        # 12-05 的阶段一：读持久数据（`restore_persistence`）。
+        # **只有接了后端才进恢复流程**：没有存档要恢复时闸门在构造期就开着，
+        # 这里再 `begin()` 一次会把已经开放的业务重新关上一帧。
+        if self.persistence_enabled:
+            self.recovery.begin()
         self.restore_persistence()
         if bind_engine:
             # 顺序是有意的：先把本模组方块加入移除事件白名单，再注册监听器，
@@ -1139,6 +1188,13 @@ class ServerBootstrap(object):
         self.tick_count += 1
         backfilled = self._advance_backfill()
         drained, changes = self._drain_events()
+        # 12-05 的阶段二..七：设备已由上面的补查/事件消费对过账（区块发现
+        # 带来的设备注册就在这一步），此后才可以开放业务。
+        # **必须在 `topology.advance` 之前**：拓扑发布会立刻触发运行时同步
+        # 与 `open_if_ready`，那时闸门若还关着，第一帧就白白被拒一次——
+        # 而拓扑若确实还没重建完，`open_if_ready` 会照旧以「分量正在重建」
+        # 把运行时关着，与本闸门无关。
+        self._finish_recovery()
         # 事件消费完再重建：同帧的多次变化只算一次重建（02-02）。
         rebuild = self.topology.advance(self.rebuild_steps_per_tick)
         # 唤醒投递必须夹在**重建之后、推进之前**：放前面会丢掉「本帧刚放下、
@@ -1150,6 +1206,10 @@ class ServerBootstrap(object):
         # → 服务推进。顺序不能倒——先在旧图上推进服务，等于让它们按已经
         # 不成立的归属动手。
         service_steps = self.runtimes.tick(self.runtime_budget, self._tick_context())
+        # 主控刚在这一帧出现：把存档里属于**这个位置**的网络台账应用上去
+        # （预留归档、待核对转移恢复成待核对）。晚于本帧的业务一帧，
+        # 但台账里只有**已经发生过**的待核对记录，不影响本帧任何搬运的正确性。
+        network_states_applied = self._apply_archived_network_states()
         # 发布窗口**紧跟运行时推进**（任务 11-02）：提交发生在 `runtimes.tick`
         # 内，取脏键放其后，窗口才看得见本帧提交。放前面会让本帧的提交等到
         # 下一帧才发布——那不是错，只是白慢一拍；放后面则更快。位置不能挪。
@@ -1202,6 +1262,9 @@ class ServerBootstrap(object):
             #: 没有脏记录时一次 `SaveExtraData()` 都不发。
             "persisted_records": persisted["records"],
             "persisted_commits": persisted["commits"],
+            #: 本帧应用了几份网络级台账（12-04/12-05）。恒为 0 是正常的——
+            #: 只在某张网络的主控第一次出现时应用一次。
+            "network_states_applied": network_states_applied,
             "runtimes": len(self.runtimes.runtimes()),
             "queue": self.queue.stats(),
         }
@@ -1210,24 +1273,96 @@ class ServerBootstrap(object):
 
     def restore_persistence(self):
         # type: () -> dict
-        """启动时读回驱动器与介质。**没接后端时是空操作。**
+        """启动时读回驱动器/介质、接口、网络级台账。**没接后端时是空操作。**
 
         失败时**拒绝继续、也不清任何内存状态**，并把原因留在诊断里。
         把读不出的存档当成空存档继续，是最坏的一种处置：随后每一次
         `save_to_repository` 都会把读不出的那部分覆盖掉——那正是
         「未知新版本被当作空库存」的整机版本。
+
+        三份记录**一次读完**（12-05 的阶段一）：驱动器的槽位会决定接口缓冲
+        挂在哪些位置上、网络台账里的预留又引用着哪些介质，分开读会让
+        「读到一半」变成一个没有名字的中间态。
         """
         if not self.persistence_enabled:
             return {"enabled": False, "ok": True, "detail": ""}
         try:
-            stats = self.drivers.restore_from_repository(self.repository)
+            stats = {
+                "drivers": self.drivers.restore_from_repository(self.repository),
+                "ports": self.ports.restore_from_repository(self.repository),
+                "networks": self._restore_network_records(),
+            }
         except Exception as error:
             self.persistence_restore_error = "%s: %s" % (type(error).__name__, error)
+            self.recovery.note_restored(False, self.persistence_restore_error)
             return {"enabled": True, "ok": False, "detail": self.persistence_restore_error}
         self.persistence_restore_error = ""
         # 恢复成功之后才切持久 ID 发号：水位要抬到存档里已有的最大序号之上。
         self.drivers.use_durable_ids()
+        self.recovery.note_restored(
+            True, "驱动器 %d、接口 %d、网络台账 %d"
+            % (
+                stats["drivers"].get("drivers", 0),
+                stats["ports"].get("ports", 0),
+                stats["networks"],
+            )
+        )
         return {"enabled": True, "ok": True, "detail": "", "stats": stats}
+
+    def _restore_network_records(self):
+        # type: () -> int
+        """把网络级台账读进 `archived_networks`，**先不应用到任何运行时**。
+
+        此时运行时还没建（它们是拓扑重建之后才出现的），因此这里只负责
+        「读回来、放在手边」；真正应用发生在某张网络的主控出现的那一刻
+        （见 `_apply_archived_network_states`）。
+        """
+        count = 0
+        for record_id in self.repository.list_ids(NETWORK_RECORD_KIND):
+            record = self.repository.load(NETWORK_RECORD_KIND, record_id)
+            if record is None or not isinstance(record.payload, dict):
+                continue
+            archive = dict(record.payload)
+            archive["_read_only"] = bool(record.read_only)
+            self.archived_networks[record_id] = archive
+            count += 1
+        return count
+
+    def _apply_archived_network_states(self):
+        # type: () -> int
+        """把存档里的网络台账应用到刚出现的主控所在的那张网络上。
+
+        **每张网络只应用一次**（按主控位置文本去重）。应用的内容按
+        `StorageService.import_network_state` 的口径：预留**归档不复活**、
+        待核对转移**恢复成待核对但不重放**。
+        """
+        applied = 0
+        for runtime in self.runtimes.runtimes():
+            master = runtime.master
+            if master is None:
+                continue
+            record_id = node_key_text(master.ref.node_key)
+            if record_id in self._network_state_applied:
+                continue
+            archive = self.archived_networks.get(record_id)
+            # 无论有没有存档，都记下「这张网络已经对过账」——没有存档时
+            # 重复检查只是白跑，有存档时更不能应用第二次。
+            self._network_state_applied.add(record_id)
+            if archive is None:
+                continue
+            storage = runtime.services.get(ServiceId.STORAGE)
+            if not isinstance(storage, StorageService):
+                # 存储槽位是替身（离线装配）：没有地方应用这份台账。
+                continue
+            # 记录里是**装配层的一层信封** `{storage, orders}`：那是为了把
+            # 网络级台账与订单簿放在**同一条边界**里进出（避免单独恢复一个
+            # 计数）。存储服务要的是里面那一份，不是信封本身。
+            storage_payload = archive.get("storage")
+            if isinstance(storage_payload, dict):
+                storage.import_network_state(storage_payload)
+            runtime.stats["network_state_restored"] = 1
+            applied += 1
+        return applied
 
     def advance_persistence(self):
         # type: () -> dict
@@ -1239,20 +1374,90 @@ class ServerBootstrap(object):
         """
         if not self.persistence_enabled:
             return {"records": 0, "commits": 0}
-        records = self.drivers.save_to_repository(
-            self.repository, budget=self.persistence_batch
-        )
+        # 预算是**两家分**（驱动器与接口各一半），不是先到先得：轮流让一家
+        # 吃满的话，另一家在「那一类一直有脏记录」的网络里会永远排不上队，
+        # 而症状是「有些设备的改动就是不落盘」，查起来毫无线索。
+        half = max(1, self.persistence_batch // 2)
+        records = self.drivers.save_to_repository(self.repository, budget=half)
+        records += self.ports.save_to_repository(self.repository, budget=half)
         committed = self.repository.commit()
         return {"records": records, "commits": 1 if committed else 0}
 
     def flush_persistence(self):
         # type: () -> int
-        """把剩下的脏记录一次写完。**停机路径用，不限预算。**"""
+        """把剩下的脏记录一次写完。**停机路径用，不限预算。**
+
+        网络级台账（预留、待核对转移、订单簿）**只在这里写**（以及显式调用
+        `write_network_states()` 时）：它是**审计与复核记录**，不是可续跑的
+        状态——订单本就不跨主控实例续跑，因此它落后最后一次改动不影响正确性。
+        每帧写它反而会把「订单簿有多大」变成每帧的开销。
+        """
         if not self.persistence_enabled:
             return 0
         records = self.drivers.save_to_repository(self.repository, budget=None)
+        records += self.ports.save_to_repository(self.repository, budget=None)
+        records += self.write_network_states()
         self.repository.commit()
         return records
+
+    def write_network_states(self):
+        # type: () -> int
+        """把每张网络的台账写进存档。返回写了多少条。
+
+        **一张网络一条记录**，主键是主控位置文本。冻结（信封读不懂）的那些
+        不写回——与驱动器/介质同一条纪律。
+        """
+        written = 0
+        for runtime in self.runtimes.runtimes():
+            master = runtime.master
+            if master is None:
+                continue
+            record_id = node_key_text(master.ref.node_key)
+            archive = self.archived_networks.get(record_id)
+            if archive is not None and archive.get("_read_only"):
+                continue
+            storage = runtime.services.get(ServiceId.STORAGE)
+            factory = runtime.services.get(ServiceId.FACTORY)
+            payload = {
+                "schema_version": NETWORK_STATE_SCHEMA_VERSION,
+                "kind": "network_state",
+                "storage": (
+                    storage.export_network_state()
+                    if isinstance(storage, StorageService) else None
+                ),
+                "orders": (
+                    factory.export_order_book()
+                    if isinstance(factory, FactoryService) else None
+                ),
+            }
+            self.repository.write(
+                Record(NETWORK_RECORD_KIND, record_id, payload)
+            )
+            written += 1
+        return written
+
+    def _finish_recovery(self):
+        # type: () -> None
+        """第一次完整推进之后开放业务（12-05 的阶段七）。幂等。"""
+        if self.recovery.is_open():
+            return
+        if not self.started:
+            return
+        self.recovery.mark_ready(self.tick_count)
+
+    def consistency_diagnostics(self):
+        # type: () -> dict
+        """跨层一致性检查（12-08）。**只读、不改**，结果缓存一份。"""
+        report = consistency_report(self)
+        self._consistency = report
+        return report
+
+    def assert_consistent(self):
+        # type: () -> dict
+        """一致性问题非空时抛错。**只应在验收时显式调用。**"""
+        report = assert_consistent(self)
+        self._consistency = report
+        return report
 
     def persistence_diagnostics(self):
         # type: () -> dict
@@ -1273,6 +1478,18 @@ class ServerBootstrap(object):
             "durable_medium_ids": self.drivers.diagnostics()["durable_medium_ids"],
             "pending_archive_writes": self.drivers.pending_archive_writes(),
             "archive": dict(self.drivers.archive_stats),
+        }
+        report["ports"] = {
+            "pending_archive_writes": self.ports.pending_archive_writes(),
+            "pending_states": self.ports.diagnostics()["pending_states"],
+            "frozen_ports": self.ports.diagnostics()["frozen_ports"],
+            "archive": dict(self.ports.archive_stats),
+        }
+        #: 分阶段恢复的当前阶段（12-05）。**`ready` 之前业务一律被拒。**
+        report["recovery"] = self.recovery.diagnostics()
+        report["networks"] = {
+            "archived": sorted(self.archived_networks),
+            "applied": sorted(self._network_state_applied),
         }
         report["repository"] = self.repository.diagnostics()
         if self.persistence_restore_error:
@@ -2037,6 +2254,13 @@ class ServerBootstrap(object):
             "energy": self.energy_diagnostics(),
             "sync": self.sync_diagnostics(),
             "persistence": self.persistence_diagnostics(),
+            #: 分阶段恢复的阶段与可复现记录（12-05），以及跨层一致性检查
+            #: （12-08）。两者都只读。
+            "recovery": self.recovery.diagnostics(),
+            "consistency": (
+                self._consistency if self._consistency is not None
+                else consistency_report(self)
+            ),
             "world": self.world.diagnostics(),
             "scope_note": (
                 "已装配任务 01 的设备层、任务 02 的拓扑/负载层、任务 03 的主控/运行时、"
@@ -2063,10 +2287,15 @@ class ServerBootstrap(object):
                 "也不是机器坏了，是**这条装配没有把 10 接上**"
                 "（游戏内由 `start_server()` 接上）；"
                 "装配仓执行是 07-06，它的回流入口已备好但仍无调用方。"
-                "存档后端**已接入驱动器与介质**（12-03，世界 ExtraData）："
-                "接了 `persistence_backend` 时，驱动器槽位与介质内容会随存档"
-                "走，重进世界按位置重挂；**接口缓冲、订单与预留凭据仍未存**"
-                "（12-04），分阶段恢复（12-05）与拆除掉落（12-06）也没做。"
+                "存档后端**已接入驱动器/介质、接口与网络级台账**（12-03/12-04，"
+                "世界 ExtraData）：接了 `persistence_backend` 时，驱动器槽位、"
+                "介质内容、接口配置/缓冲归属/批次/待核对标记都会随存档走，"
+                "重进世界**按位置重挂**；分阶段恢复（12-05）在读完记录到第一次"
+                "完整推进之间**不接受新存取**。"
+                "**订单与预留不跨主控实例复活**：它们随网络台账存下来供复核，"
+                "恢复成为「待复核记录」而不是可续跑的状态——一份没有主的预留"
+                "会把库存永久锁住。**待核对的外部投料恢复成待核对但不重放**"
+                "（12-07）。拆除时接口记录删掉、余料另存一条处置留痕（12-06）。"
                 "没接后端时 `persistence` 那一节会如实报 `enabled: False`。"
                 "界面同步**只接了底座**——"
                 "会话与消息协议、快照与增量、长列表模型已完成，但没有任何一面"
@@ -2097,8 +2326,8 @@ class ServerBootstrap(object):
         )
         report["scope_note"] = (
             "介质挂载、汇总索引、预留与受控读写已实现并通过离线断言；"
-            "存档后端（12）与界面同步（11）未接入，因此这些能力目前只有"
-            "领域层的证据，没有游戏内的证据。"
+            "驱动器/介质（12-03）与接口/网络台账（12-04）已接真实存档后端，"
+            "界面同步（11）已接入；接口接触真实引擎那一段仍只有部分游戏内证据。"
             "**06 的转移协调器已经可用，但介质装卸还没有改走它**："
             "`mount` 仍按 05 的路径（`create_medium(model_id)` + `provider.mount`），"
             "因为「介质物品如何携带身份」是 12-02 尚未做出的决定——"
@@ -2401,7 +2630,14 @@ class ServerBootstrap(object):
         领域层按纪律不吞异常（缺陷要在自己的层次炸出来），但这一层接着的
         是每帧数十次的引擎回调，抛回去会刷屏并让后续帧全废。因此异常在
         `ApplicationService.submit` 里被转成 `rejected INTERNAL`。
+
+        **恢复未完成时在这里直接拒掉**（12-05）。设备发起的命令走的是
+        主控那条路，由主控的 `master_recovering` 挡（见 `NetworkRuntime`
+        的 `recovery_gate`）；这一道是**玩家/终端**那条路的对应闸门，
+        两条路都要挡，否则界面绕开主机状态就能在恢复期改库存。
         """
+        if self.started and not self.recovery.is_open():
+            return _recovery_blocked(command, self.recovery.blocker())
         return self.application.submit(command)
 
 

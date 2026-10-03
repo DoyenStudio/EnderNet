@@ -34,7 +34,7 @@ from ...common.definitions import (
     PICKUP_FILTER_LIMIT,
     TEMPLATE_PATTERN_SLOT_COUNT,
 )
-from ...common.identity import FACING_NAMES, FACING_OFFSETS, NodeKey
+from ...common.identity import FACING_NAMES, FACING_OFFSETS, NodeKey, node_key_text
 from ...common.protocol import (
     BlockReason,
     CommandKind,
@@ -49,6 +49,7 @@ from ...common.protocol import (
     TransferStatus,
 )
 from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
+from ..persistence.repository import Record
 from .capabilities import (
     FLUID_PORT,
     ITEM_PORT,
@@ -152,6 +153,16 @@ DEFAULT_STACK_LIMIT = 64
 #: **工厂样板专用槽**（原料缓冲改为独立的内存缓冲）。因此 v1 的样板口记录
 #: **不能按新语义解释**——任务 12 要为它写迁移，在那之前只标记、保留原载荷。
 PORT_STATE_SCHEMA_VERSION = 2
+
+#: 接口状态的存档记录类型。**一条接口一条记录**，主键是位置文本
+#: （`node_key_text`）——理由与驱动器槽位同：位置稳定，设备代次不持久。
+PORT_RECORD_KIND = "endernet.port_state"
+
+#: 拆除时余料的处置记录（12-06）。**与接口记录分开存**：接口记录在拆除时
+#: 被删掉（同位置重放不继承），而「这里曾经有一台接口、缓冲里还剩 N 件」
+#: 是必须留在档里的事实——R05 定案后要据此决定掉落还是保管。
+#: 主键同样是位置文本，同一位置多次拆除时保留最新一条。
+PORT_DISPOSAL_RECORD_KIND = "endernet.port_disposal"
 
 #: 缓冲的存放形态。**「没有内部槽」与「有槽但是空的」必须分得开**——
 #: 前者是还没有内部存放处，后者只是当前恰好为空。
@@ -760,7 +771,11 @@ class PortItemPort(object):
                 op_id, count, 0, TransferStatus.REFUSED, Reason.NO_CONTAINER,
                 resource_key,
             )
-        return endpoint.commit_insert(op_id, resource_key, count, "", ORIGIN_EXTERNAL)
+        receipt = endpoint.commit_insert(
+            op_id, resource_key, count, "", ORIGIN_EXTERNAL
+        )
+        self._note_side_effect(receipt)
+        return receipt
 
     def extract(self, op_id, resource_key, count):
         # type: (str, ResourceKey, int) -> TransferReceipt
@@ -771,7 +786,23 @@ class PortItemPort(object):
                 op_id, count, 0, TransferStatus.REFUSED, Reason.NO_CONTAINER,
                 resource_key,
             )
-        return endpoint.commit_extract(op_id, resource_key, count)
+        receipt = endpoint.commit_extract(op_id, resource_key, count)
+        self._note_side_effect(receipt)
+        return receipt
+
+    def _note_side_effect(self, receipt):
+        # type: (object) -> None
+        """外部物流动了**本地缓冲**就标脏。
+
+        只对「对外那一侧是缓冲」的角色标：其余角色（存货口/取货口）的对外
+        动作打在朝向容器上，那是别人的箱子，与这台接口的存档无关。
+        """
+        if (
+            self.state.role in BUFFER_AS_EXTERNAL_SIDE
+            and receipt is not None
+            and receipt.moved > 0
+        ):
+            self.ports.note_changed(self.state)
 
     def describe(self):
         # type: () -> dict
@@ -934,27 +965,19 @@ class PortState(object):
 
     def to_dict(self):
         # type: () -> dict
-        """**存档结构**（任务 12 的入口），同时兼任状态视图。
+        """**状态视图**（界面与诊断）。比存档多了统计、能力清单与几何投影。
 
-        包含缓冲的**完整批次表**而不是一份概览：批次上的 `origin` 与 `op_id`
-        是「这份资源算不算外部输入」的唯一依据，丢了它就只能靠猜。
+        真正的存档走 `archive_payload()`：那一份**不含统计计数**。计数每帧
+        都在变，写进记录会让「这台接口的存档」每次都不一样，发布去重与
+        「改动才写盘」两件事同时失效。
         """
         target = self.target_key()
-        return {
+        view = self.archive_payload()
+        view.update({
             "node_key": self.node_key.to_dict(),
-            "device_id": self.device_id,
-            "role": self.role,
             "generation": self.ref.generation,
             "loaded": self.loaded,
-            "facing": self.facing,
             "target": target.to_dict() if target is not None else None,
-            "config": self.config.to_dict(),
-            "hold": self.hold,
-            "hold_detail": self.hold_detail,
-            "schema_version": PORT_STATE_SCHEMA_VERSION,
-            "batch": self.batch.to_dict() if self.batch is not None else None,
-            "buffer_kind": self.buffer_kind,
-            "buffer": self.buffer.to_dict() if self.buffer is not None else None,
             "buffer_summary": (
                 self.buffer.describe() if self.buffer is not None else None
             ),
@@ -962,6 +985,31 @@ class PortState(object):
             # 「这台设备到底提供了什么」，而不是看定义表里的标签。
             "capabilities": sorted(self.capabilities.names()),
             "stats": dict(self.stats),
+        })
+        return view
+
+    def archive_payload(self):
+        # type: () -> dict
+        """**存档结构**（任务 12 的入口）。不含任何随帧变化的计数。
+
+        包含缓冲的**完整批次表**而不是一份概览：批次上的 `origin` 与 `op_id`
+        是「这份资源算不算外部输入」的唯一依据，丢了它就只能靠猜。
+
+        `device_id` 必须存：同位置**换了方块**时，记录不得被新设备继承
+        （那会把一台取货口的缓存配置装到一台存货口上）；`role` 由它推出，
+        存下来只是为了恢复时不必再查定义表。
+        """
+        return {
+            "schema_version": PORT_STATE_SCHEMA_VERSION,
+            "device_id": self.device_id,
+            "role": self.role,
+            "facing": self.facing,
+            "config": self.config.to_dict(),
+            "hold": self.hold,
+            "hold_detail": self.hold_detail,
+            "batch": self.batch.to_dict() if self.batch is not None else None,
+            "buffer_kind": self.buffer_kind,
+            "buffer": self.buffer.to_dict() if self.buffer is not None else None,
         }
 
     def __repr__(self):
@@ -1006,6 +1054,31 @@ class PortStore(object):
             "unrecovered": 0,
             "disposed": 0,
         }
+        # -- 存档（12-04）------------------------------------------------
+        #: 还没写进存档的接口 `node_key` 文本。**谁改状态谁调
+        #: `note_changed`**，不由扫描兜底：漏标一次的表现是「改了没存」，
+        #: 而那种缺陷要等到重进世界才看得见。
+        self._dirty_ports = set()
+        #: 已拆除、**待从存档里删掉**的接口。
+        self._removed_ports = set()
+        #: 从存档读回、还没等到对应设备被区块发现的接口载荷。
+        #: `node_key 文本 -> 载荷 dict`。位置稳定，设备代次不持久，
+        #: 因此必须等 `ensure()` 拿到新实例时按位置装上。
+        self._pending_states = {}
+        #: 信封版本过新、只能原样保留的接口记录：槽位/配置照最好猜测应用，
+        #: 但**不写回也不删除**——写回会把只存在于新版本里的字段抹掉。
+        self._frozen_ports = set()
+        #: 载荷读不动的接口记录（未知结构 / 超出容量）。原样留档，等人工处置。
+        self._unrecovered_records = []
+        self.archive_stats = {
+            "port_writes": 0,
+            "port_deletes": 0,
+            "restored_ports": 0,
+            "disposal_writes": 0,
+        }
+        #: 待写盘的处置记录位置（12-06）。**只增不减**：它是历史事实。
+        self._dirty_disposals = set()
+        self._disposals = {}
 
     # -- 状态 ----------------------------------------------------------
 
@@ -1085,7 +1158,33 @@ class PortStore(object):
         self._register_capabilities(state)
         self._states[ref.node_key.as_key()] = state
         self.stats["created"] += 1
+        # 存档里等着这台设备的配置/缓冲/批次：**按位置装**，位置稳定而代次不。
+        self._apply_pending_state(state)
         return state
+
+    def _apply_pending_state(self, state):
+        # type: (PortState) -> bool
+        """把存档里等着这台设备的接口状态装上。**只认位置，不认代次。**
+
+        两道拒绝：
+        - **型号不同**（同位置换成了别的方块）不装——那不是同一台设备，
+          把取货口的缓存配置装到存货口上会让它按错误的语义工作；
+        - 载荷读不动（`_unrecovered`）不装——**不当空配置**，原样留在档里。
+
+        装完之后**不标脏**：刚读回来的东西立刻写回去是纯浪费，而且会让
+        「读不懂的记录永不写回」那条闸多一条绕过的路径。
+        """
+        key = node_key_text(state.node_key)
+        raw = self._pending_states.get(key)
+        if raw is None:
+            return False
+        if raw.get("device_id") != state.device_id:
+            # 位置还在，但换成了别的方块：记录**不装也不删**，等下一次
+            # 那台新设备写出自己的记录时自然覆盖（12-06 的替换处置）。
+            return False
+        self._apply_archive(state, raw)
+        self._pending_states.pop(key, None)
+        return True
 
     def _register_capabilities(self, state):
         # type: (PortState) -> None
@@ -1148,7 +1247,23 @@ class PortStore(object):
             report["tick"] = self.tick
             self._disposed.append(report)
             self.stats["disposed"] += report.get("held", 0)
+        key = node_key_text(state.node_key)
+        if state.buffer is not None and state.buffer.total() > 0:
+            # 处置报告落盘：接口记录马上要被删掉，这份留痕是「东西还在」
+            # 的唯一凭据（见 `PORT_DISPOSAL_RECORD_KIND`）。
+            self._disposals[key] = self._disposed[-1]
+            self._dirty_disposals.add(key)
         self._states.pop(ref.node_key.as_key(), None)
+        # 接口记录**删掉而不是写空**：同位置重放的新接口不得继承旧的配置、
+        # 缓冲归属与批次（12 验收「同一位置拆后重放……不会自动继承」）。
+        # 缓冲里剩下的东西已经记进 `_disposed`（R05 未定，只报告不动作），
+        # 那份**不随记录一起删**——它是「东西还在，归谁待定」的唯一凭据。
+        self._dirty_ports.discard(key)
+        self._pending_states.pop(key, None)
+        # 信封读不懂的那些**连删都不删**：那份存档不是本构建写的，
+        # 凭什么断定「这台接口现在该从档案里消失」。
+        if key not in self._frozen_ports:
+            self._removed_ports.add(key)
         self.stats["dropped"] += 1
         return state
 
@@ -1256,7 +1371,30 @@ class PortStore(object):
             return False
         state.config = config
         self.project(state)
+        self.note_changed(state)
         return True
+
+    def note_changed(self, state):
+        # type: (PortState) -> None
+        """标脏一台接口。**谁改状态谁调**，不由扫描兜底。
+
+        与 `StorageDriverStore.note_medium_changed` 同形：漏标一次的表现是
+        「改了没存」，而那种缺陷要等到重进世界才看得见。信封版本过新、
+        只能原样保留的记录**跳过**（见 `_frozen_ports`）。
+        """
+        if state is None:
+            return
+        key = node_key_text(state.node_key)
+        if key in self._frozen_ports:
+            return
+        # `_states` 的键是 `as_key()` 元组，而存档键是位置文本——两套键
+        # 不能混用（早先这里拿文本去 `in self._states`，于是**永远为假**，
+        # 一条记录都标不脏）。
+        if self._states.get(state.node_key.as_key()) is not None:
+            self._dirty_ports.add(key)
+            # **撤销待删除**：同一局里「拆掉 → 又放一台」时，删除意图必须
+            # 作废，否则保存顺序（先写后删）会让这台新设备的记录刚写下就被删。
+            self._removed_ports.discard(key)
 
     # -- 容器 ----------------------------------------------------------
 
@@ -1377,14 +1515,39 @@ class PortStore(object):
             state = self.ensure(record.ref, record.device_id, record.facing)
             if state is None:
                 continue
-            if raw.get("config"):
-                state.config = PortConfig.from_dict(raw["config"])
-            if raw.get("batch"):
-                state.batch = BatchState.from_dict(raw["batch"])
-            self._restore_buffer(state, raw)
+            self._apply_archive(state, raw)
             self.project(state)
             restored += 1
         return restored
+
+    def _apply_archive(self, state, raw):
+        # type: (PortState, dict) -> bool
+        """把一份接口载荷装到一台**已经存在**的 state 上。
+
+        读不动的子项**不装**、原样留痕：把一份读不懂的批次表当空批次，
+        等于把「外部机器投了一半」这件事抹成「没投过」。
+        """
+        if raw.get("config"):
+            try:
+                state.config = PortConfig.from_dict(raw["config"])
+            except (KeyError, TypeError, ValueError) as error:
+                self._note_bad_record(state, "config", error)
+                return False
+        # **待核对标记必须存**（12-07）：不确定的外部投料重进世界后
+        # 仍然要停在那条通路上，不得因为「重开了一次」而开始自动重试。
+        hold = raw.get("hold") or ""
+        state.hold = hold
+        state.hold_detail = raw.get("hold_detail") or ""
+        if raw.get("batch"):
+            try:
+                state.batch = BatchState.from_dict(raw["batch"])
+            except (KeyError, TypeError, ValueError) as error:
+                self._note_bad_record(state, "batch", error)
+        if not state.facing:
+            # 朝向以世界读数为准；读不到时才退回存档里那一份（存档只是兜底）。
+            state.facing = raw.get("facing")
+        self._restore_buffer(state, raw)
+        return True
 
     def _restore_buffer(self, state, raw):
         # type: (PortState, dict) -> bool
@@ -1393,15 +1556,24 @@ class PortStore(object):
         try:
             buffer = TransferBuffer.from_dict(raw["buffer"])
         except (KeyError, TypeError, ValueError) as error:
-            self.stats["unrecovered"] += 1
-            self._unrecovered.append(
-                {"node_key": state.node_key.as_key(), "detail": str(error)}
-            )
+            self._note_bad_record(state, "buffer", error)
             return False
         # 物品的实际存放处不随存档走（它在方块容器里），重新挂上。
         buffer.backing = state.buffer.backing
         state.buffer = buffer
         return True
+
+    def _note_bad_record(self, state, field, error):
+        # type: (PortState, str, object) -> None
+        """读不懂的载荷：计数、留痕、原样保留。**绝不静默替换成空。**"""
+        self.stats["unrecovered"] += 1
+        entry = {
+            "node_key": state.node_key.as_key(),
+            "field": field,
+            "detail": str(error),
+        }
+        self._unrecovered.append(entry)
+        self._unrecovered_records.append(entry)
 
     def unrecovered(self):
         # type: () -> list
@@ -1416,6 +1588,124 @@ class PortStore(object):
         掉落、保管还是转交。**没有这张表就等于那批东西从诊断里消失。**
         """
         return [dict(item) for item in self._disposed]
+
+    # -- 真实后端（12-04）-----------------------------------------------
+
+    def pending_archive_writes(self):
+        # type: () -> int
+        """还没写进存档的接口/处置记录数。诊断与预算用。"""
+        return (
+            len(self._dirty_ports)
+            + len(self._removed_ports)
+            + len(self._dirty_disposals)
+        )
+
+    def save_to_repository(self, repository, budget=None):
+        # type: (object, int) -> dict
+        """把脏接口与处置记录写进存档，把拆掉的接口从档里删掉。
+
+        返回本批写了多少条。**写成功之后才摘脏**：`repository.write` 抛异常
+        （故障注入、版本过新）时记录留在脏里等下一轮重试——先摘脏再写会让
+        那次改动永远丢掉。
+        """
+        written = 0
+        for key in sorted(self._dirty_ports):
+            if budget is not None and written >= budget:
+                break
+            if key in self._frozen_ports:
+                self._dirty_ports.discard(key)
+                continue
+            state = self._by_text(key)
+            if state is None:
+                # 设备已经不在了（拆掉而没走 `drop`）。不写空，留待删除分支。
+                self._dirty_ports.discard(key)
+                continue
+            repository.write(Record(PORT_RECORD_KIND, key, state.archive_payload()))
+            self.archive_stats["port_writes"] += 1
+            self._dirty_ports.discard(key)
+            written += 1
+
+        for key in sorted(self._dirty_disposals):
+            if budget is not None and written >= budget:
+                break
+            report = self._disposals.get(key)
+            if report is None:
+                self._dirty_disposals.discard(key)
+                continue
+            repository.write(
+                Record(PORT_DISPOSAL_RECORD_KIND, key, self._disposal_payload(report))
+            )
+            self.archive_stats["disposal_writes"] += 1
+            self._dirty_disposals.discard(key)
+            written += 1
+
+        for key in sorted(self._removed_ports):
+            if budget is not None and written >= budget:
+                break
+            repository.delete(PORT_RECORD_KIND, key)
+            self._removed_ports.discard(key)
+            self.archive_stats["port_deletes"] += 1
+            written += 1
+
+        return written
+
+    def _disposal_payload(self, report):
+        # type: (dict) -> dict
+        """处置报告转成**纯数据**。
+
+        `BufferDisposition.dispose()` 已经把批次表转成 dict（含
+        `resource_key.to_dict()`），因此这里只需浅拷一份，不要再动里面的键——
+        再转一次会让「谁负责序列化」变成两处，而两处迟早会分叉。
+        """
+        return dict(report)
+
+    def restore_from_repository(self, repository):
+        # type: (object) -> dict
+        """从存档读回接口状态。返回统计。
+
+        **不立刻建接口**：位置稳定而设备代次不持久，因此载荷进
+        `_pending_states`，等 `ensure()` 拿到新实例时按 `node_key` 装上
+        （与驱动器槽位同一条纪律）。
+
+        信封版本过新 → 冻结（照最好猜测应用但不写回）；
+        载荷读不动 → 进 `_unrecovered` 并**原样留在档里**，不当空配置。
+        """
+        stats = {"ports": 0, "frozen": 0, "disposals": 0, "missing": 0}
+        for key in repository.list_ids(PORT_RECORD_KIND):
+            record = repository.load(PORT_RECORD_KIND, key)
+            if record is None or not isinstance(record.payload, dict):
+                stats["missing"] += 1
+                continue
+            if record.read_only:
+                self._frozen_ports.add(key)
+                stats["frozen"] += 1
+            self._pending_states[key] = record.payload
+            stats["ports"] += 1
+        for key in repository.list_ids(PORT_DISPOSAL_RECORD_KIND):
+            record = repository.load(PORT_DISPOSAL_RECORD_KIND, key)
+            if record is None or not isinstance(record.payload, dict):
+                stats["missing"] += 1
+                continue
+            self._disposals[key] = record.payload
+            stats["disposals"] += 1
+        self.archive_stats["restored_ports"] += stats["ports"]
+        return stats
+
+    def _by_text(self, key):
+        # type: (str) -> PortState
+        for state in self._states.values():
+            if node_key_text(state.node_key) == key:
+                return state
+        return None
+
+    def archived_states(self):
+        # type: () -> dict
+        """还没等到设备的存档载荷（诊断用）。**只读快照。**"""
+        return dict(self._pending_states)
+
+    def frozen_ports(self):
+        # type: () -> list
+        return sorted(self._frozen_ports)
 
     def diagnostics(self):
         # type: () -> dict
@@ -1444,6 +1734,13 @@ class PortStore(object):
             "policy": self.policy.describe(),
             "unresolved": self.policy.unresolved_report(),
             "disposition": self.disposition.policy_id,
+            # -- 存档（12-04）--------------------------------------------
+            "pending_archive_writes": self.pending_archive_writes(),
+            #: 存档里有、还没等到设备的接口载荷。
+            "pending_states": sorted(self._pending_states),
+            #: 信封版本过新、只能原样保留的接口记录。**它们不进任何写回路径。**
+            "frozen_ports": sorted(self._frozen_ports),
+            "archive": dict(self.archive_stats),
         }
 
     def __repr__(self):
@@ -1688,6 +1985,9 @@ class PortRunner(object):
             )
             state.stats["uncertain"] += 1
             state.stats["holds"] += 1
+            # **待核对标记落盘**（12-07）：重进世界后这条通路仍要停着，
+            # 不得因为「重开了一次」就开始自动重试。
+            self.ports.note_changed(state)
             return PollOutcome(False, 0)
 
         if moved > 0:
@@ -1721,6 +2021,7 @@ class PortRunner(object):
         detail = "已解除待核对标记（原因：%s）" % (state.hold,)
         state.hold = ""
         state.hold_detail = ""
+        self.ports.note_changed(state)
         return True, detail
 
     def status(self, ref):
@@ -1905,7 +2206,14 @@ class PortDispatcher(object):
                 [BlockReason(Reason.UNSUPPORTED, "未登记的接口角色 %r" % (role,))],
             )
         self.stats["dispatches"] += 1
-        return handler(state, request_id, topology_version)
+        result = handler(state, request_id, topology_version)
+        # **改动才标脏**（12-04）：模拟、被拒、去重命中都不该产生写盘工作。
+        # 判据是「真搬动了」或「这次派发涉及投料批次」——后者即使没搬动
+        # 也会改 `batch.reason`，那也是要落盘的状态。
+        moved = int(((result.payload or {}).get("receipt") or {}).get("moved", 0) or 0)
+        if moved > 0 or state.batch is not None:
+            self.ports.note_changed(state)
+        return result
 
     # -- 被动总线（06-04）----------------------------------------------
 
@@ -2229,6 +2537,7 @@ class PortDispatcher(object):
         if not batch.is_complete():
             batch.reason = "备料未完成，批次已保留"
         result.payload["batch"] = batch.to_dict()
+        self.ports.note_changed(state)
         return result
 
     # -- 公共 ----------------------------------------------------------

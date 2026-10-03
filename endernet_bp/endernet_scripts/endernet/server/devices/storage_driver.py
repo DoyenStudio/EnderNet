@@ -22,7 +22,7 @@
 """
 
 from ...common.definitions import UNCONFIGURED
-from ...common.identity import DeviceRef, NodeKey
+from ...common.identity import DeviceRef, NodeKey, node_key_text  # noqa: F401
 from ...common.protocol import (
     ContainerCapabilities,
     Reason,
@@ -85,18 +85,6 @@ def medium_sequence(medium_id):
         return int(medium_id[len(MEDIUM_ID_PREFIX):])
     except (TypeError, ValueError):
         return 0
-
-
-def node_key_text(node_key):
-    # type: (NodeKey) -> str
-    """`NodeKey` 的存档文本。**位置才是稳定身份**，设备代次不是。
-
-    用它当驱动器记录的主键，而不是 `DeviceRef`：代次不持久
-    （`GenerationAllocator` 重启后从 0 重来），拿它当键会让「重进世界」
-    变成「查不到」。
-    """
-    dimension, x, y, z = node_key.as_key()
-    return "%d,%d,%d,%d" % (dimension, x, y, z)
 
 
 class DriverPolicy(object):

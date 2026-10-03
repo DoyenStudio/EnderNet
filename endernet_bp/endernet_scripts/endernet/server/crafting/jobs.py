@@ -905,6 +905,28 @@ class WaitingLedger(object):
             for key, row in sorted(self._steps.items())
         )
 
+    def export_book(self):
+        # type: () -> list
+        """等待台账的**纯数据**快照（12-04）。
+
+        每行是「某个执行实例还在等某种产物的多少件」。恢复后订单不续跑
+        （保守口径），因此这份快照的用途是**可复核记录**：让退出世界时
+        「谁还在等什么」在重进之后仍看得见，而不是拿去重建活台账。
+        """
+        out = []
+        for execution_id in sorted(self._steps):
+            for canonical in sorted(self._steps[execution_id]):
+                item = self._steps[execution_id][canonical]
+                out.append({
+                    "execution_id": execution_id,
+                    "canonical": canonical,
+                    "expected": item.expected,
+                    "received": item.received,
+                    "remaining": item.remaining(),
+                    "counts_for_completion": bool(item.counts_for_completion),
+                })
+        return out
+
     def diagnostics(self):
         # type: () -> dict
         return {
@@ -1264,6 +1286,41 @@ class Order(object):
             "stats": dict(self.stats),
         }
 
+    def book_entry(self):
+        # type: () -> dict
+        """订单簿条目（12-04）：**只放标量与规范文本**。
+
+        与 `to_dict()` 的区别是**它是纯数据、且不含计划与执行实例**：
+        `to_dict()` 里的 `steps`/`progress` 是给界面与诊断看的活视图，
+        而订单簿要进 JSON 存档。恢复后订单不续跑（保守口径），所以这里
+        只需要回答「曾经有过一张什么订单、归哪台主控、走到哪、压着什么」。
+        """
+        return {
+            "order_id": self.order_id,
+            "request_id": self.request_id,
+            "component_id": self.component_id,
+            "master_instance_id": self.master_instance_id,
+            "target": self.canonical,
+            "amount": self.amount,
+            "status": self.status,
+            "status_detail": self.status_detail,
+            "paused": bool(self.paused),
+            "adopted": bool(self.adopted),
+            "created_tick": self.created_tick,
+            "updated_tick": self.updated_tick,
+            "tasks_total": self.tasks_total,
+            "tasks_completed": sum(step.completed for step in self.steps),
+            "reservation_ids": sorted(
+                item.get("reservation_id")
+                for item in self.reservations.values()
+                if item.get("reservation_id")
+            ),
+            "memory_lease_id": (
+                self.memory_lease.lease_id if self.memory_lease else None
+            ),
+            "residue": list(self.residue),
+        }
+
     def __repr__(self):
         return "Order(%s, %s, %s)" % (self.order_id, self.canonical, self.status)
 
@@ -1490,6 +1547,27 @@ class OrderStore(object):
     def ids(self):
         # type: () -> tuple
         return tuple(self._order)
+
+    def export_book(self):
+        # type: () -> dict
+        """订单簿（12-04）：订单 ID 序号水位 + 每条订单的纯数据条目。
+
+        **带上 `_seq`**：不抬水位的话，重进世界后新订单会从 1 重新数，
+        与存档里的旧订单**撞号**——两条订单共用一个 ID，预留与回执会串到
+        一起。这是「不能单独恢复一个计数」的一个具体例子：序号与订单必须
+        同一条边界进出。
+        """
+        return {
+            "component_id": self.component_id,
+            "seq": self._seq,
+            "orders": [order.book_entry() for order in self.orders()],
+        }
+
+    def raise_sequence(self, seq):
+        # type: (int) -> int
+        """把发号水位抬到 `seq` 之上（不降）。返回抬过之后的水位。"""
+        self._seq = max(self._seq, int(seq))
+        return self._seq
 
     def diagnostics(self):
         # type: () -> dict
