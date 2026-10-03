@@ -3,14 +3,15 @@
 
 from ....tooldelta.api.client.player import GetLocalPlayerHotbarAndInvItems
 from .select_item_window import SelectItemWindow, _unique_ids
+from .widgets.window_identity import (
+    SELECT_FLUID_SEARCH_BINDING as SEARCH_BINDING,
+    SELECT_FLUID_WINDOW_ATTRIBUTE as WINDOW_ATTRIBUTE,
+)
 
 if 0 > 1:
     import typing
 
     from ....tooldelta.ui import ToolDeltaScreen
-
-WINDOW_ATTRIBUTE = "_endernet_select_fluid_window"
-SEARCH_BINDING = "#EnderNetSelectFluid.search"
 
 
 def show_select_fluid_window(screen, network_fluid_ids, select_callback):
@@ -27,7 +28,8 @@ class SelectFluidWindow(SelectItemWindow):
     SEARCH_BINDING = SEARCH_BINDING
     CONTROL_DEFINITION = "endernet_windows.select_fluid_window"
     CONTROL_NAME = "endernet_select_fluid_window"
-    GRID_PATH = "fluids/grid"
+    COLLECTION = "endernet_select_fluids"
+    BINDING_PREFIX = "#EnderNetSelectFluid."
 
     def _source_ids(self):
         if self.source == "network":

@@ -1,5 +1,7 @@
 # bus_item_output_io.json：总线物品取货口
 
+> **2026-10-03 06-06 更新**：开启缓存时走真实 5 格中转，关闭时直输且不触碰缓存；每条主控命令只搬一段。真实库存由方块容器与原生集合承载，不以批次表推算可用量。此前“中转路由未实现”为历史状态。UI JSON 未改，关闭缓存时的玩家槽交互限制、错误文案与任务 12 恢复仍待完成。详见 [06-06 交付](../tasks/06-06-交付说明-真实缓存.md)。
+
 [返回目录](README.md) · [UI JSON](../../endernet_rp/ui/bus_item_output_io.json)
 
 namespace：`bus_item_output_io_ui`。依据 2026-09-28 当前 JSON、公共组件、User 截图及功能说明编写。UI 功能交接已填写；设备专用脚本、服务端新增缓存模式及游戏验证待完成。
@@ -146,6 +148,37 @@ show_item_list_window(self, draft_item_ids, 9, "自动输出物品")
 
 待接入：Screen 类及注册、方块交互打开、设置窗口挂载、toggle 事件、barrier／已设定图标、5 格槽映射、配置提交与同步、缓存／直输服务端路线、持久化迁移及关闭清理。本轮只编写文档，未修改 UI JSON 或运行时代码。
 
+### 2026-10-03 接入记录（11-07 配置写入）
+
+**屏幕与注册**：`endernet/client/ui/device_panels.py` 的 `BusItemOutputPanel`
+（`@RegistToolDeltaScreen("bus_item_output_io_ui.main", is_proxy=True)`），
+逻辑在 `endernet/client/ui/port_panel.py` 的 `ItemPortPanelBase`。方块交互
+打开由引擎的容器组件负责，脚本不拦右键。
+
+**控件全部命令式驱动，本 JSON 一个字节都没改**：
+
+| 控件 | 驱动方式 |
+| --- | --- |
+| `M/item_set_panel/selected_item_renderer` | `widgets/control_api.show_item(控件, name, aux)`；空配置画 `minecraft:barrier`（**静态的草地占位因此被覆盖**，不必改 JSON）。**注意形状是 `(name, aux)`，不是 `Item` 对象**——2026-10-03 真机实测，传对象抛 `TypeError` 且界面只是空白 |
+| `M/item_set_panel/item_set_tip_text` | `asLabel().SetText(摘要)` |
+| `M/item_set_panel/interact_btn` | `SetCallback` → `show_item_list_window(self, 权威名单副本, 服务端下发上限, "自动输出物品")` |
+| `M/settings_btn` | `SetCallback` → `AddElement("bus_item_output_io_ui.settings_window")` 并 `SetVisible(True)` |
+| 设置窗 `cache_slots_enable_mode_switch` | 显示 `SetState(权威值)`；每帧 `GetState()` 与权威值比对，不同就提交 |
+
+**设置窗是按需 `AddElement` 出来的**（它在本 JSON 里是一张自由模板，没有
+挂进 `content`），建好立刻 `SetVisible(False)`、之后留着不销毁。因此
+`$toggle_name` / `$toggle_binding_type` 那对编辑器占位参数**不需要改**：
+状态显示与读取都走控件 API，不经绑定。
+
+**配置怎么来怎么去**：服务端推 `port_config`（`MSG_PORT_CONFIG`，全量快照）；
+玩家改配置时发 `CommandKind.STORAGE` 的 `port_configure`（`TerminalCommand.config`
+带**只写要改的那几项**的字典），回执里的 `payload["config"]` 是合并后的权威值。
+名单窗口关闭即提交（组件没有关闭回调，按「它还在不在 `_vars` 里」判定）。
+
+**仍未做**：5 格槽映射、持久化迁移（属 12）、
+失败原因的显示位置（**缺项：本 JSON 里没有可承载文案的控件**）。
+**游戏内一次都没跑过**——逐条见 [11 交付说明第三十五节](../tasks/11-交付说明.md)。
+
 ## 8. 缺项与验证记录
 
 | 缺项／待确认规则 | 影响与处理边界 |
@@ -156,7 +189,8 @@ show_item_list_window(self, draft_item_ids, 9, "自动输出物品")
 | 缓存关闭视觉与手动存取 | 隐藏／置灰及玩家权限待定；继承原生槽模板不等于授予权限 |
 | 预取与调度 | 目标满／缺失时是否预取、补货顺序及槽位分配未定；保持资源守恒和预算约束 |
 | 精确物品匹配 | 列表仅 identifier，aux／NBT 口径需对齐服务端身份契约 |
-| 静态占位与容量继承 | renderer=131072（草方块，应为 barrier）、toggle 编辑器绑定串、maximum_grid_items=27 待接入时修正。开关另缺 `$toggle_binding_type`（原版默认 `"none"`），只换 `$toggle_name` 仍是空转，两者须一起改 |
+| 静态占位与容量继承 | renderer=131072（草方块，应为 barrier）、toggle 编辑器绑定串、maximum_grid_items=27 待接入时修正。开关另缺 `$toggle_binding_type`（原版默认 `"none"`），只换 `$toggle_name` 仍是空转，两者须一起改。**2026-10-03 接入时选择绕开它**：摘要图标、开关状态与开关读取全部走控件 API（`SetUiItem` / `SetState` / `GetState`），因此这三处静态占位**不需要改 JSON**；`maximum_grid_items=27` 只影响**引擎容器集合**的格数，与过滤名单上限无关（名单上限由服务端下发），本轮同样不动 |
+| 失败原因的显示位置 | **缺项**：本 JSON 的 `content` 与 `settings_window` 里都没有可承载错误文案的控件。2026-10-03 的接入把原因写进 `PortConfigModel.notice` 与 `diagnostics()`，**界面上看不到**。接一个 label 即可显示，常量名预定 `#EnderNetPortConfig.notice_text`（尚未写进 JSON） |
 | 脚本、同步与恢复 | 专用 Screen、新模式、5 格库存及迁移待实现；旧搬运验证不覆盖本轮缓存规则。~~服务端侧取货口**无缓冲**（`io.py:101` 的 `BUFFERED_ROLES` 不含 OUTPUT）、`PortConfig` 无缓存模式字段~~ **这两条 2026-09-29 已补**（`PortStore` 对 `OUTPUT` 建 `BUFFER_CONTAINER`、`PortConfig.cache_enabled`）；**仍未补的**是无设备视图通道与 `Migrator.register` 全仓零调用点，以及「网络 → 缓存 → 朝向容器」这条中转路由（06-06）。逐条见 [11-07 缺项清单](../tasks/11-07-UI缺项与等待交接.md) 第四节 |
 | 引擎交互 | 层级、触控、防穿透、距离／拆除失效、R12 及异常状态待验证 |
 | 公共组件未交接 | 本文件依赖的 `endernet_container_common.md`、`endernet_ui_common.md`、`endernet_windows.md` 三份文档仍为空模板（各 27 处「待填写」）。列表窗口可被 §7 引用，但组件文档未交接时接入示意无法核对 |
@@ -164,7 +198,8 @@ show_item_list_window(self, draft_item_ids, 9, "自动输出物品")
 
 - [x] 核对 JSON、公共列表入口、5 格容量和缓存开关规则，完成文档交接。
 - [x] 同步方块说明与 06/11/12 契约，保留未定项。
-- [ ] 完成专用脚本、业务绑定、服务端缓存模式及恢复。
+- [x] **2026-10-03**：专用脚本、屏幕注册、控件驱动、配置提交与同步
+  （离线部分；**缓存／直输的服务端路线与恢复仍不在此列**）。
 - [ ] 游戏验证：默认启用、重开保留关闭值、两种路线真实转移守恒。
 - [ ] 游戏验证：空配置 barrier、设定与清空、多项摘要、第 9／10 项上限。
 - [ ] 游戏验证：满容器、缺货、断电、部分写入、方向改变、带货切换、多人编辑、卸载恢复与拆除。

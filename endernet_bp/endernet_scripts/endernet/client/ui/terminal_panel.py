@@ -54,7 +54,11 @@ from .backpack_model import (
 )
 from .item_list_model import SORT_COUNT, SORT_NAME
 from .terminal_cache import TerminalCache
-from .widgets import device_status_bindings, order_preview_bindings
+from .widgets import (
+    device_status_bindings,
+    list_window_bindings,
+    order_preview_bindings,
+)
 from ..network_client import NetworkClient
 from ...common.identity import DeviceRef
 from ...common.protocol import STATUS_OK
@@ -218,6 +222,9 @@ def _text(value):
 
 class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
                         device_status_bindings.DeviceStatusBindingsMixin,
+                        list_window_bindings.SelectItemWindowBindingsMixin,
+                        list_window_bindings.SelectFluidWindowBindingsMixin,
+                        list_window_bindings.NumberSetWindowBindingsMixin,
                         ToolDeltaScreen):
     """Other terminal screens may inherit this class and reuse terminal_inventory.
 

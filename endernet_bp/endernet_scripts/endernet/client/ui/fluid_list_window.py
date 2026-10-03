@@ -6,13 +6,14 @@ from .select_fluid_window import (
     WINDOW_ATTRIBUTE as SELECT_WINDOW_ATTRIBUTE,
     show_select_fluid_window,
 )
+from .widgets.window_identity import (
+    FLUID_LIST_BINDING_PREFIX as BINDING_PREFIX,
+    FLUID_LIST_COLLECTION as COLLECTION,
+    FLUID_LIST_WINDOW_ATTRIBUTE as WINDOW_ATTRIBUTE,
+)
 
 if 0 > 1:
     from ....tooldelta.ui import ToolDeltaScreen
-
-WINDOW_ATTRIBUTE = "_endernet_fluid_list_window"
-COLLECTION = "endernet_fluid_list"
-BINDING_PREFIX = "#EnderNetFluidList."
 
 
 def show_fluid_list_window(screen, fluid_ids, max_fluids, title="流体列表"):

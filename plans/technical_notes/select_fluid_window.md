@@ -106,3 +106,11 @@ def OnDestroy(self):
 
 2026-09-28：`python -B endernet_tests/run_tests.py` 通过 2205 项测试，
 74 个源码文件通过 Python 2.7 兼容门禁；本次涉及文件的 `git diff --check` 通过。
+
+## 2026-10-03 网格动态绑定
+
+继承物品选择器的动态网格生命周期，collection 使用 `endernet_select_fluids`，
+绑定名使用 `#EnderNetSelectFluid.has_item` / `item_id_aux` / `select`。
+格子模板 `selected_fluid@selected_item` 覆盖绑定参数，与物品选择器可同屏共存；
+关闭流体窗口仅解除自己的网格绑定，搜索仍由宿主静态 mixin 转发。
+本次离线门禁通过，游戏内效果尚未验证。

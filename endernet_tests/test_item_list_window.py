@@ -10,42 +10,18 @@ import unittest
 from unittest.mock import patch
 from weakref import WeakSet
 
-from test_select_item_window import ROOT, Screen
+from test_select_item_window import BinderStub, ROOT, Screen
 
-
-class BinderStub(object):
-    BF_BindString = 1
-    BF_BindInt = 2
-    BF_BindBool = 3
-    BF_ButtonClickUp = 4
-    BF_EditChanged = 5
-    #: 11-06 起本仓库也用到这两个旗标（工厂终端的进度条与三色背景）。
-    #: 取值与真引擎无关，只要求**各测试文件彼此一致**。
-    BF_BindColor = 7
-    BF_BindFloat = 8
 
 class ItemStub(object):
     def __init__(self, item_id):
         self.item_id = item_id
         self.newItemName = item_id
-        self.newItemName = item_id
+        #: 真 `Item` 有的第二个字段（渲染要用，见 `widgets/control_api.py`）。
+        self.newAuxValue = 0
 
     def GetBasicInfo(self):
         return types.SimpleNamespace(itemName=self.item_id, id_aux=12345)
-
-
-class BoundScreen(Screen):
-    def __init__(self):
-        Screen.__init__(self)
-        self.collection_bindings = {}
-
-    def DynaBindingCollection(self, flag, collection, name, callback):
-        self.collection_bindings[(flag, collection, name)] = callback
-
-    def DynaUnbindingCollection(self, flag, collection):
-        for key in list(self.collection_bindings):
-            if key[:2] == (flag, collection):
-                del self.collection_bindings[key]
 
 
 class ItemListWindowTests(unittest.TestCase):
@@ -63,7 +39,7 @@ class ItemListWindowTests(unittest.TestCase):
             modules[module.__name__] = module
 
         def load(name):
-            full_name = prefix + "endernet.client.ui." + name
+            full_name = prefix + "endernet.client.ui." + name.replace("/", ".")
             path = os.path.join(ROOT, "endernet_bp", "endernet_scripts", "endernet",
                                 "client", "ui", name + ".py")
             spec = importlib.util.spec_from_file_location(full_name, path)
@@ -75,9 +51,16 @@ class ItemListWindowTests(unittest.TestCase):
             cls.selector = load("select_item_window")
             with patch.dict(sys.modules, {cls.selector.__name__: cls.selector}):
                 cls.module = load("item_list_window")
+            # 绑定在**宿主的类体**上（11-07），测试因此也要有一个宿主。
+            cls.bindings_module = load("widgets/list_window_bindings")
+        cls.Host = type(
+            "HostScreen",
+            (cls.bindings_module.ItemListWindowBindingsMixin, Screen),
+            {},
+        )
 
     def setUp(self):
-        self.screen = BoundScreen()
+        self.screen = type(self).Host()
         self.items = ["minecraft:stone", "minecraft:dirt"]
         self.catalog = types.SimpleNamespace(
             item_ids=["minecraft:stone", "minecraft:apple"], windows=WeakSet())
@@ -95,12 +78,43 @@ class ItemListWindowTests(unittest.TestCase):
         self.addCleanup(window.close)
         return window
 
+    def resolve(self, flag, name):
+        """按**绑定名**取回调，并核对旗标——引擎就是按名字取的。
+
+        旗标也要核：它和 JSON 的 `binding_type` 对不上时，引擎会按另一种
+        类型解析同一份数据，而症状同样是「格子空着但什么都不报」。
+        """
+        for attr in dir(type(self.screen)):
+            func = getattr(type(self.screen), attr, None)
+            if getattr(func, "binding_name", None) == name:
+                self.assertEqual(
+                    getattr(func, "binding_flags", None), flag,
+                    "%s 的旗标不是 %r" % (name, flag))
+                return getattr(self.screen, attr)
+        raise AssertionError("宿主屏上没有 %r 这条绑定" % (name,))
+
+    def declared(self):
+        """宿主类体上声明的绑定：`(旗标, collection 或 None, 名字)`。
+
+        它是旧 `screen.bindings` / `screen.collection_bindings` 那两个字典的
+        替身——原先记的是运行时注册的那一批，而**运行时注册在这台引擎上
+        根本不生效**（这正是 11-07 改掉的那件事）。
+        """
+        out = set()
+        for attr in dir(type(self.screen)):
+            func = getattr(type(self.screen), attr, None)
+            name = getattr(func, "binding_name", None)
+            if name is None:
+                continue
+            out.add((getattr(func, "binding_flags", None),
+                     getattr(func, "binding_collection", None), name))
+        return out
+
     def bind(self, flag, name, *args):
-        return self.screen.bindings[(flag, self.module.BINDING_PREFIX + name)](*args)
+        return self.resolve(flag, self.module.BINDING_PREFIX + name)(*args)
 
     def cell_bind(self, flag, name, index):
-        return self.screen.collection_bindings[
-            (flag, self.module.COLLECTION, self.module.BINDING_PREFIX + name)](index)
+        return self.resolve(flag, self.module.BINDING_PREFIX + name)(index)
 
     def test_title_count_icons_and_selection_use_bindings(self):
         window = self.open(title="输入白名单")
@@ -194,9 +208,14 @@ class ItemListWindowTests(unittest.TestCase):
         self.assertIs(self.module.show_item_list_window(self.screen, [], 4), False)
         self.assertIs(self.screen._vars[self.module.WINDOW_ATTRIBUTE], window)
 
-    def test_close_cleans_owned_picker_and_bindings_but_keeps_other_bindings(self):
-        self.screen.bindings[(99, "#Other.binding")] = lambda: None
-        self.screen.collection_bindings[(99, "other", "#Other.binding")] = lambda: None
+    def test_close_cleans_owned_picker_and_marker_but_keeps_the_bindings(self):
+        """关窗只清「打开标记」与它自己开的选择器。
+
+        **不再摘绑定**：绑定在宿主类体上是静态的（11-07）。因此这里钉的是
+        「关窗之后宿主上那九条一条不少」——把这条写成「绑定被摘掉了」会让
+        下一个人以为还能回到运行时注册那条路。
+        """
+        before = self.declared()
         window = self.open()
         window.add()
         picker = window.picker
@@ -204,8 +223,7 @@ class ItemListWindowTests(unittest.TestCase):
         window.close()
         self.assertTrue(picker.closed)
         self.assertEqual(self.screen._vars, {})
-        self.assertEqual(list(self.screen.bindings), [(99, "#Other.binding")])
-        self.assertEqual(list(self.screen.collection_bindings), [(99, "other", "#Other.binding")])
+        self.assertEqual(self.declared(), before)
         window._on_item_selected("minecraft:apple")
         self.assertEqual(len(self.items), 2)
 
@@ -219,13 +237,11 @@ class ItemListWindowTests(unittest.TestCase):
         self.assertIs(self.screen._vars[self.selector.WINDOW_ATTRIBUTE], picker)
         self.assertFalse(picker.closed)
 
-    def test_creation_failure_unbinds_and_allows_retry(self):
+    def test_creation_failure_clears_the_marker_and_allows_retry(self):
         with patch.object(self.screen, "AddElement", side_effect=RuntimeError("failed")):
             with self.assertRaises(RuntimeError):
                 self.module.show_item_list_window(self.screen, self.items, 4)
         self.assertEqual(self.screen._vars, {})
-        self.assertEqual(self.screen.bindings, {})
-        self.assertEqual(self.screen.collection_bindings, {})
         self.open()
 
     def test_json_contract_matches_registered_binders(self):
@@ -261,13 +277,13 @@ class ItemListWindowTests(unittest.TestCase):
             binding = control["bindings"][0]
             self.assertEqual(binding["binding_name_override"], target)
             key = (flag, filled(binding["binding_collection_name"]), filled(binding["binding_name"]))
-            self.assertIn(key, self.screen.collection_bindings)
+            self.assertIn(key, self.declared())
             self.assertEqual(
                 filled(binding["binding_name"]), self.module.BINDING_PREFIX + name)
         button = parts["interact_btn"]
         self.assertIn(
-            (BinderStub.BF_ButtonClickUp, filled(button["$pressed_button_name"])),
-            self.screen.bindings)
+            (BinderStub.BF_ButtonClickUp, None, filled(button["$pressed_button_name"])),
+            self.declared())
         # 按键映射指向的是**控件自己的那个属性**，属性里装的才是绑定名，因此
         # 要按 `$pressed_button_name` 取一次值、再把这个值当变量填一次。
         self.assertEqual(
@@ -278,7 +294,9 @@ class ItemListWindowTests(unittest.TestCase):
         grid = data["item_list_grid"]
         self.assertEqual(grid["collection_name"], self.module.COLLECTION)
         self.assertEqual(grid["bindings"][0]["binding_name_override"], "#maximum_grid_items")
-        self.assertIn((BinderStub.BF_BindInt, grid["bindings"][0]["binding_name"]), self.screen.bindings)
+        self.assertIn(
+            (BinderStub.BF_BindInt, None, grid["bindings"][0]["binding_name"]),
+            self.declared())
         window = controls(data["item_list_window"])
         self.assertEqual(window["scroll_view"]["$scrolling_content"], "endernet_windows.item_list_grid")
         for control, flag, target in (
@@ -288,7 +306,7 @@ class ItemListWindowTests(unittest.TestCase):
         ):
             binding = control["bindings"][0]
             self.assertEqual(binding["binding_name_override"], target)
-            self.assertIn((flag, binding["binding_name"]), self.screen.bindings)
+            self.assertIn((flag, None, binding["binding_name"]), self.declared())
 
 
 if __name__ == "__main__":

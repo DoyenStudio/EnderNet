@@ -1,5 +1,9 @@
 # coding=utf-8
-"""Reusable item-ID picker embedded in an existing ToolDeltaScreen."""
+"""物品选择器：宿主静态搜索绑定，网格按窗口生命周期动态绑定。
+
+网格通过 DynaBindingCollection 提供可见性与 id_aux，点击通过集合下标选取。
+窗口打开时注册、关闭时解除绑定，不再查找网格格子或渲染器控件。
+"""
 
 from functools import partial
 
@@ -7,14 +11,18 @@ from ....tooldelta.api.client.player import GetLocalPlayerHotbarAndInvItems
 from ....tooldelta.define.item import Item
 from ....tooldelta.ui import Binder
 from ..item_catalog import get_catalog
+from .widgets.window_identity import (
+    SELECT_ITEM_SEARCH_BINDING as SEARCH_BINDING,
+    SELECT_ITEM_WINDOW_ATTRIBUTE as WINDOW_ATTRIBUTE,
+)
 
 if 0 > 1:
     import typing
 
     from ....tooldelta.ui import ToolDeltaScreen
 
-WINDOW_ATTRIBUTE = "_endernet_select_item_window"
-SEARCH_BINDING = "#EnderNetSelectItem.search"
+COLLECTION = "endernet_select_items"
+BINDING_PREFIX = "#EnderNetSelectItem."
 MAX_ITEMS = 40
 DEFAULT_TEXTURE = "textures/ui/endernet/background_panel_opaque"
 PRESSED_TEXTURE = "textures/ui/endernet/button_pressed"
@@ -59,9 +67,10 @@ def show_select_item_window(screen, network_item_ids, select_callback):
 class SelectItemWindow(object):
     WINDOW_ATTRIBUTE = WINDOW_ATTRIBUTE
     SEARCH_BINDING = SEARCH_BINDING
+    COLLECTION = COLLECTION
+    BINDING_PREFIX = BINDING_PREFIX
     CONTROL_DEFINITION = "endernet_windows.select_item_window"
     CONTROL_NAME = "endernet_select_item_window"
-    GRID_PATH = "items/grid"
 
     def __init__(self, screen, network_item_ids, select_callback):
         self.screen = screen
@@ -74,8 +83,7 @@ class SelectItemWindow(object):
         self.search_names = {}
         self.closed = False
         self.root = None
-        self.grid = None
-        self.cells = []
+        self.dynamic_bindings = []
         # The instance is both the open marker and the optional cleanup handle.
         screen._vars[self.WINDOW_ATTRIBUTE] = self
         try:
@@ -86,22 +94,48 @@ class SelectItemWindow(object):
 
     def _create_controls(self):
         screen = self.screen
+        self._bind_grid()
         self.root = screen.AddElement(
             self.CONTROL_DEFINITION, self.CONTROL_NAME
         )
         self.root.SetLayer(50)
-        self.grid = self.root.GetElement(self.GRID_PATH).asGrid()
-        self.cells = [self.grid.GetGridItem(i % 8, i // 8) for i in range(MAX_ITEMS)]
         for source, path in SOURCE_BUTTONS:
             self.root.GetElement(path).asButton().SetCallback(partial(self._set_source, source))
         self.root.GetElement("close").asButton().SetCallback(self.close)
-        for index, cell in enumerate(self.cells):
-            cell.GetElement("interact_btn").asButton().SetCallback(partial(self._select, index))
-        # A reusable helper cannot require decorators on every caller's Screen class.
-        screen.DynaBinding(Binder.BF_EditChanged, self.SEARCH_BINDING, self._search)
         if self.catalog is not None:
             self.catalog.windows.add(self)
         self._set_source("all")
+
+    def _bind_grid(self):
+        self._bind_dynamic(Binder.BF_BindBool, "has_item", self.has_item, self.COLLECTION)
+        self._bind_dynamic(Binder.BF_BindInt, "item_id_aux", self.get_item_id_aux, self.COLLECTION)
+        self._bind_dynamic(Binder.BF_ButtonClickUp, "select", self.on_select)
+
+    def _bind_dynamic(self, flag, suffix, callback, collection=None):
+        # type: (int, str, object, object) -> None
+        binding_name = self.BINDING_PREFIX + suffix
+        # 先记录，注册中途失败时 close 也能撤销。
+        self.dynamic_bindings.append((flag, collection, binding_name))
+        if collection is None:
+            self.screen.DynaBinding(flag, binding_name, callback)
+        else:
+            self.screen.DynaBindingCollection(flag, collection, binding_name, callback)
+
+    def has_item(self, index):
+        # type: (int) -> bool
+        return not self.closed and 0 <= index < len(self.visible_ids)
+
+    def get_item_id_aux(self, index):
+        # type: (int) -> int
+        if not self.has_item(index):
+            return 131072
+        return Item(self.visible_ids[index]).GetBasicInfo().id_aux
+
+    def on_select(self, params):
+        # type: (dict) -> None
+        index = params.get("#collection_index")
+        if isinstance(index, int) and not isinstance(index, bool):
+            self._select(index)
 
     def _set_source(self, source, params=None):
         if self.closed:
@@ -118,7 +152,9 @@ class SelectItemWindow(object):
             )
         self.refresh()
 
-    def _search(self, params):
+    def on_search(self, params):
+        # type: (dict) -> None
+        """搜索框变了（由宿主屏的类体绑定转发，见模块 docstring）。"""
         if self.closed:
             return
         self.query = _text(params.get("Text") or "").strip().lower()
@@ -150,11 +186,6 @@ class SelectItemWindow(object):
             if len(visible_ids) == MAX_ITEMS:
                 break
         self.visible_ids = visible_ids
-        for index, cell in enumerate(self.cells):
-            present = index < len(visible_ids)
-            cell.SetVisible(present)
-            if present:
-                cell.GetElement("item_renderer").asItemRenderer().SetUiItem(Item(visible_ids[index]))
 
     def _select(self, index, params=None):
         if self.closed or not 0 <= index < len(self.visible_ids):
@@ -171,7 +202,12 @@ class SelectItemWindow(object):
         self.closed = True
         if self.catalog is not None:
             self.catalog.windows.discard(self)
-        self.screen.DynaUnbinding(Binder.BF_EditChanged, self.SEARCH_BINDING)
+        for flag, collection, binding_name in reversed(self.dynamic_bindings):
+            if collection is None:
+                self.screen.DynaUnbinding(flag, binding_name)
+            else:
+                self.screen.DynaUnbindingCollection(flag, collection)
+        self.dynamic_bindings = []
         if self.screen._activated and self.root is not None:
             self.root.Remove()
         if self.screen._vars.get(self.WINDOW_ATTRIBUTE) is self:
@@ -179,6 +215,4 @@ class SelectItemWindow(object):
         self.select_callback = None
         self.visible_ids = []
         self.search_names.clear()
-        self.cells = []
-        self.grid = None
         self.root = None

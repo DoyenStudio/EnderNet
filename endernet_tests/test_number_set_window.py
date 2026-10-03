@@ -9,7 +9,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from test_select_item_window import ROOT, Control, Screen
+from test_select_item_window import BinderStub, ROOT, Control, Screen
 
 
 class NumberControl(Control):
@@ -45,17 +45,30 @@ class NumberSetWindowTests(unittest.TestCase):
     def setUpClass(cls):
         prefix = "endernet_bp.endernet_scripts."
         ui = types.ModuleType(prefix + "tooldelta.ui")
-        ui.Binder = types.SimpleNamespace(BF_EditChanged=1)
-        path = os.path.join(ROOT, "endernet_bp", "endernet_scripts", "endernet",
-                            "client", "ui", "number_set_window.py")
-        spec = importlib.util.spec_from_file_location(
-            prefix + "endernet.client.ui.number_set_window", path)
-        cls.module = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {ui.__name__: ui}):
-            spec.loader.exec_module(cls.module)
+        ui.Binder = BinderStub
+        modules = {ui.__name__: ui}
+
+        def load(name):
+            path = os.path.join(ROOT, "endernet_bp", "endernet_scripts", "endernet",
+                                "client", "ui", name.replace("/", os.sep) + ".py")
+            spec = importlib.util.spec_from_file_location(
+                prefix + "endernet.client.ui." + name.replace("/", "."), path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+
+        with patch.dict(sys.modules, modules):
+            cls.module = load("number_set_window")
+            # 编辑框的绑定写在**宿主的类体**上（11-07），测试因此也要有宿主。
+            cls.bindings_module = load("widgets/list_window_bindings")
+        cls.Host = type(
+            "HostScreen",
+            (cls.bindings_module.NumberSetWindowBindingsMixin, NumberScreen),
+            {},
+        )
 
     def setUp(self):
-        self.screen = NumberScreen()
+        self.screen = type(self).Host()
         self.confirmed = []
 
     def open(self, number=64, minimum=1, maximum=None, callback=None, title=None):
@@ -74,7 +87,18 @@ class NumberSetWindowTests(unittest.TestCase):
 
     def edit(self, text):
         self.editor.SetText(text)
-        self.screen.bindings[(1, self.module.EDIT_BINDING)]({"Text": text})
+        # 按**绑定名**取回调——引擎就是按名字取的（11-07 起绑定在宿主类体上）。
+        self.screen.callback(self.module.EDIT_BINDING)({"Text": text})
+
+    def assert_closed_window_ignores_edits(self, window):
+        """已关的窗口不再接受编辑。
+
+        **绑定不会被摘掉**（它在宿主类体上是静态的）：这条判据因此从
+        「运行时注册被摘除」换成「回调仍在、但窗口自己提前返回」。
+        """
+        before = window.number
+        self.screen.callback(self.module.EDIT_BINDING)({"Text": "999"})
+        self.assertEqual(window.number, before)
 
     def test_open_initial_quantity_duplicate_and_set_number(self):
         self.open()
@@ -111,7 +135,7 @@ class NumberSetWindowTests(unittest.TestCase):
         def confirmed(number):
             self.assertNotIn(self.module.WINDOW_ATTRIBUTE, self.screen._vars)
             self.assertTrue(self.root.removed)
-            self.assertFalse(self.screen.bindings)
+            self.assert_closed_window_ignores_edits(self.window)
             self.confirmed.append(number)
 
         self.open(callback=confirmed)
@@ -156,9 +180,9 @@ class NumberSetWindowTests(unittest.TestCase):
         self.click("add_1x_btn")
         old.close()
         self.assertFalse(self.confirmed)
-        self.assertFalse(self.screen.bindings)
+        self.assert_closed_window_ignores_edits(old)
         self.open(5)
-        old._edited({"Text": "100"})
+        old.on_edited({"Text": "100"})
         old.close()
         self.assertIs(self.screen._vars[self.module.WINDOW_ATTRIBUTE], self.window)
         self.assertEqual(self.editor.GetText(), "5")
@@ -171,15 +195,14 @@ class NumberSetWindowTests(unittest.TestCase):
         self.window.close()
         self.assertFalse(self.root.removed)
         self.assertFalse(self.confirmed)
-        self.assertFalse(self.screen.bindings)
+        self.assert_closed_window_ignores_edits(self.window)
         self.assertNotIn(self.module.WINDOW_ATTRIBUTE, self.screen._vars)
 
-    def test_creation_failure_cleans_marker_and_binding(self):
+    def test_creation_failure_cleans_marker(self):
         with patch.object(NumberControl, "SetText", side_effect=RuntimeError("engine failure")):
             with self.assertRaises(RuntimeError):
                 self.open()
         self.assertNotIn(self.module.WINDOW_ATTRIBUTE, self.screen._vars)
-        self.assertFalse(self.screen.bindings)
         self.assertTrue(self.screen.root.removed)
         self.open()
 

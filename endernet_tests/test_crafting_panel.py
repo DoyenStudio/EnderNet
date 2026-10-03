@@ -149,8 +149,15 @@ class ControlStub(object):
         self.callback = callback
         return self
 
-    def SetUiItem(self, item):
-        self.item = item
+    def SetUiItem(self, name, aux):
+        """**真引擎的形状是 `(name, aux)`，且两个都必填**（2026-10-03 真机实测：
+        少传一个抛 `TypeError: SetUiItem() takes at least 3 arguments`）。
+
+        替身以前写成单参 `SetUiItem(item)`，于是「传一个 `Item` 对象」那条
+        **错的**调用形状在离线一路绿灯——而真机上它每次都抛，症状是**原料格
+        全空、日志干净**。不设默认值是有意的：这样错形状会当场在离线变红。
+        """
+        self.item = types.SimpleNamespace(newItemName=name, newAuxValue=aux)
         return True
 
     def SetText(self, text):

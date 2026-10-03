@@ -79,6 +79,11 @@ from ...common.protocol import (
 from ...common.resource_sync import ResourceResyncRequired
 from ..network.runtime import RuntimeChange
 from ..network.ticking import RotationCursor
+from .device_config import (
+    PortConfigSubscriptions,
+    build_config_message,
+    read_config,
+)
 from .device_status import (
     DeviceStatusSubscriptions,
     build_status_message,
@@ -605,6 +610,7 @@ class TerminalSyncHub(object):
         template_of=None,
         order_of=None,
         preview_of=None,
+        port_of=None,
     ):
         self.registry = registry if registry is not None else SessionRegistry()
         self.policy = policy if policy is not None else SyncPolicy()
@@ -629,6 +635,9 @@ class TerminalSyncHub(object):
         #: 而「哪条会话在看哪一份预览」由预览服务按 `session_id` 回答
         #: （见 `delivery_for`：一个会话同时只看一份）。
         self._preview_of = preview_of if preview_of is not None else _no_preview
+        #: 接口设备的配置视图（11-07）。与 `_status_of` 同一地位：**按设备取**。
+        #: 非接口设备取到 `None`，那条消息就不发（见 `read_config`）。
+        self._port_of = port_of if port_of is not None else _no_port
         self.port = port
         self._subs = {}
         self._inventory_sent = {}
@@ -647,6 +656,9 @@ class TerminalSyncHub(object):
         #: 设备总体状态（11-08/11-13）。订阅表就是 `registry`，这里只记
         #: 「每会话上一次发出去的是什么」，用来做变化去重。
         self.status = DeviceStatusSubscriptions()
+        #: 接口配置（11-07）。与 `status` 逐行同形：每会话「上次发出去的
+        #: 配置」，用来做变化去重；同样是**按设备**的，不是按网络的。
+        self.config = PortConfigSubscriptions()
         self._rotation = RotationCursor()
         self._next_batch = 1
         self._next_snapshot = 1
@@ -717,6 +729,12 @@ class TerminalSyncHub(object):
             #: 「只读设备屏真的把会话养住了」这句话在实机上的判据；反过来
             #: 「设备屏开着不动、`expired` 照涨」说明屏根本没在发。
             "keepalives": 0,
+            #: 推出去的接口配置条数（11-07）。判据同 `order_states`：去重命中
+            #: 不算，涨就说明玩家真的改了配置（或设备换了网络/代次）。
+            "config_states": 0,
+            #: 读配置或编消息抛异常的次数。**与「没发」分开计**：非接口设备
+            #: 本来就不发（那是正常的），而这里涨说明是故障。
+            "config_errors": 0,
         }
 
     # -- 装配 ----------------------------------------------------------
@@ -1014,6 +1032,12 @@ class TerminalSyncHub(object):
         """
         self.stats["commands"] += 1
         payload = dict(message.payload())
+        # **`port_configure` 有意留在 `STORAGE`，不改成 `CONFIGURE`。**
+        # 两张表的分工是「按内容归属路由」：只有工厂那几条要换服务。
+        # `CommandKind.CONFIGURE` 与 `STORAGE` 在 `COMMAND_ROUTES`
+        # （`server/network/services.py`）上**同路由到 `ServiceId.STORAGE`、
+        # 同为非只读**，改成它零行为变化，却要多一张动作表——而每多一张
+        # 就多一处可能与真身漂移的地方。等控制器真要区别对待两者时再迁。
         order_action = ORDER_ACTIONS.get(message.action)
         if order_action is None:
             kind = CommandKind.STORAGE
@@ -1157,6 +1181,12 @@ class TerminalSyncHub(object):
                 # 也不是不可能，而多发一份空结果的代价只是几字节。
                 self._publish_preview(session)
                 self._publish_device_status(session)
+                # 接口配置（11-07）。**同样不按视图分流**，理由与设备状态
+                # 逐字相同：配置是**这台设备自己**的，不属于物品视图；而且
+                # 代理屏本来就以 `VIEW_ITEM` 开会话（`ProxyPanelBase._adopt`
+                # 用的是 `NetworkClient()` 的默认种类）。非接口设备读不到，
+                # 这一句自然什么都不发。
+                self._publish_device_config(session)
         return self._publish_network(subs, frame)
 
     def _publish_inventory(self, session):
@@ -1376,6 +1406,37 @@ class TerminalSyncHub(object):
             return
         if self._send(session, message):
             self.status.remember(session.session_id, payload)
+
+    def _publish_device_config(self, session):
+        # type: (object) -> None
+        """把**这台会话自己的设备**的权威配置推给客户端（11-07）。
+
+        与 `_publish_device_status` 逐行同形，差别只在对象：那条说「这台设备
+        现在能不能干活」，这条说「玩家把它配成了什么样」。
+
+        **非接口设备什么都不发**：`read_config` 对它们返回 `None`，而不是
+        一份空配置——一份空配置在界面上读出来就是「这台设备什么都没配」，
+        那是个会让人去改一台根本没有过滤名单的设备的结论。
+
+        读取与编码整条包在 `try` 里：这里是 tick 路径，一次读取或编码失败
+        不该让整帧作废（与 `_publish_inventory` 同一条纪律）。计数落在
+        `config_states` / `config_errors` 上，好让「配置没到界面」这件事
+        分得清是没发还是发失败。
+        """
+        try:
+            view = read_config(session.device_ref, self._port_of)
+            if view is None:
+                return
+            message = build_config_message(view)
+            payload = message.to_dict()
+        except Exception:
+            self.stats["config_errors"] += 1
+            return
+        if self.config.unchanged(session.session_id, payload):
+            return
+        if self._send(session, message):
+            self.config.remember(session.session_id, payload)
+            self.stats["config_states"] += 1
 
     def _advance_transfer(self, session, subs, frame):
         # type: (object, object, int) -> None
@@ -1751,6 +1812,10 @@ class TerminalSyncHub(object):
         if previews is not None:
             previews.forget_session(session.session_id)
         self.status.drop(session.session_id)
+        # 配置那张逐会话表同样要清（11-07）。不清的后果不是串台（会话 ID
+        # 不复用），而是 `config.count()` 说谎——「关屏后订阅归零」这条
+        # 上机判据就落不下来。
+        self.config.drop(session.session_id)
         subs = self._subs.get(session.network_id)
         if subs is None:
             return
@@ -2036,6 +2101,7 @@ class TerminalSyncHub(object):
             }
         report["rotation"] = self._rotation.describe()
         report["device_status"] = self.status.diagnostics()
+        report["port_config"] = self.config.diagnostics()
         return report
 
 
@@ -2098,6 +2164,16 @@ def _no_preview(network_id):
 
     发一份空结果会被读成「没有缺料」——那是另一个结论，而且是会让玩家
     点下「下单」的那一个。同 `_no_craft` / `_no_order` 的纪律。
+    """
+    return None
+
+
+def _no_port(device_ref):
+    # type: (object) -> None
+    """没有接上接口状态集合时的兜底：**一条都不发**。
+
+    发一份空配置会被读成「这台设备什么都没配」——那是另一个结论，而它会让
+    界面把玩家的过滤名单显示成空的。同 `_no_preview` 的纪律。
     """
     return None
 

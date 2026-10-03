@@ -88,6 +88,7 @@ from .devices.io import (
     PortGateway,
     PortPolicy,
     PortStore,
+    config_view,
     port_blocker,
 )
 from .devices.registry import DeviceRegistry
@@ -851,6 +852,9 @@ class ServerBootstrap(object):
             # 下单预览（11 增量）。同样收网络标识：预览是每网络一份的，
             # 「哪条会话在看哪一份」由预览服务按 `session_id` 回答。
             preview_of=self._sync_preview_of,
+            # 接口设备的配置视图（11-07）。**收设备引用**，与 `status_of`
+            # 同一地位——配置是那台设备自己的，不是网络的。
+            port_of=self._sync_port_of,
         )
         if session_check is None:
             # 注入值优先：离线测试与 05/08 的既有用例会自己传探针，
@@ -1673,6 +1677,26 @@ class ServerBootstrap(object):
         结论。
         """
         return self.runtimes.device_status(device_ref)
+
+    def _sync_port_of(self, device_ref):
+        # type: (object) -> object
+        """一台**接口设备**的配置视图（11-07）；不是接口就返回 `None`。
+
+        **只读路径**：`get_by_ref` 只查表（它的键就是 `(位置, 代次)`，因此
+        查得到即身份已经对上），`config_view` 只读配置与缓冲摘要，不订阅
+        服务、不唤醒设备、不写任何东西——与 `_sync_status_of` 同一条纪律。
+
+        **「这是不是一台接口」由 store 回答，不按方块名猜**：`PortStore`
+        在设备生命周期事件里 `ensure` 的正是那几台接口方块（见
+        `adapters` 与 `io.is_port_device`），因此查不到就是「不是接口」，
+        而这正是 `sync/device_config.read_config` 要的那一声 `None`。
+        """
+        if device_ref is None:
+            return None
+        state = self.ports.get_by_ref(device_ref)
+        if state is None:
+            return None
+        return config_view(state, self.ports.policy)
 
     def _sync_context_of(self, player_id, device_ref):
         # type: (str, object) -> object

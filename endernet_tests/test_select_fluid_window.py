@@ -9,7 +9,14 @@ import types
 import unittest
 from unittest.mock import patch
 
-from test_select_item_window import ROOT, Screen, Bus, Event, EVENTS
+from test_select_item_window import (
+    ROOT,
+    BinderStub,
+    Bus,
+    EVENTS,
+    Event,
+    Screen,
+)
 from endernet_bp.endernet_scripts.endernet.common.fluid_catalog import build_fluid_catalog
 from endernet_bp.endernet_scripts.endernet.client.item_catalog import ItemCatalogClient
 from endernet_bp.endernet_scripts.endernet.server.adapters.item_catalog import load_catalog
@@ -18,12 +25,14 @@ from endernet_bp.endernet_scripts.endernet.server.adapters.item_catalog import l
 class FluidItem(object):
     def __init__(self, item_id, count=1):
         self.newItemName = item_id
+        #: 真 `Item` 有的第二个字段（渲染要用，见 `widgets/control_api.py`）。
+        self.newAuxValue = 0
         self.count = count
 
     def GetBasicInfo(self):
         return types.SimpleNamespace(
             itemName="水" if self.newItemName == "minecraft:water" else self.newItemName,
-            itemCategory="none" if "water" in self.newItemName else "items")
+            itemCategory="none" if "water" in self.newItemName else "items", id_aux=7654)
 
 
 class FluidRulesTests(unittest.TestCase):
@@ -91,14 +100,14 @@ class FluidWindowTests(unittest.TestCase):
         for suffix, attrs in (
             ("tooldelta.api.client.player", {"GetLocalPlayerHotbarAndInvItems": lambda: []}),
             ("tooldelta.define.item", {"Item": FluidItem}),
-            ("tooldelta.ui", {"Binder": types.SimpleNamespace(BF_EditChanged=1)}),
+            ("tooldelta.ui", {"Binder": BinderStub}),
         ):
             module = types.ModuleType(prefix + suffix)
             module.__dict__.update(attrs)
             modules[module.__name__] = module
 
         def load(name):
-            fullname = prefix + "endernet.client.ui." + name
+            fullname = prefix + "endernet.client.ui." + name.replace("/", ".")
             path = os.path.join(ROOT, "endernet_bp", "endernet_scripts", "endernet", "client",
                                 "ui", name + ".py")
             spec = importlib.util.spec_from_file_location(fullname, path)
@@ -110,9 +119,19 @@ class FluidWindowTests(unittest.TestCase):
             cls.items = load("select_item_window")
             with patch.dict(sys.modules, {cls.items.__name__: cls.items}):
                 cls.fluids = load("select_fluid_window")
+            cls.bindings_module = load("widgets/list_window_bindings")
+        # 同一块屏上会同时开物品选择器与流体选择器，因此宿主两条混入都要有——
+        # 这正是「两条绑定各认各的 `_vars` 槽」那条判据的现场。
+        cls.Host = type(
+            "HostScreen",
+            (cls.bindings_module.SelectItemWindowBindingsMixin,
+             cls.bindings_module.SelectFluidWindowBindingsMixin,
+             Screen),
+            {},
+        )
 
     def setUp(self):
-        self.screen = Screen()
+        self.screen = type(self).Host()
         self.catalog = ItemCatalogClient(Bus(), EVENTS, Event)
         self.catalog.item_ids = ["minecraft:stone"]
         self.catalog.fluid_ids = ["minecraft:water", "mod:oil"]
@@ -134,9 +153,9 @@ class FluidWindowTests(unittest.TestCase):
         window = self.open(["mod:oil", "mod:oil", "minecraft:water"])
         self.assertEqual(self.screen.definition, "endernet_windows.select_fluid_window")
         self.assertEqual(window.root.layer, 50)
-        self.assertIs(window.grid, window.root.GetElement("fluids/grid"))
+        self.assertEqual(window.COLLECTION, "endernet_select_fluids")
         self.assertEqual(window.visible_ids, ["minecraft:water", "mod:oil"])
-        self.assertEqual(window.cells[0].GetElement("item_renderer").item, "minecraft:water")
+        self.assertEqual(window.get_item_id_aux(0), 7654)
         window._set_source("network")
         self.assertEqual(window.visible_ids, ["mod:oil", "minecraft:water"])
         inventory = [None, FluidItem("minecraft:stone"), FluidItem("minecraft:water_bucket", 0),
@@ -154,7 +173,7 @@ class FluidWindowTests(unittest.TestCase):
     def test_search_and_limit_apply_after_fluid_identification(self):
         self.catalog.fluid_ids = ["mod:fluid_%02d" % i for i in range(51)] + ["minecraft:water"]
         window = self.open()
-        search = self.screen.bindings[(1, self.fluids.SEARCH_BINDING)]
+        search = self.screen.callback(self.fluids.SEARCH_BINDING)
         search({"Text": " \t "})
         self.assertEqual(len(window.visible_ids), 40)
         search({"Text": " FLUID_50 "})
@@ -162,7 +181,7 @@ class FluidWindowTests(unittest.TestCase):
         search({"Text": " 水 ".encode("utf-8")})
         self.assertEqual(window.visible_ids, ["minecraft:water"])
         search({"Text": "missing"})
-        self.assertFalse(any(cell.visible for cell in window.cells))
+        self.assertFalse(any(window.has_item(i) for i in range(40)))
         window._select(0)
         self.assertEqual(self.received, [])
 
@@ -173,19 +192,30 @@ class FluidWindowTests(unittest.TestCase):
         window = self.open()
         self.assertIs(self.fluids.show_select_fluid_window(self.screen, [], lambda _: None), False)
         root = window.root
+        engine = self.screen._screen_instance
+        self.assertEqual(len(engine.collections), 4)
+        fluid_click = self.screen.callback(window.BINDING_PREFIX + "select")
 
         def selected(fluid_id):
             self.assertTrue(root.removed)
             self.assertNotIn(self.fluids.WINDOW_ATTRIBUTE, self.screen._vars)
-            self.assertNotIn((1, self.fluids.SEARCH_BINDING), self.screen.bindings)
-            self.assertIn((1, self.items.SEARCH_BINDING), self.screen.bindings)
+            # **两条绑定同时活在宿主类体上，各认各的 `_vars` 槽**（11-07）。
+            # 关掉流体窗既不摘掉自己那条（静态绑定摘不掉），也不碰物品窗
+            # 那条：前者已关所以忽略编辑，后者照常收到。
+            self.screen.callback(self.fluids.SEARCH_BINDING)({"Text": "missing"})
+            self.assertEqual(window.query, "")
+            self.screen.callback(self.items.SEARCH_BINDING)({"Text": "minecraft:stone"})
+            self.assertEqual(item_window.query, "minecraft:stone")
             self.received.append(fluid_id)
 
         window.select_callback = selected
-        window._select(0)
-        window._select(0)
+        fluid_click({"#collection_index": 0})
+        fluid_click({"#collection_index": 0})
         self.assertEqual(self.received, ["minecraft:water"])
         self.assertIs(self.screen._vars[self.items.WINDOW_ATTRIBUTE], item_window)
+        self.assertEqual(len(engine.collections), 2)
+        self.assertTrue(all(key[1] == item_window.COLLECTION for key in engine.collections))
+        self.assertTrue(callable(self.screen.callback(item_window.BINDING_PREFIX + "select")))
         self.open().close()
 
     def test_late_catalog_refreshes_backpack_and_stop_cleans_everything(self):
@@ -224,6 +254,10 @@ class FluidWindowTests(unittest.TestCase):
         self.assertEqual(controls["fluid_search_editor"]["$text_box_name"], self.fluids.SEARCH_BINDING)
         grid = controls["fluids"]["controls"][0]["grid"]
         self.assertEqual(grid["collection_name"], "endernet_select_fluids")
+        self.assertEqual(grid["grid_item_template"], "endernet_windows.selected_fluid")
+        template = data["selected_fluid@selected_item"]
+        self.assertEqual(template["$selector_collection"], "endernet_select_fluids")
+        self.assertEqual(template["$selector_select"], "#EnderNetSelectFluid.select")
         self.assertEqual(grid["grid_dimensions"], [8, 5])
         self.assertEqual(grid["maximum_grid_items"], 40)
 

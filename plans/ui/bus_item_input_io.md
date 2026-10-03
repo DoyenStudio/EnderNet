@@ -43,7 +43,7 @@ main@common.inventory_screen_common
       ├─ main
       │  ├─ title/title_text
       │  ├─ stat_bar
-      │  ├─ container_grid（5 个内部缓冲槽）
+      │  ├─ cached_slots/container_grid（5 个内部缓冲槽）
       │  ├─ baseband_img/{bg, frame}
       │  ├─ conn_band_img
       │  ├─ outer_container_panel/{bg_frame, stat_text}
@@ -69,7 +69,7 @@ settings_window（独立模板）
 | `B/close` | `common.close_button`，18×18 | 关闭设备主界面；继承事件与销毁行为待核对 |
 | `M/title/title_text` | 标题 label，背景 82×16 | 显示方块本地化名称 |
 | `M/stat_bar` | `endernet_ui_common.device_stat_bar`，偏移 [84, 1] | 继承 `stat_icon`、`stat_text`、`interact_btn`；默认错误图标及“未知状态”，状态刷新及点击用途待接入 |
-| `M/container_grid` | 物品 grid，5×1，中心偏移 [0, -32] | 显示本设备真实缓冲库存；吸取和输入网络后刷新 |
+| `M/cached_slots/container_grid` | 物品 grid，5×1，中心偏移 [0, -32] | 显示本设备真实缓冲库存；吸取和输入网络后刷新 |
 | `M/outer_container_panel/stat_text` | 外部容器状态 label，面板 100×20，顶部偏移 [0, 24] | 初始“外部容器： 未接入”；按朝向容器接入状态刷新，其他文案待明确 |
 | `M/baseband_img` | 网络基带示意 panel，100×10，顶部偏移 [0, 90] | `bg` 为 `network_baseband_8` 平铺纹理，`frame` 为装饰；无动态绑定 |
 | `M/conn_band_img` | 连接示意 image，40×50，顶部偏移 [0, 42] | 灰色 `white_background`；未声明动态颜色或动画 |
@@ -89,12 +89,12 @@ settings_window（独立模板）
 
 | 组件 | 模板／collection | 数量与身份 | 显示与操作约定 |
 | --- | --- | --- | --- |
-| `M/container_grid` | `endernet_container_common.container_grid_items`；`netease_container` | 5 个内部真实缓冲槽；业务槽号 0–4，UI 集合映射待接入验证 | 展示吸取后、尚未输入网络的实际物品；不是过滤条目，手动存取权限待定 |
+| `M/cached_slots/container_grid` | `endernet_container_common.container_grid_items`；`netease_container` | 5 个内部真实缓冲槽；业务槽号 0–4，UI 集合映射待接入验证 | 展示吸取后、尚未输入网络的实际物品；不是过滤条目，手动存取权限待定 |
 | `B/inventory/inventory/inventory_grid` | `endernet_container_common.inventory_panel` 内的 grid；`inventory_items` | 9×3，集合内布局索引 0–26 | 玩家背包，实际槽身份按引擎集合处理 |
 | `B/inventory/hotbar` | `endernet_container_common.hotbar_grid_template`；`hotbar_items` | 9×1，集合内布局索引 0–8 | 玩家快捷栏，不与设备缓冲槽共用编号语义 |
 | 过滤名单 | `endernet_windows.item_list_window`；`endernet_item_list` | 数量由传入 list 和独立上限决定 | 虚拟配置列表，仅保存物品 identifier；不消耗、存储或移动真实物品 |
 
-**资源接入注意：**当前 `container_grid` 的 grid_dimensions 是 [5, 1]，仍继承公共模板的 maximum_grid_items=27。业务容量已明确为 **5**，接入时需使网格数量、集合数据和槽位映射都严格对应 5 格，不能将继承值解释为 27 格缓冲容量。
+**资源接入注意：**当前 `cached_slots/container_grid` 的 grid_dimensions 是 [5, 1]，仍继承公共模板的 maximum_grid_items=27。业务容量已明确为 **5**，接入时需使网格数量、集合数据和槽位映射都严格对应 5 格，不能将继承值解释为 27 格缓冲容量。
 
 > **2026-09-29 更正。** 本节原先写 [9, 1] 与「业务容量已明确为 9」，而 JSON 里一直是 [5, 1]——**文档与 JSON 分叉了，且当时的离线断言只查「界面画没画这个集合」、不查格数，所以门禁没有拦住**。User 当天定以界面为准，本文与 [blocks.md](../blocks.md) 一并改为 5；方块侧也补上了网易容器（`container_size` 与领域层槽数同源于 `common/definitions.py` 的 `ITEM_INTAKE_PORT_SLOT_COUNT`）。
 
@@ -132,7 +132,7 @@ settings_window（独立模板）
 | --- | --- | --- |
 | 设备状态 → `M/stat_bar` | 状态文字及图标；打开和状态变化时刷新 | 公共模板初值已有，本设备数据源及回调待接入 |
 | 外部容器状态 → `M/outer_container_panel/stat_text` | 朝向容器接入信息 | 当前为静态 text，无业务绑定 |
-| 缓冲库存 → `M/container_grid` | 5 个真实物品槽，包含物品身份与数量 | 继承 `netease_container`；设备身份、快照和槽号映射待接入 |
+| 缓冲库存 → `M/cached_slots/container_grid` | 5 个真实物品槽，包含物品身份与数量 | 继承 `netease_container`；设备身份、快照和槽号映射待接入 |
 | 过滤模式 → `S/filter_mode_btn/icon`、`S/filter_mode_text` | 黑／白两态；打开及切换后同步刷新 | JSON 只有黑名单初值，无模式字段绑定或业务事件 |
 | 过滤物品 → 物品列表窗口 | `list[str]`，元素为物品 identifier | 组件已有 `#EnderNetItemList.*` 动态绑定；设备存储及同步待接入 |
 | 名单上限 → 列表参数 | 非负整数，不接受 bool | 组件已有校验；本设备具体上限待定，不能套用缓冲槽数量或示例值 64 |
@@ -162,21 +162,55 @@ show_item_list_window(self, current_filter_item_ids, max_filter_items, list_titl
 - 设置窗口需另行创建／挂载并绑定 `settings_btn`、`filter_mode_btn`、`filter_modification_btn` 和关闭回调；通用编辑器 click 名不是设备业务接口。
 - 缓冲槽数据源及两阶段物流接入需按 5 格真实库存实现；本文不提供未实现的吸取、入网或保存 API。
 
+### 2026-10-03 接入记录（11-07 配置写入）
+
+**屏幕与注册**：`endernet/client/ui/device_panels.py` 的 `BusItemInputPanel`
+（`@RegistToolDeltaScreen("bus_item_input_io_ui.main", is_proxy=True)`），
+逻辑在 `endernet/client/ui/port_panel.py` 的 `ItemPortPanelBase`。
+
+**控件全部命令式驱动，本 JSON 一个字节都没改**：
+
+| 控件 | 驱动方式 |
+| --- | --- |
+| `M/settings_btn` | `SetCallback` → `AddElement("bus_item_input_io_ui.settings_window")` 并 `SetVisible(True)` |
+| 设置窗 `filter_mode_btn`（点按） | `SetCallback` → 在**服务端下发的 `filter_modes`** 内轮转，提交 `{"filter_mode": 下一个}` |
+| 设置窗 `filter_mode_btn/icon` | `asImage().SetUV(uv, (16,16))`，取值照 §5 那张表（黑名单 `[16,0]`／白名单 `[0,0]`） |
+| 设置窗 `filter_mode_text` | `asLabel().SetText("黑名单"/"白名单")`——与图标同一次取，避免图与字分家 |
+| 设置窗 `filter_modification_btn` | `SetCallback` → `show_item_list_window(self, 权威名单副本, 服务端下发上限, 当前模式名)` |
+
+**设置窗是按需 `AddElement` 出来的**（它在本 JSON 里是一张自由模板），建好
+立刻 `SetVisible(False)`、之后留着不销毁，层级 `SetLayer(45)`。
+
+**本设备没有摘要控件**：`content` 里没有 `item_set_panel`，因此界面不画
+「已设定 N 项」那格——这是界面本来就有的差异，不是漏接。
+
+**仍未做**：5 格缓冲的槽映射与两阶段物流（属 06-05／06-06）、持久化迁移
+（属 12）、失败原因的显示位置（**缺项**）、遮罩与防穿透。
+**游戏内一次都没跑过**——逐条见 [11 交付说明第三十五节](../tasks/11-交付说明.md)。
+
+**顺带更正一处路径分叉**：本文第 2、3、4、6 节原先写 `M/container_grid`，
+而 JSON 里那格实际在 `main/cached_slots/container_grid`（与取货口一侧、
+以及 `bus_item_output_io.md` 的写法一致）。**已按 JSON 更正**——这与
+2026-09-29 那次「存货口格数 9→5」是同一类问题：文档过时了，不是 JSON 错了。
+
 ## 8. 待确认项与验证记录
 
 | 待确认／接入项 | 影响范围 |
 | --- | --- |
 | 5 格缓冲的数量与数据接入 | 覆盖继承的 maximum_grid_items=27，核实 UI 下标到真实槽号 0–4 的映射 |
 | 缓冲槽操作权限 | 是否允许玩家手动存取；过滤改变后已缓冲物品的处理 |
-| 名单规则 | 空名单行为、条目上限、切换模式时共用还是分开保存列表 |
-| 设置窗口生命周期 | 完整路径、layer=-2 的运行时调整、遮罩、防穿透、重复点击和返回键 |
-| 脚本与服务端同步 | 注册、快照、两阶段物流、配置保存、回执与失效处理 |
+| 名单规则 | 空名单行为、条目上限、切换模式时共用还是分开保存列表。**2026-10-03**：条目上限**不由界面决定**——服务端 `PortPolicy.intake_filter_limit` 随 `port_config` 下发，界面照它显示与限制（那仍是替身口径，不是定案） |
+| 设置窗口生命周期 | 完整路径、layer=-2 的运行时调整、遮罩、防穿透、重复点击和返回键。**2026-10-03**：改用 `AddElement` 按需创建并 `SetLayer(45)`，**模板里那个 `layer=-2` 因此不再生效**；遮罩与防穿透仍未做 |
+| 脚本与服务端同步 | 注册、快照、两阶段物流、配置保存、回执与失效处理。**2026-10-03**：注册、配置保存与回执已接（离线）；**两阶段物流与快照仍属 06-05／06-06** |
+| 失败原因的显示位置 | **缺项**：本 JSON 的 `settings_window` 与 `content` 里都没有可承载错误文案的控件（`filter_mode_text` 是模式标签，不能当报错条）。2026-10-03 的接入把原因写进 `PortConfigModel.notice` 与 `diagnostics()`，界面上看不到 |
 | 游戏验证 | 触控、长文本、层级遮挡、库存更新、关闭及重开 |
 
 - [x] 已核对当前 JSON、公共模板及用户补充的交互规则。
 - [x] 已明确 5 格真实缓冲槽及“外部容器 → 缓冲 → 网络”的顺序。
 - [x] 已记录默认黑名单、图标 UV、模式切换和物品列表入口。
 - [x] 已区分资源初始值、已有公共接口与待接入行为。
+- [x] **2026-10-03**：本设备脚本、屏幕注册、控件驱动与配置同步（离线部分；
+  **两阶段物流与完整运行时路径仍不在此列**）。
 - [ ] 本设备脚本、绑定、同步及完整运行时路径已验证。
 - [ ] 游戏内打开、吸取、入网、过滤修改、关闭及重开已验证。
 - [ ] 移动端、异常状态及持有物退出已验证。

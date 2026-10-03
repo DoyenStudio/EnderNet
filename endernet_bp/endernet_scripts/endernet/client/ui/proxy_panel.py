@@ -80,6 +80,10 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
     client = None
     #: 本屏的设备状态模型；没开会话之前是 `None`。
     status = None
+    #: 本屏的**设备配置**模型（11-07）。同样是类属性：绑定比 `OnCreate`
+    #: 早生效、比会话活得久，因此每一处消费它之前都要容忍它是 `None`。
+    #: 只有能配置的设备（两台物品口）会把它建成真的 `PortConfigModel`。
+    port_config = None
 
     def __init__(self, screen_name, screen_instance, params=None):
         # type: (str, object, object) -> None
@@ -108,6 +112,10 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
         if self._session_lost():
             return
         self._keepalive()
+        # 会话正常时的额外推进（11-07）。**子类不覆盖 `OnTicking`**：
+        # 覆盖基类同名方法是静默的，迟早有人只重写了半条链，而症状是
+        # 「保活不发了」或「身份再也不认领」。因此留一个具名钩子在这里。
+        self._tick_extra()
 
     def OnDestroy(self):
         self._release()
@@ -139,6 +147,10 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
         # 就会推一份总体状态。
         self.status = device_status.DeviceStatusModel(device_ref)
         client.on_message(self._make_status_handler(client))
+        # 子类的模型与收包回调（11-07）。**在 `open_session` 之前**：会话一开
+        # 服务端下一帧就会推配置，晚一步那一份就永远补不上了（与上面那条
+        # 「先挂收包再开会话」同一条理由）。
+        self._attach_models(device_ref, client)
         self.client = client
         self._opened_at = self._ticks
         client.open_session(device_ref, dimension)
@@ -206,6 +218,7 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
         client = self.client
         self.client = None
         self.status = None
+        self._detach_models()
         self._had_session = False
         self._opened_at = None
         if client is None:
@@ -214,12 +227,42 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
         client.clear_handlers()
         client.close_session()
 
+    def _attach_models(self, device_ref, client):
+        # type: (object, object) -> None
+        """认领到设备之后的模型装配钩子。**基类什么都不做。**
+
+        子类在这里建自己的模型、挂自己的收包回调。参数里带着 `client` 是
+        有意的：回调必须在 `open_session` 之前挂上，而那时 `self.client`
+        还没有赋值（见 `_adopt`）。
+        """
+        return None
+
+    def _detach_models(self):
+        # type: () -> None
+        """收尾时的对称钩子：把子类的模型置回安全值。**基类什么都不做。**
+
+        与 `_attach_models` 成对：`_release` 幂等，因此这里也可能被调两次。
+        """
+        return None
+
+    def _tick_extra(self):
+        # type: () -> None
+        """会话正常时每帧的额外推进。**基类什么都不做。**
+
+        见 `OnTicking`：子类不覆盖 `OnTicking`，只用这个钩子。
+        """
+        return None
+
     def diagnostics(self):
         # type: () -> dict
         client = self.client
+        config = self.port_config
         return {
             "screen_key": type(self)._screen_key,
             "adopted": client is not None,
             "ticks": self._ticks,
             "session": client.diagnostics() if client is not None else None,
+            "port_config": (
+                config.diagnostics() if config is not None else None
+            ),
         }

@@ -246,7 +246,9 @@ def _declared_containers():
 #: 方块时要当场变红，而不是被一个「反向差异为空」的断言悄悄放过去。
 PANEL_EXEMPTIONS = {
     "endernet:bus_item_io": "界面没做完，User 2026-09-29 判定不作样本",
-    "endernet:storage_driver": "驱动器界面未交接（plans/ui/storage_driver.md 仍是模板）",
+    # `endernet:storage_driver` **2026-10-03 已移出本清单**：User 裁定介质管理
+    # 暂不需要界面，于是给它挂了一张**空屏**（`StorageDriverPanel`，只有状态栏
+    # 与详情弹窗）。它的配置面仍然没有——但「有没有屏幕类」这一问已经有了答案。
     "endernet:memory_slot": "内存槽界面未交接（plans/ui/memory_slot.md 仍是模板）",
     "endernet:bus_fluid_input_io": "流体口，R07 占位、真实适配属 13-03，界面刻意不画集合",
     "endernet:bus_fluid_output_io": "流体口，同上一行",
@@ -317,6 +319,238 @@ class TestRegistration(unittest.TestCase):
         registered = register_screens()
         for _, panel_cls in device_panels.PROXY_PANELS:
             self.assertIn(panel_cls, registered)
+
+
+def _settings_controls(device_id):
+    """界面 JSON 里 `settings_window` 模板的控件名集合（含嵌套路径）。
+
+    **不去重、不归一**：这里要回答的是「Python 里写的那个名字在 JSON 里
+    存不存在」，因此嵌套那一条按 `父/子` 的路径形式收进来，与
+    `GetElement` 收路径的用法一致（`filter_mode_btn/icon` 就是这种）。
+    """
+    data = _load_ui(ui_file_of(device_id))
+    template = data.get("settings_window")
+    if template is None:
+        return None
+    found = set()
+
+    def walk(node, prefix):
+        for entry in node.get("controls") or ():
+            for key, value in entry.items():
+                name = key.split("@")[0]
+                path = prefix + name
+                found.add(path)
+                if isinstance(value, dict):
+                    walk(value, path + "/")
+
+    walk(template, "")
+    return found
+
+
+class TestPortConfigPanels(unittest.TestCase):
+    """两台物品口的配置接线（11-07）。
+
+    守的是**「哪台有哪些控件」这件事有两份描述**：Python 的类属性与界面的
+    JSON。两处对不上时界面不会报错——只是那一下点了没反应，或者开关拨了
+    没人读。因此这里把它们对起来。
+    """
+
+    OUTPUT = device_panels.BusItemOutputPanel
+    INPUT = device_panels.BusItemInputPanel
+
+    def test_each_port_declares_only_the_controls_its_interface_has(self):
+        # 取货口有缓存开关、没有过滤模式；存货口正好相反。
+        self.assertIsNotNone(self.OUTPUT.CACHE_SWITCH)
+        self.assertIsNone(self.OUTPUT.MODE_BUTTON)
+        self.assertIsNone(self.OUTPUT.MODE_ICON)
+        self.assertIsNone(self.OUTPUT.MODE_TEXT)
+        self.assertIsNone(self.INPUT.CACHE_SWITCH)
+        self.assertIsNotNone(self.INPUT.MODE_BUTTON)
+        self.assertIsNotNone(self.INPUT.MODE_ICON)
+        self.assertIsNotNone(self.INPUT.MODE_TEXT)
+
+    def test_each_port_has_exactly_one_way_to_open_the_filter_list(self):
+        """两条路（主面板／设置窗）**各用其中一条**。
+
+        两条都填会让 `_ensure_controls` 与 `_wire_settings` 各接一次回调、
+        后接的那次盖掉前面——表现是「点其中一个按钮没反应」。
+        """
+        self.assertIsNotNone(self.OUTPUT.FILTER_BUTTON_MAIN)
+        self.assertIsNone(self.OUTPUT.FILTER_BUTTON_SETTINGS)
+        self.assertIsNone(self.INPUT.FILTER_BUTTON_MAIN)
+        self.assertIsNotNone(self.INPUT.FILTER_BUTTON_SETTINGS)
+
+    def test_only_the_output_port_draws_a_summary(self):
+        """存货口的 `content` 里没有 `item_set_panel`——那是界面的差异，
+        不是漏接。填 `True` 只会让每次开屏多记一条 missing。"""
+        self.assertTrue(self.OUTPUT.HAS_SUMMARY)
+        self.assertFalse(self.INPUT.HAS_SUMMARY)
+
+    def test_the_settings_definition_names_this_panel_s_own_json(self):
+        for device_id, panel_cls in (
+            ("endernet:bus_item_output_io", self.OUTPUT),
+            ("endernet:bus_item_input_io", self.INPUT),
+        ):
+            self.assertEqual(
+                panel_cls.SETTINGS_DEFINITION,
+                ui_file_of(device_id)[:-5] + "_ui.settings_window",
+            )
+        # 取货口与存货口各是各的文件，串了就会去开另一台的设置窗。
+        self.assertNotEqual(self.OUTPUT.SETTINGS_DEFINITION,
+                            self.INPUT.SETTINGS_DEFINITION)
+
+    def test_every_declared_control_name_exists_in_the_interface_json(self):
+        """**Python 里的控件名必须能在 JSON 里找到。**
+
+        找不到时 `_settings_control` 会记一条 missing 并跳过——界面不报错，
+        只是那个开关永远画不出权威值。这条用例把那份沉默变成一次红灯。
+        """
+        for device_id, panel_cls in (
+            ("endernet:bus_item_output_io", self.OUTPUT),
+            ("endernet:bus_item_input_io", self.INPUT),
+        ):
+            controls = _settings_controls(device_id)
+            self.assertIsNotNone(controls, "%s 没有 settings_window 模板" % (device_id,))
+            declared = [
+                ("SETTINGS_CACHE_SWITCH", panel_cls.CACHE_SWITCH),
+                ("MODE_BUTTON", panel_cls.MODE_BUTTON),
+                ("MODE_ICON", panel_cls.MODE_ICON),
+                ("MODE_TEXT", panel_cls.MODE_TEXT),
+                ("FILTER_BUTTON_SETTINGS", panel_cls.FILTER_BUTTON_SETTINGS),
+            ]
+            for label, name in declared:
+                if name is None:
+                    continue
+                self.assertIn(
+                    name, controls,
+                    "%s 的 %s=%r 在界面 JSON 里找不到" % (device_id, label, name))
+
+    def test_the_settings_window_is_not_mounted_in_the_content_tree(self):
+        """它是一张**自由模板**，由脚本按需 `AddElement` 出来。
+
+        本轮把它挂进 `content` 没有意义：那会让它每次开屏都在树上，而
+        显隐还得另接一条绑定——命令式那边一个字节都不用改。
+        """
+        for device_id in ("endernet:bus_item_output_io",
+                          "endernet:bus_item_input_io"):
+            data = _load_ui(ui_file_of(device_id))
+            content = data["content"]
+            keys = [key for entry in content["controls"] for key in entry]
+            self.assertFalse(
+                [key for key in keys if "settings_window" in key],
+                "%s 的 content 里不该挂 settings_window" % (device_id,))
+
+
+class TestPortConfigPanelLifecycle(unittest.TestCase):
+    """屏的模型装配与「没有控件也不炸」。"""
+
+    def setUp(self):
+        self.patcher = mock.patch.object(proxy_panel, "NetworkClient", _FakeClient)
+        self.patcher.start()
+        self.addCleanup(self.patcher.stop)
+        client_identity.latch().clear()
+        self.addCleanup(client_identity.latch().clear)
+        self.ref = DeviceRef(NodeKey(0, 4, 5, 6), 2)
+
+    def panel(self, cls=None):
+        cls = cls or device_panels.BusItemOutputPanel
+        return cls("probe.main", FakeScreen())
+
+    def offer(self, cls):
+        return client_identity.latch().offer(
+            device_identity.identity_payload(cls._screen_key, self.ref, 0))
+
+    def test_the_config_model_is_built_on_adopt_and_dropped_on_release(self):
+        self.offer(device_panels.BusItemOutputPanel)
+        panel = self.panel()
+        panel.OnCreate()
+        self.assertIsNotNone(panel.port_config)
+        self.assertIsNone(panel.port_config.device_id)   # 还没收到推送
+        panel.OnDestroy()
+        self.assertIsNone(panel.port_config)
+
+    def test_a_tick_without_controls_degrades_instead_of_raising(self):
+        """控件取不到（路径解析失败、这台设备的界面里没有那一格）时，
+        `OnTicking` **不许抛**——引擎每帧调用它，抛出会刷屏并跳过本帧剩下的事。
+
+        取不到的名字要被记下来（`missing`），否则「开关永远画不出权威值」
+        在诊断里也看不见。
+        """
+        self.offer(device_panels.BusItemOutputPanel)
+        panel = self.panel()
+        panel.OnCreate()
+        panel.client.establish()
+        panel.OnTicking()
+        panel.OnTicking()
+        self.assertIsInstance(panel.diagnostics()["port_failures"], dict)
+        # FakeScreen 没有控件树，因此取不到主面板那几个。
+        self.assertTrue(panel.diagnostics()["port_missing"])
+
+    def test_a_config_push_reaches_the_model_and_a_stale_one_does_not(self):
+        self.offer(device_panels.BusItemOutputPanel)
+        panel = self.panel()
+        panel.OnCreate()
+        panel.client.establish()
+        session = panel.client.session_id
+        panel.client.deliver(session, protocol.PortConfigMessage(
+            "endernet:bus_item_output_io", self.ref.generation, "output",
+            {"enabled": True, "direction": "both", "filter_mode": "whitelist",
+             "filter": [], "supply_slots": [], "limit": 0, "cache_enabled": False},
+            9, filter_modes=["whitelist"]))
+        self.assertFalse(panel.port_config.cache_enabled())
+        # 旧代次的推送一律丢掉：拆掉又在原地放一台时，界面不能画上一台的配置。
+        panel.client.deliver(session, protocol.PortConfigMessage(
+            "endernet:bus_item_output_io", self.ref.generation + 1, "output",
+            {"enabled": True, "direction": "both", "filter_mode": "whitelist",
+             "filter": [], "supply_slots": [], "limit": 0, "cache_enabled": True},
+            9, filter_modes=["whitelist"]))
+        self.assertFalse(panel.port_config.cache_enabled())
+        self.assertEqual(panel.port_config.stats["stale"], 1)
+
+
+class TestItemPickerSearch(unittest.TestCase):
+    def test_port_search_binding_filters_localized_item_names(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui import select_item_window
+        from test_select_item_window import ItemStub as SearchItem
+
+        for panel_cls in (device_panels.BusItemInputPanel, device_panels.BusItemOutputPanel):
+            with self.subTest(panel=panel_cls.__name__):
+                engine = FakeScreen()
+                panel = panel_cls("probe.main", engine)
+                panel._activated = True
+                panel._vars = {}
+                # 仅构造选择器数据模型；事件仍通过实际设备屏生成的绑定入口派发。
+                picker = select_item_window.SelectItemWindow.__new__(
+                    select_item_window.SelectItemWindow)
+                picker.screen = panel
+                picker.closed = False
+                picker.source = "all"
+                picker.query = ""
+                picker.search_names = {}
+                picker.visible_ids = []
+                picker.catalog = types.SimpleNamespace(
+                    item_ids=["test:item_%02d" % i for i in range(55)] + ["minecraft:stone"])
+                panel._vars[picker.WINDOW_ATTRIBUTE] = picker
+                key = (BinderStub.BF_EditChanged, picker.SEARCH_BINDING)
+                self.assertIn(key, engine.bindings)
+                callback = engine.bindings[key]
+                with mock.patch.object(select_item_window, "Item", SearchItem):
+                    picker.refresh()
+                    self.assertEqual(len(picker.visible_ids), 40)
+                    # 名称命中，ID 不含关键字；目标位于最初 40 项之外。
+                    for text in ("  石头  ", "石头".encode("utf-8")):
+                        callback({"Text": text})
+                        self.assertEqual(picker.visible_ids, ["minecraft:stone"])
+                        self.assertTrue(picker.has_item(0))
+                        self.assertFalse(picker.has_item(1))
+                        self.assertEqual(picker.get_item_id_aux(0), 1234)
+                    callback({"Text": "不存在"})
+                    self.assertEqual(picker.visible_ids, [])
+                    callback({"Text": ""})
+                    self.assertEqual(len(picker.visible_ids), 40)
+                    del panel._vars[picker.WINDOW_ATTRIBUTE]
+                    callback({"Text": "石头"})
+                    self.assertEqual(picker.query, "")
 
 
 class TestContainerScreenTable(unittest.TestCase):
@@ -586,6 +820,31 @@ class _FakeClient(object):
         self.opens = []
         self.keepalives = 0
         self.closes = 0
+        #: 11-07 起设备屏会发配置命令并排水，因此替身要回答这两条。
+        self.commands = []
+        self.results = []
+        self.requests = 0
+
+    def send_command(self, action, **kwargs):
+        self.requests += 1
+        request_id = "c%d" % (self.requests,)
+        self.commands.append((action, kwargs, request_id))
+        return request_id
+
+    def take_command_results(self, limit=None):
+        taken = self.results
+        self.results = []
+        return taken
+
+    def deliver(self, session_id, message):
+        """把一条 S2C 消息喂给所有回调（照 `NetworkClient.receive` 的做法）。"""
+
+        class _Envelope(object):
+            def __init__(self, session_id):
+                self.session_id = session_id
+
+        for handler in list(self.handlers):
+            handler(_Envelope(session_id), message)
 
     def listen(self, handler):
         return 1

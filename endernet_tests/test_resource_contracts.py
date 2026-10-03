@@ -382,6 +382,7 @@ class SyncMessageTests(unittest.TestCase):
             ),
             template_message(),
             order_message(),
+            port_config_message(),
             preview_state_message(),
             preview_chunk_message(),
         )
@@ -644,6 +645,41 @@ class SyncMessageTests(unittest.TestCase):
         self.assertNotIn("op_id", payload)
         # `expected_index_version` 属消息层，不是动作载荷。
         self.assertNotIn("expected_index_version", payload)
+
+    def test_command_config_is_a_wire_shaped_dict_or_absent(self):
+        """`config` 与 `key` 同一条纪律：**字典或 `None`，不是领域对象**。
+
+        塞 `PortConfig` 进去的后果不是「被拒绝」，而是 `to_dict()` 把它原样
+        写进消息、到**发包那一刻**才在引擎的 msgpack 上炸
+        （`can not serialize`），界面上什么都看不到。因此构造期就要炸。
+        """
+        # 缺席 = 不带这个键：服务端 `payload.get("config")` 拿到 `None`，
+        # 与「这次没改配置」同义。消息层的 `to_dict()` 仍写 `None`，
+        # 那是 `_require_fields` 的严格性要求，两者不矛盾。
+        absent = protocol.TerminalCommand("r1", "port_configure")
+        self.assertNotIn("config", absent.payload())
+        self.assertIsNone(absent.to_dict()["config"])
+        with self.assertRaises(ValueError):
+            protocol.TerminalCommand("r1", "port_configure", config=[("a", 1)])
+        # 解析路径**无条件**检查：这是来自对面的数据，本端没开 DEBUG
+        # 不能成为关掉边界检查的理由。
+        forged = absent.to_dict()
+        forged["config"] = "cache_enabled=false"
+        with self.assertRaises(ValueError):
+            protocol.decode_sync_message(forged)
+
+    def test_command_config_rides_the_wire_unchanged(self):
+        """`config` 装的是**要写进权威状态的配置**，往返不得走样。
+
+        `filter` 那一项是资源键字典的列表——它必须原样到服务端，由
+        `StorageService._key_from` 读成 `ResourceKey`；换成字符串或领域
+        对象都会在线上或服务端才炸。
+        """
+        intent = {"filter": [self.stone.to_dict()], "filter_mode": "whitelist"}
+        command = protocol.TerminalCommand("r1", "port_configure", config=intent)
+        self.assertEqual(command.payload()["config"], intent)
+        restored = protocol.decode_sync_message(command.to_dict())
+        self.assertEqual(restored.config, intent)
 
     def test_command_result_rejects_a_mismatched_request_id(self):
         """消息层的 `request_id` 与结果里的那一份**必须相等**（指纹式核对）。
@@ -1021,6 +1057,36 @@ def order_message():
           "stage": protocol.ORDER_SOURCE_STAGE_RUNNING,
           "feed": protocol.ORDER_SOURCE_FEED_WAITING_OUTPUTS,
           "done": 16, "total": 64}],
+    )
+
+
+def port_config_message(**overrides):
+    """一台接口设备的权威配置（11-07）。**带一条过滤项**，好让资源键那一项
+    在往返里真的被走到（空名单时它是一条空列表，什么也测不到）。"""
+    fields = dict(
+        device_id="endernet:bus_item_output_io",
+        generation=3,
+        role="output",
+        config={
+            "enabled": True,
+            "direction": "both",
+            "filter_mode": "whitelist",
+            "filter": [{"kind": "item", "name": "minecraft:stone"}],
+            "supply_slots": [],
+            "limit": 0,
+            "cache_enabled": False,
+        },
+        filter_limit=9,
+        filter_modes=["whitelist"],
+        blocker={"code": "port_unconfigured", "detail": "接口尚未配置"},
+        buffer_summary="占用 3/5 格",
+    )
+    fields.update(overrides)
+    return protocol.PortConfigMessage(
+        fields["device_id"], fields["generation"], fields["role"],
+        fields["config"], fields["filter_limit"],
+        filter_modes=fields["filter_modes"], blocker=fields["blocker"],
+        buffer_summary=fields["buffer_summary"],
     )
 
 

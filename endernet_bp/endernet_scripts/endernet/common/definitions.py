@@ -598,7 +598,7 @@ ITEM_INTAKE_PORT_SLOT_COUNT = Value(
 #: `BUFFER_CONTAINER` 形态的 `TransferBuffer`，件数上界由
 #: `PortPolicy.output_cache_capacity` 从本值推出。
 #:
-#: 但**「网络 → 缓存 → 朝向容器」这条中转路由尚未实现**（06-06），
+#: 而**「网络 → 缓存 → 朝向容器」这条中转路由已于 2026-10-03 交付**（06-06），
 #: 缓存开关（`PortConfig.cache_enabled`）目前只被记录与展示。
 #: 「这 5 格有权威来源」与「缓存已打通」仍是两件事，不要读成后者。
 ITEM_OUTPUT_PORT_SLOT_COUNT = Value(
@@ -790,6 +790,12 @@ CONTAINER_SCREENS = {
     "endernet:bus_item_input_io": "bus_item_input_io_ui.main",
     "endernet:bus_template_io": "bus_template_io_ui.main",
     "endernet:assemble_chamber": "assemble_chamber_ui.main",
+    # 存储驱动器（11-07）。**屏幕是空的**——User 2026-10-03 裁定：介质的
+    # 装卸与 Lore 刷新**暂不需要界面**，只保留服务端逻辑，因此本屏只有
+    # 状态栏与详情弹窗（`ProxyPanelBase` 给的那两样），不接任何配置控件。
+    # 它的 UI 文档 `plans/ui/storage_driver.md` 第 2～8 节仍是空模板，
+    # 所以**不能**给它写配置面；这一行登记的是「引擎开着的那张屏由谁接管」。
+    "endernet:storage_driver": "storage_driver_ui.main",
 }
 
 #: 同一个人两次打开终端界面的最小间隔（秒）。窗口内再右键**静默忽略**。

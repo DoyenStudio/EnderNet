@@ -2,8 +2,8 @@
 
 入口：`endernet/client/ui/select_item_window.py` 的
 `show_select_item_window(screen, network_item_ids, select_callback)`。
-只在客户端、当前 `ToolDeltaScreen` 已创建后调用；不需要继承新的 Screen，
-也不需要在调用方添加 Binder 装饰器。
+只在客户端、当前 `ToolDeltaScreen` 已创建后调用；宿主继承
+`SelectItemWindowBindingsMixin` 以提供静态搜索绑定，网格绑定由窗口动态注册。
 
 ```python
 # 在 endernet/client/ui/ 下的 Screen 脚本中：
@@ -83,13 +83,19 @@ ID 列表，窗口复制并按首次出现顺序去重，不发送网络库存�
 | `select_from_backpack_btn` / `select_from_net_btn` / `select_from_all_btn` | 本地切换来源 |
 | 各来源按钮的 `default` | 选中时 `SetSprite(button_pressed)`，其余恢复 `background_panel_opaque` |
 | 各来源按钮的 `hover` | 选中时也保持 pressed，其他恢复 `button_hovered` |
-| `item_search_editor` | `$text_box_name = #EnderNetSelectItem.search`，运行时注册 `BF_EditChanged` |
+| `item_search_editor` | `$text_box_name = #EnderNetSelectItem.search`，宿主 mixin 的静态 `BF_EditChanged` |
 | `items/grid` | 固定 40 格，collection 为 `endernet_select_items` |
-| 每格 `item_renderer` / `interact_btn` | `SetUiItem(Item(id))` 渲染，点击按当前可见列表取 ID |
+| 每格显隐 | `DynaBindingCollection(BF_BindBool, endernet_select_items, #EnderNetSelectItem.has_item)` |
+| 每格物品图标 | `DynaBindingCollection(BF_BindInt, endernet_select_items, #EnderNetSelectItem.item_id_aux)`，返回 `Item(id).GetBasicInfo().id_aux`；空格返回 `131072` |
+| 每格点击 | `DynaBinding(BF_ButtonClickUp, #EnderNetSelectItem.select)`，按 `params["#collection_index"]` 从当前可见列表取 ID |
 
-搜索绑定仅在窗口打开期间存在，关闭时 `DynaUnbinding`；按钮按实例直接绑定，
-不占用调用方静态 Binder 名称。关闭先移除控件、解除绑定、清空回调，再调用
-选择回调；标记也在回调前删除，因此回调可以立即打开新窗口。
+网格保持固定 8×5，JSON 使用 `always` 集合绑定，使隐藏格子在搜索或切换来源后
+仍能重新显示。`refresh()` 仅更新可见 ID 列表，不调用 `GetGridItem`、
+`ExecuteAfterUpdate` 或获取每格 `item_renderer` / `interact_btn`。
+
+三条网格相关绑定在创建根控件前注册，关窗及创建失败时清理；依赖 ToolDelta
+已修复的动态回调注册与注销机制。搜索绑定留在宿主 mixin，关闭窗口后仍存在。
+关闭先解除网格绑定、移除控件并清空窗口标记，再调用选择回调，允许回调立即重开。
 
 ## 验证记录
 
@@ -102,3 +108,14 @@ ID 列表，窗口复制并按首次出现顺序去重，不发送网络库存�
 尝试通过 MCDK 读取运行时模块和 UI 列表，两次均发生 IPC 超时，未完成实机验收。
 后续按用户要求不再进行游戏内验证；离线替身不代表引擎验收。
 `git diff --check` 通过；环境未安装 Ruff，未执行 Ruff 检查。
+
+2026-10-03：网格改用已修复的 ToolDelta 动态绑定 API；移除逐格控件获取和
+延迟补拿逻辑。物品/流体选择器使用独立 collection 与绑定名，共享参数化格子
+模板。离线全量 3544 项测试、112 个源码文件的 Python 2.7 语法门禁、
+`python -B scripts/gen_blocks.py --check` 通过。未做本次改动的游戏内验证。
+
+2026-10-03 搜索接线修复：物品接口屏基类 `ItemPortPanelBase` 原先只继承
+名单窗口的绑定 mixin，未声明选择器的 `#EnderNetSelectItem.search` 编辑事件，
+导致输入没有传给筛选逻辑。现补入 `SelectItemWindowBindingsMixin`，覆盖物品
+存货口与取货口。回归测试通过实际设备屏的绑定入口检查 `Item.GetBasicInfo().itemName`
+中文名称筛选、UTF-8 输入、完整目录筛选后截断以及清空搜索恢复；游戏内尚未验证。

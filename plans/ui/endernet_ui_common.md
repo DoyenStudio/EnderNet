@@ -81,7 +81,7 @@ User 先填写字段含义及已有 JSON 配置，脚本接入方核对后补充
 
 | 项目 | 使用说明 |
 | --- | --- |
-| Screen 文件、类名、注册入口，或公共组件的接入方式 | `device_stat_bar` 是**公共组件**，没有自己的 Screen。宿主界面在自己的类体里声明绑定，如 `endernet_bp/endernet_scripts/endernet/client/ui/terminal_panel.py` 的 `TerminalPanelBase`（`CommonTerminalPanel` 注册为 `common_terminal_panel_ui.main`）。绑定**必须写在类体里**——运行时注册在本引擎上不生效。 |
+| Screen 文件、类名、注册入口，或公共组件的接入方式 | `device_stat_bar` 是**公共组件**，没有自己的 Screen。宿主界面在自己的类体里声明绑定，如 `endernet_bp/endernet_scripts/endernet/client/ui/terminal_panel.py` 的 `TerminalPanelBase`（`CommonTerminalPanel` 注册为 `common_terminal_panel_ui.main`）。当前组件使用宿主类体绑定。ToolDelta 动态回调名称解析缺陷已于 2026-10-03 修复，静态与动态 API 均可使用，见 [修复记录](../technical_notes/tooldelta_dynamic_binding.md)；此组件保留现有静态实现。 |
 | namespace／根控件、打开方法与调用时机 | 由宿主界面实例化：`"stat_bar@endernet_ui_common.device_stat_bar"`，只覆盖 `offset`。它会**自动继承模板里的绑定**，不需要在实例上重复声明。数据不跟实例走，跟**会话**走。 |
 | 参数字段、类型、必填项及可信来源 | 没有 `$` 参数。设备身份来自宿主界面的 `device_ref`（服务端 `PushUIRequest` 带来），**不接受客户端自报**。 |
 | 初始化、读取快照及订阅入口 | 宿主界面 `OnCreate` 里先 `client.on_message(handler)` **再** `open_session`——服务端下一帧就会推第一份快照，晚一步就永远补不上。订阅表就是会话表，没有第二条通道。 |

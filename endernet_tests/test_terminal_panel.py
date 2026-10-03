@@ -2941,7 +2941,13 @@ class TestEngineBindingResolution(unittest.TestCase):
         #     行数（接 `#maximum_grid_items`），四行属性（图标、名字、数量、
         #     缺料颜色），三个按钮（关闭、取消、下单）。
         # 预览的缺料颜色与设备状态的颜色用同一个旗标，缺了它两边各少一条。
-        expected = 24 + 11 + 1 + 12
+        #
+        # 11-07 再加三条：挂在终端屏上的三个**辅助窗口**的输入框绑定
+        # （物品选择器、流体选择器、数量窗）。它们原先由窗口对象自己用
+        # 运行时注册声明——正是本条钉住的那条不通的路——因此搬到类体上
+        # （`widgets/list_window_bindings.py`）。数在终端这一侧是因为
+        # `TerminalPanelBase` 是它们的宿主。
+        expected = 24 + 11 + 1 + 12 + 3
         if terminal_panel._COLOR_BINDING_FLAG is None:
             expected -= 1
         if order_preview_bindings.COLOR_BINDING_FLAG is None:

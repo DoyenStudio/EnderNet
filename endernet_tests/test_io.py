@@ -42,6 +42,7 @@ from endernet.server.adapters.containers import (
     ContainerEntry,
     FakeContainer,
     NoSimulateContainer,
+    UncertainContainer,
 )
 from endernet.server.devices.io import (
     BUFFER_AS_EXTERNAL_SIDE,
@@ -1032,9 +1033,13 @@ class _Task(object):
 
 
 class TestOutputPort(PortFixture):
-    """取货口：按过滤从网络取，向朝向容器供给。"""
+    """关闭缓存的直输路线；默认开启的中转路线另行覆盖。"""
 
     device_id = OUTPUT_DEVICE
+
+    def configure(self, **kwargs):
+        kwargs.setdefault("cache_enabled", False)
+        return PortFixture.configure(self, **kwargs)
 
     def test_unconfigured_ports_do_nothing(self):
         result = self.result()
@@ -1116,6 +1121,189 @@ class _HalfFillingBox(FakeContainer):
         return FakeContainer._do_insert(
             self, op_id, resource_key, min(count, self.accept)
         )
+
+
+class TestCachedOutputPort(PortFixture):
+    """06-06：真实 5 格缓存，独立命令逐段搬运。"""
+
+    def setUp(self):
+        PortFixture.setUp(self)
+        self.cache = FakeContainer(slots=5, max_stack=64)
+        self.containers.boxes[self.ref.node_key.as_key()] = self.cache
+        self.configure()
+
+    def test_default_route_stages_then_delivers_without_double_extraction(self):
+        staged = self.result("stage")
+        self.assertEqual(staged.payload["route"], "network_to_cache")
+        self.assertEqual(self.cache.count_of(STONE), 32)
+        self.assertEqual(self.box.count_of(STONE), 0)
+        delivered = self.result("deliver")
+        self.assertEqual(delivered.payload["route"], "cache_to_target")
+        self.assertEqual(self.cache.count_of(STONE), 0)
+        self.assertEqual(self.box.count_of(STONE), 32)
+        self.assertEqual(self.network_stub.stored[STONE], 8)
+        self.assertEqual(len(self.network_stub.extracts), 1)
+        self.assertEqual(self.network_stub.inserts, [])
+
+    def test_missing_cache_never_falls_back_to_hidden_memory_or_direct_output(self):
+        del self.containers.boxes[self.ref.node_key.as_key()]
+        result = self.result()
+        self.assertEqual(result.status, STATUS_BLOCKED)
+        self.assertIn(Reason.NO_ADAPTER, result.reason_codes())
+        self.assertEqual(self.network_stub.stored[STONE], 40)
+        self.assertEqual(self.box.count_of(STONE), 0)
+
+    def test_wrong_slot_count_is_blocked(self):
+        self.containers.boxes[self.ref.node_key.as_key()] = FakeContainer(slots=9)
+        self.assertEqual(self.result().status, STATUS_BLOCKED)
+        self.assertEqual(self.network_stub.stored[STONE], 40)
+
+    def test_capacity_comes_from_real_slots_and_stack_limits(self):
+        self.cache.max_stack = 1
+        self.result()
+        self.assertEqual(self.cache.count_of(STONE), 5)
+        self.assertEqual(self.network_stub.stored[STONE], 35)
+
+    def test_full_cache_never_withdraws_from_network(self):
+        for slot in range(5):
+            self.cache.set_slot(slot, ContainerEntry(DIRT, 64))
+        self.assertEqual(self.result().payload["moved"], 0)
+        self.assertEqual(self.network_stub.stored[STONE], 40)
+        self.assertEqual(self.cache.count_of(DIRT), 320)
+
+    def test_full_target_does_not_prefetch_or_drain_cache(self):
+        self.cache.set_slot(0, ContainerEntry(STONE, 9))
+        self.box.max_stack = 0
+        self.assertEqual(self.result().payload["moved"], 0)
+        self.assertEqual(self.cache.count_of(STONE), 9)
+        self.assertEqual(self.network_stub.stored[STONE], 40)
+        self.cache.write_slot(0, None)
+        self.assertEqual(self.result("empty-cache").payload["moved"], 0)
+        self.assertEqual(self.network_stub.stored[STONE], 40)
+
+    def test_missing_target_preserves_cache_and_network(self):
+        self.cache.set_slot(0, ContainerEntry(STONE, 9))
+        del self.containers.boxes[key(2).as_key()]
+        self.assertEqual(self.result().status, STATUS_BLOCKED)
+        self.assertEqual(self.cache.count_of(STONE), 9)
+        self.assertEqual(self.network_stub.stored[STONE], 40)
+
+    def test_partial_delivery_returns_leftover_to_cache(self):
+        self.cache.set_slot(0, ContainerEntry(STONE, 12))
+        target = _HalfFillingBox(slots=1, max_stack=64, accept=5)
+        self.containers.boxes[key(2).as_key()] = target
+        result = self.result()
+        self.assertEqual(result.payload["receipt"]["moved"], 5)
+        self.assertEqual(self.cache.count_of(STONE), 7)
+        self.assertEqual(target.count_of(STONE), 5)
+        self.assertEqual(self.network_stub.stored[STONE], 40)
+
+    def test_partial_staging_returns_leftover_to_network(self):
+        cache = _HalfFillingBox(slots=5, max_stack=64, accept=5)
+        self.containers.boxes[self.ref.node_key.as_key()] = cache
+        self.assertEqual(self.result().payload["receipt"]["moved"], 5)
+        self.assertEqual(cache.count_of(STONE), 5)
+        self.assertEqual(self.network_stub.stored[STONE], 35)
+        self.assertEqual(self.box.count_of(STONE), 0)
+
+    def test_disabled_mode_ignores_existing_cache_and_requires_no_cache_adapter(self):
+        self.cache.set_slot(0, ContainerEntry(STONE, 9))
+        self.configure(cache_enabled=False)
+        del self.containers.boxes[self.ref.node_key.as_key()]
+        self.result()
+        self.assertEqual(self.box.count_of(STONE), 32)
+        self.assertEqual(self.cache.count_of(STONE), 9)
+        self.assertEqual(self.network_stub.stored[STONE], 8)
+
+    def test_reenable_uses_retained_stock_before_taking_new_stock(self):
+        self.cache.set_slot(0, ContainerEntry(STONE, 9))
+        self.configure(cache_enabled=False)
+        self.configure(cache_enabled=True)
+        self.result()
+        self.assertEqual(self.box.count_of(STONE), 9)
+        self.assertEqual(self.network_stub.stored[STONE], 40)
+
+    def test_filter_removal_and_empty_filter_preserve_leftovers(self):
+        self.cache.set_slot(0, ContainerEntry(STONE, 9))
+        self.configure(filter=(DIRT,))
+        self.result()
+        self.assertEqual(self.cache.count_of(STONE), 9)
+        self.assertEqual(self.box.count_of(STONE), 0)
+        self.configure(filter=())
+        self.result("clear")
+        self.assertEqual(self.cache.count_of(STONE), 9)
+
+    def test_external_changes_are_read_from_actual_cache_not_lot_table(self):
+        self.result("stage")
+        # 玩家拿走旧货并放入 3 件；无批次表更新也只输出真实的 3 件。
+        self.cache.set_slot(0, ContainerEntry(STONE, 3))
+        self.network_stub.stored[STONE] = 0
+        self.result("deliver")
+        self.assertEqual(self.box.count_of(STONE), 3)
+        self.assertEqual(self.cache.count_of(STONE), 0)
+
+    def test_metadata_is_preserved_and_different_identity_is_not_drained(self):
+        special = ResourceKey.item("minecraft:stone", aux=1, user_data={"tag": "a"})
+        self.configure(filter=(special,))
+        self.network_stub.stored[special] = 6
+        self.cache.set_slot(0, ContainerEntry(STONE, 2))
+        self.result("stage")
+        self.result("deliver")
+        self.assertEqual(self.box.count_of(special), 6)
+        self.assertEqual(self.cache.count_of(STONE), 2)
+        self.assertEqual(self.network_stub.stored[special], 0)
+
+    def test_no_simulate_target_limits_both_legs_to_probe_unit(self):
+        target = NoSimulateContainer(slots=1)
+        self.containers.boxes[key(2).as_key()] = target
+        self.result("stage")
+        self.assertEqual(self.cache.count_of(STONE), 1)
+        self.result("deliver")
+        self.assertEqual(target.count_of(STONE), 1)
+
+    def test_nine_filters_do_not_require_nine_real_slots(self):
+        resources = tuple(ResourceKey.item("test:item%d" % index) for index in range(9))
+        self.configure(filter=resources)
+        self.network_stub.stored[resources[-1]] = 7
+        self.result("stage")
+        self.result("deliver")
+        self.assertEqual(self.box.count_of(resources[-1]), 7)
+
+    def test_strategy_remains_explicitly_unsettled(self):
+        report = self.policy.unresolved_report()
+        self.assertIn("port.output_cache_strategy", [item["field"] for item in report])
+        with self.assertRaises(ValueError):
+            PortPolicy(output_cache_strategy="prefetch_all")
+
+    def test_direction_change_uses_current_target_and_preserves_stock(self):
+        self.result("stage")
+        self.state.facing = "west"
+        new_target = FakeContainer(slots=1)
+        self.containers.boxes[key(0).as_key()] = new_target
+        self.result("deliver")
+        self.assertEqual(new_target.count_of(STONE), 32)
+        self.assertEqual(self.box.count_of(STONE), 0)
+        self.assertEqual(self.network_stub.stored[STONE], 8)
+
+    def test_uncertain_target_stops_polling_before_any_new_command(self):
+        self.cache.set_slot(0, ContainerEntry(STONE, 9))
+        target = UncertainContainer(slots=1)
+        self.containers.boxes[key(2).as_key()] = target
+        master = _Master()
+        calls = []
+
+        def submit(command):
+            calls.append(command)
+            return self.dispatcher.dispatch(self.state, command.request_id)
+
+        master.submit = submit
+        runner = PortRunner(self.ports, PortGateway(_FakeRuntime(master=master)))
+        runner._poll(_Task(self.ref))
+        self.assertEqual(self.state.hold, Reason.CONTAINER_UNCERTAIN)
+        self.assertIn("不确定", self.state.hold_detail)
+        runner._poll(_Task(self.ref))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.network_stub.stored[STONE], 40)
 
 
 # -- 命令处理：存货口（06-05）----------------------------------------------
@@ -1697,6 +1885,8 @@ class BootstrapFixture(unittest.TestCase):
             self.containers.boxes[key(offset + 1).as_key()] = self.driver_box
         if port_device in (BUS, TEMPLATE_DEVICE):
             self.containers.boxes[key(offset).as_key()] = _own_box(self)
+        if port_device == OUTPUT_DEVICE:
+            self.containers.boxes[key(offset).as_key()] = FakeContainer(slots=5)
         self.server.tick()
         return self.server.runtimes.runtimes()[0]
 
@@ -1940,7 +2130,7 @@ class TestPortCommandsThroughTheMaster(BootstrapFixture):
         ref = self.ref_at(key(3))
         self.submit("c1", ref, "port_configure",
                     config={"enabled": True, "direction": "export",
-                            "filter": [STONE.to_dict()]})
+                            "filter": [STONE.to_dict()], "cache_enabled": False})
         self.accrue_quota()
         self.assertEqual(
             self.submit("seed", ref, "insert", key=STONE.to_dict(), count=20,
@@ -1953,6 +2143,33 @@ class TestPortCommandsThroughTheMaster(BootstrapFixture):
         self.assertEqual(
             self.driver_box.count_of(STONE), result.payload["receipt"]["moved"]
         )
+
+    def test_cached_output_through_master_replays_without_changing_legs(self):
+        self.build_network()
+        self.mount_a_disk()
+        ref = self.ref_at(key(3))
+        self.submit("c1", ref, "port_configure",
+                    config={"enabled": True, "direction": "export",
+                            "filter": [STONE.to_dict()]})
+        self.accrue_quota()
+        self.submit("seed", ref, "insert", key=STONE.to_dict(), count=20,
+                    op_id="cache-seed")
+        cache = self.containers.boxes[key(3).as_key()]
+        staged = self.submit("stage", ref, "port_dispatch", intent=OUTPUT)
+        self.assertEqual(staged.status, STATUS_OK)
+        moved = staged.payload["receipt"]["moved"]
+        self.assertGreater(moved, 0)
+        self.assertEqual(cache.count_of(STONE), moved)
+        self.assertEqual(self.driver_box.count_of(STONE), 0)
+        self.submit("stage", ref, "port_dispatch", intent=OUTPUT)
+        self.assertEqual(cache.count_of(STONE), moved)
+        self.assertEqual(self.driver_box.count_of(STONE), 0)
+        delivered = self.submit("deliver", ref, "port_dispatch", intent=OUTPUT)
+        self.assertEqual(delivered.payload["route"], "cache_to_target")
+        self.assertEqual(cache.count_of(STONE), 0)
+        self.assertEqual(self.driver_box.count_of(STONE), moved)
+        self.submit("deliver", ref, "port_dispatch", intent=OUTPUT)
+        self.assertEqual(self.driver_box.count_of(STONE), moved)
 
     def test_port_clear_lifts_the_hold(self):
         runtime = self.build_network()

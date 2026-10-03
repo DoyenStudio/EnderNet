@@ -47,8 +47,11 @@ collection 为 `endernet_fluid_list`；前缀为 `#EnderNetFluidList.`。
 | select | BF_ButtonClickUp，读取 #collection_index |
 
 `has_item`、`item_id_aux` 沿用公共渲染语义命名，实际数据是流体 ID。
-所有动态绑定仅在窗口打开期间注册；关闭时注销。窗口保存在 `_vars["_endernet_fluid_list_window"]`，关闭或创建失败时移除。
-物品名单与流体名单的 collection、绑定前缀、窗口标记均独立，关闭其中之一不移除另一方绑定。
+当前实现由宿主的 `FluidListWindowBindingsMixin` 声明静态绑定，关闭窗口保留绑定并返回安全值。
+窗口保存在 `_vars["_endernet_fluid_list_window"]`，关闭或创建失败时移除。
+物品名单与流体名单的 collection、绑定前缀、窗口标记均独立。
+ToolDelta 的旧动态回调名称解析缺陷已于 2026-10-03 修复，见
+[修复记录](tooldelta_dynamic_binding.md)；本组件保留现有静态实现。
 
 ## 验证与范围
 

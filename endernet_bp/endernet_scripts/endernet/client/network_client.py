@@ -666,8 +666,9 @@ class NetworkClient(object):
         cell=None,
         order=None,
         preview=None,
+        config=None,
     ):
-        # type: (str, object, object, object, object, object, object, object, object, object, object, object, object) -> str
+        # type: (str, object, object, object, object, object, object, object, object, object, object, object, object, object) -> str
         """发一条手动存取命令，返回 `request_id`。
 
         `action` 是 `StorageService.handle` 认识的那几个之一（`inv_take` /
@@ -701,6 +702,13 @@ class NetworkClient(object):
         字段叫 `target`，但**线上那个 `target` 已经被占用了**（样板终端
         的虚格面名、快捷转移的落点），因此资源键走 `key`、由服务端那张
         动作表改名（`ORDER_ACTIONS`）——改名表只此一处。
+
+        `config` 是 11-07 加的：设备配置的**意图**（`port_configure`），例如
+        `{"cache_enabled": False}` 或 `{"filter": [资源键字典, ...]}`。
+        收的是**线上形状的字典**，不在这里转换——调用方（端口面板的模型）
+        把资源键转成字典，理由与下面 `key` 那段逐字相同：`config` 里的
+        资源键同样要能被 msgpack 编。服务端只合并载荷里出现的那几项，
+        因此这里写多少项就改多少项。
 
         **`key` 收 `ResourceKey`，在这里转成线上形状。** `TerminalCommand`
         的 `key` 字段与线上同形（字典）：它的 `from_dict` 原样转交、`payload()`
@@ -743,6 +751,7 @@ class NetworkClient(object):
                 cell=cell,
                 order=order,
                 preview=preview,
+                config=config,
             ),
             session_id=self.session_id,
             network_id=self.network_id,

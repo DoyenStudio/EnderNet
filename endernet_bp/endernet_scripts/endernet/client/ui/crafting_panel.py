@@ -64,6 +64,7 @@ from .select_item_window import (
 from .terminal_cache import TerminalCache
 from .terminal_panel import TerminalListView, TerminalPanelBase
 from .widgets import device_status
+from .widgets.control_api import show_item
 from ..network_client import NetworkClient
 from ...common.identity import DeviceRef
 from ...common.protocol import (
@@ -762,7 +763,11 @@ class RecipeChoiceWindow(object):
             cell.SetVisible(False)
             return
         cell.SetVisible(True)
-        cell.GetElement("item_renderer").asItemRenderer().SetUiItem(item)
+        # 形状是 `(name, aux)`，不是 `Item` 对象（2026-10-03 真机实测，
+        # 见 `widgets/control_api.py`）。原先传对象，症状是**原料格全空
+        # 而不报错**——而这一屏至今没上过机，所以一直没被发现。
+        show_item(cell.GetElement("item_renderer"),
+                  item.newItemName, item.newAuxValue)
         count = entry.get("count") if isinstance(entry, dict) else None
         label = cell.GetElement("item_count").asLabel()
         if (isinstance(count, INTEGER_TYPES) and not isinstance(count, bool)

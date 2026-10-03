@@ -29,8 +29,10 @@ show_number_set_window(screen, 1, on_confirm, title="设置流体数量")
   点击确认时不提交，窗口保持打开。确认直接读取输入框，回调只调用一次。
 - 点右上角关闭按钮仅取消，不调用确认回调。宿主的 `OnDestroy` 可取出
   `screen._vars.get(WINDOW_ATTRIBUTE)` 并调用其 `close()`；该方法可重复调用。
-- 数量输入使用独立的 `#EnderNetNumberSet.number` 动态绑定，关闭时解绑，
-  不复用物品选择窗口的搜索绑定。
+- 数量输入使用独立的 `#EnderNetNumberSet.number` 静态绑定，由宿主的
+  `NumberSetWindowBindingsMixin` 转发，关窗后保留并忽略输入；不复用物品选择窗口的搜索绑定。
+  旧 ToolDelta 动态绑定故障已于 2026-10-03 修复，见
+  [修复记录](../technical_notes/tooldelta_dynamic_binding.md)，本组件保留现有静态实现。
 
 这是通用 UI 组件，具体业务数量范围由调用方提供，服务端仍需校验提交数量。
 未改变终端手势映射或其他未定玩法规则。

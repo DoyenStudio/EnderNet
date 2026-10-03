@@ -1,9 +1,9 @@
 # 通用终端物品栏 UI
 
 > **2026-09-30 下半屏已游戏内实测**：面板能打开、36 格全部生成、两个段的槽序映射
-> 与引擎实读逐格对上、集合下标落格正确。**绑定必须写在类体里**（`@Binder.binding` /
-> `binding_collection`）——运行时注册那条路在这个引擎上根本不生效，用了就是每渲染
-> 一帧一条 `AttributeError`。见 [交付](../tasks/11-交付说明.md) 第十二节。
+> 与引擎实读逐格对上、集合下标落格正确。当时通过类体绑定避开了 ToolDelta 的
+> 动态回调名称解析缺陷。该缺陷已于 2026-10-03 修复，静态与动态 API 均可使用；
+> 终端仍保留已验收的类体绑定。见 [修复记录](tooldelta_dynamic_binding.md)。
 > **上半屏（列表）仍未跑过**：`OpenDemo` 没有权威身份，那 10 条只跑到了安全值分支。
 
 > **2026-09-30 S-15**：D-06 已修复。显示仍读本地背包，版本校验新增服务端 `inventory_snapshot` 与真实 `slot_version` 回传；无匹配快照则等待同步。下文“不新增协议”是此前 D3 的历史边界，已由此增量替代。见 [交付](../tasks/06-11-交付说明-背包槽版本.md)，游戏内未验。
@@ -86,14 +86,12 @@ backpack = screen.GetBackpackItems()      # [(资源名, 数量) | None] × 36�
 
 **36 格一格控件都不持有，全部走引擎的集合绑定。** 十条列表绑定与八条格子绑定
 **都写在 `TerminalPanelBase` 的类体里**（`@Binder.binding` / `@Binder.binding_collection`），
-**一条都不在运行时注册**。这不是风格选择，是**运行时注册那条路在这个引擎上根本
-不生效**（2026-09-30 由引擎源码与实测定案）：引擎存的是回调的 `__name__`，渲染时
-拿这个名字到界面实例上 `getattr`。类体里的绑定由 tooldelta 的注册器连名带壳塞进
-生成的 `_Base` 类，`getattr` 找得到；运行时那条路（`DynaBinding` /
-`DynaBindingCollection`）的包装器 `__name__` 是 `reader` 之类，`_Base` 上没有 →
-**每渲染一帧一条 `AttributeError: 'CommonTerminalPanel_Base' object has no
-attribute 'reader'`**，格子全空。列表那一半同理，区别只是它们委托给实例属性
-`list_view`，所以类体里必须有一个 `list_view = None` 的类属性兜底（绑定解析早于
+当前终端不在运行时注册绑定。2026-09-30 的旧 ToolDelta 动态注册只保存包装方法，
+未把回调安装到注册宿主上，曾导致 `no attribute 'reader'`、格子全空。
+2026-10-03 框架已修复：为每个动态包装方法生成独立名称并安装到注册实例上，
+反绑定及销毁时清理；详见 [修复记录](tooldelta_dynamic_binding.md)。
+终端保留既有静态实现。列表绑定委托给实例属性 `list_view`，因此类体里仍需
+`list_view = None` 的类属性兜底（绑定解析早于
 `OnCreate`），且每条回调在 `list_view is None` 时返回安全值——静态绑定在类注册时
 就生效，**不能按会话摘除**，没有会话时引擎照样会来问。
 
@@ -201,10 +199,10 @@ _slots ←───────┘  + _pending（还没被真值兑现的本地�
 - `test_terminal_panel.py::TestEngineBindingResolution`：**钉住上面那条机制**。
   替身按引擎的做法走一遍——先建生成的 `_Base`，再逐个按回调的 `__name__` 到界面
   实例上 `getattr`，因此「类体里每条绑定都答得出引擎要的那个名字」（21 条）与
-  「运行时注册那条路答不出（`AttributeError`）」各有一条。**这条用例存在的意义
-  是让退回运行时注册立刻在离线变红**，而不是只在游戏里表现为格子全空。
-  引擎那条 `getattr` 的链路是 2026-09-30 从 ModSDK 源码
-  （`screenBase.process_binding` → C++ 侧按名解析）读出来的，离线替身照抄了它。
+  「旧运行时注册缺少同名属性时抛 `AttributeError`」各有一条。
+  后者是历史缺陷的最小复现，不是修复后动态 API 不可用的证据。
+  当前框架回归见 `test_tooldelta_dyna_binding.py`，覆盖按名称解析、替换、注销、
+  销毁及代理宿主；引擎按名称解析的约定保持不变。
 - `test_terminal_inventory.py`：界面 JSON 的 grid／模板实例／六个 `$` 变量与常量的
   接线，以及点击路径上的槽位映射。`InventoryTests` 那半守的是已撤下的
   `InventoryModel`，保留它是因为那些搬运语义的边界用例仍然成立。

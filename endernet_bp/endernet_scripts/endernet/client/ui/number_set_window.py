@@ -1,17 +1,31 @@
 # coding=utf-8
-"""Reusable integer quantity dialog embedded in a ToolDeltaScreen."""
+"""数量窗：嵌在任意 `ToolDeltaScreen` 里的一个整数输入对话。
+
+## 绑定在**宿主屏的类体**上，不在这里
+
+原先输入框那一条 `BF_EditChanged` 由本对象用运行时注册（`DynaBinding`）
+声明，而那条路在**当时**的引擎上不生效（引擎按回调名字到 `_Base` 上
+`getattr`，运行时注册的包装函数叫 `reader`）。真机证据见
+`plans/tasks/11-交付说明.md` 第十二节。
+
+改法：绑定搬到 `widgets/list_window_bindings.py` 的
+`NumberSetWindowBindingsMixin`（宿主继承即可），本对象只留模型与控制器。
+编辑回调因此从 `_edited` 改名为**公开的** `on_edited`。
+其余控件走 `SetCallback`，不经 `Binder` 注册表，原样保留。
+"""
 
 from functools import partial
 
-from ....tooldelta.ui import Binder
+from .widgets.window_identity import (
+    NUMBER_SET_EDIT_BINDING as EDIT_BINDING,
+    NUMBER_SET_WINDOW_ATTRIBUTE as WINDOW_ATTRIBUTE,
+)
 
 if 0 > 1:
     import typing
 
     from ....tooldelta.ui import ToolDeltaScreen
 
-WINDOW_ATTRIBUTE = "_endernet_number_set_window"
-EDIT_BINDING = "#EnderNetNumberSet.number"
 TITLE_PATH = "title/title_tip"
 DEFAULT_TITLE = "设置数量"
 STEP_BUTTONS = (
@@ -85,8 +99,9 @@ class NumberSetWindow(object):
                 self.root.GetElement(path).asButton().SetCallback(partial(self._step, step))
             self.root.GetElement("close").asButton().SetCallback(self.close)
             self.root.GetElement("confirm_btn").asButton().SetCallback(self._confirm)
-            # This helper is shared by arbitrary screens, so bind only while open.
-            screen.DynaBinding(Binder.BF_EditChanged, self.EDIT_BINDING, self._edited)
+            # **输入框的绑定不在这里**：它写在宿主屏的类体上
+            # （`widgets/list_window_bindings.py` 的
+            # `NumberSetWindowBindingsMixin` → 本对象的 `on_edited`）。
             self.set_number(number)
         except Exception:
             self.close()
@@ -116,7 +131,9 @@ class NumberSetWindow(object):
             return None
         return number
 
-    def _edited(self, params):
+    def on_edited(self, params):
+        # type: (dict) -> None
+        """输入框变了（由宿主屏的类体绑定转发，见模块 docstring）。"""
         if self.closed:
             return
         number = self._parse(params.get("Text"))
@@ -146,7 +163,7 @@ class NumberSetWindow(object):
         if self.closed:
             return
         self.closed = True
-        self.screen.DynaUnbinding(Binder.BF_EditChanged, self.EDIT_BINDING)
+        # **不摘绑定**：绑定在宿主类体上，是静态的（见模块 docstring）。
         if self.screen._activated and self.root is not None:
             self.root.Remove()
         if self.screen._vars.get(self.WINDOW_ATTRIBUTE) is self:

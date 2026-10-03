@@ -1106,6 +1106,11 @@ MSG_ORDER_STATE = "order_state"
 #: `plans/technical_notes/terminal_pattern_order_preview.md`。
 MSG_PREVIEW_STATE = "preview_state"
 MSG_PREVIEW_CHUNK = "preview_chunk"
+#: 一台**接口设备**的权威配置（11-07）。服务端单向推，见 `PortConfigMessage`。
+#: **与 `MSG_DEVICE_STATUS` 各管一半**：那条说「这台设备现在能不能干活」，
+#: 这条说「玩家把它配成了什么样」。两条都按会话的设备身份发，因此任何一台
+#: 设备的屏都能同时收到；非接口设备收不到这一条（服务端读不到就不发）。
+MSG_PORT_CONFIG = "port_config"
 
 CLIENT_TO_SERVER_KINDS = frozenset(
     [
@@ -1134,6 +1139,7 @@ SERVER_TO_CLIENT_KINDS = frozenset(
         MSG_ORDER_STATE,
         MSG_PREVIEW_STATE,
         MSG_PREVIEW_CHUNK,
+        MSG_PORT_CONFIG,
     ]
 )
 
@@ -2545,6 +2551,15 @@ class TerminalCommand(SyncMessage):
     一刻才炸**，界面上什么都看不到（2026-09-30 真机撞过）。转换的位置在
     `NetworkClient.send_command`。
 
+    ## `config` 是设备配置的**意图**，与 `key` 同样只收线上形状
+
+    `port_configure` 要改哪几项就发哪几项——服务端**合并**而不是整体替换
+    （`server/storage/service.py` 的 `_cmd_port_configure`），因此这里是一个
+    小字典，不是一份领域对象，`filter` 那一项是资源键字典的列表。
+    与 `key` 同一条纪律、同一个理由：塞 `PortConfig` 进去会被 `to_dict()`
+    原样写进消息，而引擎的 msgpack 编不了自定义对象，**要到发包那一刻才炸**。
+    `__init__` 因此在 `DEBUG` 下拒掉非字典。
+
     ## 为什么没有这些字段
 
     - **没有 `player` / `player_id`。** 身份只有引擎在 C2S 事件上附的
@@ -2599,6 +2614,7 @@ class TerminalCommand(SyncMessage):
         "cell",
         "order",
         "preview",
+        "config",
     )
 
     #: 本条消息**允许**出现的字段。`from_dict` 用它做严格检查，
@@ -2619,6 +2635,7 @@ class TerminalCommand(SyncMessage):
         "cell",
         "order",
         "preview",
+        "config",
     )
 
     def __init__(
@@ -2637,6 +2654,7 @@ class TerminalCommand(SyncMessage):
         cell=None,
         order=None,
         preview=None,
+        config=None,
     ):
         if settings.DEBUG:
             require_text(request_id, "request_id")
@@ -2661,6 +2679,12 @@ class TerminalCommand(SyncMessage):
                 require_text(order, "order")
             if preview is not None:
                 require_text(preview, "preview")
+            # **与 `key` 同形：字典或 `None`。** 理由同上（那段注释的
+            # 「发包那一刻才炸」对 `config` 一字不差地成立）。
+            if config is not None and not isinstance(config, dict):
+                raise ValueError(
+                    "config 必须是字典（线上形状），得到 %r" % (type(config),)
+                )
         self.request_id = request_id
         self.expected_index_version = expected_index_version
         self.action = action
@@ -2687,6 +2711,12 @@ class TerminalCommand(SyncMessage):
         #: （`executor.py` 的 `_consume_preview` 按它校验并消费）。
         #: 服务端在 `payload()` 里写成 `preview_id`。
         self.preview = preview
+        #: **设备配置的意图**（11-07）：`{"cache_enabled": False}` 或
+        #: `{"filter": [资源键字典, ...]}` 这类**只写要改的那几项**的字典。
+        #: 与 `cell` / `order` / `preview` 同样刻意独立——配置项既不是槽号
+        #: 也不是虚格下标，共用一个字段会让「这个数属于哪个空间」变成逐动作
+        #: 去猜的事。服务端读的键就叫 `config`，因此 `payload()` 是直传。
+        self.config = config
 
     def payload(self):
         # type: () -> dict
@@ -2725,6 +2755,10 @@ class TerminalCommand(SyncMessage):
         # 映射仍然只在这一处。
         if self.preview is not None:
             data["preview_id"] = self.preview
+        # `config` 的线上名与服务端读的键**同名**（`payload.get("config")`），
+        # 因此这里是直传。写出来只为了让「哪些字段会上线」在这一处看得全。
+        if self.config is not None:
+            data["config"] = self.config
         return data
 
     def to_dict(self, descriptions=None):
@@ -2745,6 +2779,7 @@ class TerminalCommand(SyncMessage):
             "cell": self.cell,
             "order": self.order,
             "preview": self.preview,
+            "config": self.config,
         }
 
     @classmethod
@@ -2765,6 +2800,14 @@ class TerminalCommand(SyncMessage):
             require_text(data["order"], "order")
         if data["preview"] is not None:
             require_text(data["preview"], "preview")
+        # **无条件检查**（同 `CommandResultMessage.from_dict` 与
+        # `SyncEnvelope.from_dict`）：这是来自对面的数据，本端没开 DEBUG
+        # 不能成为关掉边界检查的理由。`key` 那一条只在 `__init__` 里查，
+        # 这里补上是因为 `config` 里装着要写进权威状态的配置。
+        if data["config"] is not None and not isinstance(data["config"], dict):
+            raise ValueError(
+                "config 必须是字典（线上形状），得到 %r" % (type(data["config"]),)
+            )
         return cls(
             data["request_id"],
             data["action"],
@@ -2780,6 +2823,7 @@ class TerminalCommand(SyncMessage):
             data["cell"],
             data["order"],
             data["preview"],
+            data["config"],
         )
 
 
@@ -3051,6 +3095,174 @@ class DeviceStatusMessage(SyncMessage):
         )
 
 
+#: `PortConfigMessage.config` 必须在线的字段。**是一份镜像，不是 import**：
+#: `common/` 不得 import `server/`（`test_import_boundaries.py` 静态强制），
+#: 而配置的形状由领域层的 `PortConfig.to_dict()` 持有。因此这里放一份镜像，
+#: 并用一条跨层用例钉住两者逐字相等（`test_io.py` 的 `TestPortConfigView`）。
+#: 镜像与真身漂移的表现是「配置被静默丢掉一项」，那正好是那条用例要拦的。
+PORT_CONFIG_FIELDS = (
+    "enabled",
+    "direction",
+    "filter_mode",
+    "filter",
+    "supply_slots",
+    "limit",
+    "cache_enabled",
+)
+
+#: 过滤模式的**线上词汇**。同样是镜像：真身是 `server/devices/io.py` 的
+#: `FILTER_MODES`，跨层用例钉住两者相等。下发与回传的 `filter_mode` 都只
+#: 允许这两个词——写错了要当场拒收，而不是让服务端在 `PortConfig` 的
+#: 构造器里抛一个「未知过滤模式」。
+PORT_FILTER_MODES = ("whitelist", "blacklist")
+
+
+class PortConfigMessage(SyncMessage):
+    """一台**接口设备**的权威配置（11-07）。
+
+    **它是全量快照，不是增量。** 一次发这台设备的整份配置，外加界面显示与
+    限制所需的 `filter_limit` / `filter_modes` / `blocker`，客户端收到即整份
+    替换。没有版本号、不做增量：配置只在玩家动手时变，整份也就几个字段，
+    为它建一套版本协调，收益远小于它引入的第二份真相源。
+
+    **不含任何版本字段**，理由见 `PORT_CONFIG_FIELDS` 上方与
+    `server/devices/io.py` 的 `config_view`：配置版本今天不存在，而另外两个
+    版本词汇（交易版本、存档结构版本）各有其名，挪用它们会让「按哪个版本
+    判断过期」变成猜。
+
+    `config` 是 `PortConfig.to_dict()`，与 `TerminalCommand.config` 完全同形
+    ——**同一条形状从服务端推到客户端、再原样发回来**，中间不经转换，
+    因此不存在「推的形状与收的形状不一致」这种漂移。
+    """
+
+    kind = MSG_PORT_CONFIG
+    __slots__ = (
+        "device_id",
+        "generation",
+        "role",
+        "config",
+        "filter_limit",
+        "filter_modes",
+        "blocker",
+        "buffer_summary",
+    )
+
+    #: 线上字段的**唯一清单**，构造与解析共用，防止两边漂移。
+    FIELDS = (
+        "kind",
+        "device_id",
+        "generation",
+        "role",
+        "config",
+        "filter_limit",
+        "filter_modes",
+        "blocker",
+        "buffer_summary",
+    )
+
+    def __init__(
+        self,
+        device_id,
+        generation,
+        role,
+        config,
+        filter_limit,
+        filter_modes=(),
+        blocker=None,
+        buffer_summary=None,
+    ):
+        self.device_id = device_id
+        self.generation = generation
+        self.role = role
+        self.config = dict(config)
+        self.filter_limit = filter_limit
+        self.filter_modes = tuple(filter_modes)
+        self.blocker = dict(blocker) if blocker is not None else None
+        self.buffer_summary = buffer_summary
+        if settings.DEBUG:
+            self._validate(self.to_dict())
+
+    @classmethod
+    def _validate(cls, data):
+        # type: (dict) -> None
+        """形状校验。**不重建领域对象**，只验「界面拿它做得了判断吗」。
+
+        与 `DeviceStatusMessage._validate` 同一取向。`config` 按
+        `PORT_CONFIG_FIELDS` **逐字段**验：形状不对就拒收整条，而不是让界面
+        拿到半份配置——半份配置最坏的表现是「界面上少了 3 条过滤」，而玩家
+        看不出那是丢包还是本来就没配。
+        """
+        require_text(data["device_id"], "port_config.device_id")
+        _require_count(data["generation"], "port_config.generation")
+        require_text(data["role"], "port_config.role")
+        _require_count(data["filter_limit"], "port_config.filter_limit")
+        config = data["config"]
+        if not isinstance(config, dict):
+            raise TypeError("port_config.config 必须是字典")
+        _require_fields(config, PORT_CONFIG_FIELDS, "port_config.config")
+        if config["filter_mode"] not in PORT_FILTER_MODES:
+            raise ValueError(
+                "未知的过滤模式 %r" % (config["filter_mode"],)
+            )
+        entries = config["filter"]
+        if not isinstance(entries, (list, tuple)):
+            raise TypeError("port_config.config.filter 必须是资源键的列表")
+        for entry in entries:
+            # 线上形状就是资源键的字典（与 `TerminalCommand.key` 同一份）。
+            # 这里只验「是个字典」：`ResourceKey.from_dict` 那一层的严格
+            # 校验在领域侧，协议层重复一遍只会多一处会漂移的副本。
+            if not isinstance(entry, dict):
+                raise TypeError(
+                    "port_config.config.filter 的项必须是字典，得到 %r"
+                    % (type(entry),)
+                )
+        modes = data["filter_modes"]
+        if not isinstance(modes, (list, tuple)):
+            raise TypeError("port_config.filter_modes 必须是列表")
+        for mode in modes:
+            if mode not in PORT_FILTER_MODES:
+                raise ValueError("未知的过滤模式 %r" % (mode,))
+        blocker = data["blocker"]
+        if blocker is not None:
+            _require_fields(blocker, ("code", "detail"), "port_config.blocker")
+            require_text(blocker["code"], "port_config.blocker.code")
+        summary = data["buffer_summary"]
+        if summary is not None and not isinstance(summary, _TEXT_TYPES):
+            raise TypeError("port_config.buffer_summary 必须是文本或 None")
+
+    def to_dict(self, descriptions=None):
+        # type: (object) -> dict
+        return {
+            "kind": self.kind,
+            "device_id": self.device_id,
+            "generation": self.generation,
+            "role": self.role,
+            "config": dict(self.config),
+            "filter_limit": self.filter_limit,
+            "filter_modes": list(self.filter_modes),
+            "blocker": dict(self.blocker) if self.blocker is not None else None,
+            "buffer_summary": self.buffer_summary,
+        }
+
+    @classmethod
+    def from_dict(cls, data, descriptions=None):
+        # type: (dict, object) -> PortConfigMessage
+        _require_fields(data, cls.FIELDS, "port_config")
+        # 解析路径的检查**无条件执行**（同 `SyncEnvelope.from_dict`）：
+        # 这是来自对面的数据，本端没开 DEBUG 不是关掉边界检查的理由。
+        cls._validate(data)
+        return cls(
+            data["device_id"],
+            data["generation"],
+            data["role"],
+            data["config"],
+            data["filter_limit"],
+            filter_modes=list(data["filter_modes"]),
+            blocker=data["blocker"],
+            buffer_summary=data["buffer_summary"],
+        )
+
+
 def _build_sync_message_types(classes):
     # type: (tuple) -> dict
     """建立 `kind -> 类` 注册表，并**当场拒绝重复的种类名**。
@@ -3094,6 +3306,7 @@ _SYNC_MESSAGE_TYPES = _build_sync_message_types(
         OrderStateMessage,
         PreviewStateMessage,
         PreviewChunkMessage,
+        PortConfigMessage,
     )
 )
 

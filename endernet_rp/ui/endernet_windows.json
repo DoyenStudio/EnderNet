@@ -863,6 +863,7 @@
                         {
                             "title_tip": {
                                 "type": "label",
+                                "layer": 1,
                                 "font_type": "default",
                                 "shadow": true,
                                 "text": "物品列表",
@@ -2610,7 +2611,7 @@
                                     8,
                                     5
                                 ],
-                                "grid_item_template": "endernet_windows.selected_item",
+                                "grid_item_template": "endernet_windows.selected_fluid",
                                 "grid_rescaling_type": "horizontal",
                                 "maximum_grid_items": 40
                             }
@@ -2661,6 +2662,7 @@
                         {
                             "title_tip": {
                                 "type": "label",
+                                "layer": 1,
                                 "font_type": "default",
                                 "shadow": true,
                                 "text": "选择物品",
@@ -3000,13 +3002,32 @@
             }
         ]
     },
+    "selected_fluid@selected_item": {
+        "$selector_collection": "endernet_select_fluids",
+        "$selector_item_id_aux": "#EnderNetSelectFluid.item_id_aux",
+        "$selector_select": "#EnderNetSelectFluid.select",
+        "$selector_visible": "#EnderNetSelectFluid.has_item"
+    },
     "selected_item": {
         "type": "panel",
+        "$selector_collection|default": "endernet_select_items",
+        "$selector_item_id_aux|default": "#EnderNetSelectItem.item_id_aux",
+        "$selector_select|default": "#EnderNetSelectItem.select",
+        "$selector_visible|default": "#EnderNetSelectItem.has_item",
         "size": [
             18.0,
             18.0
         ],
         "layer": 1,
+        "bindings": [
+            {
+                "binding_name_override": "#visible",
+                "binding_collection_name": "$selector_collection",
+                "binding_condition": "always",
+                "binding_type": "collection",
+                "binding_name": "$selector_visible"
+            }
+        ],
         "controls": [
             {
                 "bg": {
@@ -3026,7 +3047,16 @@
                     "layer": 1,
                     "property_bag": {
                         "#item_id_aux": 131072
-                    }
+                    },
+                    "bindings": [
+                        {
+                            "binding_name_override": "#item_id_aux",
+                            "binding_collection_name": "$selector_collection",
+                            "binding_condition": "always",
+                            "binding_type": "collection",
+                            "binding_name": "$selector_item_id_aux"
+                        }
+                    ]
                 }
             },
             {
@@ -3059,11 +3089,17 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "$selector_select",
                     "$pressed_texture": "",
                     "$texture_layer": 2,
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
@@ -3071,7 +3107,7 @@
                     "bindings": [
                         {
                             "binding_type": "collection_details",
-                            "binding_collection_name": "",
+                            "binding_collection_name": "$selector_collection",
                             "binding_condition": "always_when_visible"
                         }
                     ],

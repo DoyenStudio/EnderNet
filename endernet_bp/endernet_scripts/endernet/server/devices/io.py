@@ -240,6 +240,7 @@ class PortPolicy(object):
         "max_batch",
         "probe_unit",
         "cached_items_on_disable",
+        "output_cache_strategy",
     )
 
     def __init__(
@@ -253,8 +254,9 @@ class PortPolicy(object):
         output_cache_capacity=None,
         intake_buffer_capacity=None,
         cached_items_on_disable=CACHE_KEEP,
+        output_cache_strategy="demand_first",
     ):
-        # type: (int, int, str, str, int, int, int, int, str) -> None
+        # type: (int, int, str, str, int, int, int, int, str, str) -> None
         #: **R05**：样板接口的**原料缓冲**能装多少件。
         #: 与它那 9 个样板槽无关——规格明写「不能用 9 个样板槽推算」。
         #: 替身按「若干格 × 一个通用堆叠上限」估；真实值定案前不落进交付。
@@ -317,6 +319,11 @@ class PortPolicy(object):
         #: 因此替身取 `CACHE_KEEP`——唯一一个不会造成损失的选项。
         #: 另两种口径（回网 / 掉落）**没有实现**，只留名字。
         self.cached_items_on_disable = cached_items_on_disable
+        # R05 开发替身：先送已有缓存，按名单顺序补货；目标无空间不预取。
+        # 只实现这一个口径，不能把未实现的策略作为可选行为放行。
+        if output_cache_strategy != "demand_first":
+            raise ValueError("未实现的取货缓存策略: %r" % (output_cache_strategy,))
+        self.output_cache_strategy = output_cache_strategy
 
         if self.template_buffer_capacity <= 0:
             raise ValueError(
@@ -369,6 +376,13 @@ class PortPolicy(object):
     def unresolved_report(self):
         # type: () -> list
         return [
+            {
+                "field": "port.output_cache_strategy",
+                "rule": "R05",
+                "value": self.output_cache_strategy,
+                "note": "开发替身：先送缓存、按名单顺序补货、无目标空间不预取；"
+                        "名单移除后的余货保留，预取与调度仍待定案",
+            },
             {
                 "field": "port.template_buffer_capacity",
                 "rule": "R05",
@@ -438,6 +452,7 @@ class PortPolicy(object):
         return {
             "template_buffer_capacity": self.template_buffer_capacity,
             "output_cache_capacity": self.output_cache_capacity,
+            "output_cache_strategy": self.output_cache_strategy,
             "intake_buffer_capacity": self.intake_buffer_capacity,
             "intake_filter_limit": self.intake_filter_limit,
             "default_filter_mode": self.default_filter_mode,
@@ -526,7 +541,9 @@ class PortConfig(object):
         #:
         #: **只有取货口读它**，其余角色拿到什么值都不影响行为（它们各自的中转
         #: 语义是别的东西，不由这个开关管）。**本字段目前只被记录与展示**——
-        #: 「网络 → 缓存 → 朝向容器」这条中转路由尚未实现（06-06/11-07）。
+        #: 「网络 → 缓存 → 朝向容器」这条中转路由已于 2026-10-03 交付
+        #: （06-06；游戏内未验）。**存货口那一半（06-05）仍未实现**，
+        #: `dispatch_intake` 至今是直输。
         #:
         #: **它与「有没有缓冲」是两件事**：关掉开关不撤缓冲，
         #: 见 `PortPolicy.cached_items_on_disable`。
@@ -1049,9 +1066,9 @@ class PortStore(object):
             # 2026-09-29 挂上 `container_size=5` 的网易容器）。这 5 格此前在
             # 领域层**没有任何权威来源**（11-07 的 C1），这里把它补上。
             #
-            # 存放形态是**方块容器**（不是内存），因此 `buffer_endpoint` 会把
-            # 方块自己的容器惰性挂成实际存放处——外部物流与外部模组直接存取
-            # 那 5 格时，记账看得见，两端从此是同一份数据。
+            # 06-06 搬运以方块自己的容器为唯一库存权威，逐次读真实槽。
+            # 此 TransferBuffer 仅保留旧归属/恢复结构，不把它的批次表当库存；
+            # 外部模组直接改槽不能变成账上多出来的第二份物品。
             #
             # **建缓冲与「缓存启不启用」是两件事**，见 `PortConfig.cache_enabled`：
             # 关掉开关不该让这 5 格里的东西从账上消失，那正是 `blocks.md` 的
@@ -1059,7 +1076,7 @@ class PortStore(object):
             #
             # **对外那一侧仍是朝向的容器**，缓存只是中转站——因此本角色不在
             # `BUFFER_AS_EXTERNAL_SIDE` 里。「网络 → 缓存 → 朝向容器」这条
-            # 中转路由本身**尚未实现**（属 06-06/11-07），本分支只立权威。
+            # 中转路由由 PortDispatcher._cached_output 实现。
             state.buffer = TransferBuffer(
                 self.policy.output_cache_capacity, ref.node_key.as_key()
             )
@@ -1770,6 +1787,69 @@ def port_blocker(state, policy=None):
     return None
 
 
+def config_view(state, policy):
+    # type: (PortState, PortPolicy) -> dict
+    """一台接口的**配置视图**：界面要显示与编辑的那一份（11-07）。
+
+    与 `PortState.to_dict()` **刻意分开**。那一份是**存档结构**（任务 12 的
+    入口），带着整张批次表、缓冲明细与统计计数；把它直接当界面载荷发出去，
+    既是白发的带宽，也会在客户端留下一份没人看的存档副本——更要命的是，
+    界面一旦照着它写回，就把「存档长什么样」变成了第二个写者。
+
+    这里只挑界面真正用得上的：配置本身、**该角色的上限**、**该角色允许的
+    过滤模式**，以及当前为什么不工作。
+
+    **上限与模式由策略回答，界面不硬编码。** 取货的 9 种是定案值，而存货口
+    那个上限尚未定案（`PortPolicy.intake_filter_limit`，替身口径）；界面若
+    自己抄一个数字，就是把替身悄悄变成定案。`filter_modes` 同理：取货口
+    只接受白名单（`ROLE_FILTER_MODES`），界面不该自己判断。
+
+    **不含任何版本字段。** `PortState` 上没有配置版本，而 `schema_version`
+    是存档结构版本、`expected_index_version` 是交易版本——按仓库「两个版本
+    必须各有其名」的纪律，两个都不得挪用到配置上（11-07 的「期望配置版本」
+    因此仍未实现，见交付说明）。
+
+    `buffer_summary` 只是给界面看的一句话，**不是**可写回的数据。
+
+    ## `buffer_summary` 为什么是一句话而不是 `describe()`
+
+    `TransferBuffer.describe()` 给的是一份**带统计计数**的字典（`stats` 里
+    那几个数随每一次搬运都在变）。把它整份塞进载荷有两个后果，而且都不会
+    在离线用例里露出来（夹具的缓冲是 `None`）：
+
+    1. **线上编不出去**——`PortConfigMessage` 的校验要求这一项是文本，
+       于是 `build_config_message` 抛 `TypeError`，被 `_publish_device_config`
+       吞掉并计进 `config_errors`。**表现是配置推送一条都到不了客户端**，
+       而界面上只是「什么都不显示」。
+    2. 就算放开校验也**不该发**：发布去重按整个载荷比相等，而那串计数每帧
+       都可能变，于是**每帧一个包**。
+
+    2026-10-03 在真机上撞到的是第 1 条。这里因此只取「占用了多少」这一句
+    稳定的话，计数留在 `PortState.to_dict()`（存档与诊断）里。
+    """
+    blocker = port_blocker(state, policy)
+    buffer = state.buffer
+    summary = None
+    if state.device_id == "endernet:bus_item_output_io":
+        summary = "5 格真实缓存，库存以方块容器为准"
+    elif buffer is not None:
+        described = buffer.describe()
+        summary = "占用 %d/%d 单位物，%d 组" % (
+            described["total"], described["capacity"], described["lots"])
+    return {
+        "device_id": state.device_id,
+        "generation": state.ref.generation,
+        "role": state.role,
+        "config": state.config.to_dict(),
+        "filter_limit": policy.filter_limit_for(state.role),
+        # `sorted` 是为了让它成为**确定的顺序**：发布去重按整个载荷比相等，
+        # 集合的迭代顺序一变就会白发一份「内容其实没变」的包。
+        "filter_modes": sorted(ROLE_FILTER_MODES.get(state.role, FILTER_MODES)),
+        "blocker": blocker.to_dict() if blocker is not None else None,
+        "buffer_summary": summary,
+    }
+
+
 # -- 命令处理 --------------------------------------------------------------
 
 
@@ -1997,6 +2077,8 @@ class PortDispatcher(object):
         endpoint, reason, detail = self.ports.facing_endpoint(state)
         if endpoint is None:
             return CommandResult.blocked(request_id, [BlockReason(reason, detail)])
+        if state.config.cache_enabled and state.device_id == "endernet:bus_item_output_io":
+            return self._cached_output(state, request_id, endpoint, topology_version)
         limit = state.config.effective_limit(self.ports.policy)
         for key in state.config.filter:
             available = self._available_of(key)
@@ -2020,6 +2102,64 @@ class PortDispatcher(object):
             )
         self.stats["no_source"] += 1
         return self._idle(request_id, OUTPUT, "网络里没有配置的过滤资源")
+
+    def _cached_output(self, state, request_id, target, topology_version):
+        # type: (PortState, str, object, object) -> CommandResult
+        """一次只搬一段，复用主控准入和协调器的回执、回退与去重。
+
+        真实容器是库存权威；不从 TransferBuffer 批次表推算可用量。
+        玩家/外部模组可直接改槽，因此不能把批次表恢复成第二份物品。
+        不在名单中的余货保留；开关关闭后本方法根本不调用。
+        """
+        if not state.config.filter:
+            return self._idle(request_id, OUTPUT, "网络里没有配置的过滤资源")
+        adapter = self.ports.container_at(state.node_key)
+        if adapter is None or adapter.slots_count() != ITEM_OUTPUT_PORT_SLOT_COUNT.value:
+            return CommandResult.blocked(
+                request_id, [BlockReason(Reason.NO_ADAPTER, "取货口需要自身的 5 格真实容器")]
+            )
+        cache = ContainerEndpoint(adapter, "container:%s" % (state.node_key.as_key(),))
+        if not cache.can_read() or not cache.can_write():
+            return CommandResult.blocked(
+                request_id, [BlockReason(Reason.NO_ADAPTER, "取货缓存不可读写")]
+            )
+        limit = state.config.effective_limit(self.ports.policy)
+        totals = {}
+        for _, entry in adapter.entries():
+            totals[entry.resource_key] = totals.get(entry.resource_key, 0) + entry.count
+        # 开发替身 demand_first：先送旧货，不在同一命令里再扣一次网络。
+        for key in state.config.filter:
+            wanted = self._output_space(target, key, min(totals.get(key, 0), limit))
+            if wanted > 0:
+                result = self._pump(
+                    request_id, key, wanted, cache, target,
+                    ORIGIN_INTERNAL, topology_version,
+                )
+                result.payload["route"] = "cache_to_target"
+                return result
+        for key in state.config.filter:
+            # 同种旧货没送出去时不继续积压；目标满/缺失不预取。
+            if totals.get(key, 0) > 0:
+                continue
+            wanted = self._output_space(target, key, min(self._available_of(key), limit))
+            wanted = self._output_space(cache, key, wanted)
+            if wanted > 0:
+                result = self._pump(
+                    request_id, key, wanted, self.network, cache,
+                    ORIGIN_INTERNAL, topology_version,
+                )
+                result.payload["route"] = "network_to_cache"
+                return result
+        return self._idle(request_id, OUTPUT, "缓存或网络无可输出资源，或容器无空间")
+
+    def _output_space(self, endpoint, key, wanted):
+        # type: (object, ResourceKey, int) -> int
+        if wanted <= 0:
+            return 0
+        space = endpoint.probe_space(key, wanted)
+        if space is None:
+            return min(wanted, self.ports.policy.probe_unit)
+        return max(0, min(wanted, int(space)))
 
     # -- 样板口（06-07）------------------------------------------------
 
@@ -2108,7 +2248,7 @@ class PortDispatcher(object):
 
         `return_to` 用默认值（退回来源端）：
         - 存货口：网络拒收的部分退回**朝向容器**——它本来的家；
-        - 取货口：朝向容器放不下的部分退回**网络**——06 验收「不丢弃余量」。
+        - 取货口：直输/补货的余量回网络，缓存输出的余量回真实缓存。
         """
         request = TransferRequest(
             request_id,

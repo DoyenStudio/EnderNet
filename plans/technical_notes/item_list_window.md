@@ -52,17 +52,15 @@ ID 列表、最多物品数和可选标题。创建成功返回 `True`；该 Scr
 根层级为 30，为滚动容器的子层级留出空间，低于选择窗口的 50。资源中的 `scroll_view` 继续引用
 `endernet_windows.item_list_grid`；格子模板为 `endernet_windows.item_can_be_selected`。
 
-所有绑定在窗口打开期间通过当前 Screen 的 `DynaBinding` / `DynaBindingCollection`
-注册，使用 ToolDelta 的 `Binder` 标志；关闭时注销。无需修改宿主 Screen 类的
-装饰器，也不会占用选择窗口的绑定名。
+当前实现由宿主的 `ItemListWindowBindingsMixin` 声明静态 Binder 绑定，
+窗口对象提供数据与操作；关闭窗口清理实例，静态绑定保留并返回安全值。
+绑定名与选择窗口独立，设备屏已有生产接入。
 
-> ⚠️ **2026-09-30：这条「运行时注册」的路在这个引擎上不生效，本节描述的方案会抛
-> `AttributeError`。** 引擎存的是回调的 `__name__`，渲染时按这个名字到界面实例上
-> `getattr`；运行时注册的包装器名字（`reader` 之类）不在生成的 `_Base` 类上。
-> 终端面板已因此改成**把绑定写进宿主 Screen 的类体**（见 [11-交付说明](../tasks/11-交付说明.md)
-> 第十二节）。本文件描述的窗口**当前没有任何生产调用点**（只有测试在调），因此
-> **未修**；要用之前必须先照第十二节改——改法是为每个宿主界面声明转发的类体绑定，
-> 而不是继续用 `DynaBinding`。
+2026-09-30 曾因 ToolDelta 动态回调没有安装到注册宿主上，发生按名称查找失败。
+该框架缺陷已于 2026-10-03 修复，见 [修复记录](tooldelta_dynamic_binding.md)。
+`DynaBinding` / `DynaBindingCollection` 已可按窗口生命周期注册和注销；
+本组件目前保留静态 mixin 实现，不再将动态绑定列为不可用方案。修复已做离线验证，
+不代表本组件已完成动态绑定的真机验收。
 
 | 控件 / 用途 | 绑定名 | 标志 / 目标 |
 | --- | --- | --- |
