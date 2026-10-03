@@ -1642,6 +1642,12 @@ class TerminalListView(object):
         """
         if self.cache.client.has_session():
             return
+        # session_open 发出后、session_ready 到达前也没有会话号。
+        # 此时设备身份仍在，不能清掉已被状态回调捕获的模型；否则后续
+        # 回包因模型身份不符被永久丢弃，状态栏与详情按钮一起失效。
+        # 拒绝、丢失或关闭会话都会由 _forget_session 清掉设备身份。
+        if self.cache.client.device_ref() is not None:
+            return
         # 状态快照与会话一起失效；即使没有在途动作，也不能残留在线与弹窗。
         self.screen.status = None
         if self.backpack is None:

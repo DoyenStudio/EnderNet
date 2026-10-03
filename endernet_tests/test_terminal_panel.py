@@ -2750,6 +2750,35 @@ class TestRerenderAndAnchoring(PanelFixture):
 
 
 class TestStatusSessionLifecycle(PanelFixture):
+    def test_delayed_session_ready_preserves_status_model_and_handler(self):
+        from endernet_bp.endernet_scripts.endernet.common.protocol import DeviceStatusMessage
+        self.client.drop_session()
+        model = device_status.DeviceStatusModel(REF)
+        self.panel.status = model
+        self.client.on_message(self.panel._make_status_handler(self.client))
+        self.client.open_session(REF, 0)
+        for unused in range(3):
+            self.panel.OnTicking()
+        self.assertIs(self.panel.status, model)
+        self.assertFalse(self.panel.device_status_visible())
+        self.feed(SessionReady(7, SNAPSHOT_VERSION))
+        self.feed(DeviceStatusMessage(
+            "endernet:common_terminal", REF.generation, True, "在线",
+            "ok", "runnable", "可运行", 1))
+        self.panel.OnTicking()
+        self.assertEqual(self.panel.device_status_text(), "在线")
+        self.screen.bindings[
+            (BinderStub.BF_ButtonClickUp, device_status.OPEN_BINDING)]({})
+        self.assertTrue(self.panel.device_status_popup_visible())
+
+    def test_rejected_pending_session_clears_status_model(self):
+        self.client.drop_session()
+        self.panel.status = device_status.DeviceStatusModel(REF)
+        self.client.open_session(REF, 0)
+        self.client.receive(SyncEnvelope(SyncError("x", "session_invalid")).to_dict())
+        self.panel.OnTicking()
+        self.assertIsNone(self.panel.status)
+
     def online(self):
         from endernet_bp.endernet_scripts.endernet.common.protocol import DeviceStatusMessage
         model = device_status.DeviceStatusModel(REF)
