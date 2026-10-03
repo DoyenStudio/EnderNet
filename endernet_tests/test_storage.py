@@ -42,9 +42,13 @@ from endernet.server.devices.registry import DeviceRegistry
 from endernet.server.devices.storage_driver import (
     DISK_SCOPE_HARDDISKS_ONLY,
     DRIVER_DEVICE_ID,
+    DRIVER_RECORD_KIND,
+    MEDIUM_RECORD_KIND,
     DriverPolicy,
     StorageDriverStore,
+    medium_sequence,
 )
+from endernet.server.persistence.repository import MemoryRepository, Record
 from endernet.server.network.controller import RunState
 from endernet.server.network.node import NetworkNode
 from endernet.server.runtime.events import NormalizedEvent
@@ -1349,6 +1353,399 @@ class TestAssembly(unittest.TestCase):
         self.server.stop()
         self.assertFalse(state.loaded)
         self.assertIsNotNone(self.server.drivers.medium(medium_id="nothing") or state)
+
+
+class TestRepositoryArchive(Fixture):
+    """12-03：驱动器槽位与介质**走真实仓库**往返。
+
+    与 `TestPersistenceStructures` 的区别是：那边验的是 `save_all()` /
+    `restore()` 这对内存结构，这里验的是记录级的存档路径
+    （`save_to_repository` / `restore_from_repository`），包括
+    **重启后设备代次变了**这一条——那正是真机上最容易丢盘的地方。
+    """
+
+    def setUp(self):
+        Fixture.setUp(self)
+        self.repo = MemoryRepository()
+
+    def _restart(self):
+        """模拟「退出世界再进来」：新的注册表（**代次从头数**）+ 新的状态集合。"""
+        registry = DeviceRegistry(self.definitions)
+        store = StorageDriverStore(
+            self.definitions,
+            registry,
+            policy=self.driver_policy,
+            medium_policy=self.medium_policy,
+        )
+        store.restore_from_repository(self.repo)
+        store.use_durable_ids()
+        return registry, store
+
+    def _archive(self):
+        self.store.save_to_repository(self.repo)
+        self.repo.commit()
+
+    # -- 内容跟随身份 --------------------------------------------------
+
+    def test_medium_content_survives(self):
+        medium = self.new_medium()
+        self.seed(STONE, 4)
+        self._archive()
+
+        _, store = self._restart()
+        copy = store.medium(medium.medium_id)
+        self.assertIsNotNone(copy, "介质 ID 必须原样回来，不得重新分配")
+        self.assertEqual(copy.count_of(STONE), 4)
+        self.assertEqual(copy.used_micro, medium.used_micro)
+        copy.assert_consistent()
+
+    def test_medium_is_keyed_by_its_own_id(self):
+        first = self.new_medium(slot=0)
+        self._archive()
+        self.assertIn(first.medium_id, self.repo.list_ids(MEDIUM_RECORD_KIND))
+
+    def test_orphan_flag_survives(self):
+        medium = self.new_medium()
+        self.store.drop(self.record.ref)
+        self._archive()
+        _, store = self._restart()
+        self.assertTrue(store.medium(medium.medium_id).orphaned)
+
+    def test_a_medium_without_a_record_is_not_an_empty_disk(self):
+        """记录缺 → 引用还在但**不可交易**，绝不当空盘按 0 处理。"""
+        medium = self.new_medium()
+        self._archive()
+        self.repo.delete(MEDIUM_RECORD_KIND, medium.medium_id)
+
+        registry, store = self._restart()
+        registry.register(key(0), DRIVER_DEVICE_ID)
+        state = store.ensure(registry.get(key(0)).ref)
+        # 槽位还是它的（存档里写着），但介质对象不在表里。
+        self.assertEqual(state.slot_of(medium.medium_id), 0)
+        receipt = state.provider.read(medium.medium_id, STONE, 1)
+        self.assertEqual(receipt.moved, 0)
+        self.assertEqual(receipt.reason, Reason.MEDIUM_UNRECOVERED)
+
+    # -- 槽位按位置重挂（代次变了也要挂上）------------------------------
+
+    def test_slots_are_reattached_by_position_not_generation(self):
+        medium = self.new_medium(slot=3)
+        self._archive()
+
+        registry, store = self._restart()
+        outcome = registry.register(key(0), DRIVER_DEVICE_ID)
+        state = store.ensure(outcome.record.ref)
+        self.assertEqual(state.slot_of(medium.medium_id), 3)
+        self.assertEqual(
+            state.assignment(3).slot_version, self.state.assignment(3).slot_version
+        )
+
+    def test_slots_land_at_the_documented_slot_only(self):
+        medium = self.new_medium(slot=2)
+        self._archive()
+        registry, store = self._restart()
+        registry.register(key(0), DRIVER_DEVICE_ID)
+        state = store.ensure(registry.get(key(0)).ref)
+        self.assertIsNone(state.assignment(0))
+        self.assertEqual(state.slot_of(medium.medium_id), 2)
+
+    def test_a_different_position_does_not_claim_the_slots(self):
+        medium = self.new_medium(slot=1)
+        self._archive()
+        registry, store = self._restart()
+        outcome = registry.register(key(9), DRIVER_DEVICE_ID)
+        state = store.ensure(outcome.record.ref)
+        self.assertIsNone(state.slot_of(medium.medium_id))
+
+    def test_restoring_twice_does_not_duplicate_the_medium(self):
+        medium = self.new_medium()
+        self._archive()
+        _, store = self._restart()
+        store.restore_from_repository(self.repo)
+        self.assertEqual(sorted(store.mediums()), [medium.medium_id])
+
+    # -- 未知新版本 -------------------------------------------------------
+
+    def _make_record_future(self, kind, record_id):
+        """把一条记录改成「更新的构建写下的版本」，绕过写入闸。"""
+        record = self.repo.load(kind, record_id)
+        record.schema_version = 99
+        self.repo._store[kind][record_id] = record
+
+    def test_a_future_version_record_is_kept_read_only(self):
+        medium = self.new_medium(slot=0)
+        self._archive()
+        self._make_record_future(MEDIUM_RECORD_KIND, medium.medium_id)
+
+        _, store = self._restart()
+        # 内容接管进内存（不能丢），但**冻结**：不进任何写回路径。
+        self.assertIsNotNone(store.medium(medium.medium_id))
+        self.assertIn(medium.medium_id, store.diagnostics()["frozen_mediums"])
+
+    def test_a_frozen_medium_is_never_rewritten(self):
+        """覆盖掉一份更新的存档，是本任务最不能犯的错。"""
+        medium = self.new_medium(slot=0)
+        self._archive()
+        self._make_record_future(MEDIUM_RECORD_KIND, medium.medium_id)
+        _, store = self._restart()
+
+        store.note_medium_changed(medium.medium_id)
+        self.assertEqual(store.pending_archive_writes(), 0)
+        # 连拆除导致的孤儿标记也不写回。
+        store.drop(self.record.ref)
+        self.assertEqual(store.pending_archive_writes(), 0)
+
+    # -- 读不懂的存档一律不写回（代码评审揪出的两条真缺陷）----------------
+
+    def _make_payload_unreadable(self, record_id):
+        """把介质**载荷自己的**版本抬到 2——信封不动。
+
+        这模拟的是「载荷读不懂」，与「信封版本过新」是**两套**判据。
+        只按信封判的实现在这里会放行。
+        """
+        record = self.repo.load(MEDIUM_RECORD_KIND, record_id)
+        record.payload["schema_version"] = 2
+        self.repo._store[MEDIUM_RECORD_KIND][record_id] = record
+
+    def test_an_unreadable_payload_is_frozen_not_just_the_envelope(self):
+        medium = self.new_medium(slot=0)
+        self.seed(STONE, 4)
+        self._archive()
+        self._make_payload_unreadable(medium.medium_id)
+
+        _, store = self._restart()
+        recovered = store.medium(medium.medium_id)
+        self.assertIsNotNone(recovered)
+        self.assertNotEqual(recovered.recovery, "ok")
+        self.assertFalse(recovered.is_tradeable())
+        self.assertIn(medium.medium_id, store.diagnostics()["frozen_mediums"])
+
+    def test_a_broken_driver_does_not_overwrite_an_unreadable_disk(self):
+        """**最严重的一条**：载荷读不懂的盘被写回去会变成一枚**空盘**，
+        内容永久消失——`Medium.to_dict()` 没有 `raw_payload` 回退。
+
+        注意**必须在新 store 里重新登记设备再拆**：拿夹具原来那个 `ref` 去拆，
+        `get_by_ref` 找不到（新 store 里一台设备都没有），`drop` 是个空操作，
+        用例就会**永远通过**——它测的东西一次都没跑过。
+        """
+        medium = self.new_medium(slot=0)
+        self.seed(STONE, 4)
+        self._archive()
+        self._make_payload_unreadable(medium.medium_id)
+        before = dict(self.repo._store[MEDIUM_RECORD_KIND][medium.medium_id].payload)
+
+        registry, store = self._restart()
+        outcome = registry.register(key(0), DRIVER_DEVICE_ID)
+        state = store.ensure(outcome.record.ref)
+        self.assertEqual(state.slot_of(medium.medium_id), 0, "槽位没挂上，下面测不到")
+        # 拆掉驱动器 → `drop()` → 标脏（修复前这里就把空盘写回去了）
+        self.assertIsNotNone(store.drop(outcome.record.ref), "drop 没生效")
+        store.save_to_repository(self.repo)
+
+        after = self.repo._store[MEDIUM_RECORD_KIND][medium.medium_id].payload
+        self.assertEqual(after, before, "读不懂的载荷被改写了")
+        self.assertEqual(after["schema_version"], 2)
+
+    def test_a_future_version_driver_record_is_not_rewritten(self):
+        """驱动器那半边同样只管了信封版本，漏掉了写回。"""
+        medium = self.new_medium(slot=0)
+        self._archive()
+        key_text = "0,0,64,0"
+        record = self.repo.load(DRIVER_RECORD_KIND, key_text)
+        record.schema_version = 99
+        record.payload["future_only_field"] = "keepme"
+        self.repo._store[DRIVER_RECORD_KIND][key_text] = record
+
+        registry, store = self._restart()
+        outcome = registry.register(key(0), DRIVER_DEVICE_ID)
+        state = store.ensure(outcome.record.ref)
+        # 槽位照常按最好猜测应用……
+        self.assertEqual(state.slot_of(medium.medium_id), 0)
+        # ……但任何槽位变化都**不写回**。
+        self.assertTrue(state.provider.unmount(0)[0])
+        self.assertTrue(state.provider.mount(0, medium.medium_id)[0])
+        store.save_to_repository(self.repo)
+
+        stored = self.repo._store[DRIVER_RECORD_KIND][key_text]
+        self.assertEqual(stored.schema_version, 99)
+        self.assertEqual(stored.payload.get("future_only_field"), "keepme")
+        self.assertIn(key_text, store.diagnostics()["frozen_drivers"])
+
+    def test_two_unreadable_medium_records_do_not_abort_the_restore(self):
+        """读不懂的载荷没有 `medium_id`，会全用占位 ID 撞在一起，
+        异常从恢复循环逃出去——**后面连槽位都恢复不了**。"""
+        self._archive()
+        for record_id in ("medium:x", "medium:y"):
+            self.repo.write(Record(MEDIUM_RECORD_KIND, record_id, {"junk": True}))
+        self.repo.commit()
+
+        # 不能抛：抛了 `bootstrap.restore_persistence` 会把整轮恢复判失败。
+        _, store = self._restart()
+        self.assertIsNotNone(store.medium("medium:x"))
+        self.assertIsNotNone(store.medium("medium:y"))
+        self.assertEqual(sorted(store.diagnostics()["frozen_mediums"]), ["medium:x", "medium:y"])
+
+    # -- 槽数放不下的槽位：保留不截断 --------------------------------------
+
+    def test_slots_that_do_not_fit_are_preserved_not_truncated(self):
+        """R10 槽数未定案：存档里有、当前槽数放不下的槽位**不能静默丢掉**，
+        更不能把「装得下的那几个」写回去而让档案里那条引用永久消失。"""
+        medium = self.new_medium(slot=3)
+        self._archive()
+        before = dict(self.repo._store[DRIVER_RECORD_KIND]["0,0,64,0"].payload)
+
+        # 用更小的槽数重启（R10 改小 / 未配置）
+        registry = DeviceRegistry(self.definitions)
+        store = StorageDriverStore(
+            self.definitions,
+            registry,
+            policy=DriverPolicy(slot_count=2),
+            medium_policy=self.medium_policy,
+        )
+        store.restore_from_repository(self.repo)
+        store.use_durable_ids()
+        outcome = registry.register(key(0), DRIVER_DEVICE_ID)
+        state = store.ensure(outcome.record.ref)
+
+        self.assertIsNone(state.slot_of(medium.medium_id))
+        self.assertEqual(store.diagnostics()["unplaced_slots"], {"0,0,64,0": 1})
+        # 档案原样：那条放不下的引用还在。
+        store.save_to_repository(self.repo)
+        self.assertEqual(
+            self.repo._store[DRIVER_RECORD_KIND]["0,0,64,0"].payload, before
+        )
+
+    # -- 拆除 ------------------------------------------------------------
+
+    def test_a_dropped_driver_record_is_removed(self):
+        """同位置重放的新实例**不得继承**旧槽位引用（12 验收）。"""
+        self.new_medium(slot=0)
+        self.store.drop(self.record.ref)
+        self._archive()
+        self.assertEqual(self.repo.list_ids(DRIVER_RECORD_KIND), [])
+
+    # -- 持久 ID ---------------------------------------------------------
+
+    def test_durable_ids_continue_above_the_archive(self):
+        first = self.new_medium(slot=0)
+        self._archive()
+        _, store = self._restart()
+        second, reason, detail = store.create_medium(TAPE)
+        self.assertIsNotNone(second, "%s / %s" % (reason, detail))
+        self.assertNotEqual(second.medium_id, first.medium_id)
+        self.assertGreater(
+            medium_sequence(second.medium_id), medium_sequence(first.medium_id)
+        )
+
+    def test_durable_flag_is_reported(self):
+        self.assertFalse(self.store.diagnostics()["durable_medium_ids"])
+        self.store.use_durable_ids()
+        self.assertTrue(self.store.diagnostics()["durable_medium_ids"])
+
+    # -- 跨驱动器重复挂载 -------------------------------------------------
+
+    def test_the_same_medium_cannot_be_mounted_on_two_drivers(self):
+        """两台驱动器各插一块同 ID 的盘，会让一份内容被记两次。"""
+        medium = self.new_medium(slot=0)
+        other = self.place(5)
+        other_state = self.store.get_by_ref(other.ref)
+        ok, reason, detail = other_state.provider.mount(0, medium.medium_id)
+        self.assertFalse(ok)
+        self.assertEqual(reason, Reason.MEDIUM_DUPLICATE_MOUNT)
+        # 报错要说清楚它现在装在哪——否则玩家只知道「不行」。
+        self.assertIn("0 号槽", detail)
+
+    def test_the_same_medium_can_be_remounted_after_unmount(self):
+        """拒绝的是**同时**挂两处，不是「这块盘从此不能动」。"""
+        medium = self.new_medium(slot=0)
+        other = self.place(5)
+        other_state = self.store.get_by_ref(other.ref)
+        self.assertTrue(self.state.provider.unmount(0)[0])
+        ok, reason, detail = other_state.provider.mount(0, medium.medium_id)
+        self.assertTrue(ok, "%s / %s" % (reason, detail))
+
+
+class TestBootstrapPersistence(unittest.TestCase):
+    """12-03：装配层真的接上了存档后端。
+
+    用 `ServerBootstrap` 的**离线路径**验接线：`bind_engine=False` 不碰引擎，
+    后端换成内存替身。测的是「恢复在区块发现之前」「帧尾提交」「停机落盘」
+    这三条时序，不是引擎行为。
+    """
+
+    def setUp(self):
+        from endernet.server.bootstrap import ServerBootstrap
+
+        self.backend = testsupport.MemoryExtraDataBackend()
+        self.server = ServerBootstrap(
+            world=test_bootstrap_world(),
+            persistence_backend=self.backend,
+        )
+
+    def test_diagnostics_report_the_backend(self):
+        self.server.start(bind_engine=False)
+        report = self.server.diagnostics()["persistence"]
+        self.assertTrue(report["enabled"])
+        self.assertEqual(report["backend"], "MemoryExtraDataBackend")
+
+    def test_diagnostics_report_disabled_without_a_backend(self):
+        from endernet.server.bootstrap import ServerBootstrap
+
+        server = ServerBootstrap(world=test_bootstrap_world())
+        self.assertFalse(server.diagnostics()["persistence"]["enabled"])
+
+    def test_a_placed_driver_and_medium_are_persisted(self):
+        self.server.start(bind_engine=False)
+        self.server.push(NormalizedEvent.place(key(3), DRIVER_DEVICE_ID))
+        self.server.tick()
+        record = self.server.registry.get(key(3))
+        state = self.server.drivers.get_by_ref(record.ref)
+        medium, _, _ = self.server.drivers.create_medium(TAPE)
+        self.assertTrue(state.provider.mount(0, medium.medium_id)[0])
+
+        self.server.tick()
+        self.server.stop()
+        kind = "endernet.storage_medium"
+        self.assertIn(medium.medium_id, self.server.repository.list_ids(kind))
+
+    def test_an_idle_frame_does_not_write_to_disk(self):
+        """没有脏记录时一次 `SaveExtraData()` 都不发。"""
+        self.server.start(bind_engine=False)
+        self.server.tick()
+        self.server.tick()
+        self.assertEqual(self.backend.saves, 0)
+
+    def test_restore_happens_before_chunk_discovery(self):
+        """恢复必须先于区块发现：反过来槽位就会建在空状态上。"""
+        self.server.start(bind_engine=False)
+        self.server.push(NormalizedEvent.place(key(3), DRIVER_DEVICE_ID))
+        self.server.tick()
+        record = self.server.registry.get(key(3))
+        state = self.server.drivers.get_by_ref(record.ref)
+        medium, _, _ = self.server.drivers.create_medium(TAPE)
+        self.assertTrue(state.provider.mount(2, medium.medium_id)[0])
+        self.server.tick()
+        self.server.stop()
+
+        # 重进世界：新的装配层，读同一份后端。
+        from endernet.server.bootstrap import ServerBootstrap
+
+        revived = ServerBootstrap(
+            world=test_bootstrap_world(), persistence_backend=self.backend
+        )
+        revived.start(bind_engine=False)
+        revived.push(NormalizedEvent.place(key(3), DRIVER_DEVICE_ID))
+        revived.tick()
+        revived_record = revived.registry.get(key(3))
+        revived_state = revived.drivers.get_by_ref(revived_record.ref)
+        self.assertEqual(revived_state.slot_of(medium.medium_id), 2)
+
+
+def test_bootstrap_world():
+    """一份不碰引擎的世界替身。见 `test_bootstrap.FakeWorld` 的同一理由。"""
+    from test_bootstrap import FakeWorld
+
+    return FakeWorld()
 
 
 if __name__ == "__main__":

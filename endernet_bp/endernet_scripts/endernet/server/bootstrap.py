@@ -59,6 +59,7 @@ from .adapters.containers_engine import (
 )
 from .adapters.events import ServerEventBinder
 from .adapters.messages import AdapterSyncPort
+from .adapters.persistence_engine import EngineExtraDataBackend
 from .adapters.recipes import EngineRecipeSource
 from .adapters.world import ToolDeltaWorldAdapter
 from .application import ApplicationService
@@ -95,6 +96,7 @@ from .devices.io import (
 from .devices.registry import DeviceRegistry
 from .devices.memory_slot import MemorySlotStore
 from .devices.storage_driver import DriverPolicy, StorageDriverStore
+from .persistence.repository import ExtraDataRepository
 from .network.admission import AdmissionService
 from .network.energy import DEVICE_IDLE, DEVICE_WORK, EnergyPolicy, EnergyService
 from .network.runtime import RuntimeChange, RuntimeManager
@@ -558,8 +560,10 @@ class ServerBootstrap(object):
         sync_policy=None,
         session_policy=None,
         sync_events=None,
+        persistence_backend=None,
+        persistence_batch=32,
     ):
-        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object) -> None
+        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object, object, int) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
         #: 逻辑时钟（04-01）。**它是业务时间的唯一依据**，由 `drive_once()`
         #: 每帧推进一步，经 `context["tick"]` 下传给各服务。注入自有实例即可
@@ -589,7 +593,25 @@ class ServerBootstrap(object):
         #: 是同一帧的时间，但一个是节点展开、一个是业务工作，不能混在一起。
         self.runtime_budget = int(runtime_budget)
         self.assembly_profile = AssemblyProfile.validate(assembly_profile)
+        #: 真实存档后端（12-03）。**注入式**，与 `event_api` / `sync_events`
+        #: 同一约定：给了它才有真实存档，没给则整套持久化一行都不跑，
+        #: 离线测试与既有用例的行为**零差异**。
+        #:
+        #: 它与 `repository` 不是二选一：`repository` 是**存档边界**（可以是
+        #: 内存替身），`persistence_backend` 是**引擎口子**。只给后者时，
+        #: 就地包一个 `ExtraDataRepository` 同时供应两者——运行时记录的
+        #: 存档路径（`NetworkRuntime.save_node_data`）与驱动器/介质走同一份。
+        self.persistence_backend = persistence_backend
+        #: 每帧最多写几条记录。引擎的 `SaveExtraData()` 固定开销约 39.8 KB
+        #: 且按**调用次数**付（`persistence_backend.md` §3.2），所以提交要合并；
+        #: 而一次写太多会在单帧里堆出尖峰，所以写也限量。
+        self.persistence_batch = int(persistence_batch)
+        if repository is None and persistence_backend is not None:
+            repository = ExtraDataRepository(persistence_backend)
         self.repository = repository
+        self.persistence_enabled = repository is not None
+        #: 启动恢复失败时的原因。**失败不等于没有存档**——见 `restore_persistence`。
+        self.persistence_restore_error = ""
         #: 调度策略（04-03 的轮转旋钮与 04-02 的退避数值）。
         #: **全进程只有这一份对象**：跨网轮转（`RuntimeManager`）与每个网络的
         #: `SchedulerService` 都读它。各存一份的代价是
@@ -993,6 +1015,12 @@ class ServerBootstrap(object):
         """
         if self.started:
             return
+        # **恢复必须在区块发现之前。** 区块加载会带来本模组方块，
+        # 每一个都走 `_emit` → `drivers.observe(ADDED)` → `ensure()`；
+        # 等那些跑完再恢复，槽位就已经在空状态上建好了，介质得靠
+        # 「权威槽位里已没有它」那条路径被反复卸挂。先读记录，随后
+        # 区块发现幂等接管，才不会造出第二份。
+        self.restore_persistence()
         if bind_engine:
             # 顺序是有意的：先把本模组方块加入移除事件白名单，再注册监听器，
             # 否则启动瞬间的拆除事件会被引擎直接丢掉。
@@ -1070,6 +1098,10 @@ class ServerBootstrap(object):
         """显式销毁。要求 hot reload 与退出时不残留监听器与待办。"""
         if not self.started:
             return
+        # 提交点放在这里，**在所有 `mark_all_unloaded` 之前**：那时内容还
+        # 加载着、脏集合还没被清，正要落盘的就是刚刚算完的那一版。
+        # 放在最后会丢掉停机前最后一帧的改动。
+        self.flush_persistence()
         self.event_binder.unbind()
         # 会话与订阅缓存一并丢掉。**监听器已经注销了，但订阅表还活着**——
         # 留着它的症状不是报错，而是下一次 `start()` 时发布窗口以为还有人在看，
@@ -1135,6 +1167,9 @@ class ServerBootstrap(object):
         # 推进之后**：容量是下一帧 `refresh_capacity()` 的事，本帧的服务
         # 推进用的是本帧开头那份容量，这一点与样板索引一致（都晚一帧）。
         memory_reads = self.memory_slots.advance(self.clock.current_tick())
+        # 落盘是**本帧最后一个动作**，与上面两条同一理由：本帧服务的账、
+        # 样板的账、内存的账都算完了，再决定哪些要写出去。
+        persisted = self.advance_persistence()
 
         return {
             "tick": self.tick_count,
@@ -1163,9 +1198,86 @@ class ServerBootstrap(object):
             "pattern_reads": pattern_reads,
             #: 本帧重读了几台内存槽（2026-10-03）。口径同 `pattern_reads`。
             "memory_reads": memory_reads,
+            #: 本帧写进存档的记录数与提交次数（12-03）。恒为 0 是正常的——
+            #: 没有脏记录时一次 `SaveExtraData()` 都不发。
+            "persisted_records": persisted["records"],
+            "persisted_commits": persisted["commits"],
             "runtimes": len(self.runtimes.runtimes()),
             "queue": self.queue.stats(),
         }
+
+    # -- 持久化（12-03）------------------------------------------------
+
+    def restore_persistence(self):
+        # type: () -> dict
+        """启动时读回驱动器与介质。**没接后端时是空操作。**
+
+        失败时**拒绝继续、也不清任何内存状态**，并把原因留在诊断里。
+        把读不出的存档当成空存档继续，是最坏的一种处置：随后每一次
+        `save_to_repository` 都会把读不出的那部分覆盖掉——那正是
+        「未知新版本被当作空库存」的整机版本。
+        """
+        if not self.persistence_enabled:
+            return {"enabled": False, "ok": True, "detail": ""}
+        try:
+            stats = self.drivers.restore_from_repository(self.repository)
+        except Exception as error:
+            self.persistence_restore_error = "%s: %s" % (type(error).__name__, error)
+            return {"enabled": True, "ok": False, "detail": self.persistence_restore_error}
+        self.persistence_restore_error = ""
+        # 恢复成功之后才切持久 ID 发号：水位要抬到存档里已有的最大序号之上。
+        self.drivers.use_durable_ids()
+        return {"enabled": True, "ok": True, "detail": "", "stats": stats}
+
+    def advance_persistence(self):
+        # type: () -> dict
+        """把脏记录写进存档并提交。返回 `{"records": n, "commits": m}`。
+
+        **没有脏记录时不调 `SaveExtraData()`**：那次调用的固定开销约
+        39.8 KB，与载荷几乎无关（`persistence_backend.md` §3.2），
+        空转帧不该付这笔钱。
+        """
+        if not self.persistence_enabled:
+            return {"records": 0, "commits": 0}
+        records = self.drivers.save_to_repository(
+            self.repository, budget=self.persistence_batch
+        )
+        committed = self.repository.commit()
+        return {"records": records, "commits": 1 if committed else 0}
+
+    def flush_persistence(self):
+        # type: () -> int
+        """把剩下的脏记录一次写完。**停机路径用，不限预算。**"""
+        if not self.persistence_enabled:
+            return 0
+        records = self.drivers.save_to_repository(self.repository, budget=None)
+        self.repository.commit()
+        return records
+
+    def persistence_diagnostics(self):
+        # type: () -> dict
+        report = {"enabled": self.persistence_enabled}
+        if not self.persistence_enabled:
+            report["note"] = (
+                "未接存档后端（`persistence_backend`）：驱动器槽位与介质内容"
+                "只在内存里，退出世界即丢失。"
+            )
+            return report
+        report["batch"] = self.persistence_batch
+        report["backend"] = (
+            type(self.persistence_backend).__name__
+            if self.persistence_backend is not None
+            else "injected_repository"
+        )
+        report["drivers"] = {
+            "durable_medium_ids": self.drivers.diagnostics()["durable_medium_ids"],
+            "pending_archive_writes": self.drivers.pending_archive_writes(),
+            "archive": dict(self.drivers.archive_stats),
+        }
+        report["repository"] = self.repository.diagnostics()
+        if self.persistence_restore_error:
+            report["restore_error"] = self.persistence_restore_error
+        return report
 
     def _tick_context(self):
         # type: () -> dict
@@ -1924,6 +2036,7 @@ class ServerBootstrap(object):
             "order": self.order_diagnostics(),
             "energy": self.energy_diagnostics(),
             "sync": self.sync_diagnostics(),
+            "persistence": self.persistence_diagnostics(),
             "world": self.world.diagnostics(),
             "scope_note": (
                 "已装配任务 01 的设备层、任务 02 的拓扑/负载层、任务 03 的主控/运行时、"
@@ -1950,7 +2063,12 @@ class ServerBootstrap(object):
                 "也不是机器坏了，是**这条装配没有把 10 接上**"
                 "（游戏内由 `start_server()` 接上）；"
                 "装配仓执行是 07-06，它的回流入口已备好但仍无调用方。"
-                "存档后端尚未接入（任务 12）；界面同步**只接了底座**——"
+                "存档后端**已接入驱动器与介质**（12-03，世界 ExtraData）："
+                "接了 `persistence_backend` 时，驱动器槽位与介质内容会随存档"
+                "走，重进世界按位置重挂；**接口缓冲、订单与预留凭据仍未存**"
+                "（12-04），分阶段恢复（12-05）与拆除掉落（12-06）也没做。"
+                "没接后端时 `persistence` 那一节会如实报 `enabled: False`。"
+                "界面同步**只接了底座**——"
                 "会话与消息协议、快照与增量、长列表模型已完成，但没有任何一面"
                 "终端界面接上它（11-03 及以后等待 UI 交接），"
                 "因此 `sync` 那一节的 `networks` 为空是正常的。"
@@ -2342,6 +2460,11 @@ def start_server():
         energy_policy=EnergyPolicy.dev_stand_in(),
         return_policy=return_policy,
         returns_sink=returns,
+        # 第 4 件显式选择（12-03）：**接上真实存档后端**。不传它时驱动器
+        # 与介质只在内存里，退出世界就没了——那是「没接上」，不是默认行为。
+        # 后端只在这里构造一次；它自己不碰引擎，引擎调用发生在方法体内，
+        # 因此这个 import 在离线环境里也不会炸。
+        persistence_backend=EngineExtraDataBackend(),
     )
     _SERVER.start()
     return _SERVER

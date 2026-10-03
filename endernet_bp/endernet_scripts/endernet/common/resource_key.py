@@ -21,6 +21,7 @@
 
 from copy import deepcopy
 
+from . import medium_item
 from . import settings
 
 try:  # pragma: no cover - 仅在 Python 2 下成立
@@ -192,7 +193,17 @@ def _item_identity_tree(
         ),
         ("custom_tips", _optional(None if custom_tips is None else canonical_tree(custom_tips))),
         ("extra_id", _optional(None if extra_id is None else canonical_tree(extra_id))),
-        ("user_data", _optional(None if user_data is None else canonical_tree(user_data))),
+        # 身份投影落在这一处，因此**两条构造路径（`item()` 与 `from_dict()`）
+        # 自动都走到它**。介质物品的动态容量 Lore 只在这里被剔除；
+        # `_raw`（以及 `raw_identity` / `to_dict`）拿到的仍是完整载荷。
+        (
+            "user_data",
+            _optional(
+                None
+                if user_data is None
+                else canonical_tree(medium_item.project_identity_user_data(user_data))
+            ),
+        ),
         ("durability", _optional(None if durability is None else canonical_tree(durability))),
     )
 

@@ -275,6 +275,53 @@ class StorageStand(object):
         return tick
 
 
+class MemoryExtraDataBackend(object):
+    """`ExtraDataBackend` 的内存替身（12-03）。
+
+    **刻意分成「内存区」与「已提交」两份**，因为真实引擎就是这么分的：
+    `SetExtraData(k, v, auto_save=False)` 只改内存区，`SaveExtraData()` 才提交
+    （`persistence_backend.md` §3.3）。合成一份的话，「提交前读得到、提交后
+    还在」这条会被替身自己变成恒真，而它正是 `commit()` 语义要验的东西。
+
+    真实引擎的**异步落盘窗口**不在这里模拟：那是引擎行为，不是本层的契约，
+    12-05/12-06 才需要以它为前提。
+    """
+
+    def __init__(self):
+        #: 已提交（相当于已进 leveldb）的键值。
+        self.committed = {}
+        #: 引擎内存区里还没提交的改动。
+        self.pending = {}
+        #: `save()` 被调了几次。**固定开销按调用次数付**，所以要数它。
+        self.saves = 0
+
+    def get(self, key):
+        # type: (str) -> object
+        if key in self.pending:
+            return self.pending[key]
+        return self.committed.get(key)
+
+    def set(self, key, value, auto_save=True):
+        # type: (str, str, bool) -> bool
+        self.pending[key] = value
+        if auto_save:
+            self.committed[key] = value
+        return True
+
+    def delete(self, key):
+        # type: (str) -> bool
+        self.pending.pop(key, None)
+        self.committed.pop(key, None)
+        return True
+
+    def save(self):
+        # type: () -> bool
+        self.saves += 1
+        self.committed.update(self.pending)
+        self.pending = {}
+        return True
+
+
 #: 假引擎模块的命名前缀。**集中在这里**而不是散在各测试里：这个名字要
 #: 与真引擎的顶层包名区分开，也要一眼看出「这是替身」，四处各写一份迟早
 #: 会有一处写成真名——而那会让某个测试悄悄开始依赖真引擎。

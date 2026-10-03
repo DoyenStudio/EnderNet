@@ -195,6 +195,117 @@ class TestRoundTrip(unittest.TestCase):
             ResourceKey.from_dict({"kind": "plasma", "name": "x"})
 
 
+class TestMediumIdentityProjection(unittest.TestCase):
+    """介质物品的身份特例（12-02 定案、12-03 落地）。
+
+    边界极窄，所以这里**每一侧都有反例**：只有「已识别的本模组介质 +
+    带标记的管理行」这一种组合会被剔除，其余一律按原来的算法走。
+    """
+
+    TAPE = "endernet:singleside_tape"
+
+    def _media_user_data(self, medium_id, lines):
+        from endernet.common.medium_item import carrier_of, mark_managed_line
+
+        user_data = carrier_of(_FakeMedium(medium_id))
+        user_data["display"] = {
+            "Name": "同一块盘",
+            "Lore": ["玩家自己写的一行"] + [mark_managed_line(l) for l in lines],
+        }
+        return user_data
+
+    def test_same_id_different_capacity_lines_are_the_same_key(self):
+        """**核心性质**：同一块盘只因为剩余量变了就换身份，会让库存里
+        凭空多出/少掉一条，并触发 remove/add 与预留重建。"""
+        left = ResourceKey.item(self.TAPE, user_data=self._media_user_data("medium:1", ["12", "1728"]))
+        right = ResourceKey.item(self.TAPE, user_data=self._media_user_data("medium:1", ["3", "40"]))
+        self.assertEqual(left, right)
+        self.assertEqual(hash(left), hash(right))
+
+    def test_different_ids_are_different_keys(self):
+        """同型号、同剩余量的**两块**盘不能被合并——稳定 ID 就是为此存在的。"""
+        left = ResourceKey.item(self.TAPE, user_data=self._media_user_data("medium:1", ["12", "1728"]))
+        right = ResourceKey.item(self.TAPE, user_data=self._media_user_data("medium:2", ["12", "1728"]))
+        self.assertNotEqual(left, right)
+
+    def test_other_lore_still_distinguishes(self):
+        """只排除管理行——玩家自己写的那一行仍然参与身份。"""
+        from endernet.common.medium_item import carrier_of
+
+        base = carrier_of(_FakeMedium("medium:1"))
+        left = dict(base, display={"Lore": ["玩家 A"]})
+        right = dict(base, display={"Lore": ["玩家 B"]})
+        self.assertNotEqual(
+            ResourceKey.item(self.TAPE, user_data=left), ResourceKey.item(self.TAPE, user_data=right)
+        )
+
+    def test_custom_name_still_distinguishes(self):
+        from endernet.common.medium_item import carrier_of
+
+        base = carrier_of(_FakeMedium("medium:1"))
+        left = dict(base, display={"Name": "甲"})
+        right = dict(base, display={"Name": "乙"})
+        self.assertNotEqual(
+            ResourceKey.item(self.TAPE, user_data=left), ResourceKey.item(self.TAPE, user_data=right)
+        )
+
+    def test_unmanaged_item_is_completely_unaffected(self):
+        """**平行对照**：没有载体的物品，Lore 里就算有一样的标记也照旧参与身份。"""
+        from endernet.common.medium_item import mark_managed_line
+
+        left = ResourceKey.item(
+            IRON, user_data={"display": {"Lore": [mark_managed_line("一样的标记")]}}
+        )
+        right = ResourceKey.item(IRON, user_data={"display": {"Lore": []}})
+        self.assertNotEqual(left, right)
+
+    def test_other_user_data_keys_still_distinguish(self):
+        """别的模组的键不归我们管，照旧参与身份。"""
+        from endernet.common.medium_item import carrier_of
+
+        base = carrier_of(_FakeMedium("medium:1"))
+        left = dict(base, **{"别的模组": 1})
+        right = dict(base, **{"别的模组": 2})
+        self.assertNotEqual(
+            ResourceKey.item(self.TAPE, user_data=left), ResourceKey.item(self.TAPE, user_data=right)
+        )
+
+    def test_raw_identity_keeps_the_managed_lines(self):
+        """**投影不是清洗**：真实载荷里那两行必须原样留着。"""
+        user_data = self._media_user_data("medium:1", ["12", "1728"])
+        key = ResourceKey.item(self.TAPE, user_data=user_data)
+        self.assertEqual(key.raw_identity["user_data"], user_data)
+
+    def test_round_trip_preserves_identity(self):
+        """`to_dict` / `from_dict` 之后身份不变——两条构造路径都要走投影。"""
+        from endernet.common.resource_key import ResourceKey as RK
+
+        key = RK.item(self.TAPE, user_data=self._media_user_data("medium:1", ["12", "1728"]))
+        restored = RK.from_dict(key.to_dict())
+        self.assertEqual(restored, key)
+        self.assertEqual(restored.raw_identity, key.raw_identity)
+
+    def test_a_capacity_refresh_does_not_change_the_key(self):
+        """把「按最新权威摘要物化」接在身份上：刷新前后必须是同一个键。"""
+        from endernet.common.medium_item import apply_capacity_lines, carrier_of
+
+        user_data = carrier_of(_FakeMedium("medium:1"))
+        before = ResourceKey.item(self.TAPE, user_data=user_data)
+        after = ResourceKey.item(
+            self.TAPE, user_data=apply_capacity_lines(user_data, ("12", "1728"))
+        )
+        self.assertEqual(before, after)
+
+
+class _FakeMedium(object):
+    """只需要 `medium_id`：`carrier_of` 用它发载体。"""
+
+    __slots__ = ("medium_id",)
+
+    def __init__(self, medium_id):
+        self.medium_id = medium_id
+
+
 class TestUnitScale(unittest.TestCase):
     """单位尺度：1 物品 = 50 微单位物，1 mB = 1 微单位物。"""
 
