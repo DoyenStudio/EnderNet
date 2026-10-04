@@ -1215,6 +1215,29 @@ class TestJsonContract(unittest.TestCase):
     """界面 JSON 的接线。**只验名字与位置对得上**——控件画不画得出来是
     游戏内实测项。"""
 
+    def test_assemble_chamber_inputs_use_first_nine_container_slots(self):
+        document = _load_ui("assemble_chamber.json")
+        grids = []
+
+        def walk(node):
+            if isinstance(node, dict):
+                if "source_items_grid" in node:
+                    grids.append(node["source_items_grid"])
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value)
+
+        walk(document["content"])
+        self.assertEqual(len(grids), 1)
+        grid = grids[0]
+        self.assertEqual(grid["collection_name"], "netease_container")
+        self.assertEqual(grid["grid_dimensions"], [3, 3])
+        self.assertEqual(grid["maximum_grid_items"], 9)
+        self.assertEqual(grid["grid_item_template"],
+                         "endernet_container_common.container_grid_item")
+
     def test_every_panel_json_instantiates_the_status_popup(self):
         for device_id, screen_name in CONTAINER_SCREENS.items():
             document = _load_ui(ui_file_of(device_id))

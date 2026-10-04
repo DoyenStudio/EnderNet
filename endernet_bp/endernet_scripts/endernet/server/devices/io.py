@@ -1435,6 +1435,24 @@ class PortStore(object):
             "",
         )
 
+    def adjacent_endpoints(self, state):
+        # type: (PortState) -> list
+        """样板投料查询六面外部容器，跳过样板接口和订单管理的装配仓。"""
+        endpoints = []
+        for facing in FACING_NAMES:
+            target = neighbor_key(state.node_key, facing)
+            record = self.registry.get(target)
+            if record is not None and (
+                role_of(record.device_id) == TEMPLATE
+                or record.device_id == "endernet:assemble_chamber"
+            ):
+                continue
+            adapter = self.container_at(target)
+            if adapter is not None:
+                endpoints.append((facing, ContainerEndpoint(
+                    adapter, "container:%s" % (target.as_key(),))))
+        return endpoints
+
     def buffer_endpoint(self, state, op_id, origin=ORIGIN_INTERNAL):
         # type: (PortState, str, str) -> object
         """缓冲端点。
@@ -1913,7 +1931,7 @@ class PortRunner(object):
         # type: (PortState) -> PollOutcome
         """构造并提交一条搬运命令。"""
         role = state.role
-        if role in FACING_ROLES:
+        if role in FACING_ROLES and role != TEMPLATE:
             endpoint, reason, detail = self.ports.facing_endpoint(state)
             if endpoint is None:
                 state.stats["no_container"] += 1
@@ -2473,7 +2491,7 @@ class PortDispatcher(object):
 
     def dispatch_template(self, state, request_id, topology_version=None):
         # type: (PortState, str, object) -> CommandResult
-        """把已经备好的批次投给朝向容器。
+        """把已经备好的批次依次尝试投给六面相邻容器。
 
         **投不完就留着，不重来。** 外部机器只收了一部分时，剩余量留在
         中转位，批次状态记着「已投多少、还差多少」——06-07 明写后续推进
@@ -2482,9 +2500,10 @@ class PortDispatcher(object):
         batch = state.batch
         if batch is None or batch.is_complete():
             return self._idle(request_id, TEMPLATE, "没有待投的样板批次")
-        endpoint, reason, detail = self.ports.facing_endpoint(state)
-        if endpoint is None:
-            return CommandResult.blocked(request_id, [BlockReason(reason, detail)])
+        endpoints = self.ports.adjacent_endpoints(state)
+        if not endpoints:
+            return CommandResult.blocked(request_id, [BlockReason(
+                Reason.NO_CONTAINER, "六个相邻面都没有可用的投料容器")])
         buffer_endpoint = self.ports.buffer_endpoint(state, batch.op_id, ORIGIN_INTERNAL)
         if buffer_endpoint is None:
             return CommandResult.blocked(
@@ -2499,10 +2518,19 @@ class PortDispatcher(object):
                 request_id, [BlockReason(Reason.INSUFFICIENT_STOCK, batch.reason)]
             )
         wanted = min(staged, batch.remaining(), state.config.effective_limit(self.ports.policy))
-        result = self._pump(
-            request_id, batch.resource_key, wanted, buffer_endpoint, endpoint,
-            ORIGIN_INTERNAL, topology_version,
-        )
+        for facing, endpoint in endpoints:
+            # 各面的尝试必须有独立身份，否则拒收回执会被下一面重放。
+            result = self._pump(
+                "%s/face:%s" % (request_id, facing), batch.resource_key,
+                wanted, buffer_endpoint, endpoint, ORIGIN_INTERNAL,
+                topology_version,
+            )
+            receipt = (result.payload or {}).get("receipt", {})
+            # 一面接收后结束本轮；部分接收的余量下轮继续尝试六面。
+            # 不确定时立即停下，交由 PortRunner 设置待核对标记。
+            if int(receipt.get("moved", 0) or 0) > 0 or receipt.get("status") == "uncertain":
+                break
+        result.request_id = request_id
         moved = int((result.payload or {}).get("receipt", {}).get("moved", 0) or 0)
         batch.delivered += moved
         if moved <= 0:

@@ -1585,6 +1585,97 @@ class TestTemplatePort(PortFixture):
 
     device_id = TEMPLATE_DEVICE
 
+    def test_feeding_finds_each_face_without_a_facing(self):
+        for face in ("up", "down", "north", "south", "west", "east"):
+            self.setUp()
+            self.configure()
+            self.state.facing = None
+            target = neighbor_key(self.state.node_key, face)
+            self.containers.boxes = {target.as_key(): self.box}
+            self.dispatcher.stage_batch(self.state, STONE, 10, "batch-op", "r1")
+            result = self.result("feed")
+            self.assertEqual(result.request_id, "feed")
+            self.assertEqual(self.state.batch.delivered, 10, face)
+            self.assertEqual(self.box.count_of(STONE), 10, face)
+            self.assertEqual(self.state.buffer.total_of(STONE), 0, face)
+
+    def test_feeding_skips_full_and_template_neighbours(self):
+        self.configure()
+        up = neighbor_key(self.state.node_key, "up")
+        north = neighbor_key(self.state.node_key, "north")
+        pattern_box = FakeContainer(slots=1, max_stack=64)
+        self.registry.add(DeviceRef(up, 0), TEMPLATE_DEVICE)
+        full_box = FakeContainer(slots=1, max_stack=64)
+        full_box.set_slot(0, ContainerEntry(DIRT, 64))
+        self.containers.boxes[up.as_key()] = pattern_box
+        self.containers.boxes[north.as_key()] = full_box
+        self.dispatcher.stage_batch(self.state, STONE, 10, "batch-op", "r1")
+        self.result("feed")
+        self.assertEqual(pattern_box.count_of(STONE), 0)
+        self.assertEqual(full_box.count_of(DIRT), 64)
+        self.assertEqual(self.box.count_of(STONE), 10)
+        self.assertEqual(self.state.batch.delivered, 10)
+        self.assertEqual(self.state.buffer.total_of(STONE), 0)
+
+    def test_busy_machine_does_not_redirect_materials_into_assembly_chamber(self):
+        self.configure()
+        self.registry.add(self.target_ref, "endernet:assemble_chamber")
+        # 装配仓已有另一配方的原料；相同资源仍不能被外部投料叠加。
+        self.box.set_slot(0, ContainerEntry(STONE, 1))
+        up = neighbor_key(self.state.node_key, "up")
+        machine = FakeContainer(slots=1, max_stack=64)
+        machine.set_slot(0, ContainerEntry(DIRT, 64))
+        self.containers.boxes[up.as_key()] = machine
+        self.dispatcher.stage_batch(self.state, STONE, 2, "batch-op", "r1")
+
+        self.result("feed-busy")
+
+        self.assertEqual(self.box.count_of(STONE), 1)
+        self.assertEqual(self.state.batch.delivered, 0)
+        self.assertEqual(self.state.buffer.total_of(STONE), 2)
+        self.assertEqual(self.network_stub.stored[STONE], 38)
+        # 外部机器空闲后，同一批料继续投递，不额外从网络取料。
+        machine.write_slot(0, None)
+        self.result("feed-resumed")
+        self.assertEqual(machine.count_of(STONE), 2)
+        self.assertEqual(self.box.count_of(STONE), 1)
+        self.assertEqual(self.state.batch.delivered, 2)
+        self.assertEqual(self.state.buffer.total_of(STONE), 0)
+        self.assertEqual(self.network_stub.stored[STONE], 38)
+
+    def test_partial_delivery_continues_on_another_face_next_round(self):
+        self.configure()
+        up = neighbor_key(self.state.node_key, "up")
+        small_box = FakeContainer(slots=1, max_stack=4)
+        self.containers.boxes[up.as_key()] = small_box
+        self.dispatcher.stage_batch(self.state, STONE, 10, "batch-op", "r1")
+        self.result("feed-1")
+        self.assertEqual(small_box.count_of(STONE), 4)
+        self.assertEqual(self.box.count_of(STONE), 0)
+        self.assertEqual(self.state.buffer.total_of(STONE), 6)
+        self.result("feed-2")
+        self.assertEqual(self.box.count_of(STONE), 6)
+        self.assertEqual(self.state.batch.delivered, 10)
+        self.assertEqual(self.state.buffer.total_of(STONE), 0)
+
+    def test_uncertain_face_does_not_try_another_face(self):
+        self.configure()
+        up = neighbor_key(self.state.node_key, "up")
+        self.containers.boxes[up.as_key()] = FakeContainer(slots=1, max_stack=64)
+        self.dispatcher.stage_batch(self.state, STONE, 10, "batch-op", "r1")
+        attempts = []
+
+        def uncertain(request_id, resource_key, count, source, target, origin, version):
+            attempts.append(target.endpoint_id())
+            return CommandResult.ok(request_id,
+                {"receipt": {"status": "uncertain", "moved": 0}})
+
+        self.dispatcher._pump = uncertain
+        result = self.result("feed")
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(result.payload["receipt"]["status"], "uncertain")
+        self.assertEqual(self.state.buffer.total_of(STONE), 10)
+
     def test_staging_takes_a_batch_from_the_network(self):
         self.configure()
         result = self.dispatcher.stage_batch(

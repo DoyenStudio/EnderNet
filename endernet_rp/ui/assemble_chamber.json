@@ -120,7 +120,8 @@
                                                             24.0
                                                         ],
                                                         "layer": 1,
-                                                        "collection_name": "source_items",
+                                                        "collection_name": "netease_container",
+                                                        "maximum_grid_items": 9,
                                                         "grid_dimensions": [
                                                             3,
                                                             3
