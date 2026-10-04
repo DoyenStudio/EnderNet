@@ -348,6 +348,7 @@ class OrderExecutor(object):
             amount,
             tick,
             request_id=request_id,
+            player_id=getattr(command.source, "player_id", "") or "",
         )
         service.orders.add(order)
         self._start_planning(order, tick)

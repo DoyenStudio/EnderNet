@@ -994,17 +994,20 @@ class Order(object):
         "residue",
         "adopted",
         "request_id",
+        "player_id",
     )
 
     def __init__(self, order_id, component_id, master_instance_id, target, canonical,
-                 amount, tick=0, request_id=""):
-        # type: (str, int, str, object, str, int, int, str) -> None
+                 amount, tick=0, request_id="", player_id=""):
+        # type: (str, int, str, object, str, int, int, str, str) -> None
         self.order_id = order_id
         #: **玩家那条命令的请求 ID**，与 `order_id` 是两件事：订单 ID 标识
         #: 「这一单」，请求 ID 标识「玩家点的哪一下」。规划是分帧的，拒绝要
         #: 过几帧才发生，那时玩家早就离开界面了——拒绝记录里存的是**它**，
         #: 客户端才认得出这是自己那条请求的回音（2026-09-26 追加决定 2）。
         self.request_id = request_id
+        #: 发起者身份来自服务端命令来源；旧订单或无玩家来源时为空。
+        self.player_id = player_id
         self.component_id = component_id
         #: 下单时那张网络的主控实例。**它变了订单就不该继续跑**（09 验收：
         #: 拓扑拆分后订单只属于原主控）。主控换人时订单转 BLOCKED 并报出来，
@@ -1238,6 +1241,7 @@ class Order(object):
         return {
             "order_id": self.order_id,
             "request_id": self.request_id,
+            "player_id": self.player_id,
             "component_id": self.component_id,
             "master_instance_id": self.master_instance_id,
             "target": self.canonical,
@@ -1298,6 +1302,7 @@ class Order(object):
         return {
             "order_id": self.order_id,
             "request_id": self.request_id,
+            "player_id": self.player_id,
             "component_id": self.component_id,
             "master_instance_id": self.master_instance_id,
             "target": self.canonical,
