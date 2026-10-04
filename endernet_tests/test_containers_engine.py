@@ -23,6 +23,7 @@ import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.protocol import Reason, TransferStatus
 from endernet.common.resource_key import ResourceKey
+from endernet.common.item_codec import item_key_from_dict
 from endernet.server.adapters.containers_engine import (
     EMPTY_ITEM,
     PLAYER_SLOT_COUNT,
@@ -713,6 +714,76 @@ class TestEngineBoundary(unittest.TestCase):
         """注入一个「一碰就炸」的原语：只要没人调用，整条链路照常构造。"""
         provider = EngineContainerProvider(_MissingEngine())
         self.assertEqual(provider.diagnostics()["cached"], 0)
+
+
+class TestContainerWriteDictionary(unittest.TestCase):
+    """用严格的引擎替身检查写入参数；事件是否派发另做真机验证。"""
+
+    def setUp(self):
+        class Component(object):
+            def __init__(self):
+                self.item = None
+                self.calls = []
+                self.result = True
+
+            def GetContainerSize(self, pos, dimension):
+                return 1
+
+            def GetContainerItem(self, pos, slot, dimension, user_data):
+                return None if self.item is None else dict(self.item)
+
+            def SpawnItemToContainer(self, data, slot, pos, dimension):
+                # 真机中这三个 None 能写入实物，却使变更事件丢失。
+                for field in ("durability", "customTips", "extraId"):
+                    if data.get(field) is None:
+                        raise AssertionError("invalid engine field: %s" % field)
+                self.calls.append((dict(data), slot, pos, dimension))
+                if self.result:
+                    self.item = dict(data) if data.get("count", 0) > 0 else None
+                return self.result
+
+        self.component = Component()
+        self.primitives = EngineItemPrimitives()
+        self.primitives._container_comp = lambda: self.component
+        self.container = EngineItemContainer(self.primitives, 0, (28, 68, -4))
+
+    def test_empty_insert_stack_and_clear_use_engine_empty_values(self):
+        first = self.container.insert("first", STONE, 1)
+        second = self.container.insert("second", STONE, 2)
+        self.assertEqual((first.moved, second.moved), (1, 2))
+        self.assertEqual(item_key_from_dict(self.container.read_slot(0)), STONE)
+        self.assertTrue(self.container.write_slot(0, None))
+        self.assertIsNone(self.container.read_slot(0))
+        self.assertEqual([call[0]["count"] for call in self.component.calls], [1, 3, 0])
+        for data, slot, pos, dimension in self.component.calls:
+            self.assertEqual((slot, pos, dimension), (0, (28, 68, -4), 0))
+            self.assertEqual((data["durability"], data["customTips"], data["extraId"]),
+                             (0, "", ""))
+
+    def test_write_preserves_metadata_identity_and_source_dictionary(self):
+        data = item_dict(STONE, 1)
+        data.update(durability=7, customTips="tip", extraId="id",
+                    enchantData=[(1, 2)], modEnchantData=[("endernet:test", 4)],
+                    userData={"custom": 1})
+        before = dict(data)
+        self.assertTrue(self.primitives.set_container_item(0, (28, 68, -4), 0, data))
+        self.assertEqual(data, before)
+        self.assertEqual(self.component.calls[-1][0], before)
+        self.assertEqual(item_key_from_dict(self.container.read_slot(0)),
+                         item_key_from_dict(before))
+
+    def test_none_conversion_does_not_mutate_input_or_hide_write_failure(self):
+        data = item_dict(STONE, 1)
+        data.update(durability=None, customTips=None, extraId=None,
+                    enchantData=None, modEnchantData=None, userData=None)
+        before = dict(data)
+        self.component.result = False
+        self.assertFalse(self.primitives.set_container_item(0, (28, 68, -4), 0, data))
+        self.assertEqual(data, before)
+        self.assertIsNone(self.component.item)
+        written = self.component.calls[-1][0]
+        for field in ("enchantData", "modEnchantData", "userData"):
+            self.assertIsNone(written[field])
 
 
 class TestEmptyItemTranslation(unittest.TestCase):

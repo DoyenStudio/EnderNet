@@ -354,12 +354,19 @@ class EngineItemPrimitives(object):
 
     def set_container_item(self, dimension, position, slot, data):
         # type: (int, tuple, int, dict) -> bool
+        # 内部身份把空值归一为 None，但写入引擎需要恢复这三个字段。
+        # 2026-10-04 红石熔炉实测：任一个传 None 都会写入成功，却不派发
+        # ContainerItemChangedServerEvent；传 0 / 空字符串后事件恢复。
+        item = dict(data)
+        for field, empty in (("durability", 0), ("customTips", ""), ("extraId", "")):
+            if item.get(field) is None:
+                item[field] = empty
         # **返回值必须看。** `tooldelta` 的 `PutItemIntoContainer` 正是在这里
         # 丢掉了布尔值，才出现「空槽路径报告全部放入」的缺陷。
         # 参数顺序照 `tooldelta/api/server/container.py`：`(item, slot, pos, dim)`。
         return bool(
             self._container_comp().SpawnItemToContainer(
-                dict(data), slot, tuple(position), dimension
+                item, slot, tuple(position), dimension
             )
         )
 
