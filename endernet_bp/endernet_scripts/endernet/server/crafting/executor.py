@@ -537,6 +537,7 @@ class OrderExecutor(object):
             self._release_everything(order)
             self.orders.stats["completed"] += 1
             self.service.stats["completed"] += 1
+            self.service.notify_order_completed(order)
             return False
         return self._finish_adoption(order, tick)
 
@@ -2214,6 +2215,8 @@ class OrderExecutor(object):
         再查一次 `query(target).stored >= amount` 反而是错的：玩家随时可以
         把产物取走，那时订单会被判成永远完不成，而它其实早就做完了。
         """
+        if order.is_terminal():
+            return 0
         for step in order.steps:
             if not step.is_fulfilled():
                 return 0
@@ -2227,6 +2230,7 @@ class OrderExecutor(object):
         )
         self.orders.stats["completed"] += 1
         self.service.stats["completed"] += 1
+        self.service.notify_order_completed(order)
         return 1
 
     # -- 容量与只读视图 ------------------------------------------------
@@ -2587,9 +2591,11 @@ class FactoryService(NetworkService):
         on_slots_changed=None,
         previews=None,
         memory_store=None,
+        on_order_completed=None,
     ):
         # type: (object, object, object, object, object, object, object, object, str, object, object, object) -> None
         self.service_id = ServiceId.FACTORY
+        self.on_order_completed = on_order_completed
         self.policy = policy if policy is not None else OrderPolicy()
         #: 08 的规划器门面。**同一个对象**：诊断报出来的策略就是实际生效的那份。
         self.planner = planner
@@ -2647,6 +2653,7 @@ class FactoryService(NetworkService):
         self.stats = {
             "submitted": 0,
             "completed": 0,
+            "notification_failed": 0,
             "unblocked": 0,
             "stagings": 0,
             #: 被拒绝的下单请求数。**与订单统计分开**：被拒的不是订单。
@@ -2656,6 +2663,16 @@ class FactoryService(NetworkService):
             self.attach(runtime)
 
     # -- 契约 ----------------------------------------------------------
+
+    def notify_order_completed(self, order):
+        # type: (object) -> None
+        if self.on_order_completed is None or not order.player_id:
+            return
+        try:
+            self.on_order_completed(order)
+        except Exception:
+            # 引擎提示失败不回滚已完成的订单，也不打断其他订单推进。
+            self.stats["notification_failed"] += 1
 
     def attach(self, runtime):
         # type: (object) -> None

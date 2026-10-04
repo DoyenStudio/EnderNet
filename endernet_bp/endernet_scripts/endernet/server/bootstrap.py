@@ -63,6 +63,7 @@ from .adapters.containers_engine import (
 )
 from .adapters.events import ServerEventBinder
 from .adapters.messages import AdapterSyncPort
+from .adapters.order_notifications import notify_order_completed
 from .adapters.persistence_engine import EngineExtraDataBackend
 from .adapters.recipes import EngineRecipeSource
 from .adapters.world import ToolDeltaWorldAdapter
@@ -465,7 +466,7 @@ def _returns_port_for(returns, runtime):
 
 
 def _factory_builder(policy, planner, patterns, ports, returns=None, on_slots_changed=None,
-                     preview_policy=None, memory_store=None):
+                     preview_policy=None, memory_store=None, on_order_completed=None):
     # type: (object, object, object, object, object, object, object, object) -> object
     """把规划器、样板索引与接口状态集合绑进工厂服务的构造器。
 
@@ -517,6 +518,7 @@ def _factory_builder(policy, planner, patterns, ports, returns=None, on_slots_ch
             # 内存容量的来源（2026-10-03）：**全进程一份**，与样板索引同理
             # ——内存条装在方块容器里，不能因为网络断开、主控被移除而消失。
             memory_store=memory_store,
+            on_order_completed=on_order_completed,
         )
 
     return build
@@ -593,6 +595,7 @@ class ServerBootstrap(object):
         sync_events=None,
         persistence_backend=None,
         persistence_batch=32,
+        on_order_completed=None,
     ):
         # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object, object, int) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
@@ -893,6 +896,7 @@ class ServerBootstrap(object):
                         self._note_factory_energy_changed,
                         self.preview_policy,
                         self.memory_slots,
+                        on_order_completed=on_order_completed,
                     ),
                 }
             )
@@ -2737,6 +2741,7 @@ def start_server():
         # 后端只在这里构造一次；它自己不碰引擎，引擎调用发生在方法体内，
         # 因此这个 import 在离线环境里也不会炸。
         persistence_backend=EngineExtraDataBackend(),
+        on_order_completed=notify_order_completed,
     )
     _SERVER.start()
     return _SERVER
