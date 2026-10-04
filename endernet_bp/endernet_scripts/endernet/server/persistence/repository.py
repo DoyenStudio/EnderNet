@@ -21,6 +21,11 @@ from .migrations import (
     UnsupportedVersionError,
 )
 
+try:
+    _TEXT_TYPES = (str, unicode)  # noqa: F821
+except NameError:
+    _TEXT_TYPES = (str, bytes)
+
 
 # -- 版本闸门（所有后端共用一处）------------------------------------------
 
@@ -98,11 +103,12 @@ def dumps_payload(payload):
     `{"__type__": T, "__value__": V}`（`resource_identity.md` §2.1）——
     在这里赌它不包装是不必要的风险。
 
-    `ensure_ascii=True` 让产物是**纯 ASCII 字节串**，正好落在实测过的那一侧。
+    `ensure_ascii=True` 只保证内容为 ASCII；py2 仍可能返回 unicode，
+    必须显式编码成 str 才能交给 ExtraData。
     """
     text = json.dumps(payload, ensure_ascii=True, sort_keys=True)
-    if isinstance(text, bytes) and not isinstance(text, str):  # pragma: no cover - py3
-        return text.decode("ascii")
+    if not isinstance(text, str):  # pragma: no cover - py2 unicode
+        return text.encode("ascii")
     return text
 
 
@@ -115,7 +121,7 @@ def loads_payload(text):
     """
     if isinstance(text, bytes) and not isinstance(text, str):  # pragma: no cover - py3
         text = text.decode("utf-8")
-    if not isinstance(text, str) and not isinstance(text, bytes):
+    if not isinstance(text, _TEXT_TYPES):
         raise TypeError("存档载荷必须是字符串，得到 %r" % (type(text),))
     payload = json.loads(text)
     if not isinstance(payload, dict):
@@ -127,8 +133,8 @@ def dumps_index(ids):
     # type: (object) -> str
     """索引表（一串 record_id）编成字符串。"""
     text = json.dumps(sorted(ids), ensure_ascii=True)
-    if isinstance(text, bytes) and not isinstance(text, str):  # pragma: no cover - py3
-        return text.decode("ascii")
+    if not isinstance(text, str):  # pragma: no cover - py2 unicode
+        return text.encode("ascii")
     return text
 
 
@@ -136,7 +142,7 @@ def loads_index(text):
     # type: (object) -> list
     if isinstance(text, bytes) and not isinstance(text, str):  # pragma: no cover - py3
         text = text.decode("utf-8")
-    if not isinstance(text, (str, bytes)):
+    if not isinstance(text, _TEXT_TYPES):
         raise TypeError("索引载荷必须是字符串，得到 %r" % (type(text),))
     ids = json.loads(text)
     if not isinstance(ids, list):

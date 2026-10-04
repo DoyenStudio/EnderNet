@@ -23,6 +23,8 @@
   因此提交必须合并，`ExtraDataRepository.commit()` 是唯一的调用点。
 """
 
+from .engine_text import engine_text
+
 
 class ExtraDataBackend(object):
     """存档后端的引擎口子：四个原语。
@@ -32,7 +34,8 @@ class ExtraDataBackend(object):
     就能把仓库层整条跑通（替身见 `endernet_tests/testsupport.py`）。
 
     进出都是**字符串**：键是纯 ASCII 文本，值是 `ExtraDataRepository`
-    编好的 JSON 字符串。后端不解析内容，也不做类型转换。
+    编好的 JSON 字符串。后端不解析内容；引擎实现会把 unicode 编码为
+    UTF-8 str，避免把 JSON 读回的 unicode 键或值直接传给 SDK。
     """
 
     def get(self, key):
@@ -76,17 +79,19 @@ class EngineExtraDataBackend(ExtraDataBackend):
     def get(self, key):
         # type: (str) -> object
         self.calls["get"] += 1
-        return self._component().GetExtraData(key)
+        return self._component().GetExtraData(engine_text(key))
 
     def set(self, key, value, auto_save=True):
         # type: (str, str, bool) -> bool
         self.calls["set"] += 1
-        return bool(self._component().SetExtraData(key, value, auto_save))
+        return bool(self._component().SetExtraData(
+            engine_text(key), engine_text(value), auto_save
+        ))
 
     def delete(self, key):
         # type: (str) -> bool
         self.calls["delete"] += 1
-        return bool(self._component().CleanExtraData(key))
+        return bool(self._component().CleanExtraData(engine_text(key)))
 
     def save(self):
         # type: () -> bool

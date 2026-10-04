@@ -15,16 +15,110 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.server.persistence.migrations import Migrator
+from endernet.server.adapters.persistence_engine import EngineExtraDataBackend
 from endernet.server.persistence.repository import (
     ExtraDataRepository,
     MemoryRepository,
     Record,
+    dumps_index,
+    dumps_payload,
     index_key,
+    loads_index,
+    loads_payload,
     record_key,
 )
 
 MEDIUM = "endernet.storage_medium"
 DRIVER = "endernet.storage_driver"
+
+
+class TestTextCodec(unittest.TestCase):
+    def test_unicode_payload_serializes_to_ascii_str(self):
+        payload = {u"notes": u"驱动器已拆除", u"medium_id": u"medium:1"}
+        raw = dumps_payload(payload)
+        self.assertIs(type(raw), str)
+        raw.encode("ascii")
+        self.assertEqual(loads_payload(raw), payload)
+
+    def test_unicode_index_serializes_to_ascii_str(self):
+        ids = [u"medium:2", u"medium:1"]
+        raw = dumps_index(ids)
+        self.assertIs(type(raw), str)
+        raw.encode("ascii")
+        self.assertEqual(loads_index(raw), sorted(ids))
+
+    def test_unicode_and_bytes_can_be_read(self):
+        self.assertEqual(loads_payload(u'{"notes": "已拆除"}'),
+                         {u"notes": u"已拆除"})
+        self.assertEqual(loads_index(u'["medium:1"]'), [u"medium:1"])
+        self.assertEqual(loads_payload(b'{"n": 1}'), {"n": 1})
+        self.assertEqual(loads_index(b'["medium:1"]'), [u"medium:1"])
+
+    def test_non_text_is_rejected(self):
+        for value in (None, 1, {}, []):
+            with self.assertRaises(TypeError):
+                loads_payload(value)
+            with self.assertRaises(TypeError):
+                loads_index(value)
+
+
+class BytesOnlyExtraDataComponent(object):
+    """模拟 SDK 字节串边界；py3 也能检出 unicode 参数漏转。"""
+
+    def __init__(self):
+        self.values = {}
+        self.auto_save = None
+        self.saved = 0
+
+    def GetExtraData(self, key):
+        assert type(key) is bytes
+        return self.values.get(key)
+
+    def SetExtraData(self, key, value, auto_save):
+        assert type(key) is bytes
+        assert type(value) is bytes
+        self.values[key] = value
+        self.auto_save = auto_save
+        return True
+
+    def CleanExtraData(self, key):
+        assert type(key) is bytes
+        self.values.pop(key, None)
+        return True
+
+    def SaveExtraData(self):
+        self.saved += 1
+        return True
+
+
+class TestEngineTextBoundary(unittest.TestCase):
+    def setUp(self):
+        self.component = BytesOnlyExtraDataComponent()
+        self.backend = EngineExtraDataBackend()
+        self.backend._component = lambda: self.component
+
+    def test_unicode_key_and_value_are_encoded(self):
+        self.assertTrue(self.backend.set(u"endernet:测试", u"载荷", False))
+        self.assertEqual(self.backend.get(u"endernet:测试"),
+                         u"载荷".encode("utf-8"))
+        self.assertFalse(self.component.auto_save)
+        self.assertTrue(self.backend.delete(u"endernet:测试"))
+        self.assertIsNone(self.backend.get(u"endernet:测试"))
+
+    def test_restored_medium_can_be_written_and_deleted(self):
+        repo = ExtraDataRepository(self.backend)
+        payload = {u"notes": u"驱动器已拆除"}
+        repo.write(Record(MEDIUM, u"medium:1", payload))
+        repo.commit()
+        restored_id = repo.list_ids(MEDIUM)[0]
+        record = repo.load(MEDIUM, restored_id)
+        self.assertEqual(record.payload, payload)
+        repo.write(record)
+        self.assertTrue(repo.delete(MEDIUM, restored_id))
+        repo.commit()
+        self.assertEqual(repo.list_ids(MEDIUM), [])
+        self.assertIsNone(repo.load(MEDIUM, restored_id))
+        self.assertEqual(self.component.saved, 2)
 
 
 class Fixture(unittest.TestCase):
