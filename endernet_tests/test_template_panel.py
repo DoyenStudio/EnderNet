@@ -426,6 +426,66 @@ class TestCellAccessors(TemplateFixture):
 class TestTwoWayModel(TemplateFixture):
     """交接第 4 节的双向模型，逐条钉住。"""
 
+    def select_network(self, stored=40, reserved=0, has_pattern=False):
+        view = terminal_panel.TerminalListView(
+            self.panel, cache=TerminalCache(client=self.client),
+            device_ref=REF, dimension=0, scroll_path=None,
+            backpack=self.backpack)
+        self.addCleanup(view.close)
+        self.panel.list_view = view
+        view.cache.model.replace_snapshot(
+            SNAPSHOT_VERSION, [(STONE, stored, reserved, has_pattern)])
+        view.refresh()
+        view.on_select({"#collection_index": 0})
+        self.assertEqual(STONE, view.cache.model.selected_key())
+        return view
+
+    def test_a_selected_network_item_is_copied_into_each_source_cell(self):
+        self.state(revision=6)
+        view = self.select_network(stored=40, reserved=40)
+        for index in range(9):
+            self.click_cell(SURFACE_SOURCE, index)
+            command = self.last_command()
+            self.assertEqual("template_cell_put", command["action"])
+            self.assertEqual(SURFACE_SOURCE, command["target"])
+            self.assertEqual(index, command["cell"])
+            self.assertEqual(STONE.to_dict(), command["key"])
+            self.assertEqual(6, command["slot_version"])
+            self.assertIsNone(command["count"])
+            self.assertIsNone(command["slot"])
+        self.assertEqual(9, len(self.commands()))
+        self.assertIsNone(self.view.selection)
+        self.assertEqual(STONE, view.cache.model.selected_key())
+        self.deliver(self.result(self.last_command()["request_id"]))
+        self.assertIsNone(view.cache.model.selected_key())
+
+    def test_a_pattern_only_network_item_can_configure_factory_outputs(self):
+        self.state(mode=MODE_FACTORY)
+        view = self.select_network(stored=0, has_pattern=True)
+        self.click_cell(SURFACE_OUTPUTS, 2)
+        command = self.last_command()
+        self.assertEqual("template_cell_put", command["action"])
+        self.assertEqual(SURFACE_OUTPUTS, command["target"])
+        self.assertEqual(2, command["cell"])
+        self.assertEqual(STONE.to_dict(), command["key"])
+        self.deliver(self.result(command["request_id"], status=STATUS_REJECTED))
+        self.assertEqual(STONE, view.cache.model.selected_key())
+
+    def test_network_selection_cannot_edit_locked_crafting_output(self):
+        self.state()
+        view = self.select_network()
+        self.click_cell(SURFACE_OUTPUTS, 1)
+        self.assertEqual([], self.commands())
+        self.assertEqual(STONE, view.cache.model.selected_key())
+
+    def test_cleared_network_selection_does_not_copy_the_previous_item(self):
+        self.state()
+        view = self.select_network()
+        view.cache.model.clear()
+        self.click_cell(SURFACE_SOURCE, 4)
+        self.assertEqual([], self.commands())
+        self.assertEqual((SURFACE_SOURCE, 4), self.view.selection)
+
     def test_a_selected_backpack_item_is_copied_into_the_cell(self):
         self.select_backpack(0)
         self.state(source=((0, STONE, 3),))

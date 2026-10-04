@@ -12,7 +12,7 @@
 
 ## 双向模型（交接第 4、5 节）
 
-- **背包有选中** → 点虚格 = 把那件物品**复制**成配置（源槽不消耗、不移动）；
+- **背包或网络列表有选中** → 点虚格 = 把那件物品**复制**成配置（源槽不消耗、不移动）；
 - **选中虚格** → 点外界（**背包槽或网络列表行**）= **仅清空那一格的配置**，
   外界不增加、不替换、不合并物品，那一下**也不取物**；
 - 点已选中的同一格 = 取消；点另一格 = 选中挪过去。
@@ -397,6 +397,13 @@ class TemplateView(object):
             _slot, key, _count = take
             self._send(ACTION_CELL_PUT, target=surface, cell=index, key=key)
             return
+        view = getattr(self.screen, "list_view", None)
+        if view is not None:
+            key = view.cache.model.selected_key()
+            if key is not None:
+                # 网络行同样只提供配置的资源键，不按库存余额取出实物。
+                self._send(ACTION_CELL_PUT, target=surface, cell=index, key=key)
+                return
         if self.selection == (surface, index):
             self.selection = None
             return
