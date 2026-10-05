@@ -487,6 +487,18 @@ class TemplateConfig(object):
             self.cells_of(group)[index] = (key, count)
         self.revision.bump()
 
+    def replace_factory(self, source, outputs):
+        # type: (list, list) -> None
+        """原子替换工厂输入与输出；两组全部合法后才改动现有配置。"""
+        if self.mode != PATTERN_MODE_FACTORY:
+            raise ValueError("只有工厂模式支持批量导入")
+        source = _cells_from(source, SOURCE_CELL_COUNT, "输入九宫格")
+        outputs = _cells_from(outputs, OUTPUT_CELL_COUNT, "输出格")
+        self.source = source
+        self.outputs = outputs
+        self.revision.bump()
+
+
     def clear_cell(self, group, index):
         # type: (str, int) -> bool
         """清空一格。**空格子返回假**——调用方据此决定要不要发通知。"""

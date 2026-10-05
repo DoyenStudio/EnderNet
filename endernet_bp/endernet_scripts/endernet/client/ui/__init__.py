@@ -26,6 +26,7 @@ def register_screens():
     from .factoric_panel import FactoricPanel
     from .template_panel import TemplatePanel
     from .terminal_panel import CommonTerminalPanel
+    from .universal_importer import UniversalImporterScreen
 
     return (
         CommonTerminalPanel,
@@ -37,4 +38,5 @@ def register_screens():
         BusTemplatePanel,
         AssembleChamberPanel,
         StorageDriverPanel,
+        UniversalImporterScreen,
     )

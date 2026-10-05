@@ -40,6 +40,7 @@ from ...common.item_codec import item_key_from_dict
 from ...common.definitions import (
     ITEM_TEMPLATES,
     PATTERN_MODE_CRAFTING,
+    PATTERN_MODE_FACTORY,
     PATTERN_MODES,
     TEMPLATE_PANEL_ITEM_ID,
 )
@@ -1556,6 +1557,7 @@ class StorageService(NetworkService):
             # 样板终端（11-05）
             "template_mode": self._cmd_template_mode,
             "template_cell_put": self._cmd_template_cell_put,
+            "template_universal_import": self._cmd_template_universal_import,
             "template_cell_clear": self._cmd_template_cell_clear,
             "template_cell_count": self._cmd_template_cell_count,
             "template_encode": self._cmd_template_encode,
@@ -2774,6 +2776,53 @@ class StorageService(NetworkService):
             "action": "template_mode",
             "state": self._template_state_payload(state),
         })
+
+    def _cmd_template_universal_import(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """采集器一次替换最多 9 输入、3 输出，仅修改虚拟配置。"""
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        gate = self._template_gate(command, payload, state)
+        if gate is not None:
+            return gate
+        if state.config.mode != PATTERN_MODE_FACTORY:
+            return self._reject(command, Reason.TEMPLATE_CELL_LOCKED,
+                                "只有工厂模式支持万用导入")
+        config = payload.get("config")
+        if not isinstance(config, dict):
+            return self._reject(command, Reason.BAD_PARAMETER, "缺少采集配置")
+        groups = {}
+        for field, group in (("inputs", GROUP_SOURCE), ("outputs", GROUP_OUTPUTS)):
+            items = config.get(field)
+            if not isinstance(items, list):
+                return self._reject(command, Reason.BAD_PARAMETER, "采集配置必须是物品列表")
+            cells = [None] * CELL_COUNT_OF[group]
+            for index, item in enumerate(items[:len(cells)]):
+                if not isinstance(item, dict):
+                    return self._reject(command, Reason.BAD_PARAMETER, "采集物品格式不合法")
+                try:
+                    key = ResourceKey.from_dict({
+                        "kind": "item", "name": item["itemName"],
+                        "aux": item.get("auxValue", 0),
+                    })
+                except (KeyError, TypeError, ValueError):
+                    return self._reject(command, Reason.BAD_PARAMETER, "采集物品标识不合法")
+                if key.name == "minecraft:air":
+                    return self._reject(command, Reason.BAD_PARAMETER, "不能导入空气")
+                # GetUiItem 没有数量；沿用手动配置新格子的默认数量。
+                count = self.template_policy.encode_count_per_cell
+                invalid = self._template_stack_error(state, group, index, key, count)
+                if invalid is not None:
+                    return self._reject(command, Reason.PATTERN_INVALID, invalid)
+                cells[index] = (key, count)
+            groups[group] = cells
+        state.config.replace_factory(groups[GROUP_SOURCE], groups[GROUP_OUTPUTS])
+        return CommandResult.ok(command.request_id, {
+            "action": "template_universal_import",
+            "state": self._template_state_payload(state),
+        })
+
 
     def _cmd_template_cell_put(self, command, payload):
         # type: (object, dict) -> CommandResult

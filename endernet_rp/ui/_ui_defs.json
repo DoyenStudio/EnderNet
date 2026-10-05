@@ -15,6 +15,7 @@
         "ui/endernet_container_common.json",
         "ui/endernet_terminal_inventory.json",
         "ui/endernet_ui_common.json",
+        "ui/endernet_universal_importer_ui.json",
         "ui/endernet_windows.json",
         "ui/energy_input_interface.json",
         "ui/factoric_terminal_panel.json",

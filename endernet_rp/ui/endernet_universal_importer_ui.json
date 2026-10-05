@@ -1,0 +1,448 @@
+{
+    "main": {
+        "type": "screen",
+        "controls": []
+    },
+    "namespace": "endernet_universal_importer_ui",
+    "overlay_panel": {
+        "type": "panel",
+        "size": [
+            "100%",
+            "100%"
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "control_board": {
+                    "type": "input_panel",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        "15%+0px",
+                        "15%+0px"
+                    ],
+                    "size": [
+                        120.0,
+                        40.0
+                    ],
+                    "draggable": "both",
+                    "layer": 1,
+                    "button_mappings": [
+                        {
+                            "to_button_id": "#netease_to_button_id",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "bg": {
+                                "type": "image",
+                                "layer": 1,
+                                "clip_direction": "left",
+                                "clip_ratio": 0.0,
+                                "texture": "textures/ui/endernet/background_bottom_dark_edge"
+                            }
+                        },
+                        {
+                            "title": {
+                                "type": "label",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    4.0,
+                                    4.0
+                                ],
+                                "layer": 2,
+                                "color": [
+                                    1.0,
+                                    1.0,
+                                    1.0
+                                ],
+                                "font_scale_factor": 1.4,
+                                "font_type": "default",
+                                "shadow": true,
+                                "text": "万用样板采集器",
+                                "text_alignment": "center"
+                            }
+                        },
+                        {
+                            "sample_btn@common.button": {
+                                "type": "button",
+                                "$control_alpha": 1.0,
+                                "$default_texture": "textures/ui/endernet/button_default",
+                                "$hover_texture": "textures/ui/endernet/button_hovered",
+                                "$is_new_nine_slice": false,
+                                "$label_color": [
+                                    0.2588235294117647,
+                                    0.2588235294117647,
+                                    0.2588235294117647
+                                ],
+                                "$label_font_scale_factor": 1.0,
+                                "$label_font_size": "normal",
+                                "$label_layer": 3,
+                                "$label_offset": [
+                                    0,
+                                    0
+                                ],
+                                "$label_text": "开始选择",
+                                "$nine_slice_buttom": 0,
+                                "$nine_slice_left": 0,
+                                "$nine_slice_right": 0,
+                                "$nine_slice_top": 0,
+                                "$nineslice_size": [
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                "$pressed_texture": "textures/ui/endernet/button_pressed",
+                                "$texture_layer": 2,
+                                "anchor_from": "bottom_left",
+                                "anchor_to": "bottom_left",
+                                "size": [
+                                    40.0,
+                                    20.0
+                                ],
+                                "layer": 3,
+                                "button_mappings": [],
+                                "default_control": "default",
+                                "hover_control": "hover",
+                                "is_handle_button_move_event": true,
+                                "pressed_control": "pressed",
+                                "bindings": [
+                                    {
+                                        "binding_type": "collection_details",
+                                        "binding_collection_name": "",
+                                        "binding_condition": "always_when_visible"
+                                    }
+                                ],
+                                "controls": [
+                                    {
+                                        "default@netease_editor_template_namespace.default": {}
+                                    },
+                                    {
+                                        "hover@netease_editor_template_namespace.hover": {}
+                                    },
+                                    {
+                                        "pressed@netease_editor_template_namespace.pressed": {}
+                                    },
+                                    {
+                                        "button_label@netease_editor_template_namespace.button_label": {}
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "mode_btn@common.button": {
+                                "type": "button",
+                                "$control_alpha": 1.0,
+                                "$default_texture": "textures/ui/endernet/button_default",
+                                "$hover_texture": "textures/ui/endernet/button_hovered",
+                                "$is_new_nine_slice": false,
+                                "$label_color": [
+                                    0.2588235294117647,
+                                    0.2588235294117647,
+                                    0.2588235294117647
+                                ],
+                                "$label_font_scale_factor": 1.0,
+                                "$label_font_size": "normal",
+                                "$label_layer": 3,
+                                "$label_offset": [
+                                    0,
+                                    0
+                                ],
+                                "$label_text": "输入模式",
+                                "$nine_slice_buttom": 0,
+                                "$nine_slice_left": 0,
+                                "$nine_slice_right": 0,
+                                "$nine_slice_top": 0,
+                                "$nineslice_size": [
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                "$pressed_texture": "textures/ui/endernet/button_pressed",
+                                "$texture_layer": 2,
+                                "anchor_from": "bottom_left",
+                                "anchor_to": "bottom_left",
+                                "offset": [
+                                    40.0,
+                                    0.0
+                                ],
+                                "size": [
+                                    40.0,
+                                    20.0
+                                ],
+                                "layer": 13,
+                                "button_mappings": [],
+                                "default_control": "default",
+                                "hover_control": "hover",
+                                "is_handle_button_move_event": true,
+                                "pressed_control": "pressed",
+                                "bindings": [
+                                    {
+                                        "binding_type": "collection_details",
+                                        "binding_collection_name": "",
+                                        "binding_condition": "always_when_visible"
+                                    }
+                                ],
+                                "controls": [
+                                    {
+                                        "default@netease_editor_template_namespace.default": {}
+                                    },
+                                    {
+                                        "hover@netease_editor_template_namespace.hover": {}
+                                    },
+                                    {
+                                        "pressed@netease_editor_template_namespace.pressed": {}
+                                    },
+                                    {
+                                        "button_label@netease_editor_template_namespace.button_label": {}
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "save_btn@common.button": {
+                                "type": "button",
+                                "$control_alpha": 1.0,
+                                "$default_texture": "textures/ui/endernet/button_default",
+                                "$hover_texture": "textures/ui/endernet/button_hovered",
+                                "$is_new_nine_slice": false,
+                                "$label_color": [
+                                    0.2588235294117647,
+                                    0.2588235294117647,
+                                    0.2588235294117647
+                                ],
+                                "$label_font_scale_factor": 1.0,
+                                "$label_font_size": "normal",
+                                "$label_layer": 3,
+                                "$label_offset": [
+                                    0,
+                                    0
+                                ],
+                                "$label_text": "保存",
+                                "$nine_slice_buttom": 0,
+                                "$nine_slice_left": 0,
+                                "$nine_slice_right": 0,
+                                "$nine_slice_top": 0,
+                                "$nineslice_size": [
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                "$pressed_texture": "textures/ui/endernet/button_pressed",
+                                "$texture_layer": 2,
+                                "anchor_from": "bottom_left",
+                                "anchor_to": "bottom_left",
+                                "offset": [
+                                    80.0,
+                                    0.0
+                                ],
+                                "size": [
+                                    40.0,
+                                    20.0
+                                ],
+                                "layer": 23,
+                                "button_mappings": [],
+                                "default_control": "default",
+                                "hover_control": "hover",
+                                "is_handle_button_move_event": true,
+                                "pressed_control": "pressed",
+                                "bindings": [
+                                    {
+                                        "binding_type": "collection_details",
+                                        "binding_collection_name": "",
+                                        "binding_condition": "always_when_visible"
+                                    }
+                                ],
+                                "controls": [
+                                    {
+                                        "default@netease_editor_template_namespace.default": {}
+                                    },
+                                    {
+                                        "hover@netease_editor_template_namespace.hover": {}
+                                    },
+                                    {
+                                        "pressed@netease_editor_template_namespace.pressed": {}
+                                    },
+                                    {
+                                        "button_label@netease_editor_template_namespace.button_label": {}
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "exit_btn@common.button": {
+                                "type": "button",
+                                "$control_alpha": 1.0,
+                                "$default_texture": "textures/ui/endernet/button_red_default",
+                                "$hover_texture": "textures/ui/endernet/button_red_hovered",
+                                "$is_new_nine_slice": false,
+                                "$label_color": [
+                                    1,
+                                    1,
+                                    1
+                                ],
+                                "$label_font_scale_factor": 1.0,
+                                "$label_font_size": "large",
+                                "$label_layer": 3,
+                                "$label_offset": [
+                                    0,
+                                    0
+                                ],
+                                "$label_text": "x",
+                                "$nine_slice_buttom": 0,
+                                "$nine_slice_left": 0,
+                                "$nine_slice_right": 0,
+                                "$nine_slice_top": 0,
+                                "$nineslice_size": [
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                "$pressed_texture": "textures/ui/endernet/button_red_pressed",
+                                "$texture_layer": 2,
+                                "anchor_from": "top_right",
+                                "anchor_to": "top_right",
+                                "size": [
+                                    20.0,
+                                    20.0
+                                ],
+                                "layer": 33,
+                                "button_mappings": [],
+                                "default_control": "default",
+                                "hover_control": "hover",
+                                "is_handle_button_move_event": true,
+                                "pressed_control": "pressed",
+                                "bindings": [
+                                    {
+                                        "binding_type": "collection_details",
+                                        "binding_collection_name": "",
+                                        "binding_condition": "always_when_visible"
+                                    }
+                                ],
+                                "controls": [
+                                    {
+                                        "default@netease_editor_template_namespace.default": {}
+                                    },
+                                    {
+                                        "hover@netease_editor_template_namespace.hover": {}
+                                    },
+                                    {
+                                        "pressed@netease_editor_template_namespace.pressed": {}
+                                    },
+                                    {
+                                        "button_label@netease_editor_template_namespace.button_label": {
+                                            "font_type": "unicode"
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "slot_section": {
+        "type": "panel",
+        "size": [
+            100,
+            100
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "img": {
+                    "type": "image",
+                    "size": [
+                        "100%",
+                        "100%"
+                    ],
+                    "layer": 1,
+                    "clip_direction": "left",
+                    "clip_ratio": 0.0,
+                    "color": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "texture": "textures/ui/endernet/universal_importer_focused_frame"
+                }
+            },
+            {
+                "interact_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "",
+                    "$hover_texture": "",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        1,
+                        1,
+                        1
+                    ],
+                    "$label_font_scale_factor": 1.0,
+                    "$label_font_size": "large",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0,
+                        0
+                    ],
+                    "$label_text": "Button",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_texture": "",
+                    "$texture_layer": 2,
+                    "size": [
+                        "100%",
+                        "100%"
+                    ],
+                    "priority": 50,
+                    "layer": 2,
+                    "button_mappings": [],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {}
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {}
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}

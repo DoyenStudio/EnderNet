@@ -494,6 +494,113 @@
                                     }
                                 ]
                             }
+                        },
+                        {
+                            "universal_import_btn@common.button": {
+                                "type": "button",
+                                "$control_alpha": 1.0,
+                                "$default_texture": "textures/ui/endernet/frame_rise_light",
+                                "$hover_texture": "textures/ui/endernet/frame_rise_light",
+                                "$is_new_nine_slice": false,
+                                "$label_color": [
+                                    0.2588235294117647,
+                                    0.2588235294117647,
+                                    0.2588235294117647
+                                ],
+                                "$label_font_scale_factor": 1.4,
+                                "$label_font_size": "small",
+                                "$label_layer": 3,
+                                "$label_offset": [
+                                    0,
+                                    0
+                                ],
+                                "$label_text": "万能导入",
+                                "$nine_slice_buttom": 0,
+                                "$nine_slice_left": 0,
+                                "$nine_slice_right": 0,
+                                "$nine_slice_top": 0,
+                                "$nineslice_size": [
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                "$pressed_button_name": "#EnderNetTemplate.universal_import",
+                                "$pressed_texture": "textures/ui/endernet/frame_rise_light",
+                                "$texture_layer": 2,
+                                "anchor_from": "bottom_left",
+                                "anchor_to": "bottom_left",
+                                "offset": [
+                                    85.0,
+                                    -3.0
+                                ],
+                                "size": [
+                                    28.0,
+                                    12.0
+                                ],
+                                "layer": 2,
+                                "button_mappings": [
+                                    {
+                                        "to_button_id": "$pressed_button_name",
+                                        "from_button_id": "button.menu_select",
+                                        "mapping_type": "pressed"
+                                    }
+                                ],
+                                "default_control": "default",
+                                "hover_control": "hover",
+                                "is_handle_button_move_event": true,
+                                "pressed_control": "pressed",
+                                "bindings": [
+                                    {
+                                        "binding_type": "global",
+                                        "binding_name_override": "#visible",
+                                        "binding_condition": "always",
+                                        "binding_name": "#EnderNetTemplate.mode_factory_selected"
+                                    },
+                                    {
+                                        "binding_type": "collection_details",
+                                        "binding_collection_name": "",
+                                        "binding_condition": "always_when_visible"
+                                    }
+                                ],
+                                "controls": [
+                                    {
+                                        "default@netease_editor_template_namespace.default": {}
+                                    },
+                                    {
+                                        "hover@netease_editor_template_namespace.hover": {}
+                                    },
+                                    {
+                                        "pressed@netease_editor_template_namespace.pressed": {}
+                                    },
+                                    {
+                                        "button_label@netease_editor_template_namespace.button_label": {}
+                                    },
+                                    {
+                                        "ok_img": {
+                                            "type": "image",
+                                            "anchor_from": "bottom_right",
+                                            "anchor_to": "bottom_right",
+                                            "size": [
+                                                6.0,
+                                                6.0
+                                            ],
+                                            "layer": 5,
+                                            "clip_direction": "left",
+                                            "clip_ratio": 0.0,
+                                            "texture": "textures/ui/endernet/corner_ok_icon",
+                                            "bindings": [
+                                                {
+                                                    "binding_type": "global",
+                                                    "binding_name_override": "#visible",
+                                                    "binding_condition": "always",
+                                                    "binding_name": "#EnderNetTemplate.universal_import_ready"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
                         }
                     ]
                 }

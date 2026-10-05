@@ -87,7 +87,9 @@ def stop_client():
     # type: () -> None
     global _CLIENT
     from .device_identity import stop_device_identity
+    from .ui.universal_importer import close_universal_importer
 
+    close_universal_importer()
     stop_device_identity()
     if _CLIENT is not None:
         _CLIENT.stop()

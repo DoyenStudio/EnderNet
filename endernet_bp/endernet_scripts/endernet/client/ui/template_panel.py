@@ -53,6 +53,7 @@ from functools import partial
 
 from ....tooldelta.ui import Binder, RegistToolDeltaScreen
 from . import stack_size
+from . import universal_importer_config
 from .number_set_window import WINDOW_ATTRIBUTE as NUMBER_WINDOW_ATTRIBUTE
 from .number_set_window import show_number_set_window
 from .terminal_cache import TerminalCache
@@ -157,6 +158,7 @@ def title_control_path():
 ACTION_MODE = "template_mode"
 ACTION_CELL_PUT = "template_cell_put"
 ACTION_CELL_CLEAR = "template_cell_clear"
+ACTION_UNIVERSAL_IMPORT = "template_universal_import"
 ACTION_CELL_COUNT = "template_cell_count"
 ACTION_ENCODE = "template_encode"
 ACTION_INPUT_PUT = "template_input_put"
@@ -167,7 +169,7 @@ ACTION_OUTPUT_TAKE = "template_output_take"
 #: 是**背包槽锚**，意思完全不同——一张表说清哪个字段在哪条命令里什么意思。
 CONFIG_ACTIONS = frozenset([
     ACTION_MODE, ACTION_CELL_PUT, ACTION_CELL_CLEAR, ACTION_CELL_COUNT,
-    ACTION_ENCODE,
+    ACTION_ENCODE, ACTION_UNIVERSAL_IMPORT,
 ])
 
 #: 面给玩家的失败原因。**只列界面必须点出来的那几条**，其余退化成空串。
@@ -236,6 +238,7 @@ class TemplateView(object):
         self.last_error = None
         self.errors = 0
         self._requests = {}
+        self._universal_import = None
 
     # -- 收包 ----------------------------------------------------------
 
@@ -568,6 +571,24 @@ class TemplateView(object):
             return None
         return self._send(ACTION_MODE, target=mode)
 
+    def on_universal_import(self):
+        # type: () -> object
+        """把采集结果作为一条配置命令提交，成功回执后才消费全局快照。"""
+        if (self.is_unavailable() or self.mode != MODE_FACTORY
+                or self._universal_import is not None
+                or not universal_importer_config.has_saved_config()):
+            return None
+        config = universal_importer_config.get_saved_config()
+        config["inputs"] = config["inputs"][:CELLS_OF[SURFACE_SOURCE]]
+        config["outputs"] = config["outputs"][:CELLS_OF[SURFACE_OUTPUTS]]
+        version = universal_importer_config.saved_config_version()
+        self.close_number_window()
+        request_id = self._send(ACTION_UNIVERSAL_IMPORT, config=config)
+        if request_id is not None:
+            self._universal_import = (request_id, version)
+        return request_id
+
+
     def on_make(self):
         # type: () -> object
         """点「OK」：编码并输出。**客户端不自行产出物品**（交接第 5 节）。"""
@@ -601,8 +622,8 @@ class TemplateView(object):
     # -- 发命令 --------------------------------------------------------
 
     def _send(self, action, target=None, cell=None, key=None, count=None,
-              slot=None, slot_version=None):
-        # type: (str, object, object, object, object, object, object) -> str
+              slot=None, slot_version=None, config=None):
+        # type: (str, object, object, object, object, object, object, object) -> str
         """发一条命令，返回 `request_id`（没发出去时 `None`）。
 
         **`slot_version` 一条命令一个意思**：配置编辑那几条是**配置修订号**
@@ -622,6 +643,7 @@ class TemplateView(object):
             count=count,
             slot=slot,
             slot_version=slot_version,
+            config=config,
         )
         self._requests[request_id] = action
         return request_id
@@ -653,10 +675,20 @@ class TemplateView(object):
         action = self._requests.pop(result.get("request_id"), None)
         if action is None:
             return
+        pending_import = self._universal_import
+        if (pending_import is not None
+                and pending_import[0] == result.get("request_id")):
+            self._universal_import = None
+            if result.get("status") == STATUS_OK:
+                universal_importer_config.clear_saved_config(pending_import[1])
         if result.get("status") != STATUS_OK:
             self.last_error = self._error_text(result)
             return
         self.last_error = None
+        if action == ACTION_UNIVERSAL_IMPORT:
+            self.selection = None
+            self.presses.clear()
+            self._clear_sources()
         if action == ACTION_CELL_PUT:
             # **一次放入 = 一次来源选择用完**（User 2026-10-02）：放完就把
             # 背包槽与网络行的选中一起放掉，下一次点虚格是「选中那一格」而
@@ -719,6 +751,7 @@ class TemplateView(object):
         if not self._requests and self.selection is None:
             return
         self._requests = {}
+        self._universal_import = None
         self.selection = None
         self.close_number_window()
 
@@ -738,6 +771,7 @@ class TemplateView(object):
         self.closed = True
         self.close_number_window()
         self._requests = {}
+        self._universal_import = None
         self.selection = None
         self.presses = {}
         self.rows = dict((surface, ()) for surface, _c in SURFACES)
@@ -1014,6 +1048,29 @@ class TemplatePanel(TerminalPanelBase):
         # type: (object) -> None
         if self.template is not None:
             self.template.on_mode(MODE_FACTORY)
+
+    @Binder.binding(Binder.BF_BindBool, BINDING_PREFIX + "universal_import_ready")
+    def universal_import_ready(self):
+        # type: () -> bool
+        return universal_importer_config.has_saved_config()
+
+
+    @Binder.binding(Binder.BF_ButtonClickUp, BINDING_PREFIX + "universal_import")
+    def on_universal_import(self, params=None):
+        # type: (object) -> None
+        if (self.template is None or self.template.is_unavailable()
+                or self.template.mode != MODE_FACTORY):
+            return
+        if universal_importer_config.has_saved_config():
+            self.template.on_universal_import()
+            return
+        # 延迟一 tick，让 SetRemove 完成终端销毁后再创建悬浮层。
+        from ....tooldelta.api.common import ExecLater
+        from .universal_importer import open_universal_importer
+
+        self.OnCloseClick(params)
+        ExecLater(0, open_universal_importer)
+
 
     @Binder.binding(Binder.BF_ButtonClickUp, BINDING_PREFIX + "make")
     def OnMakeTemplate(self, params=None):
