@@ -395,6 +395,64 @@ class TestDetailWindow(FactoricFixture):
         self.assertIsNone(self.view.detail_window())
 
 
+class TestRuntimeBindings(FactoricFixture):
+
+    def test_color_binding_returns_an_opaque_rgba_tuple(self):
+        self.apply(sources=[source_row(stage=stage) for stage in (
+            ORDER_SOURCE_STAGE_WAITING, ORDER_SOURCE_STAGE_RUNNING,
+            ORDER_SOURCE_STAGE_DONE)])
+        self.panel.OnOrderClick({"#collection_index": 0})
+        for index, rgb in enumerate((COLOR_WAITING, COLOR_RUNNING, COLOR_DONE)):
+            color = self.panel.source_color(index)
+            self.assertIsInstance(color, tuple)
+            self.assertEqual(rgb + (1.0,), color)
+        self.panel.factoric = None
+        self.assertEqual(COLOR_RUNNING + (1.0,), self.panel.source_color(0))
+
+    def test_idle_order_view_keeps_the_session_alive(self):
+        for _ in range(factoric_panel.KEEPALIVE_FRAMES - 1):
+            self.view.tick()
+        self.assertEqual([], self.port.sent)
+        self.view.tick()
+        self.assertEqual("keepalive", self.port.sent[0]["message"]["kind"])
+        self.client.drop_session()
+        for _ in range(factoric_panel.KEEPALIVE_FRAMES):
+            self.view.tick()
+        self.assertEqual(1, len(self.port.sent))
+        self.assertEqual(0, self.view._keepalive_frames)
+
+    def test_click_payload_selects_the_corresponding_order(self):
+        self.apply(orders=[order_row(), order_row(order_id=OTHER_ID)])
+        self.panel.OnOrderClick({"#collection_index": 1})
+        self.assertEqual(OTHER_ID, self.view.selected)
+        self.assertTrue(self.view.detail_window().visible)
+        self.assertFalse(hasattr(
+            factoric_panel.FactoricPanel.OnOrderClick, "collection_name"))
+
+    def test_click_without_a_valid_collection_index_does_not_open(self):
+        self.apply()
+        for params in ({}, {"#collection_index": True},
+                       {"#collection_index": -1}, None):
+            self.panel.OnOrderClick(params)
+        self.assertIsNone(self.view.selected)
+        self.assertIsNone(self.view.detail_window())
+
+    def test_all_text_bindings_return_native_strings(self):
+        self.apply()
+        self.panel.OnOrderClick({"#collection_index": 0})
+        for value in (self.panel.memory_text(), self.panel.active_tip(),
+                      self.panel.order_name(0), self.panel.order_progress_text(0),
+                      self.panel.source_name(0), self.panel.source_stat(0),
+                      self.panel.detail_title(), self.panel.order_name(99)):
+            self.assertIsInstance(value, str)
+        self.panel.factoric = None
+        for value in (self.panel.memory_text(), self.panel.active_tip(),
+                      self.panel.order_name(0), self.panel.order_progress_text(0),
+                      self.panel.source_name(0), self.panel.source_stat(0),
+                      self.panel.detail_title()):
+            self.assertIsInstance(value, str)
+
+
 class TestCancel(FactoricFixture):
     """取消订单：**一条 `order_cancel` 命令，带那一单的稳定 ID**。"""
 
@@ -671,6 +729,14 @@ class TestJsonContract(unittest.TestCase):
                 "%netease_editor_template_namespace.click",
                 node["$pressed_button_name"])
             self.assertTrue(node.get("button_mappings"), node.get("type"))
+
+    def test_order_click_button_exposes_its_collection_index(self):
+        button = next(
+            control["interact_btn@common.button"]
+            for control in self.panel["order"]["controls"]
+            if "interact_btn@common.button" in control)
+        self.assertEqual(ORDER_COLLECTION,
+                         button["bindings"][0]["binding_collection_name"])
 
     def test_the_mask_and_the_device_popup_are_instances_of_the_screen(self):
         content = self.content()

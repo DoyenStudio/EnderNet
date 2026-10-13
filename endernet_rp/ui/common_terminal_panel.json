@@ -484,6 +484,16 @@
             }
         ]
     },
+    "main@common.base_screen": {
+        "absorbs_input": true,
+        "controls": [
+            {
+                "terminal@common_terminal_panel_ui.content": {}
+            }
+        ],
+        "is_showing_menu": true,
+        "render_game_behind": true
+    },
     "namespace": "common_terminal_panel_ui",
     "terminal_items_grid": {
         "type": "grid",
@@ -522,7 +532,8 @@
                 "mapping_type": "pressed",
                 "to_button_id": "$pressed_button_name"
             }
-        ]
+        ],
+        "layer": 0
     },
     "terminal_slot@endernet_windows.item_can_be_selected": {
         "$item_collection_name": "terminal_slots",
@@ -531,15 +542,5 @@
         "$item_select_button": "#EnderNetTerminal.select",
         "$item_selected_binding": "#EnderNetTerminal.selected",
         "$item_visible_binding": "#EnderNetTerminal.has_item"
-    },
-    "main@common.base_screen": {
-        "absorbs_input": true,
-        "is_showing_menu": true,
-        "render_game_behind": true,
-        "controls": [
-            {
-                "terminal@common_terminal_panel_ui.content": {}
-            }
-        ]
     }
 }

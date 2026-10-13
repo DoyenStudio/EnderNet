@@ -4,13 +4,15 @@
 
 对应文件：`endernet_rp/ui/assemble_chamber.json`。namespace：`assemble_chamber_ui`（从当前资源读取，不表示已交接）。
 
-UI 交接：待填写；脚本接入：待填写；游戏验证：未进行。
+UI 交接：待填写；脚本接入：待填写；游戏验证：2026-10-04 已验证原料九宫格的容器集合修复，其余项目见下文。
+
+2026-10-04 故障核验：订单在主世界 `(-17, 86, -10)` 的装配仓报 `slot_occupied`，服务端原料槽 4 实际有 `skybluetech:resin` ×1，但九宫格显示为空。原料 grid 的 `collection_name` 错写成没有生产者的 `source_items`，与物品模板读取的 `netease_container` 不一致。现改为 `netease_container`，保留 3×3 布局，并以 `maximum_grid_items: 9` 限定原料槽 0～8。原生 UI 重载后，中间格已显示树脂；未移动实物、未取消订单。
 
 > 第 2～6 节中标注「（JSON 直读）」的内容是脚本接入方按当前 JSON **静态读出**的资源现状，只描述文件里写了什么，**不等于 User 已交接**，也不等于该写法可用——本文件当前有多处未接通，见第 8 节。标注「待确认」的条目一律不改动 JSON。
 
 ## 1. 制作范围与要求
 
-按 blocks.md 的已确认规则，使用网易容器，共 19 槽：0～8 原料、9 输出、10～18 合成样板。记录 UI 对应槽位与容器接入方式，不将其套作终端虚拟配置格。
+按 blocks.md 的已确认规则，使用网易容器，共 19 槽：0～8 原料、9 输出、10～18 合成模式的工厂样板。记录 UI 对应槽位与容器接入方式，不将其套作终端虚拟配置格。
 
 需求依据：[Task 11](../tasks/11.%20终端与客户端同步.md)、[方块说明](../blocks.md)。具体布局和控件用途由 User 制作后填写；以下空表不是已确认的 UI 约定。
 
@@ -56,15 +58,15 @@ UI 交接：待填写；脚本接入：待填写；游戏验证：未进行。
 | `title` | 本文件内联 | `.../bg/main/title` | `image`，top_left，size [50,16]，layer 1，texture `device_title_background`；标题底板 | 无 | 无覆盖 |
 | `title_text` | 本文件内联 | `.../bg/main/title/title_text` | `label`，top_left，offset [3,3]，`font_scale_factor` 1.2，颜色 ≈ (0.306, 0.255, 0.314)，`text` = `tile.endernet:assemble_chamber.name`，居中；标题文字 | 无（文本写死为本地化键，未设 `localize`，按原版默认显示） | 无覆盖 |
 | `stat_bar` | 继承 `endernet_ui_common.device_stat_bar` | `.../bg/main/stat_bar` | `panel`，只覆盖 `offset [84,1]`；设备状态条，模板内含 `stat_icon`(image) / `stat_text`(label，初值「未知状态」) / `interact_btn`(button，layer 2)；模板本身 size [64,16]、top_left | 状态与详情入口，字段见 [endernet_ui_common.md](endernet_ui_common.md) | 无覆盖；模板内 `interact_btn` 的 `$pressed_button_name` 仍是编辑器占位 `%netease_editor_template_namespace.click` |
-| `source_items_grid` | 本文件内联 | `.../bg/main/source_items_grid` | `grid`，top_left，offset [32,24]，layer 1，`collection_name` = `source_items`，`grid_dimensions` [3,3]，`grid_item_template` = `endernet_container_common.container_grid_item`；原料 3×3 | 待确认（集合名无生产者，见第 4 节／第 8 节） | 无覆盖 |
-| `output_item` | 本文件内联 | `.../bg/main/output_item` | `stack_panel`，top_left，offset [118,42]，size `100%cm`，layer 1，`collection_index` = 9，子控件 1 个 `slot@endernet_container_common.container_grid_item`；输出槽 | 待确认（无祖先声明 `collection_name`） | 无覆盖 |
+| `source_items_grid` | 本文件内联 | `.../bg/main/source_items_grid` | `grid`，top_left，offset [32,24]，layer 1，`collection_name` = `netease_container`，`maximum_grid_items` = 9，`grid_dimensions` [3,3]，`grid_item_template` = `endernet_container_common.container_grid_item`；原料 3×3 | 2026-10-04 已修复并在游戏内验证显示 | 无覆盖 |
+| `output_item` | 本文件内联 | `.../bg/main/output_item` | `stack_panel`，top_left，offset [118,42]，size `100%cm`，layer 1，`collection_name` = `netease_container`，子控件索引为 9，子控件 1 个 `slot@endernet_container_common.container_grid_item`；输出槽 | 原版容器槽 9 | 无覆盖 |
 | `progress` | 本文件内联 | `.../bg/main/progress` | `panel`，top_left，offset [88,40]，size [26,20]，layer 1；合成进度箭头，结构照原版熔炉（`vanilla/ui/furnace_screen.json` 的 `furnace_arrow_*_image`） | `mask` 的裁剪比例由脚本设置，见第 6 节 | 无覆盖 |
 | `progress/bg` | 本文件内联 | `.../bg/main/progress/bg` | `image`，layer 1，texture `textures/ui/arrow_inactive`；未完成部分的底图 | 无 | 无覆盖 |
 | `progress/mask` | 本文件内联 | `.../bg/main/progress/mask` | `image`，layer 1，texture `textures/ui/arrow_active`，`clip_direction` = `left`（2026-09-27 补）；已完成部分的覆盖层，靠裁剪比例表现进度。本文件**不写绑定**，比例由脚本在运行时设置 | `SetSpriteClipRatio`，见第 6 节 | 无覆盖 |
 | `inventory` | 继承 `endernet_container_common.inventory` | `.../bg/inventory` | `panel`，bottom_middle，offset [0,-4]；玩家背包（模板内为 `inventory_panel` 的 9×3 `inventory_grid`，集合 `inventory_items`） | 原版／公共模板接管 | 无覆盖 |
 | `templates` | 本文件内联 | `main/content/root_panel/templates` | `panel`，top_middle，offset [0,86]，size [162,18]，layer 1；9 个样板槽的容器面板 | 无 | 无覆盖 |
-| `slot10`～`slot18` | 本文件内联（9 个同构控件） | `main/content/root_panel/templates/slot10` … `/slot18` | `stack_panel`，size `100%cm`，layer 1，`collection_index` = 10…18，各含 1 个 `slot@endernet_container_common.container_grid_item`；合成样板 9 格。**`slot10` 未写 `anchor_from`/`anchor_to`，`slot11`～`slot18` 写了 `top_left`** | 待确认（无祖先声明 `collection_name`） | 无覆盖 |
-| `slot`（每槽子控件） | 继承 `endernet_container_common.container_grid_item` | `.../templates/slotNN/slot` | `input_panel`，物品格本体；模板只覆盖 `$item_collection_name = "netease_container"` | 由公共模板的 collection 绑定决定 | 见 [endernet_container_common.md](endernet_container_common.md) |
+| `slot10`～`slot18` | 本文件内联（9 个同构控件） | `main/content/root_panel/templates/slot10` … `/slot18` | `stack_panel`，size `100%cm`，layer 1，`collection_name` = `netease_container`，子控件索引为 10…18，各含 1 个 `slot@endernet_container_common.container_grid_item`；合成模式的工厂样板 9 格。**`slot10` 未写 `anchor_from`/`anchor_to`，`slot11`～`slot18` 写了 `top_left`** | 原版容器槽 10～18 | 无覆盖 |
+| `slot`（每槽子控件） | 继承 `endernet_container_common.container_grid_item` | `.../templates/slotNN/slot` | `input_panel`，物品格本体；实例声明 `collection_index` = 9 或 10～18；模板只覆盖 `$item_collection_name = "netease_container"` | 由公共模板的 collection 绑定决定 | 见 [endernet_container_common.md](endernet_container_common.md) |
 
 装饰性控件（`title`／`progress` 的两张图）已按上表合并记录，不再单列。
 
@@ -72,14 +74,14 @@ UI 交接：待填写；脚本接入：待填写；游戏验证：未进行。
 
 | 槽位组／组件 | 实例路径及引用模板 | 性质与数据来源 | 数量／索引范围 | UI 索引到业务身份的映射 | 限制、单位和显示规则 |
 | --- | --- | --- | --- | --- | --- |
-| 原料槽 | `content/root_panel/bg/main/source_items_grid`（`grid`，`grid_item_template` = `endernet_container_common.container_grid_item`） | 取自集合 `source_items`；该集合名在本仓库内无生产者（唯一未决项，见第 8 节） | 3×3 = 9 格，索引由 grid 自动分配 0～8 | 按 blocks.md：容器槽 0～8 = 原料 | 单格尺寸由 `container_item`（18×18）决定；格内图标／数量表现沿用公共模板 |
-| 输出槽 | `content/root_panel/bg/main/output_item`（`stack_panel`）→ 子 `slot@endernet_container_common.container_grid_item` | `collection_index` = 9。索引写在外层 `stack_panel` 上、不另写 `collection_name`——**该写法经 User 于 2026-09-27 确认为可用**（游戏内已验证） | 1 格，索引 9 | 按 blocks.md：容器槽 9 = 合成产物，产物直接送回网络 | 同上 |
-| 合成样板槽 | `content/root_panel/templates/slot10` … `slot18`（9 个 `stack_panel`）→ 各含 1 个 `slot@…container_grid_item` | `collection_index` = 10…18，写法同上，已确认可用 | 9 格，索引 10～18 | 按 blocks.md：容器槽 10～18 = 合成样板 1～9 | 同上；横向排列，x 偏移 0/18/36/…/144 |
+| 原料槽 | `content/root_panel/bg/main/source_items_grid`（`grid`，`grid_item_template` = `endernet_container_common.container_grid_item`） | 取自引擎集合 `netease_container`，上限 9 格；2026-10-04 已验证实际槽位显示 | 3×3 = 9 格，索引由 grid 自动分配 0～8 | 按 blocks.md：容器槽 0～8 = 原料 | 单格尺寸由 `container_item`（18×18）决定；格内图标／数量表现沿用公共模板 |
+| 输出槽 | `content/root_panel/bg/main/output_item`（`stack_panel`）→ 子 `slot@endernet_container_common.container_grid_item` | 父 `stack_panel` 声明 `collection_name = netease_container`，子物品控件声明 `collection_index = 9`（2026-10-04 修复，待游戏内复验） | 1 格，索引 9 | 按 blocks.md：容器槽 9 = 合成产物，产物直接送回网络 | 同上 |
+| 样板槽 | `content/root_panel/templates/slot10` … `slot18`（9 个 `stack_panel`）→ 各含 1 个 `slot@…container_grid_item` | 父 `stack_panel` 声明 `collection_name = netease_container`，子物品控件声明 `collection_index = 10…18`，写法同上 | 9 格，索引 10～18 | 按 blocks.md：容器槽 10～18 = 合成模式的工厂样板 1～9 | 同上；横向排列，x 偏移 0/18/36/…/144 |
 | 玩家背包 | `content/root_panel/bg/inventory@endernet_container_common.inventory` | 公共模板内的 `inventory_grid`，集合 `inventory_items` | 9×3 | 玩家背包槽位，非本设备业务槽 | 见 [endernet_container_common.md](endernet_container_common.md) |
 
 - 模板参数、collection 名称及索引含义：`container_grid_item@endernet_container_common.container_item` 只覆盖一个变量 `$item_collection_name = "netease_container"`；`container_item` 本体把该变量用作 `bindings[].binding_collection_name`（`binding_type: "collection"`）。
-- 索引写法（2026-09-27 澄清）：本文件把 `collection_index` 写在外层 `stack_panel` 上、**不写 `collection_name`**，这与原版参照 `endernet_rp/ui/NeteaseContainerUI.json` 的 `test_collection`（父 `row_1` 写 `collection_name`、子项 `a@…custom_grid_item` 写 `collection_index`）写法不同，但**该写法经 User 确认为可用且已在游戏内验证**，不是缺陷。输出槽与 9 个样板槽都走这一套。
-- 唯一未决的是**原料格那一组**：`source_items_grid` 是 `grid`，必须有显式 `collection_name`，而它写的 `source_items` 在仓库内没有生产者（其余容器界面用的都是 `netease_container`）。若该名字是有意的，需说明由谁提供这份集合；若是笔误，则应改为 `netease_container` 并去掉一层 3×3 的网格维度假设。**在 User 确认前不改动 JSON**，见第 8 节。
+- 索引写法（2026-10-04 修复）：此前索引写在外层 `stack_panel` 上的写法虽曾被记录为已验证，但本次游戏日志明确报告 `Unknown property [collection_index]`。现对齐网易 `NeteaseContainerUI.json`：外层 `stack_panel` 声明 `collection_name: "netease_container"`，子 `slot@endernet_container_common.container_grid_item` 声明 `collection_index`。输出槽仍为 9，样板槽仍为 10～18，布局不变；新结构待游戏内复验。
+- 原料格集合（2026-10-04 修复）：`source_items_grid` 使用 `netease_container`，保留 3×3 的布局并限制 `maximum_grid_items: 9`。游戏内重载后，槽 4 的树脂从不可见变为可见，确认此前为空的显示是假象。
 - 图标、数量缩写、精确提示和选中态位置：本文件未覆盖，全部由 `container_item` 公共模板提供，见 [endernet_container_common.md](endernet_container_common.md)。
 - 滚动复用、搜索／排序、重绑时旧状态清理：不适用——本界面是固定 19 格容器，没有长列表、搜索和排序。
 - 空槽、空列表、加载中和数据失效的表现：本文件未定义，沿用 `container_item` 公共模板的默认表现；若按现状运行，由于上述集合问题，**所有格子都会是空的**，这正是第 8 节第 1 条要澄清的问题。
@@ -108,7 +110,7 @@ UI 交接：待填写；脚本接入：待填写；游戏验证：未进行。
 - 本文件**自身没有任何 `bindings`**（静态检查：`bindings` 键在本文件内不出现）；现有绑定全部来自公共模板（`container_item` 的集合可见性／物品渲染、`device_stat_bar` 的 `interact_btn`）。
 - 已有按钮映射及按下／抬起触发约定：本文件未定义，见第 5 节。
 - 只读展示与提交服务端命令的操作区分：待填写。
-- 请求使用的设备／资源／槽位身份和版本来源：待填写（原料格的集合归属还卡在第 8 节第 1 条）。
+- 请求使用的设备／资源身份和版本来源：待填写；原料槽号来自 `netease_container` 的 0～8。
 - 快照、增量、过期响应、失败及重新同步：待填写，按 Task 11 的同步通道填写。
 - 本地化、长文本换行、数量精度：标题走本地化键 `tile.endernet:assemble_chamber.name`（`zh_CN.lang` 已有）；其余待填写。
 
@@ -133,8 +135,8 @@ UI 交接：待填写；脚本接入：待填写；游戏验证：未进行。
 
 | 缺项／问题 | 影响范围 | 需求依据 | 负责人 | 结论／日期 |
 | --- | --- | --- | --- | --- |
-| `source_items_grid` 的 `collection_name` = `source_items`，该名字在仓库内没有任何生产者（其余容器界面一律用 `netease_container`）。它是 `grid`，必须有显式集合名，不能像 `collection_index` 那样省略 | 第 3／4／6 节，原料 9 格 | blocks.md「使用网易容器，共 19 槽（槽号从 0 开始）：0～8 合成原料槽…」 | User | **待定** |
-| 索引写在外层 `stack_panel` 上、不另写 `collection_name`（`output_item` 与 `slot10`～`slot18`），与原版 `NeteaseContainerUI.json` 的把集合名写父级、索引写物品控件不同 | 第 3／4 节，输出槽与 9 个样板槽 | — | User | 2026-09-27 已确认：**可用写法，游戏内已验证**，不改动 |
+| `source_items_grid` 的 `collection_name` = `source_items`，该名字在仓库内没有任何生产者（其余容器界面一律用 `netease_container`）。它是 `grid`，必须有显式集合名，不能像 `collection_index` 那样省略 | 第 3／4／6 节，原料 9 格 | blocks.md「使用网易容器，共 19 槽（槽号从 0 开始）：0～8 合成原料槽…」 | User | 2026-10-04 已定位为集合接线错误；改为 `netease_container` 并限制 9 格，游戏内已验证 |
+| 索引写在外层 `stack_panel` 上导致引擎报告未知属性 | 第 3／4 节，输出槽与 9 个样板槽 | 2026-10-04 User 提供的游戏日志 | 脚本接入方 | 2026-10-04：撤销 2026-09-27 的可用性结论，改为父面板声明集合、子物品控件声明槽号；待游戏内复验 |
 | 方块缺 `netease:block_container`（`gen_blocks.CONTAINERS` 里也没有它），界面在游戏内无打开入口 | 第 2 节「打开入口」，及第 5／7 节 | 方块说明与设备容器接入方式 | 脚本接入方 | 2026-09-27 已补齐：`CONTAINERS` 增列 `endernet:assemble_chamber` → `assemble_chamber_ui.main`，槽数取自定义表新增的 `ASSEMBLE_CHAMBER_SLOT_COUNT`（19），并重新生成方块 JSON（`--check` 无差异） |
 | `slot10` 未写 `anchor_from`/`anchor_to`，而 `slot11`～`slot18` 都写了 `top_left` | 第 3／4 节样板槽 | — | User | 2026-09-27：**不改**，User 确认当前显示正常 |
 | `progress/mask` 缺 `clip_direction`，且没有绑定／比例，`bg` 被完整盖住，不构成进度条 | 第 3／6 节 | — | User／脚本接入方 | 2026-09-27 已定：JSON 侧补 `clip_direction: "left"`（对齐原版熔炉 `furnace_arrow_full_image`）；**裁剪比例由脚本层控制**，本文件不写绑定，接线状态见第 6 节 |
@@ -156,4 +158,10 @@ UI 交接：待填写；脚本接入：待填写；游戏验证：未进行。
 
 2026-10-02（11-07 **只读接入**）：本界面的代理 Screen 已挂上（`client/ui/device_panels.py` 的 `@RegistToolDeltaScreen("assemble_chamber_ui.main", is_proxy=True)`），`stat_bar` 在线/离线与详情弹窗接上了，`content` 里补了一条 `device_status_popup@endernet_windows.device_status_window_basic` 实例。**只用到了本文件已交接的 `stat_bar` 与公共弹窗**（两者的交接在 [endernet_ui_common](endernet_ui_common.md) 与 [endernet_windows](endernet_windows.md)），本文件 §5～§7 仍为待填写，因此装配仓自己的交互一律没接。**游戏内一次都没跑过**——代理回调与容器右键机制**当日稍后已在 `bus_template_io` 那台上验掉**（本界面共用同一份注册与绑定），但**本界面没有逐台右键过**，装配仓自己的格子和进度条仍然一个都没验。逐条见 [11 交付说明](../tasks/11-交付说明.md) 第二十三节。
 
-2026-10-04 原料九宫格修复：服务端槽 4 有树脂但界面显示为空，原因是 grid 使用了没有生产者的 `source_items` 集合，物品模板读取的却是 `netease_container`。改为 `netease_container` 并设置 `maximum_grid_items: 9`，保留 3×3 布局。Bridge 原生 UI 重载后确认树脂显示；新增回归通过。此前关于原料集合待确认的记录由本次故障核验取代。
+2026-10-04：根据 User 提供的引擎日志修复输出槽及样板槽的 `collection_index` 定义层级，并补充槽号 9～18 与父集合声明的回归检查。`python -B -m unittest discover -s endernet_tests -t endernet_tests -p test_device_panels.py`：52 项通过。全量 `python -B endernet_tests/run_tests.py`：Python 2.7 语法门禁 119 个文件通过；3847 项测试中 3 项失败、1 项错误，分别为 `test_executor.TestSubmit.test_production_order_is_created_even_when_target_is_already_stored`、`test_io.TestPortConfig.test_an_empty_filter_is_not_ready_under_the_stand_in`、`test_order_notifications.TestNotificationAdapter.test_message_and_sound_target_only_initiator`、`test_order_preview_window.TestWindowJson.test_the_row_icon_and_texts_are_bound`（涉及本次未修改的文件）。本次未运行游戏内验证；需重新打开装配仓检查日志、槽 9 的输出展示和槽 10～18 的样板展示／点击对应关系。原料区 `source_items` 集合归属继续保留为待确认。
+
+2026-10-04 样板物品统一：只保留 `endernet:factorical_template` 工厂样板物品，装配仓样板槽 10～18 按编码模式仅接受合成模式。输出槽仍为 9，原料槽仍为 0～8，UI collection_index 与布局不变。玩家拖入与漏斗漏入共用编码校验；重读索引只读样板区，并再次校验模式。空白、损坏、工厂模式和旧独立合成样板拒收，但取出不受限。游戏内验证待完成。
+
+本次样板统一的离线验证：新增 4 项回归（全部样板槽准入／索引、错误模式与错误区域拒收、玩家与漏斗事件包装、两条放入事件启用 userData）；装配模块 28 项、启动／事件模块 170 项通过。全量门禁 3851 项中 3 项失败、1 项错误，均与本轮开始前记录的四项一致（订单创建、空过滤器、通知音效、订单预览 JSON）；119 个文件通过 Python 2.7 语法门禁。`gen_blocks.py --check` 与 `gen_items.py --check` 通过。游戏内仍待整包重载后核对合成模式工厂样板放入、错误模式拒收、打开／取出／重开及真实订单执行。
+
+2026-10-04 原料格修复验证：`test_device_panels.py` 53 项通过；全量 3871 项测试仍有上文记录的相同 3 项失败、1 项错误，Python 2.7 门禁 119 文件通过。游戏内经 bridge 原生 UI 重载和截图确认中央树脂显示，未移动物品，订单仍等待槽位清理。

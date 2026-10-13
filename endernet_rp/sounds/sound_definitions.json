@@ -1,0 +1,14 @@
+{
+    "format_version": "1.14.0",
+    "sound_definitions": {
+        "note.endernet.order_finished": {
+            "category": "record",
+            "sounds": [
+                {
+                    "name": "sounds/endernet/sfx/order_finished",
+                    "volume": 1
+                }
+            ]
+        }
+    }
+}

@@ -1952,7 +1952,10 @@ def _preview_rows(rows):
         raise TypeError("rows 必须是列表，得到 %r" % (type(rows),))
     out = []
     for row in rows:
-        _require_fields(row, PREVIEW_ROW_FIELDS, "preview row")
+        fields = PREVIEW_ROW_FIELDS
+        if isinstance(row, dict) and "shortfall" in row:
+            fields += ("shortfall",)
+        _require_fields(row, fields, "preview row")
         require_text(row["canonical"], "canonical")
         # **名字必须给**：客户端要画图标与名字，而它读不到引擎。理由与
         # `_require_slot_row` / `_order_rows` 逐字相同。
@@ -1960,6 +1963,8 @@ def _preview_rows(rows):
         require_count(row["aux"], "aux")
         for field in ("demand", "allocated", "planned"):
             require_count(row[field], field)
+        if "shortfall" in row:
+            require_count(row["shortfall"], "shortfall")
         require_flag(row["missing"], "missing")
         sources = row["sources"]
         if not isinstance(sources, (list, tuple)):

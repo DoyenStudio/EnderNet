@@ -25,7 +25,7 @@
             "netease:block_container": {
                 "custom_description": "总线样板接口",
                 "screen_name": "bus_template_io_ui.main",
-                "container_size": 9
+                "container_size": 18
             },
             "netease:custom_tips": {
                 "value": "\n§7按工厂样板，向邻近容器投入原料。"

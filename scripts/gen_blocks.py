@@ -50,7 +50,7 @@ from endernet.common.definitions import (  # noqa: E402
     MEMORY_SLOT_COUNT,
     PASSIVE_PORT_SLOT_COUNT,
     STORAGE_DRIVER_SLOT_COUNT,
-    TEMPLATE_PATTERN_SLOT_COUNT,
+    TEMPLATE_CONTAINER_SLOT_COUNT,
     DefinitionSet,
 )
 
@@ -140,7 +140,7 @@ TICKING = {
 CONTAINERS = {
     "endernet:storage_driver": ("storage_driver_ui.main", STORAGE_DRIVER_SLOT_COUNT),
     "endernet:bus_item_io": ("bus_item_io_ui.main", PASSIVE_PORT_SLOT_COUNT),
-    "endernet:bus_template_io": ("bus_template_io_ui.main", TEMPLATE_PATTERN_SLOT_COUNT),
+    "endernet:bus_template_io": ("bus_template_io_ui.main", TEMPLATE_CONTAINER_SLOT_COUNT),
     "endernet:assemble_chamber": (
         "assemble_chamber_ui.main",
         ASSEMBLE_CHAMBER_SLOT_COUNT,

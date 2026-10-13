@@ -226,7 +226,6 @@
                         0.0
                     ],
                     "font_type": "default",
-                    "shadow": true,
                     "text": "#text",
                     "text_alignment": "center",
                     "bindings": [

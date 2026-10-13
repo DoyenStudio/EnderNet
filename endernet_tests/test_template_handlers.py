@@ -213,7 +213,7 @@ class Fixture(unittest.TestCase):
     #: 配置编辑要带的那道闸。`Fixture.send` 默认按当前修订号填。
     CONFIG_ACTIONS = frozenset([
         "template_mode", "template_cell_put", "template_cell_clear",
-        "template_cell_count", "template_encode",
+        "template_cell_count", "template_encode", "template_clear", "template_import",
     ])
 
     def setUp(self):
@@ -294,6 +294,41 @@ class Fixture(unittest.TestCase):
         if key is None:
             return None
         return patterns.read_pattern(key.to_dict()["identity"]["user_data"])
+
+
+class TestClear(Fixture):
+
+    def test_clear_both_groups_in_one_revision_and_keep_real_slots(self):
+        self.send({"action": "template_mode", "target": "factory"})
+        self.fill_source((0, LOG, 1), (8, PLANKS, 2))
+        self.config.set_cell(GROUP_OUTPUTS, 2, LOG, 3)
+        self.put_factory()
+        slots_before = self.slots.to_dict()
+        before = self.state.revision
+        result = self.send({"action": "template_clear"})
+        self.assertTrue(result.is_applied(), result.to_dict())
+        self.assertEqual((), self.config.occupied(GROUP_SOURCE))
+        self.assertEqual((), self.config.occupied(GROUP_OUTPUTS))
+        self.assertEqual("factory", self.config.mode)
+        self.assertEqual(slots_before, self.slots.to_dict())
+        self.assertEqual(before + 1, self.state.revision)
+
+    def test_empty_clear_succeeds_without_new_revision(self):
+        before = self.state.revision
+        self.assertTrue(self.send({"action": "template_clear"}).is_applied())
+        self.assertEqual(before, self.state.revision)
+
+    def test_crafting_clear_removes_inputs_and_detected_output(self):
+        self.fill_source((0, PLANKS, 1), (3, PLANKS, 1))
+        self.assertIsNotNone(self.service._template_detect(self.state)[0])
+        self.assertTrue(self.send({"action": "template_clear"}).is_applied())
+        self.assertEqual((None, None), self.service._template_detect(self.state))
+
+    def test_stale_clear_keeps_config(self):
+        self.fill_source((0, LOG, 1))
+        result = self.send({"action": "template_clear", "slot_version": 99})
+        self.assertEqual([Reason.STALE_VERSION], self.reasons(result))
+        self.assertEqual((0,), self.config.occupied(GROUP_SOURCE))
 
 
 class TestMode(Fixture):
@@ -555,11 +590,11 @@ class TestRealSlots(Fixture):
                             "key": STICK.to_dict(), "slot": 0})
         self.assertEqual([Reason.PATTERN_NOT_A_TEMPLATE], self.reasons(result))
 
-    def test_the_crafting_template_is_refused_by_kind(self):
+    def test_the_removed_crafting_template_is_not_a_template(self):
         self.inventory.slots[0] = (CRAFTING, 1)
         result = self.send({"action": "template_input_put",
                             "key": CRAFTING.to_dict(), "slot": 0})
-        self.assertEqual([Reason.PATTERN_KIND_MISMATCH], self.reasons(result))
+        self.assertEqual([Reason.PATTERN_NOT_A_TEMPLATE], self.reasons(result))
 
     def test_an_encoded_factory_template_is_accepted(self):
         """User 2026-10-02：空白与已编码的都收（放进去就是「打算更新它」）。"""
@@ -691,6 +726,55 @@ class TestWiring(Fixture):
     def test_the_schema_version_is_the_one_the_model_writes(self):
         self.assertEqual(TEMPLATE_SCHEMA_VERSION,
                          self.state.to_dict()["schema_version"])
+
+
+class TestRecipeImport(Fixture):
+    def import_recipe(self, **fields):
+        payload = {"action": "template_import", "key": STICK.to_dict()}
+        payload.update(fields)
+        return self.send(payload)
+
+    def test_single_recipe_replaces_grid_without_moving_items(self):
+        self.fill_source((8, LOG, 3))
+        revision = self.state.revision
+        result = self.import_recipe()
+        self.assertTrue(result.is_applied(), result.to_dict())
+        self.assertEqual((PLANKS, 1), self.config.cell(GROUP_SOURCE, 0))
+        self.assertEqual((PLANKS, 1), self.config.cell(GROUP_SOURCE, 3))
+        self.assertIsNone(self.config.cell(GROUP_SOURCE, 8))
+        self.assertEqual(revision + 1, self.state.revision)
+        self.assertEqual([], self.inventory.calls)
+
+    def test_no_recipe_preserves_config_and_revision(self):
+        self.fill_source((8, LOG, 3))
+        before = self.config.to_dict()
+        revision = self.state.revision
+        self.assertTrue(self.import_recipe(key=LOG.to_dict()).is_applied())
+        self.assertEqual(before, self.config.to_dict())
+        self.assertEqual(revision, self.state.revision)
+
+    def test_multiple_recipes_wait_for_valid_choice(self):
+        other = PresetRecipe(False, (), {}, (stack("minecraft:oak_log"),),
+                             (stack("minecraft:stick", 4),))
+        self.recipes.by_output[STICK.name].append(other)
+        revision = self.state.revision
+        result = self.import_recipe()
+        self.assertTrue(result.payload["needs_choice"])
+        self.assertEqual(2, len(result.payload["candidates"]))
+        self.assertEqual("minecraft:oak_log",
+                         result.payload["candidates"][1]["slots"][0]["name"])
+        self.assertEqual(revision, self.state.revision)
+        self.assertTrue(self.import_recipe(recipe=other.digest()).is_applied())
+        self.assertEqual((LOG, 1), self.config.cell(GROUP_SOURCE, 0))
+        self.assertIsNone(self.config.cell(GROUP_SOURCE, 3))
+
+    def test_stale_revision_wrong_mode_and_invalid_digest_do_not_write(self):
+        self.assertIn(Reason.STALE_VERSION,
+                      self.reasons(self.import_recipe(slot_version=99)))
+        self.assertIn(Reason.CRAFT_NO_RECIPE,
+                      self.reasons(self.import_recipe(recipe="missing")))
+        self.config.set_mode(patterns.PATTERN_MODE_FACTORY, self.service.template_policy)
+        self.assertIn(Reason.TEMPLATE_CELL_LOCKED, self.reasons(self.import_recipe()))
 
 
 if __name__ == "__main__":

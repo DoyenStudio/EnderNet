@@ -2344,6 +2344,27 @@ class TestPreviewPublish(Fixture):
         indexes = [e.message.packet_index for e in self.of_kind(MSG_PREVIEW_CHUNK)]
         self.assertEqual(indexes, [0, 1], "分片按序发，一片不少")
 
+    def test_shortfall_rows_reach_the_window_and_finish_loading(self):
+        from endernet.client.ui.widgets.order_preview import OrderPreviewModel
+        row = self.row()
+        row["shortfall"] = 0
+        previews = self.FakePreviews(self.delivery(rows=[row], packet_count=1))
+        session, _ = self.open_view()
+        self.settle(session)
+        self.port.sent = []
+        self.attach(previews)
+        self.hub.tick()
+        model = OrderPreviewModel()
+        model.open(STONE, 4)
+        model.apply_state(self.of_kind(MSG_PREVIEW_STATE)[0].message)
+        self.assertTrue(model.loading())
+        packets = self.of_kind(MSG_PREVIEW_CHUNK)
+        self.assertEqual(len(packets), 1)
+        model.apply_chunk(packets[0].message)
+        self.assertEqual(model.rows[0]["shortfall"], 0)
+        self.assertFalse(model.loading())
+        self.assertTrue(model.can_submit())
+
     def test_the_header_is_re_sent_when_the_status_changes(self):
         """算完那一刻要把状态头再发一次——客户端靠它结束 loading。"""
         previews = self.FakePreviews(self.delivery(status="running"))

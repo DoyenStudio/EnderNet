@@ -909,9 +909,8 @@ class WaitingLedger(object):
         # type: () -> list
         """等待台账的**纯数据**快照（12-04）。
 
-        每行是「某个执行实例还在等某种产物的多少件」。恢复后订单不续跑
-        （保守口径），因此这份快照的用途是**可复核记录**：让退出世界时
-        「谁还在等什么」在重进之后仍看得见，而不是拿去重建活台账。
+        每行是「某个执行实例还在等某种产物的多少件」。这是摘要；活等待者
+        由完整订单快照中的输出账重建，不能只恢复这一份计数。
         """
         out = []
         for execution_id in sorted(self._steps):
@@ -995,6 +994,8 @@ class Order(object):
         "adopted",
         "request_id",
         "player_id",
+        "recovery_pending",
+        "recovery_error",
     )
 
     def __init__(self, order_id, component_id, master_instance_id, target, canonical,
@@ -1008,6 +1009,8 @@ class Order(object):
         self.request_id = request_id
         #: 发起者身份来自服务端命令来源；旧订单或无玩家来源时为空。
         self.player_id = player_id
+        self.recovery_pending = False
+        self.recovery_error = ""
         self.component_id = component_id
         #: 下单时那张网络的主控实例。**它变了订单就不该继续跑**（09 验收：
         #: 拓扑拆分后订单只属于原主控）。主控换人时订单转 BLOCKED 并报出来，
@@ -1296,8 +1299,8 @@ class Order(object):
 
         与 `to_dict()` 的区别是**它是纯数据、且不含计划与执行实例**：
         `to_dict()` 里的 `steps`/`progress` 是给界面与诊断看的活视图，
-        而订单簿要进 JSON 存档。恢复后订单不续跑（保守口径），所以这里
-        只需要回答「曾经有过一张什么订单、归哪台主控、走到哪、压着什么」。
+        此摘要只回答「曾经有过一张什么订单、归哪台主控、走到哪、压着什么」。
+        可续跑状态由 `order_archive.export_order` 保存，不拿摘要猜执行进度。
         """
         return {
             "order_id": self.order_id,

@@ -541,7 +541,85 @@ class OneLevel(ExecutorFixture):
         self.configure_port()
 
 
+class TestRevalidationCache(OneLevel):
+    def setUp(self):
+        OneLevel.setUp(self)
+        self.seed(IRON, 20)
+        order_id = self.submit_order().payload["order_id"]
+        self.assert_admitted(self.settle(order_id))
+        self.row = self.service.orders.get(order_id)
+        self.executor = self.service.executor
+        self.pattern_state = self.server.patterns.get(PORT_KEY)
+        # 内容刷新可能在第一次核对中前进版本，下一次核对建立稳定缓存。
+        for _ in range(2):
+            self.assertTrue(self.executor._recheck_if_stale(self.row, self.server.tick_count))
+
+    def test_unrelated_inventory_changes_do_not_repeat_pattern_checks(self):
+        checks = self.pattern_state.stats["stale_checks"]
+        revalidations = self.row.stats["revalidations"]
+        for i in range(3):
+            self.seed(GOLD, 1, request_id="unrelated%d" % i)
+            self.assertTrue(self.executor._recheck_if_stale(self.row, self.server.tick_count))
+        self.assertEqual(self.pattern_state.stats["stale_checks"], checks)
+        self.assertEqual(self.row.stats["revalidations"], revalidations + 3)
+
+    def test_dirty_pattern_invalidates_the_next_inventory_recheck(self):
+        self.port_box.write_slot(0, None)
+        self.server.patterns.mark_dirty(PORT_KEY)
+        self.seed(GOLD, 1, request_id="dirty-pattern")
+        self.assertFalse(self.executor._recheck_if_stale(self.row, self.server.tick_count))
+        self.assertIn(Reason.PATTERN_STALE, [r.code for r in self.row.blockers])
+
+    def test_same_tick_second_dirty_mark_invalidates_the_cached_answer(self):
+        self.server.patterns.mark_dirty(PORT_KEY)
+        self.seed(GOLD, 1, request_id="dirty-first")
+        self.assertTrue(self.executor._recheck_if_stale(self.row, self.server.tick_count))
+        self.port_box.write_slot(0, None)
+        self.server.patterns.mark_dirty(PORT_KEY)
+        self.seed(GOLD, 1, request_id="dirty-second")
+        self.assertFalse(self.executor._recheck_if_stale(self.row, self.server.tick_count))
+
+    def test_unloaded_provider_invalidates_the_cached_answer(self):
+        self.server.patterns.mark_loaded(PORT_KEY, False)
+        self.seed(GOLD, 1, request_id="unloaded")
+        self.assertFalse(self.executor._recheck_if_stale(self.row, self.server.tick_count))
+        self.assertIn(Reason.DRIVER_UNLOADED, [r.code for r in self.row.blockers])
+
+    def test_removed_provider_invalidates_the_cached_answer(self):
+        self.server.patterns.drop(self.ref_at(PORT_KEY))
+        self.seed(GOLD, 1, request_id="removed")
+        self.assertFalse(self.executor._recheck_if_stale(self.row, self.server.tick_count))
+        self.assertIn(Reason.DEVICE_GONE, [r.code for r in self.row.blockers])
+
+    def test_cancelling_an_order_releases_its_cached_plan(self):
+        self.assertIn(self.row.order_id, self.executor._pattern_checks)
+        self.order("cancel", request_id="cancel-cache", order_id=self.row.order_id)
+        self.drive(2)
+        self.assertNotIn(self.row.order_id, self.executor._pattern_checks)
+
+    def test_store_without_dispatch_revision_keeps_full_revalidation(self):
+        checks = self.pattern_state.stats["stale_checks"]
+        self.server.patterns.dispatch_revision = None
+        self.seed(GOLD, 1, request_id="legacy-store")
+        self.assertTrue(self.executor._recheck_if_stale(self.row, self.server.tick_count))
+        self.assertGreater(self.pattern_state.stats["stale_checks"], checks)
+
+
 class TestSubmit(OneLevel):
+    def test_production_order_is_created_even_when_target_is_already_stored(self):
+        from endernet.server.crafting.planner import TargetSemantics
+
+        self.server.plan_policy.target_semantics = TargetSemantics.PRODUCE
+        self.seed(BLOCK, 1)
+        self.seed(IRON, 2)
+        result = self.submit_order(request_id='produce-another-one')
+        self.assertEqual(result.status, STATUS_OK, result.to_dict())
+        view = self.settle()
+        self.assert_admitted(view)
+        self.assertEqual(view['progress']['tasks_total'], 1)
+        self.assertEqual(len(view['steps']), 1)
+        self.assertEqual(self.stock(BLOCK).payload['entry']['stored'], 1)
+
     def test_a_submitted_order_plans_reserves_and_queues(self):
         """提交走的是：**规划中 → 复核 → 预留 → 租约 → 排队**。每一步都留下凭据。"""
         self.assertEqual(self.seed(IRON, 4).status, STATUS_OK)

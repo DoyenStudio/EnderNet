@@ -49,14 +49,14 @@ class TestNotificationAdapter(unittest.TestCase):
     def test_message_and_sound_target_only_initiator(self):
         result, messages, commands = self.notify(self.order())
         self.assertTrue(result)
-        self.assertEqual(messages, [("p1", u"§7[§ai§7] §a订单已完成： 3x铁块")])
-        self.assertEqual(commands, [("/playsound note.endernet.order_finished @s", "p1")])
+        self.assertEqual(messages, [("p1", "§7[§ai§7] §a订单已完成： 3x铁块".encode("utf-8"))])
+        self.assertEqual(commands, [("/playsound note.endernet.order_finished", "p1")])
 
     def test_fluid_message_uses_native_millibuckets(self):
         result, messages, commands = self.notify(
             self.order(ResourceKey.fluid("minecraft:water"), 1000))
         self.assertTrue(result)
-        self.assertEqual(messages[0][1], u"§7[§ai§7] §a订单已完成： 1000mBx水")
+        self.assertEqual(messages[0][1], "§7[§ai§7] §a订单已完成： 1000mBx水".encode("utf-8"))
 
     def test_missing_or_offline_initiator_is_skipped(self):
         self.assertEqual(self.notify(self.order(player_id="")), (False, [], []))
@@ -69,7 +69,15 @@ class TestNotificationAdapter(unittest.TestCase):
             command=lambda *args: None, name_of=lambda key: u"铁块".encode("utf-8"),
             online=lambda player_id: True,
         )
-        self.assertEqual(messages[0][1], u"§7[§ai§7] §a订单已完成： 3x铁块")
+        self.assertEqual(messages[0][1], "§7[§ai§7] §a订单已完成： 3x铁块".encode("utf-8"))
+
+    def test_failed_sound_command_is_reported(self):
+        with self.assertRaises(RuntimeError):
+            notify_order_completed(
+                self.order(), message=lambda *args: None,
+                command=lambda *args: False, name_of=lambda key: "gold",
+                online=lambda player_id: True,
+            )
 
 
 class TestCompletionNotification(OneLevel):

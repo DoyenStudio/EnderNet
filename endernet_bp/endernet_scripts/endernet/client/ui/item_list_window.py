@@ -42,9 +42,9 @@ except NameError:
     INTEGER_TYPES = (int,)
 
 
-def show_item_list_window(screen, item_ids, max_items, title="物品列表"):
-    # type: (ToolDeltaScreen, list[str], int, str) -> bool
-    """Edit item_ids in place; refuse a second window on the same screen."""
+def show_item_list_window(screen, item_ids, max_items, title="物品列表", on_selected=None):
+    # type: (ToolDeltaScreen, list[str], int, str, object) -> bool
+    """Edit a list, or close and call on_selected after picking one item."""
     if WINDOW_ATTRIBUTE in screen._vars:
         return False
     if not isinstance(item_ids, list):
@@ -53,7 +53,7 @@ def show_item_list_window(screen, item_ids, max_items, title="物品列表"):
         raise ValueError("max_items must be a non-negative integer")
     if len(item_ids) > max_items:
         raise ValueError("item_ids exceeds max_items")
-    ItemListWindow(screen, item_ids, max_items, title)
+    ItemListWindow(screen, item_ids, max_items, title, on_selected)
     return True
 
 
@@ -65,11 +65,12 @@ class ItemListWindow(object):
     CONTROL_DEFINITION = "endernet_windows.item_list_window"
     CONTROL_NAME = "endernet_item_list_window"
 
-    def __init__(self, screen, item_ids, max_items, title):
+    def __init__(self, screen, item_ids, max_items, title, on_selected=None):
         self.screen = screen
         self.item_ids = item_ids
         self.max_items = max_items
         self.title = title
+        self.on_selected = on_selected
         self.selected_index = None
         self.closed = False
         self.root = None
@@ -139,6 +140,11 @@ class ItemListWindow(object):
     def _on_item_selected(self, item_id):
         self.picker = None
         if self.closed:
+            return
+        if self.on_selected is not None:
+            callback = self.on_selected
+            self.close()
+            callback(item_id)
             return
         if item_id in self.item_ids:
             self.selected_index = self.item_ids.index(item_id)

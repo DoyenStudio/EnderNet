@@ -13,10 +13,11 @@
    它调用 `SetContainerItem` 却不看布尔返回值，在空槽路径更是直接报告
    「全部放入」。因此本模块**自己逐槽写入并逐槽读回核对**，
    13-01 的 `GhostContainer` 就是它的行为替身。
-2. **不经 `tooldelta.define.item.Item` 包装。** 那一层把 `durability` 的
+2. **实际读写不经 `tooldelta.define.item.Item` 包装。** 那一层把 `durability` 的
    `None` 归一成 `0`，而 `common/item_codec.py` 按「空值与缺省是不同身份」
    处理——包装一次就会让同一件物品在两条路径上得到不同的 `ResourceKey`。
-   所以这里一律走 `mod.server.extraServerApi` 的**原始字典**。
+   所以实际读写一律走 `mod.server.extraServerApi` 的**原始字典**；
+   存取验证事件单独包装副本，监听者的物品修改不用于写回。
 3. **写不进去就说写不进去。** 逐槽写入之后立刻读回，只把真的变了的部分算数；
    整段无法核对时把回执降级成 `UNCERTAIN`（基类已经这么做了，子类只要
    别假装成功）。
@@ -42,6 +43,8 @@
 离线可验证的部分（槽位语义、拆分、合并、部分接收、读回核对、归一化）
 由注入的替身原语覆盖，见 `endernet_tests/test_containers_engine.py`。
 """
+
+from copy import deepcopy
 
 from ...common.item_codec import (
     is_empty_item,
@@ -354,6 +357,29 @@ class EngineItemPrimitives(object):
 
     def set_container_item(self, dimension, position, slot, data):
         # type: (int, tuple, int, dict) -> bool
+        # 所有外部容器写入（含指定槽位、清空和补偿）共用这一道检查。
+        # 事件只承载本次增减的物品，不能把合并后的整堆数量当成投递量。
+        before = normalize_engine_item(self.container_item(dimension, position, slot))
+        after = normalize_engine_item(data)
+        before_key = None if _is_empty(before) else item_key_from_dict(before)
+        after_key = None if _is_empty(after) else item_key_from_dict(after)
+        before_count = 0 if before_key is None else int(before.get("count", 0))
+        after_count = 0 if after_key is None else int(after.get("count", 0))
+        removed = before_count - (after_count if before_key == after_key else 0)
+        added = after_count - (before_count if before_key == after_key else 0)
+        for inserting, source, count in ((False, before, removed), (True, after, added)):
+            if count <= 0:
+                continue
+            piece = deepcopy(source)
+            piece["count"] = count
+            if not self._broadcast_container_transfer(
+                dimension, position, slot, piece, inserting
+            ):
+                return False
+        # 广播同步执行第三方代码；槽位被监听者改动时不能覆盖新内容。
+        current = normalize_engine_item(self.container_item(dimension, position, slot))
+        if current != before:
+            return False
         # 内部身份把空值归一为 None，但写入引擎需要恢复这三个字段。
         # 2026-10-04 红石熔炉实测：任一个传 None 都会写入成功，却不派发
         # ContainerItemChangedServerEvent；传 0 / 空字符串后事件恢复。
@@ -369,6 +395,33 @@ class EngineItemPrimitives(object):
                 item, slot, tuple(position), dimension
             )
         )
+
+    def _broadcast_container_transfer(self, dimension, position, slot, data, inserting):
+        # type: (int, tuple, int, dict, bool) -> bool
+        """广播引擎存取事件；仅用 Item 包装事件副本，不改变实际写入身份。"""
+        from ....tooldelta.api.server import GetBlockName
+        from ....tooldelta.define.item import Item
+        from ....tooldelta.events.server import (
+            ItemPullOutCustomContainerServerEvent,
+            ItemPushInCustomContainerServerEvent,
+        )
+
+        event_class = (ItemPushInCustomContainerServerEvent if inserting
+                       else ItemPullOutCustomContainerServerEvent)
+        piece = deepcopy(data)
+        piece.setdefault("newAuxValue", 0)
+        piece.setdefault("showInHand", True)
+        event = event_class(
+            item=Item.from_dict(piece),
+            collectionName=GetBlockName(dimension, tuple(position)) or "",
+            collectionIndex=slot,
+            x=position[0],
+            y=position[1],
+            z=position[2],
+            dimension=dimension,
+            _orig={},
+        )
+        return not event.broadcast()._orig.get("cancel", False)
 
     def player_slot_count(self, player_id):
         # type: (str) -> int

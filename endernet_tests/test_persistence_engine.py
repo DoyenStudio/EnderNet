@@ -11,8 +11,10 @@
 
 import json
 import unittest
+from unittest import mock
 
 import testsupport  # noqa: F401  设置 sys.path
+from endernet.server.persistence import repository as repository_module
 
 from endernet.server.persistence.migrations import Migrator
 from endernet.server.adapters.persistence_engine import EngineExtraDataBackend
@@ -60,6 +62,47 @@ class TestTextCodec(unittest.TestCase):
                 loads_payload(value)
             with self.assertRaises(TypeError):
                 loads_index(value)
+
+
+class TestPayloadEncodingProbe(unittest.TestCase):
+    def test_probe_preserves_bytes_and_measures_only_encoding(self):
+        payload = {"kind": "port", "record_id": "p1", "payload": {"name": u"样板"}}
+        expected = dumps_payload(payload)
+        probe = repository_module.PayloadEncodingProbe()
+        with mock.patch.object(repository_module, "_payload_encoding_probe", probe):
+            with mock.patch.object(repository_module.time, "time", side_effect=[10.0, 10.25]):
+                self.assertEqual(dumps_payload(payload), expected)
+        report = probe.diagnostics()
+        self.assertEqual(report["calls"], 1)
+        self.assertEqual(report["slowest"], {
+            "kind": "port", "record_id": "p1", "bytes": len(expected),
+            "elapsed_ms": 250.0, "started_at": 10.0,
+        })
+
+    def test_disabled_probe_does_not_read_clock(self):
+        with mock.patch.object(repository_module, "_payload_encoding_probe", None):
+            with mock.patch.object(repository_module.time, "time", side_effect=AssertionError):
+                self.assertEqual(loads_payload(dumps_payload({"n": 1})), {"n": 1})
+
+    def test_samples_are_bounded_and_reports_are_detached(self):
+        probe = repository_module.PayloadEncodingProbe(sample_limit=2)
+        for i in range(5):
+            probe.record({"kind": "port", "record_id": str(i)}, "x" * (i + 1), 25.0, i)
+        report = probe.diagnostics()
+        self.assertEqual(report["slow_calls"], 5)
+        self.assertEqual([row["record_id"] for row in report["slow_samples"]], ["3", "4"])
+        self.assertEqual(report["largest"]["bytes"], 5)
+        report["slow_samples"][0]["bytes"] = 100
+        report["slowest"]["bytes"] = 100
+        self.assertEqual(probe.diagnostics()["slow_samples"][0]["bytes"], 4)
+        self.assertEqual(probe.diagnostics()["slowest"]["bytes"], 1)
+
+    def test_failed_encoding_still_raises_and_is_not_counted(self):
+        probe = repository_module.PayloadEncodingProbe()
+        with mock.patch.object(repository_module, "_payload_encoding_probe", probe):
+            with self.assertRaises(TypeError):
+                dumps_payload({"bad": object()})
+        self.assertEqual(probe.diagnostics()["calls"], 0)
 
 
 class BytesOnlyExtraDataComponent(object):

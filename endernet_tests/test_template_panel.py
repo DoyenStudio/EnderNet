@@ -708,6 +708,89 @@ class TestLongPress(TemplateFixture):
         self.assertEqual(1, len(opened))
 
 
+class TestOutputRecipeLongPress(TemplateFixture):
+    clock = TestLongPress.clock
+
+    def test_half_second_opens_picker_once_and_release_does_not_click(self):
+        self.state()
+        advance = self.clock()
+        with patch.object(template_panel, "show_item_list_window", return_value=True) as picker:
+            self.press_cell(SURFACE_OUTPUTS, 1)
+            advance(0.49)
+            self.view.tick()
+            picker.assert_not_called()
+            advance(0.01)
+            self.view.tick()
+            self.view.tick()
+            picker.assert_called_once()
+            picker.call_args.kwargs["on_selected"]("minecraft:stick")
+            command = self.last_command()
+            self.assertEqual("template_import", command["action"])
+            self.assertEqual(1, command["slot_version"])
+            self.click_cell(SURFACE_OUTPUTS, 1)
+            self.assertEqual(1, len(self.commands()))
+
+    def test_hidden_outputs_and_short_presses_do_not_open_picker(self):
+        self.state()
+        advance = self.clock()
+        with patch.object(template_panel, "show_item_list_window") as picker:
+            for index in (0, 2):
+                self.press_cell(SURFACE_OUTPUTS, index)
+                advance(0.5)
+                self.click_cell(SURFACE_OUTPUTS, index)
+            picker.assert_not_called()
+
+    def test_release_without_tick_opens_picker(self):
+        self.state()
+        advance = self.clock()
+        with patch.object(template_panel, "show_item_list_window", return_value=True) as picker:
+            self.press_cell(SURFACE_OUTPUTS, 1)
+            advance(0.5)
+            self.click_cell(SURFACE_OUTPUTS, 1)
+            picker.assert_called_once()
+
+    def test_multiple_recipes_use_shared_window_and_send_chosen_digest(self):
+        self.state()
+        request = self.view._on_product(self.view.revision, "minecraft:stick")
+        result = self.result(request)
+        result["payload"] = {
+            "needs_choice": True, "revision": self.view.revision,
+            "output": {"name": "minecraft:stick", "aux": 0},
+            "candidates": [{"digest": "a"}, {"digest": "b"}],
+        }
+        with patch.object(template_panel, "RecipeChoiceWindow") as window:
+            self.deliver(result)
+            window.assert_called_once()
+            window.call_args.args[3]("b")
+        self.assertEqual("b", self.last_command()["recipe"])
+
+    def test_stale_picker_callback_and_lost_session_do_not_write(self):
+        self.state()
+        self.assertIsNone(self.view._on_product(0, "minecraft:stick"))
+        self.view.close()
+        self.assertIsNone(self.view._on_product(1, "minecraft:stick"))
+        self.assertEqual([], self.commands())
+
+    def test_factory_outputs_keep_quantity_window(self):
+        self.state(mode=MODE_FACTORY, outputs=((2, STICK, 4),))
+        advance = self.clock()
+        with patch.object(template_panel, "show_number_set_window", return_value=True) as quantity:
+            with patch.object(template_panel, "show_item_list_window") as picker:
+                self.press_cell(SURFACE_OUTPUTS, 2)
+                advance(0.5)
+                self.view.tick()
+                quantity.assert_called_once()
+                self.assertEqual(4, quantity.call_args.args[1])
+                picker.assert_not_called()
+
+    def test_configuration_change_closes_recipe_window(self):
+        self.state()
+        window = type("Window", (object,), {"close": lambda obj: setattr(obj, "closed", True)})()
+        self.panel._vars[template_panel.RECIPE_WINDOW_ATTRIBUTE] = window
+        self.state(revision=2)
+        self.assertTrue(window.closed)
+
+
 class TestTitleIsWrittenByScript(TemplateFixture):
     """标题由脚本 `SetText` 写（User 2026-10-02 定），**不走绑定**。"""
 
@@ -816,6 +899,30 @@ class TestSourceSelectionCleared(TemplateFixture):
         self.assertEqual(0, self.backpack.selected, "选中还在")
         self.assertEqual(0, view.cleared)
 
+    def test_successful_clear_removes_selection_and_pending_presses(self):
+        view = self.FakeListView()
+        self.panel.list_view = view
+        self.select_backpack(0)
+        self.state(source=((0, STONE, 3),))
+        self.view.selection = (SURFACE_SOURCE, 0)
+        self.view.presses[SURFACE_SOURCE] = (0, 0.0, False)
+        request_id = self.view.on_clear()
+        self.deliver(self.result(request_id))
+        self.assertIsNone(self.view.selection)
+        self.assertEqual({}, self.view.presses)
+        self.assertIsNone(self.backpack.selected)
+        self.assertEqual(1, view.cleared)
+
+    def test_rejected_clear_keeps_selection(self):
+        self.state(source=((0, STONE, 3),))
+        self.view.selection = (SURFACE_SOURCE, 0)
+        request_id = self.view.on_clear()
+        self.deliver(self.result(request_id, status=STATUS_REJECTED,
+                                 reasons=[{"code": Reason.STALE_VERSION,
+                                           "detail": ""}]))
+        self.assertEqual((SURFACE_SOURCE, 0), self.view.selection)
+        self.assertIsNotNone(self.view.cell(SURFACE_SOURCE, 0))
+
     def test_other_actions_do_not_clear_it(self):
         view = self.FakeListView()
         self.panel.list_view = view
@@ -909,6 +1016,14 @@ class TestModeAndMake(TemplateFixture):
         self.assertEqual("template_mode", command["action"])
         self.assertEqual(MODE_FACTORY, command["target"])
 
+    def test_the_clear_button_sends_one_atomic_command(self):
+        self.state(source=((0, STONE, 1),), revision=6)
+        self.binding("clear")
+        self.assertEqual(1, len(self.commands()))
+        self.assertEqual("template_clear", self.last_command()["action"])
+        self.assertEqual(6, self.last_command()["slot_version"])
+        self.assertIsNotNone(self.view.cell(SURFACE_SOURCE, 0))
+
     def test_the_make_button_sends_exactly_one_encode(self):
         self.state()
         self.binding("make")
@@ -921,6 +1036,7 @@ class TestModeAndMake(TemplateFixture):
         self.client.drop_session()
         self.binding("mode_factory")
         self.binding("make")
+        self.binding("clear")
         self.assertEqual([], self.commands())
 
 
@@ -930,7 +1046,7 @@ class TestConfigRevision(TemplateFixture):
     def test_every_config_action_carries_the_pushed_revision(self):
         self.select_backpack(0)
         self.state(source=((0, STONE, 1),), revision=6)
-        for name in ("mode_factory", "make"):
+        for name in ("mode_factory", "make", "clear"):
             self.binding(name)
         self.click_cell(SURFACE_SOURCE, 4)
         for command in self.commands():
@@ -1305,7 +1421,8 @@ class TestJsonContract(unittest.TestCase):
                                "#EnderNetTemplate.mode_crafting"),
                               ("factoric_template_mode_radio_btn",
                                "#EnderNetTemplate.mode_factory"),
-                              ("make_template_btn", "#EnderNetTemplate.make")):
+                              ("make_template_btn", "#EnderNetTemplate.make"),
+                              ("clear_btn", "#EnderNetTemplate.clear")):
             self.assertEqual(pressed, panel[name]["$pressed_button_name"], name)
             self.assertTrue(panel[name]["button_mappings"], name)
 

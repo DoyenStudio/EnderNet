@@ -467,6 +467,19 @@ class TestFacingResolution(unittest.TestCase):
         self.assertEqual(reason, "")
         self.assertEqual(detail, "")
 
+    def test_template_neighbour_is_not_a_generic_facing_container(self):
+        registry = _Registry()
+        registry.add(DeviceRef(key(2), 0), TEMPLATE_DEVICE, "west")
+        ports = PortStore(
+            None, registry, containers=_Containers({key(2).as_key(): FakeContainer(slots=18)})
+        )
+        for device_id, role in ((TEMPLATE_DEVICE, TEMPLATE), (OUTPUT_DEVICE, OUTPUT)):
+            state = PortState(DeviceRef(key(1), 0), device_id, role, facing="east")
+            endpoint, reason, detail = ports.facing_endpoint(state)
+            self.assertIsNone(endpoint)
+            self.assertEqual(reason, Reason.NO_CONTAINER)
+            self.assertIn("样板接口", detail)
+
 
 # -- 状态集合 --------------------------------------------------------------
 
@@ -1563,6 +1576,29 @@ class TestTemplateDoesNotTouchPatternSlots(PortFixture):
         self.assertEqual(self.pattern_box.slots_count(),
                          TEMPLATE_PATTERN_SLOT_COUNT.value)
         self.assertEqual(self.box.count_of(STONE), 10, "原料进了朝向的箱子")
+
+    def test_feeding_an_adjacent_template_port_keeps_materials_in_buffer(self):
+        self.registry.add(self.target_ref, TEMPLATE_DEVICE, "west")
+        self.box.set_slot(0, ContainerEntry(DIRT, 1))
+        self.configure(filter=(STONE,))
+        self.dispatcher.stage_batch(self.state, STONE, 10, "batch-op", "r1")
+
+        result = self.result("feed-blocked")
+
+        self.assertEqual(result.status, STATUS_BLOCKED)
+        self.assertEqual(result.reasons[0].code, Reason.NO_CONTAINER)
+        self.assertEqual(self.box.count_of(STONE), 0)
+        self.assertEqual(self.box.count_of(DIRT), 1)
+        self.assertEqual(self.state.buffer.total_of(STONE), 10)
+        self.assertEqual(self.state.batch.delivered, 0)
+        self.assertEqual(self.network_stub.stored[STONE], 30)
+
+        # 目标换成加工容器后，同一批原料仍能正常继续投递。
+        self.registry.add(self.target_ref, "endernet:storage_driver")
+        resumed = self.result("feed-resumed")
+        self.assertEqual(resumed.payload["batch"]["delivered"], 10)
+        self.assertEqual(self.state.buffer.total_of(STONE), 0)
+        self.assertEqual(self.box.count_of(STONE), 10)
 
     def test_the_passive_port_does_bind_its_own_container(self):
         """反过来：被动接口**要**挂自己的容器（那 9 格就是它的库存）。"""

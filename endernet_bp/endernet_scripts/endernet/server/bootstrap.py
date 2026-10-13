@@ -64,6 +64,7 @@ from .adapters.containers_engine import (
 from .adapters.events import ServerEventBinder
 from .adapters.messages import AdapterSyncPort
 from .adapters.order_notifications import notify_order_completed
+from .adapters.template_tips import resource_display_name as template_resource_name
 from .adapters.persistence_engine import EngineExtraDataBackend
 from .adapters.recipes import EngineRecipeSource
 from .adapters.world import ToolDeltaWorldAdapter
@@ -73,7 +74,7 @@ from .crafting.capacity import OrderPolicy
 from .crafting.executor import AbsentReturns, FactoryService
 from .crafting.jobs import StepStatus
 from .crafting.patterns import PatternPolicy
-from .crafting.planner import PlanPolicy, Planner
+from .crafting.planner import PlanPolicy, Planner, TargetSemantics
 from .crafting.returns import ReturnPolicy, ReturnsService
 from .crafting.preview import PreviewPolicy, PreviewService
 from .crafting.store import PatternStore
@@ -775,6 +776,7 @@ class ServerBootstrap(object):
             accepts=self._is_template_terminal,
             drop=self._drop_template_items,
             limit_of=self._template_stack_limit,
+            name_of=template_resource_name,
         )
         #: 样板终端的未定口径（`template_terminal.TemplatePolicy`）。
         #: **全进程一份**，理由与 `crafting_policy` 相同。
@@ -839,6 +841,7 @@ class ServerBootstrap(object):
             # 07-05 的投料入口要按位置找那一份工厂服务。**传绑定方法**，
             # 因为 `self.runtimes` 这时还没构造（见 `_factory_of`）。
             factory_of=self._factory_of,
+            name_of=template_resource_name,
         )
         self.patterns.assembly.on_changed = self._note_assembly_energy_changed
         #: 内存槽状态集合（2026-10-03）。与上面三份同一地位：内存条是**方块
@@ -1220,11 +1223,9 @@ class ServerBootstrap(object):
         # 重建之后才推进运行时：发布 → 运行时同步（含主控绑定与服务挂载）
         # → 服务推进。顺序不能倒——先在旧图上推进服务，等于让它们按已经
         # 不成立的归属动手。
-        service_steps = self.runtimes.tick(self.runtime_budget, self._tick_context())
-        # 主控刚在这一帧出现：把存档里属于**这个位置**的网络台账应用上去
-        # （预留归档、待核对转移恢复成待核对）。晚于本帧的业务一帧，
-        # 但台账里只有**已经发生过**的待核对记录，不影响本帧任何搬运的正确性。
+        # 恢复等待者必须早于接口回流和订单推进，避免首帧产物无人认领。
         network_states_applied = self._apply_archived_network_states()
+        service_steps = self.runtimes.tick(self.runtime_budget, self._tick_context())
         # 发布窗口**紧跟运行时推进**（任务 11-02）：提交发生在 `runtimes.tick`
         # 内，取脏键放其后，窗口才看得见本帧提交。放前面会让本帧的提交等到
         # 下一帧才发布——那不是错，只是白慢一拍；放后面则更快。位置不能挪。
@@ -1360,8 +1361,7 @@ class ServerBootstrap(object):
         """把存档里的网络台账应用到刚出现的主控所在的那张网络上。
 
         **每张网络只应用一次**（按主控位置文本去重）。应用的内容按
-        `StorageService.import_network_state` 的口径：预留**归档不复活**、
-        待核对转移**恢复成待核对但不重放**。
+        先恢复订单，再恢复有主的预留；无主预留归档，待核对转移不重放。
         """
         applied = 0
         for runtime in self.runtimes.runtimes():
@@ -1374,8 +1374,8 @@ class ServerBootstrap(object):
             archive = self.archived_networks.get(record_id)
             # 无论有没有存档，都记下「这张网络已经对过账」——没有存档时
             # 重复检查只是白跑，有存档时更不能应用第二次。
-            self._network_state_applied.add(record_id)
             if archive is None:
+                self._network_state_applied.add(record_id)
                 continue
             storage = runtime.services.get(ServiceId.STORAGE)
             if not isinstance(storage, StorageService):
@@ -1385,8 +1385,37 @@ class ServerBootstrap(object):
             # 网络级台账与订单簿放在**同一条边界**里进出（避免单独恢复一个
             # 计数）。存储服务要的是里面那一份，不是信封本身。
             storage_payload = archive.get("storage")
-            if isinstance(storage_payload, dict):
-                storage.import_network_state(storage_payload)
+            factory = runtime.services.get(ServiceId.FACTORY)
+            book = archive.get("orders")
+            try:
+                if isinstance(factory, FactoryService) and isinstance(book, dict):
+                    factory.import_order_book(book)
+                owners = (tuple(order.order_id for order in factory.orders.live())
+                          if isinstance(factory, FactoryService) else ())
+                if isinstance(storage_payload, dict):
+                    # 分批发现区块时主控可能早于驱动器出现。此时先显示订单，
+                    # 业务保持关闭，等原预留介质挂载后再把活预留并入库存索引。
+                    missing = any(
+                        part["medium_id"] not in storage.mounted
+                        for row in storage_payload.get("reservations", ())
+                        if row.get("owner_id") in owners
+                        for part in row.get("parts", ())
+                    )
+                    if missing:
+                        runtime.close("订单恢复等待原预留介质加载")
+                        continue
+                    storage.import_network_state(storage_payload, restored_owners=owners)
+            except (KeyError, TypeError, ValueError, AttributeError, AssertionError) as error:
+                archive["_read_only"] = True
+                self.persistence_restore_error = "%s: %s" % (type(error).__name__, error)
+                self.recovery.begin()
+                self.recovery.note_restored(False, self.persistence_restore_error)
+                for item in self.runtimes.runtimes():
+                    item.close(self.persistence_restore_error)
+                self._network_state_applied.add(record_id)
+                return applied
+            self._network_state_applied.add(record_id)
+            runtime.open_if_ready()
             runtime.stats["network_state_restored"] = 1
             applied += 1
         return applied
@@ -1415,9 +1444,9 @@ class ServerBootstrap(object):
         """把剩下的脏记录一次写完。**停机路径用，不限预算。**
 
         网络级台账（预留、待核对转移、订单簿）**只在这里写**（以及显式调用
-        `write_network_states()` 时）：它是**审计与复核记录**，不是可续跑的
-        状态——订单本就不跨主控实例续跑，因此它落后最后一次改动不影响正确性。
-        每帧写它反而会把「订单簿有多大」变成每帧的开销。
+        `write_network_states()` 时）：完整快照用于正常退出恢复；
+        不承诺非正常退出时最后一帧持久化。
+        不逐帧构造整份订单簿，避免订单数量变成每帧开销。
         """
         if not self.persistence_enabled:
             return 0
@@ -1442,6 +1471,9 @@ class ServerBootstrap(object):
             record_id = node_key_text(master.ref.node_key)
             archive = self.archived_networks.get(record_id)
             if archive is not None and archive.get("_read_only"):
+                continue
+            if archive is not None and record_id not in self._network_state_applied:
+                # 等待驱动器/介质期间的半恢复状态不可覆盖完整存档。
                 continue
             storage = runtime.services.get(ServiceId.STORAGE)
             factory = runtime.services.get(ServiceId.FACTORY)
@@ -1469,6 +1501,8 @@ class ServerBootstrap(object):
         if self.recovery.is_open():
             return
         if not self.started:
+            return
+        if self.persistence_restore_error:
             return
         self.recovery.mark_ready(self.tick_count)
 
@@ -2327,9 +2361,9 @@ class ServerBootstrap(object):
                 "介质内容、接口配置/缓冲归属/批次/待核对标记都会随存档走，"
                 "重进世界**按位置重挂**；分阶段恢复（12-05）在读完记录到第一次"
                 "完整推进之间**不接受新存取**。"
-                "**订单与预留不跨主控实例复活**：它们随网络台账存下来供复核，"
-                "恢复成为「待复核记录」而不是可续跑的状态——一份没有主的预留"
-                "会把库存永久锁住。**待核对的外部投料恢复成待核对但不重放**"
+                "**新订单支持正常退出恢复**：完整计划与逐次执行账按主控位置恢复，"
+                "沿用订单/执行 ID，重建租约、等待回流与有主预留；无主预留只归档，"
+                "旧测试订单不迁移。**待核对的外部投料恢复成待核对但不重放**"
                 "（12-07）。拆除时接口记录删掉、余料另存一条处置留痕（12-06）。"
                 "没接后端时 `persistence` 那一节会如实报 `enabled: False`。"
                 "界面同步**只接了底座**——"
@@ -2734,6 +2768,8 @@ def start_server():
     _SERVER = ServerBootstrap(
         assembly_profile=AssemblyProfile.DEV,
         energy_policy=EnergyPolicy.dev_stand_in(),
+        # 下单数量是新增制作数量；已有成品不抵扣预览或正式订单的根需求。
+        plan_policy=PlanPolicy(target_semantics=TargetSemantics.PRODUCE),
         return_policy=return_policy,
         returns_sink=returns,
         # 第 4 件显式选择（12-03）：**接上真实存档后端**。不传它时驱动器

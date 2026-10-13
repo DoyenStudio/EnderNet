@@ -49,16 +49,23 @@ def _item_name(item):
     # type: (object) -> str
     """容器事件里那件物品的标识；读不出返回空串。
 
-    **只读名字，不碰 `userData`。** 事件里的 `itemDict` 带不带 `userData`
-    取决于是否调过引擎的 `GetUserDataInEvent`（tooldelta 的
-    `ListenWithUserData()` 就是干这个的），那是一条额外的不确定项；
-    而插槽拒收只需要知道**是不是本模组的样板、是哪一种**——
-    这两件事物品标识就答得了（物品类型就是配方模式）。
-    内容是否合法在重读路径上判，那条路走 `GetContainerItem(..., True)`，
-    已经在真机上验过它带 `userData`。
+    实际配方模式由样板领域层读取物品编码判定。
     """
+    if isinstance(item, dict):
+        return item.get("newItemName") or item.get("itemName", "")
     name = getattr(item, "newItemName", None)
     return name if name else ""
+
+
+def _item_data(item):
+    # type: (object) -> object
+    """保留 ToolDelta Item 的完整编码，供样板槽校验模式。"""
+    if isinstance(item, dict):
+        return item
+    marshal = getattr(item, "marshal", None)
+    if callable(marshal):
+        return marshal()
+    return {"userData": getattr(item, "userData", None)}
 
 
 class ToolDeltaEventApi(object):
@@ -175,6 +182,11 @@ class ToolDeltaEventApi(object):
         区别只是保留总线句柄以便注销。注意 `EventBus.ListenEvent` 的
         `priority` 是**必填位置参数**，没有默认值。
         """
+        if event_cls in (self.PlayerTryPutCustomContainerItemServerEvent,
+                         self.ItemPushInCustomContainerServerEvent):
+            from mod.server.extraServerApi import GetEngineCompFactory, GetLevelId
+
+            GetEngineCompFactory().CreateItem(GetLevelId()).GetUserDataInEvent(event_cls.name)
         return self._bus.ListenEvent(event_cls, priority, static=True)
 
     def remove(self, event_cls, func, priority=0):
@@ -652,7 +664,13 @@ class ServerEventBinder(object):
         for store, counter in stores:
             if store is None:
                 continue
-            if item_name and not store.accepts_put(record.device_id, item_name):
+            if store is self.patterns:
+                accepts = store.accepts_put(record.device_id, item_name,
+                                            getattr(event, "collectionIndex", None),
+                                            _item_data(item))
+            else:
+                accepts = store.accepts_put(record.device_id, item_name)
+            if item_name and not accepts:
                 event.cancel()
                 self._count(counter)
                 return True

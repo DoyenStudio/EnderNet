@@ -57,7 +57,10 @@ ModAPI 明说容器事件的顺序不可依赖：
 这与驱动器那边「未加载不等于被拆掉」是同一条纪律。
 """
 
-from ...common.definitions import TEMPLATE_PATTERN_SLOT_COUNT, devices_for_mode
+from ...common.definitions import (
+    TEMPLATE_PATTERN_SLOT_COUNT, TEMPLATE_CONTAINER_SLOT_COUNT, devices_for_mode,
+    ASSEMBLE_PATTERN_SLOTS, ASSEMBLE_CHAMBER_SLOT_COUNT,
+)
 from ...common.item_codec import (
     is_empty_item,
     item_dict_from_key,
@@ -320,8 +323,8 @@ class PatternStore(object):
     """
 
     def __init__(self, definitions, registry, policy=None, containers=None,
-                 factory_of=None):
-        # type: (object, object, PatternPolicy, object, object) -> None
+                 factory_of=None, name_of=None):
+        # type: (object, object, PatternPolicy, object, object, object) -> None
         #: 定义表。它被读三处：判定谁是提供者、查物品标识与模式、查模式对应的设备。
         self.definitions = definitions
         self.registry = registry
@@ -335,6 +338,7 @@ class PatternStore(object):
         #: `execution.PatternProviderPort.__init__`；装配层在这一层
         #: **只传绑定方法**，因为它构造时运行时往往还没建好。
         self.factory_of = factory_of
+        self.name_of = name_of
         from .assembly import AssemblyChamberExecution
 
         self.assembly = AssemblyChamberExecution()
@@ -344,6 +348,10 @@ class PatternStore(object):
         #: 是按哪个版本建的。这样查询只在真的变过之后才重建，而「有没有变过」
         #: 由重读时的内容指纹回答——不是靠调用方记得通知。
         self._revision = 0
+        #: 派发有效性信号；与仅记录产物内容的索引版本分开。
+        self._dispatch_revision = 0
+        self._dirty_signals = {}
+        self._dispatch_reads = {}
         self._index = {}
         self._index_revision = -1
         self.stats = {
@@ -376,6 +384,9 @@ class PatternStore(object):
         )
         state.capabilities.register(PATTERN_PROVIDER, state.provider_port)
         self._states[ref.node_key.as_key()] = state
+        self._dirty_signals.pop(ref.node_key.as_key(), None)
+        self._dispatch_reads.pop(ref.node_key.as_key(), None)
+        self._dispatch_revision += 1
         self.stats["created"] += 1
         # **建好就读一次**：`slot_count` 由容器回答（界面格数与领域层槽数
         # 因此不可能分叉），不读的话它会停在 0，而 `install` 会以
@@ -411,6 +422,8 @@ class PatternStore(object):
         if state is None:
             return None
         self._states.pop(ref.node_key.as_key(), None)
+        self._dirty_signals.pop(ref.node_key.as_key(), None)
+        self._dispatch_reads.pop(ref.node_key.as_key(), None)
         self._revision += 1
         self.stats["dropped"] += 1
         return state
@@ -422,6 +435,7 @@ class PatternStore(object):
         if state is None or state.loaded == bool(loaded):
             return False
         state.loaded = bool(loaded)
+        self._dispatch_revision += 1
         self.stats["load_marks"] += 1
         return True
 
@@ -433,6 +447,7 @@ class PatternStore(object):
             if state.loaded:
                 state.loaded = False
                 count += 1
+        self._dispatch_revision += count
         return count
 
     def states(self):
@@ -488,6 +503,8 @@ class PatternStore(object):
         if state is None:
             return False
         state.dirty_tick = self.tick if tick is None else int(tick)
+        self._dispatch_revision += 1
+        self._dirty_signals[node_key.as_key()] = self._dispatch_revision
         self.stats["marks"] += 1
         return True
 
@@ -498,6 +515,8 @@ class PatternStore(object):
         count = 0
         for state in self._states.values():
             state.dirty_tick = now
+            self._dispatch_revision += 1
+            self._dirty_signals[state.node_key.as_key()] = self._dispatch_revision
             count += 1
         return count
 
@@ -531,6 +550,7 @@ class PatternStore(object):
                 if self.refresh(state.ref):
                     refreshed += 1
             except Exception as error:  # pragma: no cover - 防御性
+                self._dispatch_revision += 1
                 state.stats["errors"] = state.stats.get("errors", 0) + 1
                 state.unreadable = u"重读时出错：%s: %s" % (
                     type(error).__name__,
@@ -583,6 +603,9 @@ class PatternStore(object):
             state.stats["forced_refreshes"] += 1
         previous_entries = state.entries
         previous_invalid = state.invalid
+        previous_unreadable = state.unreadable
+        node = state.node_key.as_key()
+        read_signal = self._dirty_signals.get(node, 0)
         try:
             # **`refresh` 保证不抛。** 它是重读的唯一入口，调用方分布在
             # 三条性质完全不同的路径上：引擎事件（`observe` → `ensure`）、
@@ -614,11 +637,15 @@ class PatternStore(object):
                 state.stats["errors"] = state.stats.get("errors", 0) + 1
                 ok = False
         finally:
+            if state.unreadable != previous_unreadable:
+                self._dispatch_revision += 1
             # **帧号用 `finally` 记。** 写在 `return` 之前的话，一次抛错就
             # 会让它停在 `-1`，于是 `_is_due` 判它「从没读过」——
             # 那台设备会**每帧**重试（不是每 `PATTERN_MAX_STALE_FRAMES` 帧），
             # 白白吃掉每帧那有限的几个名额。
             state.refresh_tick = self.tick
+            # 读之前的信号：读容器期间若又标脏，下一次检查仍必须补读。
+            self._dispatch_reads[node] = (state, read_signal)
             state.stats["refreshes"] += 1
             self.stats["refreshes"] += 1
         return ok
@@ -657,9 +684,13 @@ class PatternStore(object):
             return False
         state.unreadable = ""
         state.slot_count = container_slot_count(adapter, state.slot_count or None)
+        if state.device_id == "endernet:bus_template_io":
+            state.slot_count = min(state.slot_count, TEMPLATE_PATTERN_SLOT_COUNT.value)
         entries = {}
         invalid = {}
-        for slot in range(state.slot_count):
+        slots = (ASSEMBLE_PATTERN_SLOTS if state.device_id == "endernet:assemble_chamber"
+                 else range(state.slot_count))
+        for slot in slots:
             entry, error = self._read_one(state, adapter, slot)
             if state.unreadable:
                 # **中途读失败，整次作废。** 半份结果不是结果：把它当成
@@ -720,21 +751,10 @@ class PatternStore(object):
             }
         if item_key is None:
             return None, None
-        mode = self.definitions.template_mode_of(item_key.name)
-        if not mode:
+        if not self.definitions.has_template(item_key.name):
             return None, {
                 "code": PatternError.NOT_A_PATTERN,
                 "detail": u"%s 不是本模组的样板物品" % (item_key.name,),
-            }
-        if not self.policy.accepts_mode(state.device_id, mode):
-            return None, {
-                "code": PatternError.KIND_MISMATCH,
-                "detail": "这是一块%s样板，不该放在 %s 上（它只收 %s）"
-                % (
-                    mode,
-                    state.device_id,
-                    _accepted_modes(self.policy, state.device_id),
-                ),
             }
         try:
             # **先解引擎的类型标签再解码。** 引擎读回来的 `userData` 里每个
@@ -746,6 +766,13 @@ class PatternStore(object):
             )
         except PatternValidationError as error:
             return None, error.to_dict()
+        mode = decoded.definition.mode
+        if ((state.device_id == "endernet:assemble_chamber" and mode != patterns.MODE_CRAFTING)
+                or not self.policy.accepts_mode(state.device_id, mode)):
+            return None, {
+                "code": PatternError.KIND_MISMATCH,
+                "detail": u"样板编码模式 %s 不适用于 %s" % (mode, state.device_id),
+            }
         return PatternEntry(slot, decoded, item_key), None
 
     # -- 索引 ----------------------------------------------------------
@@ -841,6 +868,14 @@ class PatternStore(object):
         """
         return self._revision
 
+    def dispatch_revision(self):
+        # type: () -> tuple
+        """派发检查的失效版本，包括内容、脏信号、加载与读取状态。
+
+        同帧的第二次标脏也前进，不能仅靠 dirty_tick 判缓存有效。
+        """
+        return (self._revision, self._dispatch_revision)
+
     # -- 派发前复核 ----------------------------------------------------
 
     def check_dispatch(self, ref, slot, digest, expected_mode=None):
@@ -873,11 +908,15 @@ class PatternStore(object):
         # 最多换来一次读）。读不到的设备不在这里重试——那由 `advance` 按
         # 固定节拍兜底，否则一个卡住的提供者会被 09 每帧戳一次引擎。
         #
-        # **这里用 `>=`，与 `_is_due` 的 `>` 刻意相反。** `_is_due` 是节流
-        # 判断，同一帧算「已经覆盖」可以省一次读；这里是**正确性**判断，
-        # 同一帧时读没读到那次变更是说不准的，而代价是一份计划照着
-        # 一个已经不存在的槽去派发。宁可多读一次。
-        if state.dirty_tick >= 0 and state.dirty_tick >= state.refresh_tick:
+        # 同帧也用信号序号分辨先后：同一个标脏最多补读一次，新的标脏
+        # （包括读取期间发生的标脏）始终使这份答案失效。
+        node = state.node_key.as_key()
+        read_signature = (state, self._dirty_signals.get(node, 0))
+        if (
+            state.dirty_tick >= 0
+            and state.dirty_tick >= state.refresh_tick
+            and self._dispatch_reads.get(node) != read_signature
+        ):
             self.refresh(ref)
         blocker = self.provider_blocker(state)
         if blocker is not None:
@@ -951,6 +990,9 @@ class PatternStore(object):
             return False, "目标位置上没有样板提供者"
         if not isinstance(definition, patterns.PatternDefinition):
             return False, "要安装的必须是一份 PatternDefinition"
+        if (state.device_id == "endernet:assemble_chamber"
+                and definition.mode != patterns.MODE_CRAFTING):
+            return False, "装配仓仅接受合成模式的工厂样板"
         if not self.policy.accepts_mode(state.device_id, definition.mode):
             return False, "%s 不收 %s 模式的样板" % (state.device_id, definition.mode)
         item = self.template_item(definition)
@@ -964,6 +1006,8 @@ class PatternStore(object):
         slot = int(slot)
         if slot < 0 or slot >= state.slot_count:
             return False, "槽位 %d 越界（这台设备有 %d 格）" % (slot, state.slot_count)
+        if state.device_id == "endernet:assemble_chamber" and slot not in ASSEMBLE_PATTERN_SLOTS:
+            return False, "该槽不是装配仓样板槽"
         # **不看 `write_slot` 的返回值，一律读回核对。**
         #
         # 架构规划 §6.3 点名的真实缺陷就是「说写进去了、其实没有」
@@ -998,6 +1042,8 @@ class PatternStore(object):
         slot = int(slot)
         if slot < 0 or slot >= state.slot_count:
             return False, "槽位 %d 越界（这台设备有 %d 格）" % (slot, state.slot_count)
+        if state.device_id == "endernet:assemble_chamber" and slot not in ASSEMBLE_PATTERN_SLOTS:
+            return False, "该槽不是装配仓样板槽"
         # 理由与 `install` 同：返回值只当提示，判据是读回来的内容。
         wrote = bool(adapter.write_slot(slot, None))
         if not self.refresh(ref, force=True):
@@ -1013,8 +1059,7 @@ class PatternStore(object):
         # type: (object) -> dict
         """按配方模式造一件样板物品的引擎字典（含编码好的 `userData`）。
 
-        物品标识**按模式反查定义表**，因此「合成配方却写成工厂样板物品」
-        这条路径不存在——两者查的是同一个映射。
+        两种配方模式均编码为工厂样板物品，实际模式保存在 userData 中。
 
         **物品字典本身由 `template_terminal.encode_template_item` 造**，
         这里只负责「按哪条映射取标识」这一个决定：那件物品长什么样
@@ -1024,35 +1069,43 @@ class PatternStore(object):
         item_id = self.definitions.item_id_for_template_mode(definition.mode)
         if not item_id:
             return None
-        _key, item = encode_template_item(definition, item_id)
+        _key, item = encode_template_item(definition, item_id, self.name_of)
         return item
 
     # -- 插槽判定（引擎事件路径的入口）--------------------------------
 
-    def accepts_put(self, device_id, item_name):
-        # type: (str, str) -> bool
-        """玩家要把 `item_name` 放进这台设备的槽位，该不该拒绝。
-
-        **只在「这台设备是样板提供者」时有话说**；其余设备一律放行——
-        被动接口那 9 格是存取共用的真实库存，归 06，样板层不替它做决定。
-
-        判定**只看物品标识，不看内容**：物品类型就是配方模式
-        （`TemplateSpec.mode`），因此这里不需要读 `userData`，
-        也就绕开了「事件里的 `itemDict` 带不带 userData」这个不确定项。
-        内容是否合法在重读路径上判，坏样板报进 `invalid_slots` 而不是拒绝
-        玩家把它放进去——**拒收只针对「不该在这里的东西」**，
-        内容坏了的东西拒收会让玩家拿着一块取不出来的物品无计可施。
-
-        「不该在这里」有两种，`blocks.md` 与 14 的验收各点名了一条：
-        普通原料，以及不适用的样板类型（合成样板插进样板接口）。
-        """
+    def accepts_put(self, device_id, item_name, slot=None, item_data=None):
+        # type: (str, str, object, object) -> bool
+        """实体样板槽按物品编码模式判定，原料和输出区不收样板。"""
         if not is_pattern_provider(device_id, self.definitions):
             return True
+        is_slot = isinstance(slot, int) and not isinstance(slot, bool)
+        if device_id == "endernet:assemble_chamber":
+            if not is_slot or not 0 <= slot < ASSEMBLE_CHAMBER_SLOT_COUNT.value:
+                return False
+            if slot not in ASSEMBLE_PATTERN_SLOTS:
+                return not self.definitions.has_template(item_name) and item_name != "endernet:crafting_template"
+            if not self.definitions.has_template(item_name) or not isinstance(item_data, dict):
+                return False
+            try:
+                decoded = patterns.read_pattern(unbox_engine_value(item_data.get("userData")))
+            except PatternValidationError:
+                return False
+            return decoded.is_dispatchable() and decoded.definition.mode == patterns.MODE_CRAFTING
+        if (device_id == "endernet:bus_template_io" and is_slot
+                and TEMPLATE_PATTERN_SLOT_COUNT.value <= slot
+                < TEMPLATE_CONTAINER_SLOT_COUNT.value):
+            return not self.definitions.has_template(item_name) and item_name != "endernet:crafting_template"
         if not self.definitions.has_template(item_name):
             return False
-        return self.policy.accepts_mode(
-            device_id, self.definitions.template_mode_of(item_name)
-        )
+        # 接口仍允许空白样板；编码件则按内容检查适用模式。
+        if isinstance(item_data, dict) and item_data.get("userData"):
+            try:
+                decoded = patterns.read_pattern(unbox_engine_value(item_data.get("userData")))
+            except PatternValidationError:
+                return False
+            return self.policy.accepts_mode(device_id, decoded.definition.mode)
+        return self.policy.accepts_mode(device_id, self.definitions.template_mode_of(item_name))
 
     # -- 容器 ----------------------------------------------------------
 

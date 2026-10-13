@@ -226,6 +226,45 @@ class TestStepping(PreviewCase):
 
 
 class TestShortfall(PreviewCase):
+    def test_stored_target_does_not_replace_production_or_appear_as_material(self):
+        self.service = preview.PreviewService(
+            planner=StubPlanner(
+                one_step_recipes(), {BLOCK: 1, INGOT: 9, COAL: 1},
+                policy=planner.PlanPolicy(
+                    target_semantics=planner.TargetSemantics.PRODUCE,
+                ),
+            ),
+            patterns=PATTERNS,
+        )
+        self.request()
+        self.run_to_completion()
+        delivery = self.delivery()
+        rows = [row for chunk in delivery['chunks'] for row in chunk]
+        self.assertEqual(set(row['canonical'] for row in rows),
+                         set([INGOT.canonical(), COAL.canonical()]))
+        self.assertTrue(delivery['state']['submit_ok'])
+        self.assertEqual(self.solo().job.result().summary()['held'], 0)
+        self.assertEqual(len(self.solo().job.result().steps), 1)
+
+    def test_stored_target_does_not_hide_missing_production_materials(self):
+        self.service = preview.PreviewService(
+            planner=StubPlanner(
+                one_step_recipes(), {BLOCK: 1},
+                policy=planner.PlanPolicy(
+                    target_semantics=planner.TargetSemantics.PRODUCE,
+                ),
+            ),
+            patterns=PATTERNS,
+        )
+        self.request()
+        self.run_to_completion()
+        delivery = self.delivery()
+        self.assertTrue(delivery['state']['missing'])
+        self.assertFalse(delivery['state']['submit_ok'])
+        rows = [row for chunk in delivery['chunks'] for row in chunk]
+        self.assertNotIn(BLOCK.canonical(),
+                         [row['canonical'] for row in rows])
+
     def test_nothing_in_stock_means_missing_and_no_submit(self):
         self.request(amount=1)
         self.run_to_completion()
@@ -266,7 +305,7 @@ class TestShortfall(PreviewCase):
         blocked = set(entry["canonical"] for entry in plan.blocked_keys)
         rows = [row for chunk in delivery["chunks"] for row in chunk]
         red = set(row["canonical"] for row in rows if row["missing"])
-        self.assertEqual(red, blocked)
+        self.assertEqual(red, blocked - set([BLOCK.canonical()]))
         # **目标键自己也在里面**：它的配方选不出来，因此它也是「拿不到」
         # 的那一个。契约第 4 节的传播正是这么定义的——受影响的不只是叶子。
         self.assertEqual(
@@ -274,6 +313,16 @@ class TestShortfall(PreviewCase):
             set([BLOCK.canonical(), COAL.canonical()]),
             "缺煤，于是铁块也做不出来",
         )
+
+    def test_rows_publish_the_planners_actual_shortfall(self):
+        self.request(amount=1)
+        self.run_to_completion()
+        blocked = dict((entry["canonical"], entry["shortfall"])
+                       for entry in self.solo().job.result().blocked_keys)
+        rows = [row for packet in self.delivery()["chunks"] for row in packet]
+        self.assertTrue(blocked)
+        for row in rows:
+            self.assertEqual(row["shortfall"], blocked.get(row["canonical"], 0))
 
     def test_a_byproduct_row_is_not_a_requirement(self):
         """`demand <= 0` 的行是**纯副产物**，不是一条需求。"""

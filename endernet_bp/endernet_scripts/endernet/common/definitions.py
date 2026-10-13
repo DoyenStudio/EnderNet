@@ -423,9 +423,8 @@ class TemplateSpec(object):
     不是替身、也不进 `unresolved_report()`。
 
     `mode` 的取值域与 `server/crafting/patterns.py` 是同一套词汇（常量在本文件，
-    那边 import 过去）。**样板物品的类型就是它能承载的配方模式**，两者不可能
-    分叉——分叉的形态是「物品叫合成样板、里面的内容却是工厂配方」，
-    而那正是 `PatternPolicy.kind_scope` 要拒绝的东西。
+    那边 import 过去）。`mode` 只是规格默认模式；工厂样板可承载两种模式，
+    设备适用性按物品 userData 中的编码模式判定。
     """
 
     __slots__ = ("id", "label", "mode", "usage", "max_stack_size")
@@ -574,8 +573,14 @@ TEMPLATE_PATTERN_SLOT_COUNT = Value(
     note="样板接口的工厂样板专用槽数；也是方块容器格数（blocks.md 已确定）",
 )
 
+TEMPLATE_RETURN_SLOT_COUNT = Value(9, note="样板接口产物回流槽数")
+TEMPLATE_CONTAINER_SLOT_COUNT = Value(
+    TEMPLATE_PATTERN_SLOT_COUNT.value + TEMPLATE_RETURN_SLOT_COUNT.value,
+    note="样板接口样板槽与产物回流槽合计",
+)
+
 #: 装配仓的槽数：**19**，槽号从 0 开始（`blocks.md` 2026-09-27 确认）。
-#: 0～8 合成原料、9 输出、10～18 合成样板。
+#: 0～8 合成原料、9 输出、10～18 合成模式的工厂样板。
 #:
 #: 与上面两条同理，`scripts/gen_blocks.py` 从这一条读作方块的
 #: `netease:block_container.container_size`。**格数只写一处**：界面画 19 格、
@@ -758,47 +763,27 @@ ITEM_MEMORIES = (
 
 # -- 样板表（items.md）-----------------------------------------------------
 
-#: 两类样板，逐项取自 items.md 的「样板」一节。
+#: 唯一工厂样板物品；两种模式均保存在编码中。
 #:
 #: **除堆叠上限外没有数值字段，这是有意的**：items.md 只给了标识、用途与堆叠
 #: 上限，凭空补别的（容量、耐久）就等于替 R09 定案。这里只有足以做出物品、
 #: 做出版本校验、以及判「这块样板该进哪台设备」的信息。
 PATTERN_TEMPLATES = (
     TemplateSpec(
-        "endernet:crafting_template",
-        "合成样板",
-        PATTERN_MODE_CRAFTING,
-        "指定工作台合成配方",
-        max_stack_size=1,
-    ),
-    TemplateSpec(
         "endernet:factorical_template",
         "工厂样板",
         PATTERN_MODE_FACTORY,
-        "指定自定义配方",
+        "记录合成或工厂模式配方；模式保存在物品编码中",
         max_stack_size=64,
     ),
 )
 
-#: **样板终端编出来的样板物品标识**（11-05）。恒为工厂样板，与模式无关。
-#:
-#: 为什么不能按 `item_id_for_template_mode()` 反查：那条映射是给**样板接口／
-#: 装配仓**那 9 格用的（物品类型就是它能承载的模式），而样板终端两种模式都
-#: 只产出这一种物品——**模式记在 `userData` 的 pattern 里，不记在物品类型上**。
-#: 这是 User 2026-10-02 定的（见 `plans/ui/template_terminal_panel.md` 第 5 节
-#: 「两种模式的输入槽都仅接受工厂样板物品」）。
-#:
-#: 写成常量而不是散在命令层，是因为它一旦被「顺手统一」成按模式反查，
-#: 合成模式产出的物品会**静默**从工厂样板变成合成样板，而界面上看不出来。
+#: 两种模式均使用工厂样板物品，具体模式读取 userData。
 TEMPLATE_PANEL_ITEM_ID = "endernet:factorical_template"
+ITEM_TEMPLATES = (TEMPLATE_PANEL_ITEM_ID,)
 
-#: **已注册为游戏物品**的样板。与 `ITEM_MEDIUMS` 同一地位、同一理由：
-#: 规格表与「已经做出来了」是两件事。本次两类样板都已做出物品，
-#: 但方向相反——介质是「表里有很多、只做了两个」，样板是「表里就两个、都做了」。
-ITEM_TEMPLATES = (
-    "endernet:crafting_template",
-    "endernet:factorical_template",
-)
+#: 装配仓的实体槽位分区，UI 与执行层须遵守同一映射。
+ASSEMBLE_PATTERN_SLOTS = tuple(range(10, 19))
 
 #: 每种样板模式**在文档里指定**的设备（items.md 的用途、blocks.md 的样板接口一节）。
 #:
@@ -1352,24 +1337,14 @@ class DefinitionSet(object):
 
     def item_id_for_template_mode(self, mode):
         # type: (str) -> str
-        """该模式**已注册为物品**的样板标识；没有就返回空串。
-
-        写样板物品时按模式反查标识，因此「合成样板写成了工厂样板的物品」
-        这一路径根本不存在——两者查的是同一个映射。
-        """
-        for template_id in self.item_templates:
-            if self.get_template(template_id).mode == mode:
-                return template_id
+        """两种配方模式共用已注册的工厂样板物品。"""
+        if mode in PATTERN_MODES and TEMPLATE_PANEL_ITEM_ID in self.item_templates:
+            return TEMPLATE_PANEL_ITEM_ID
         return ""
 
     def template_mode_of(self, template_id):
         # type: (str) -> str
-        """该样板物品承载的配方模式；不是样板物品时返回空串。
-
-        **只看标识，不看内容**：物品类型就是模式，这是 `TemplateSpec.mode`
-        与 `crafting/patterns.py` 共用一套词汇的全部意义。插槽拒收要在
-        事件路径上判类型，那条路径拿不到（也不必拿）物品的 `userData`。
-        """
+        """样板规格的默认模式；编码件的实际模式必须读取 userData。"""
         spec = self.templates.get(template_id)
         return spec.mode if spec is not None else ""
 

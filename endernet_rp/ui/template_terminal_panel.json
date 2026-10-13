@@ -496,6 +496,81 @@
                             }
                         },
                         {
+                            "clear_btn@common.button": {
+                                "type": "button",
+                                "$control_alpha": 1.0,
+                                "$default_texture": "textures/ui/endernet/trash_bin",
+                                "$hover_texture": "textures/ui/endernet/trash_bin",
+                                "$is_new_nine_slice": false,
+                                "$label_color": [
+                                    1,
+                                    1,
+                                    1
+                                ],
+                                "$label_font_scale_factor": 1.0,
+                                "$label_font_size": "large",
+                                "$label_layer": 3,
+                                "$label_offset": [
+                                    0,
+                                    0
+                                ],
+                                "$label_text": "Button",
+                                "$nine_slice_buttom": 0,
+                                "$nine_slice_left": 0,
+                                "$nine_slice_right": 0,
+                                "$nine_slice_top": 0,
+                                "$nineslice_size": [
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                                ],
+                                "$pressed_button_name": "#EnderNetTemplate.clear",
+                                "$pressed_texture": "textures/ui/endernet/trash_bin",
+                                "$texture_layer": 2,
+                                "anchor_from": "bottom_left",
+                                "anchor_to": "bottom_left",
+                                "offset": [
+                                    10.0,
+                                    -4.0
+                                ],
+                                "size": [
+                                    12.0,
+                                    12.0
+                                ],
+                                "layer": 2,
+                                "button_mappings": [
+                                    {
+                                        "to_button_id": "$pressed_button_name",
+                                        "from_button_id": "button.menu_select",
+                                        "mapping_type": "pressed"
+                                    }
+                                ],
+                                "default_control": "default",
+                                "hover_control": "hover",
+                                "is_handle_button_move_event": true,
+                                "pressed_control": "pressed",
+                                "bindings": [
+                                    {
+                                        "binding_type": "collection_details",
+                                        "binding_collection_name": "",
+                                        "binding_condition": "always_when_visible"
+                                    }
+                                ],
+                                "controls": [
+                                    {
+                                        "default@netease_editor_template_namespace.default": {}
+                                    },
+                                    {
+                                        "hover@netease_editor_template_namespace.hover": {}
+                                    },
+                                    {
+                                        "pressed@netease_editor_template_namespace.pressed": {}
+                                    }
+                                ]
+                            }
+                        },
+                        {
                             "universal_import_btn@common.button": {
                                 "type": "button",
                                 "$control_alpha": 1.0,
@@ -704,6 +779,7 @@
                                     "100%+0px"
                                 ],
                                 "alpha": 0.5,
+                                "visible": false,
                                 "clip_direction": "left",
                                 "clip_ratio": 0.0,
                                 "color": [
@@ -917,7 +993,11 @@
                             "binding_type": "global"
                         }
                     ],
-                    "layer": 40
+                    "layer": 40,
+                    "offset": [
+                        0,
+                        0
+                    ]
                 }
             },
             {
@@ -932,7 +1012,11 @@
                             "binding_type": "global"
                         }
                     ],
-                    "layer": 45
+                    "layer": 45,
+                    "offset": [
+                        0,
+                        0
+                    ]
                 }
             }
         ]

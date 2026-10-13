@@ -487,6 +487,22 @@ class TemplateConfig(object):
             self.cells_of(group)[index] = (key, count)
         self.revision.bump()
 
+    def replace_source(self, source):
+        # type: (list) -> None
+        """一次替换虚拟九宫格，未用槽清空，整份配置只递增一次修订号。"""
+        self.source = _cells_from(source, SOURCE_CELL_COUNT, "输入九宫格")
+        self.revision.bump()
+
+    def clear(self):
+        # type: () -> bool
+        """清空全部虚拟配置；一次修改只推进一次修订号。"""
+        if not any(self.source) and not any(self.outputs):
+            return False
+        self.source = [None] * SOURCE_CELL_COUNT
+        self.outputs = [None] * OUTPUT_CELL_COUNT
+        self.revision.bump()
+        return True
+
     def replace_factory(self, source, outputs):
         # type: (list, list) -> None
         """原子替换工厂输入与输出；两组全部合法后才改动现有配置。"""
@@ -497,7 +513,6 @@ class TemplateConfig(object):
         self.source = source
         self.outputs = outputs
         self.revision.bump()
-
 
     def clear_cell(self, group, index):
         # type: (str, int) -> bool
@@ -608,7 +623,8 @@ class TemplateStore(object):
     一个维度与一个坐标。
     """
 
-    def __init__(self, accepts=None, drop=None, limit_of=None, policy=None):
+    def __init__(self, accepts=None, drop=None, limit_of=None, policy=None,
+                 name_of=None):
         #: `accepts(device_ref) -> bool`。**只对样板终端开口**：没有它就等于
         #: 给每条命令都变出一台空设备，而「这台方块根本没有样板槽」与
         #: 「它的样板槽是空的」在界面上是两回事。为 `None` 时不设限。
@@ -619,6 +635,8 @@ class TemplateStore(object):
         self._drop = drop
         #: `limit_of(resource_key) -> int`。堆叠上限来自定义表，因此注入。
         self._limit_of = limit_of
+        #: 资源显示名由引擎边界提供；离线未注入时使用资源标识。
+        self.name_of = name_of
         self.policy = policy if policy is not None else TemplatePolicy()
         self._states = {}
         #: 被拆掉／注销的设备，状态连同**没掉成功的**实物一起留着。
@@ -849,8 +867,8 @@ class TemplateStore(object):
 
 # -- 样板 → 物品 ------------------------------------------------------------
 
-def encode_template_item(definition, item_id=None):
-    # type: (object, str) -> tuple
+def encode_template_item(definition, item_id=None, name_of=None):
+    # type: (object, str, object) -> tuple
     """把一份样板编成一件引擎物品。返回 `(ResourceKey, 引擎物品字典)`。
 
     **默认的物品标识恒为工厂样板**（`definitions.TEMPLATE_PANEL_ITEM_ID`），
@@ -860,7 +878,7 @@ def encode_template_item(definition, item_id=None):
     留成参数、由调用方决定；`PatternStore.template_item` 也调这里，
     免得「一件样板物品长什么样」有两个写法。
 
-    **`customTips` 与 `userData` 一起进资源键**（`item_codec` 把两者都算作
+    **配方 Lore 随 `userData` 一起进资源键**（`item_codec` 将其算作
     身份）：写进去的和读回来的必须是同一个键，否则「刚放进去就被判成换了
     另一块」。由此得到一个很有用的性质——**同一份配置编两次得到同一个键**，
     产物槽那条「配置相同才可继续制作」的门限就是靠它比出来的，不必去解
@@ -869,10 +887,15 @@ def encode_template_item(definition, item_id=None):
     if item_id is None:
         item_id = TEMPLATE_PANEL_ITEM_ID
     user_data = patterns.write_pattern(None, definition)
+    # 配方说明只写 Lore，不覆盖引擎原生物品名称/提示。
+    tips = patterns.describe_tip(definition, name_of)
+    user_data["display"] = {"Lore": [
+        line.encode("utf-8") if bytes is str else line
+        for line in tips.split(u"\n")
+    ]}
     key = ResourceKey.item(
         item_id,
         0,
-        custom_tips=patterns.describe_tip(definition),
         user_data=user_data,
     )
     return key, item_dict_from_key(key, 1)

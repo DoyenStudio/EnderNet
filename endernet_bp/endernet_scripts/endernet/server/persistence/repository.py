@@ -14,12 +14,65 @@
 """
 
 import json
+import time
 
 from .migrations import (
     CURRENT_SCHEMA_VERSION,
     Migrator,
     UnsupportedVersionError,
 )
+
+
+class PayloadEncodingProbe(object):
+    """按需开启的 JSON 编码诊断；只留元数据，不保留载荷。"""
+
+    def __init__(self, threshold_ms=20.0, sample_limit=16):
+        # type: (float, int) -> None
+        self.threshold_ms = float(threshold_ms)
+        self.sample_limit = max(1, int(sample_limit))
+        self.calls = 0
+        self.total_ms = 0.0
+        self.slow_calls = 0
+        self.slow_samples = []
+        self.slowest = None
+        self.largest = None
+
+    def record(self, payload, text, elapsed_ms, started_at):
+        # type: (dict, str, float, float) -> None
+        sample = {
+            "kind": payload.get("kind"),
+            "record_id": payload.get("record_id"),
+            "bytes": len(text),  # ensure_ascii=True，字符数等于字节数。
+            "elapsed_ms": max(0.0, elapsed_ms),
+            "started_at": started_at,
+        }
+        self.calls += 1
+        self.total_ms += sample["elapsed_ms"]
+        if self.slowest is None or sample["elapsed_ms"] > self.slowest["elapsed_ms"]:
+            self.slowest = sample
+        if self.largest is None or sample["bytes"] > self.largest["bytes"]:
+            self.largest = sample
+        if sample["elapsed_ms"] >= self.threshold_ms:
+            self.slow_calls += 1
+            self.slow_samples.append(sample)
+            del self.slow_samples[:-self.sample_limit]
+
+    def diagnostics(self):
+        # type: () -> dict
+        return {
+            "calls": self.calls,
+            "total_ms": self.total_ms,
+            "mean_ms": self.total_ms / float(self.calls) if self.calls else 0.0,
+            "threshold_ms": self.threshold_ms,
+            "slow_calls": self.slow_calls,
+            "slowest": dict(self.slowest) if self.slowest is not None else None,
+            "largest": dict(self.largest) if self.largest is not None else None,
+            "slow_samples": [dict(row) for row in self.slow_samples],
+        }
+
+
+# 默认为关闭；采样结束后关闭，避免常态计时与统计开销。
+_payload_encoding_probe = None
 
 try:
     _TEXT_TYPES = (str, unicode)  # noqa: F821
@@ -106,9 +159,14 @@ def dumps_payload(payload):
     `ensure_ascii=True` 只保证内容为 ASCII；py2 仍可能返回 unicode，
     必须显式编码成 str 才能交给 ExtraData。
     """
+    probe = _payload_encoding_probe
+    started_at = time.time() if probe is not None else 0.0
     text = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+    elapsed_ms = (time.time() - started_at) * 1000.0 if probe is not None else 0.0
     if not isinstance(text, str):  # pragma: no cover - py2 unicode
-        return text.encode("ascii")
+        text = text.encode("ascii")
+    if probe is not None:
+        probe.record(payload, text, elapsed_ms, started_at)
     return text
 
 

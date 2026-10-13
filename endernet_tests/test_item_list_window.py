@@ -68,6 +68,20 @@ class ItemListWindowTests(unittest.TestCase):
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
 
+    def test_optional_single_selection_closes_before_callback(self):
+        selected = []
+
+        def choose(item_id):
+            self.assertNotIn(self.module.WINDOW_ATTRIBUTE, self.screen._vars)
+            selected.append(item_id)
+
+        self.assertTrue(self.module.show_item_list_window(
+            self.screen, [], 1, on_selected=choose))
+        window = self.screen._vars[self.module.WINDOW_ATTRIBUTE]
+        window._on_item_selected("minecraft:apple")
+        window._on_item_selected("minecraft:stone")
+        self.assertEqual(["minecraft:apple"], selected)
+
     def open(self, items=None, maximum=4, title=None):
         items = self.items if items is None else items
         args = [self.screen, items, maximum]

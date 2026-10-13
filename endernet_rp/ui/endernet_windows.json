@@ -1718,49 +1718,22 @@
         ]
     },
     "order_preview_src_item": {
-        "type": "panel",
+        "type": "image",
         "size": [
             80.0,
             20.0
         ],
+        "texture": "textures/ui/endernet/background_panel_light_flat",
+        "bindings": [
+            {
+                "binding_name_override": "#color",
+                "binding_collection_name": "order_preview_src_items",
+                "binding_condition": "always",
+                "binding_type": "collection",
+                "binding_name": "#EnderNetPreview.row_color"
+            }
+        ],
         "controls": [
-            {
-                "bg": {
-                    "type": "image",
-                    "texture": "textures/ui/endernet/background_panel_light_flat",
-                    "bindings": [
-                        {
-                            "binding_name_override": "#color",
-                            "binding_collection_name": "order_preview_src_items",
-                            "binding_condition": "always",
-                            "binding_type": "collection",
-                            "binding_name": "#EnderNetPreview.row_missing"
-                        }
-                    ]
-                }
-            },
-            {
-                "missing_mask": {
-                    "type": "image",
-                    "layer": 0,
-                    "color": [
-                        1.0,
-                        0.7843137254901961,
-                        0.7843137254901961
-                    ],
-                    "texture": "textures/ui/white_background",
-                    "tiled": true,
-                    "bindings": [
-                        {
-                            "binding_name_override": "#visible",
-                            "binding_collection_name": "order_preview_src_items",
-                            "binding_condition": "always",
-                            "binding_type": "collection",
-                            "binding_name": "#EnderNetPreview.row_missing"
-                        }
-                    ]
-                }
-            },
             {
                 "item_renderer": {
                     "type": "custom",
@@ -1821,25 +1794,28 @@
                 }
             },
             {
-                "label": {
+                "stat_label": {
                     "type": "label",
-                    "anchor_from": "bottom_left",
-                    "anchor_to": "bottom_left",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
                     "offset": [
                         20.0,
-                        -2.0
+                        11.0
                     ],
-                    "layer": 1,
+                    "size": [
+                        58.0,
+                        8.0
+                    ],
+                    "layer": 2,
                     "color": [
                         0.2588235294117647,
                         0.2588235294117647,
                         0.2588235294117647
                     ],
-                    "font_scale_factor": 1.2,
-                    "font_size": "small",
+                    "font_scale_factor": 0.65,
+                    "font_size": "normal",
                     "font_type": "default",
-                    "text": "#text",
-                    "text_alignment": "center",
+                    "text_alignment": "left",
                     "bindings": [
                         {
                             "binding_name_override": "#text",

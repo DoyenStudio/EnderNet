@@ -361,6 +361,23 @@ class _Ledger(object):
             self.on_changed()
         return total
 
+    def restore(self, owner_id, units, tick=0):
+        # type: (str, int, int) -> object
+        """恢复既有占用，不按当前容量拒绝（设备可能尚未加载或已缩水）。"""
+        existing = self.lease_of(owner_id)
+        if existing is not None:
+            if existing.units != int(units):
+                raise ValueError("restored lease conflicts with existing owner")
+            return existing
+        if int(units) < 0:
+            raise ValueError("negative restored lease")
+        lease = Lease(self._new_id(owner_id), owner_id, int(units), tick)
+        self.leases[lease.lease_id] = lease
+        self._by_owner.setdefault(owner_id, []).append(lease.lease_id)
+        if self.on_changed is not None:
+            self.on_changed()
+        return lease
+
     def lease_of(self, owner_id):
         # type: (str) -> object
         """该拥有者名下的第一条租约（诊断用）。没有则返回 None。"""

@@ -902,33 +902,27 @@ def _unescape_tree(value):
     return value
 
 
-def describe_tip(definition):
-    # type: (PatternDefinition) -> str
-    """一行人类可读的摘要，写进样板物品的 `customTips`。
+def describe_tip(definition, name_of=None):
+    # type: (PatternDefinition, object) -> str
+    """样板的多行配方提示；展示名称由引擎边界注入，不参与配方摘要。"""
+    def display_name(key):
+        text = name_of(key) if name_of is not None else key.name
+        if isinstance(text, bytes):
+            text = text.decode("utf-8")
+        return text
 
-    存在的理由很实际：样板是**塞在容器里的实物物品**，玩家在容器界面里
-    除了名字什么都看不到，两块同名样板长得一模一样。有了这一行，
-    「哪块是哪块」至少能靠悬停分辨。
-
-    **它是派生的展示文本，不是身份**——`digest()` 不看它。反过来说，
-    改这一行的措辞**不会**让玩家的样板变成另一个版本（不会触发旧规划复核），
-    因为内容一个字节都没变。
-    """
-    parts = [u"%d×%s" % (stack.count, stack.key.name) for stack in definition.inputs]
-    out = ["、".join(parts)]
-    oparts = [u"%d×%s" % (stack.count, stack.key.name) for stack in definition.outputs]
-    out.append("、".join(oparts))
-    text = u"%s → %s" % (out[0], out[1])
-    if definition.returns:
-        text += u"（返还 %s）" % (
-            "、".join(
-                u"%d×%s" % (stack.count, stack.key.name)
-                for stack in definition.returns
-            ),
-        )
-    if definition.is_ordered():
-        text = u"[有序] " + text
-    return text
+    lines = [u"§r§f制作： %s" % display_name(definition.outputs[0].key),
+             u"§r§f使用："]
+    keys = []
+    counts = {}
+    for stack in definition.inputs:
+        if stack.key not in counts:
+            keys.append(stack.key)
+            counts[stack.key] = 0
+        counts[stack.key] += stack.count
+    lines.extend(u"§r§7 - %sx%d" % (display_name(key), counts[key])
+                 for key in keys)
+    return u"\n".join(lines)
 
 
 def has_pattern(user_data):

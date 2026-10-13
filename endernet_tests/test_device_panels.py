@@ -1215,6 +1215,29 @@ class TestJsonContract(unittest.TestCase):
     """界面 JSON 的接线。**只验名字与位置对得上**——控件画不画得出来是
     游戏内实测项。"""
 
+    def test_assemble_chamber_fixed_slots_use_container_collection_indices(self):
+        """固定槽号属于集合内的物品控件，不能写在 stack_panel 上。"""
+        document = _load_ui("assemble_chamber.json")
+        found = []
+
+        def walk(node):
+            if isinstance(node, dict):
+                if node.get("type") == "stack_panel":
+                    self.assertNotIn("collection_index", node)
+                for entry in node.get("controls", []):
+                    control = entry.get("slot@endernet_container_common.container_grid_item")
+                    if control is not None:
+                        self.assertEqual(node["collection_name"], "netease_container")
+                        found.append(control["collection_index"])
+                for control in node.values():
+                    walk(control)
+            elif isinstance(node, list):
+                for control in node:
+                    walk(control)
+
+        walk(document["content"])
+        self.assertEqual(found, list(range(9, 19)))
+
     def test_assemble_chamber_inputs_use_first_nine_container_slots(self):
         document = _load_ui("assemble_chamber.json")
         grids = []

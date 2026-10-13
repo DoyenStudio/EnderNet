@@ -56,6 +56,8 @@ from . import stack_size
 from . import universal_importer_config
 from .number_set_window import WINDOW_ATTRIBUTE as NUMBER_WINDOW_ATTRIBUTE
 from .number_set_window import show_number_set_window
+from .item_list_window import show_item_list_window
+from .crafting_panel import RecipeChoiceWindow, RECIPE_WINDOW_ATTRIBUTE
 from .terminal_cache import TerminalCache
 from .terminal_panel import (
     LONG_PRESS_SECONDS,
@@ -63,8 +65,11 @@ from .terminal_panel import (
     TerminalPanelBase,
 )
 from .widgets import device_status
+from .widgets.list_window_bindings import ItemListWindowBindingsMixin
+from .widgets.window_identity import ITEM_LIST_WINDOW_ATTRIBUTE
 from ..network_client import NetworkClient
 from ...common.identity import DeviceRef
+from ...common.resource_key import ResourceKey
 from ...common.protocol import MSG_TEMPLATE_STATE, STATUS_OK, Reason
 
 try:
@@ -158,7 +163,10 @@ def title_control_path():
 ACTION_MODE = "template_mode"
 ACTION_CELL_PUT = "template_cell_put"
 ACTION_CELL_CLEAR = "template_cell_clear"
+ACTION_CLEAR = "template_clear"
+ACTION_IMPORT = "template_import"
 ACTION_UNIVERSAL_IMPORT = "template_universal_import"
+RECIPE_LONG_PRESS_SECONDS = 0.5
 ACTION_CELL_COUNT = "template_cell_count"
 ACTION_ENCODE = "template_encode"
 ACTION_INPUT_PUT = "template_input_put"
@@ -169,7 +177,7 @@ ACTION_OUTPUT_TAKE = "template_output_take"
 #: 是**背包槽锚**，意思完全不同——一张表说清哪个字段在哪条命令里什么意思。
 CONFIG_ACTIONS = frozenset([
     ACTION_MODE, ACTION_CELL_PUT, ACTION_CELL_CLEAR, ACTION_CELL_COUNT,
-    ACTION_ENCODE, ACTION_UNIVERSAL_IMPORT,
+    ACTION_ENCODE, ACTION_CLEAR, ACTION_IMPORT, ACTION_UNIVERSAL_IMPORT,
 ])
 
 #: 面给玩家的失败原因。**只列界面必须点出来的那几条**，其余退化成空串。
@@ -238,6 +246,7 @@ class TemplateView(object):
         self.last_error = None
         self.errors = 0
         self._requests = {}
+        self.recipe_choice = None
         self._universal_import = None
 
     # -- 收包 ----------------------------------------------------------
@@ -253,9 +262,13 @@ class TemplateView(object):
         if (isinstance(revision, bool) or not isinstance(revision, INTEGER_TYPES)
                 or revision < self.revision):
             return False
+        if revision != self.revision:
+            self.close_recipe_windows()
         self.revision = revision
         mode = getattr(message, "mode", None)
         if mode in (MODE_CRAFTING, MODE_FACTORY):
+            if mode != self.mode:
+                self.close_recipe_windows()
             self.mode = mode
         for surface, _collection in SURFACES:
             rows = getattr(message, surface, None) or ()
@@ -468,8 +481,8 @@ class TemplateView(object):
         if press is not None and press[0] == index:
             if press[2]:
                 return
-            if self.screen._clock() - press[1] >= LONG_PRESS_SECONDS:
-                self.open_quantity(surface, index)
+            if self.screen._clock() - press[1] >= self._long_press_seconds(surface):
+                self._on_long_press(surface, index)
                 return
         self.on_cell_click(surface, index)
 
@@ -488,10 +501,50 @@ class TemplateView(object):
             return
         now = self.screen._clock()
         for surface, (index, at, fired) in list(self.presses.items()):
-            if fired or now - at < LONG_PRESS_SECONDS:
+            if fired or now - at < self._long_press_seconds(surface):
                 continue
             self.presses[surface] = (index, at, True)
-            self.open_quantity(surface, index)
+            self._on_long_press(surface, index)
+
+    def _long_press_seconds(self, surface):
+        # type: (str) -> float
+        if surface == SURFACE_OUTPUTS and self.mode == MODE_CRAFTING:
+            return RECIPE_LONG_PRESS_SECONDS
+        return LONG_PRESS_SECONDS
+
+    def _on_long_press(self, surface, index):
+        # type: (str, int) -> bool
+        if surface != SURFACE_OUTPUTS or self.mode != MODE_CRAFTING:
+            return self.open_quantity(surface, index)
+        if (self.is_unavailable() or index != CRAFT_PREVIEW_CELL
+                or self.raw_row(surface, index) is None):
+            return False
+        if RECIPE_WINDOW_ATTRIBUTE in self.screen._vars:
+            return False
+        return show_item_list_window(
+            self.screen, [], 1, title=u"选择合成产物",
+            on_selected=partial(self._on_product, self.revision))
+
+    def _on_product(self, revision, item_id):
+        # type: (int, str) -> object
+        if (self.is_unavailable() or self.mode != MODE_CRAFTING
+                or revision != self.revision or not item_id):
+            return None
+        return self._send(ACTION_IMPORT, key=ResourceKey.item(item_id))
+
+    def _on_recipe_choice(self, digest):
+        # type: (str) -> object
+        choice = self.recipe_choice
+        self.recipe_choice = None
+        if (choice is None or self.is_unavailable()
+                or self.mode != MODE_CRAFTING or choice["revision"] != self.revision):
+            return None
+        if not any(row.get("digest") == digest for row in choice["candidates"]):
+            return None
+        output = choice["output"]
+        return self._send(ACTION_IMPORT,
+                          key=ResourceKey.item(output["name"], output.get("aux", 0)),
+                          recipe=digest)
 
     def open_quantity(self, surface, index):
         # type: (str, int) -> bool
@@ -571,6 +624,11 @@ class TemplateView(object):
             return None
         return self._send(ACTION_MODE, target=mode)
 
+    def on_clear(self):
+        # type: () -> object
+        """一次清空输入九宫格与虚拟产物配置。"""
+        return self._send(ACTION_CLEAR)
+
     def on_universal_import(self):
         # type: () -> object
         """把采集结果作为一条配置命令提交，成功回执后才消费全局快照。"""
@@ -583,11 +641,11 @@ class TemplateView(object):
         config["outputs"] = config["outputs"][:CELLS_OF[SURFACE_OUTPUTS]]
         version = universal_importer_config.saved_config_version()
         self.close_number_window()
+        self.close_recipe_windows()
         request_id = self._send(ACTION_UNIVERSAL_IMPORT, config=config)
         if request_id is not None:
             self._universal_import = (request_id, version)
         return request_id
-
 
     def on_make(self):
         # type: () -> object
@@ -622,8 +680,8 @@ class TemplateView(object):
     # -- 发命令 --------------------------------------------------------
 
     def _send(self, action, target=None, cell=None, key=None, count=None,
-              slot=None, slot_version=None, config=None):
-        # type: (str, object, object, object, object, object, object, object) -> str
+              slot=None, slot_version=None, recipe=None, config=None):
+        # type: (str, object, object, object, object, object, object, object, object) -> str
         """发一条命令，返回 `request_id`（没发出去时 `None`）。
 
         **`slot_version` 一条命令一个意思**：配置编辑那几条是**配置修订号**
@@ -643,6 +701,7 @@ class TemplateView(object):
             count=count,
             slot=slot,
             slot_version=slot_version,
+            recipe=recipe,
             config=config,
         )
         self._requests[request_id] = action
@@ -685,7 +744,18 @@ class TemplateView(object):
             self.last_error = self._error_text(result)
             return
         self.last_error = None
-        if action == ACTION_UNIVERSAL_IMPORT:
+        payload = result.get("payload") or {}
+        if (action == ACTION_IMPORT and payload.get("needs_choice")
+                and not self.is_unavailable() and self.mode == MODE_CRAFTING
+                and payload.get("revision") == self.revision):
+            self.recipe_choice = payload
+            try:
+                RecipeChoiceWindow(self.screen, payload["output"],
+                                   payload["candidates"], self._on_recipe_choice)
+            except Exception:
+                self.recipe_choice = None
+                self.errors += 1
+        if action in (ACTION_CLEAR, ACTION_UNIVERSAL_IMPORT):
             self.selection = None
             self.presses.clear()
             self._clear_sources()
@@ -748,12 +818,20 @@ class TemplateView(object):
         """
         if self.client.has_session():
             return
-        if not self._requests and self.selection is None:
-            return
         self._requests = {}
-        self._universal_import = None
         self.selection = None
+        self._universal_import = None
+        self.presses.clear()
         self.close_number_window()
+        self.close_recipe_windows()
+
+    def close_recipe_windows(self):
+        # type: () -> None
+        self.recipe_choice = None
+        for attribute in (ITEM_LIST_WINDOW_ATTRIBUTE, RECIPE_WINDOW_ATTRIBUTE):
+            window = self.screen._vars.get(attribute)
+            if window is not None:
+                window.close()
 
     def close_number_window(self):
         # type: () -> None
@@ -770,6 +848,7 @@ class TemplateView(object):
             return
         self.closed = True
         self.close_number_window()
+        self.close_recipe_windows()
         self._requests = {}
         self._universal_import = None
         self.selection = None
@@ -797,7 +876,7 @@ class TemplateView(object):
 
 
 @RegistToolDeltaScreen("template_terminal_panel_ui.main")
-class TemplatePanel(TerminalPanelBase):
+class TemplatePanel(ItemListWindowBindingsMixin, TerminalPanelBase):
     """样板终端：通用终端的一切 + 四个格子区。
 
     接线与 `CraftingPanel.OnCreate` 逐条对应，多出来的只有 `template` 这一个
@@ -1049,11 +1128,16 @@ class TemplatePanel(TerminalPanelBase):
         if self.template is not None:
             self.template.on_mode(MODE_FACTORY)
 
+    @Binder.binding(Binder.BF_ButtonClickUp, BINDING_PREFIX + "clear")
+    def OnClearTemplate(self, params=None):
+        # type: (object) -> None
+        if self.template is not None:
+            self.template.on_clear()
+
     @Binder.binding(Binder.BF_BindBool, BINDING_PREFIX + "universal_import_ready")
     def universal_import_ready(self):
         # type: () -> bool
         return universal_importer_config.has_saved_config()
-
 
     @Binder.binding(Binder.BF_ButtonClickUp, BINDING_PREFIX + "universal_import")
     def on_universal_import(self, params=None):
@@ -1070,7 +1154,6 @@ class TemplatePanel(TerminalPanelBase):
 
         self.OnCloseClick(params)
         ExecLater(0, open_universal_importer)
-
 
     @Binder.binding(Binder.BF_ButtonClickUp, BINDING_PREFIX + "make")
     def OnMakeTemplate(self, params=None):

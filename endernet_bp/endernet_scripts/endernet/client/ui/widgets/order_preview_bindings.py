@@ -34,11 +34,18 @@ from .order_preview import (
     ITEM_AUX_BINDING,
     LOADING_BINDING,
     ROW_COUNT_BINDING,
-    ROW_MISSING_BINDING,
+    ROW_COLOR_BINDING,
     ROW_NAME_BINDING,
     SUBMIT_BINDING,
     VISIBLE_BINDING,
 )
+
+# Python 2 的 BF_BindString 需要 UTF-8 str；直接返回 unicode 会被引擎写为空。
+try:
+    UNICODE_TYPE = unicode
+except NameError:
+    UNICODE_TYPE = ()
+
 
 #: 颜色绑定的标志。与 `device_status_bindings.COLOR_BINDING_FLAG` 同一条
 #: 理由：`Binder` 是引擎在运行期给的类，离线拿不到它的属性表；取不到就
@@ -52,7 +59,7 @@ def bind_color(func):
     if COLOR_BINDING_FLAG is None:
         return func
     return Binder.binding_collection(
-        COLOR_BINDING_FLAG, COLLECTION, ROW_MISSING_BINDING
+        COLOR_BINDING_FLAG, COLLECTION, ROW_COLOR_BINDING
     )(func)
 
 
@@ -131,23 +138,25 @@ class OrderPreviewBindingsMixin(object):
     def order_preview_row_name(self, index):
         # type: (object) -> str
         model = self._preview_model()
-        return "" if model is None else model.name_text(index)
+        row = None if model is None else model.row_of(index)
+        if row is None:
+            return ""
+        from .....tooldelta.define.item import Item
+        return Item(row["name"]).GetBasicInfo().itemName
 
     @Binder.binding_collection(Binder.BF_BindString, COLLECTION, ROW_COUNT_BINDING)
     def order_preview_row_count(self, index):
         # type: (object) -> str
         model = self._preview_model()
-        return "" if model is None else model.count_text(index)
+        value = "" if model is None else model.count_text(index)
+        return value.encode("utf-8") if isinstance(value, UNICODE_TYPE) else value
 
     @bind_color
     def order_preview_row_color(self, index):
-        # type: (object) -> list
-        """缺料行的背景色。**不缺的行也要给一个明确的颜色**：靠「不写」
-        恢复会留着上一次预览的红色（契约第 4 节）。"""
+        # type: (object) -> tuple
+        """直接绑定原料行 image 的颜色，复用格子时总是返回明确颜色。"""
         model = self._preview_model()
-        if model is not None and model.row_missing(index):
-            return order_preview.COLOR_MISSING
-        return order_preview.COLOR_NORMAL
+        return (1.0, 1.0, 1.0) if model is None else model.row_color(index)
 
     @Binder.binding(Binder.BF_ButtonClickUp, CLOSE_BINDING)
     def OnOrderPreviewClose(self, params=None):

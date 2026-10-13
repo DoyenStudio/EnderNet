@@ -19,6 +19,55 @@ from endernet.common.definitions import Value
 
 
 class TestAssembly(ReturnsFixture):
+    def test_factory_item_in_crafting_mode_is_indexed_and_accepted_in_all_pattern_slots(self):
+        pattern = self.patterns[10]
+        item = self.server.patterns.template_item(pattern)
+        self.assertEqual(item["newItemName"], "endernet:factorical_template")
+        for slot in range(10, 19):
+            self.assertTrue(self.server.patterns.accepts_put(
+                "endernet:assemble_chamber", item["newItemName"], slot, item))
+            self.port_box.write_slot(slot, item)
+        self.server.patterns.refresh(self.ref_at(PORT_KEY), force=True)
+        state = self.server.patterns.get_by_ref(self.ref_at(PORT_KEY))
+        self.assertEqual(sorted(state.entries), list(range(10, 19)))
+        self.assertEqual(state.invalid, {})
+
+    def test_assembly_slots_reject_other_modes_blank_broken_and_legacy_items(self):
+        from endernet.server.crafting.patterns import MODE_FACTORY, PatternError
+        store = self.server.patterns
+        crafting = store.template_item(self.patterns[10])
+        factory = store.template_item(PatternDefinition(
+            MODE_FACTORY, [PatternStack(IRON, 2)], [PatternStack(BLOCK, 1)]))
+        for slot in (10, 18):
+            for item in (factory, {"newItemName": "endernet:factorical_template"},
+                         {"newItemName": "endernet:factorical_template", "userData": {}},
+                         {"newItemName": "endernet:crafting_template"},
+                         {"newItemName": "minecraft:stone"}):
+                self.assertFalse(store.accepts_put(
+                    "endernet:assemble_chamber", item["newItemName"], slot, item))
+        for slot in range(10):
+            self.assertFalse(store.accepts_put(
+                "endernet:assemble_chamber", crafting["newItemName"], slot, crafting))
+            self.assertTrue(store.accepts_put(
+                "endernet:assemble_chamber", "minecraft:stone", slot))
+        self.port_box.write_slot(18, factory)
+        # 原料／输出中的样板不能被索引为配方提供者。
+        self.port_box.write_slot(0, crafting)
+        self.port_box.write_slot(9, crafting)
+        store.refresh(self.ref_at(PORT_KEY), force=True)
+        state = store.get_by_ref(self.ref_at(PORT_KEY))
+        self.assertEqual(sorted(state.entries), [10])
+        self.assertEqual(state.invalid[18]["code"], PatternError.KIND_MISMATCH)
+        before_pattern = self.port_box.read_slot(10)
+        self.assertFalse(store.install(self.ref_at(PORT_KEY), 10,
+                                       PatternDefinition(MODE_FACTORY, [PatternStack(IRON, 2)],
+                                                         [PatternStack(BLOCK, 1)]))[0])
+        self.assertEqual(self.port_box.read_slot(10), before_pattern)
+        before = self.port_box.read_slot(9)
+        self.assertFalse(store.install(self.ref_at(PORT_KEY), 9, self.patterns[10])[0])
+        self.assertFalse(store.uninstall(self.ref_at(PORT_KEY), 9)[0])
+        self.assertEqual(self.port_box.read_slot(9), before)
+
     def energy_member(self, node_key):
         runtime = self.server.runtimes.runtime_of(node_key)
         return runtime.services.get(ServiceId.ENERGY)._members[node_key]

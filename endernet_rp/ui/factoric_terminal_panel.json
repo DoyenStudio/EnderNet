@@ -557,7 +557,7 @@
                     "bindings": [
                         {
                             "binding_type": "collection_details",
-                            "binding_collection_name": "",
+                            "binding_collection_name": "orders",
                             "binding_condition": "always_when_visible"
                         }
                     ],
@@ -1005,6 +1005,7 @@
                         0.2588235294117647,
                         0.2588235294117647
                     ],
+                    "font_scale_factor": 0.9,
                     "font_type": "default",
                     "text": "#text",
                     "property_bag": {

@@ -588,7 +588,7 @@ class TestItemResources(AssetFixture):
         先红一次、然后被人顺手改成常数，那条断言就再也拦不住「定义表改了、
         生成物没跟上」。
 
-        介质与合成样板取 1（要携带自己的身份与内容／配方编码在 `userData` 里）；
+        介质取 1（要携带自己的身份与内容／配方编码在 `userData` 里）；
         工厂样板由 User 2026-10-02 定为 64（样板终端的输入槽要能一次放一叠），
         代价是一条尚未验证的引擎风险，见 `plans/items.md` 的样板一节。
         """
@@ -600,11 +600,10 @@ class TestItemResources(AssetFixture):
                 spec.id,
             )
 
-    def test_the_two_templates_keep_their_own_limits(self):
-        """把两类样板的取值钉死——两边一起被改时，只有这一条会红。"""
-        crafting = self.definitions.get_template("endernet:crafting_template")
+    def test_only_factory_template_is_registered_with_stack_limit_64(self):
+        """仅注册工厂样板，保留堆叠上限 64。"""
+        self.assertFalse(self.definitions.has_template("endernet:crafting_template"))
         factory = self.definitions.get_template("endernet:factorical_template")
-        self.assertEqual(crafting.max_stack_size, 1)
         self.assertEqual(factory.max_stack_size, 64)
 
     def test_items_carry_a_tip(self):

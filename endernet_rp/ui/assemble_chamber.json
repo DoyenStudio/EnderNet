@@ -142,11 +142,13 @@
                                                             "100%cm+0px",
                                                             "100%cm+0px"
                                                         ],
-                                                        "collection_index": 9,
+                                                        "collection_name": "netease_container",
                                                         "layer": 1,
                                                         "controls": [
                                                             {
-                                                                "slot@endernet_container_common.container_grid_item": {}
+                                                                "slot@endernet_container_common.container_grid_item": {
+                                                                    "collection_index": 9
+                                                                }
                                                             }
                                                         ]
                                                     }
@@ -226,11 +228,13 @@
                                                 "100%cm+0px",
                                                 "100%cm+0px"
                                             ],
-                                            "collection_index": 10,
+                                            "collection_name": "netease_container",
                                             "layer": 1,
                                             "controls": [
                                                 {
-                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                    "slot@endernet_container_common.container_grid_item": {
+                                                        "collection_index": 10
+                                                    }
                                                 }
                                             ]
                                         }
@@ -248,11 +252,13 @@
                                                 "100%cm+0px",
                                                 "100%cm+0px"
                                             ],
-                                            "collection_index": 11,
+                                            "collection_name": "netease_container",
                                             "layer": 1,
                                             "controls": [
                                                 {
-                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                    "slot@endernet_container_common.container_grid_item": {
+                                                        "collection_index": 11
+                                                    }
                                                 }
                                             ]
                                         }
@@ -270,11 +276,13 @@
                                                 "100%cm+0px",
                                                 "100%cm+0px"
                                             ],
-                                            "collection_index": 12,
+                                            "collection_name": "netease_container",
                                             "layer": 1,
                                             "controls": [
                                                 {
-                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                    "slot@endernet_container_common.container_grid_item": {
+                                                        "collection_index": 12
+                                                    }
                                                 }
                                             ]
                                         }
@@ -292,11 +300,13 @@
                                                 "100%cm+0px",
                                                 "100%cm+0px"
                                             ],
-                                            "collection_index": 13,
+                                            "collection_name": "netease_container",
                                             "layer": 1,
                                             "controls": [
                                                 {
-                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                    "slot@endernet_container_common.container_grid_item": {
+                                                        "collection_index": 13
+                                                    }
                                                 }
                                             ]
                                         }
@@ -314,11 +324,13 @@
                                                 "100%cm+0px",
                                                 "100%cm+0px"
                                             ],
-                                            "collection_index": 14,
+                                            "collection_name": "netease_container",
                                             "layer": 1,
                                             "controls": [
                                                 {
-                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                    "slot@endernet_container_common.container_grid_item": {
+                                                        "collection_index": 14
+                                                    }
                                                 }
                                             ]
                                         }
@@ -336,11 +348,13 @@
                                                 "100%cm+0px",
                                                 "100%cm+0px"
                                             ],
-                                            "collection_index": 15,
+                                            "collection_name": "netease_container",
                                             "layer": 1,
                                             "controls": [
                                                 {
-                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                    "slot@endernet_container_common.container_grid_item": {
+                                                        "collection_index": 15
+                                                    }
                                                 }
                                             ]
                                         }
@@ -358,11 +372,13 @@
                                                 "100%cm+0px",
                                                 "100%cm+0px"
                                             ],
-                                            "collection_index": 16,
+                                            "collection_name": "netease_container",
                                             "layer": 1,
                                             "controls": [
                                                 {
-                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                    "slot@endernet_container_common.container_grid_item": {
+                                                        "collection_index": 16
+                                                    }
                                                 }
                                             ]
                                         }
@@ -380,11 +396,13 @@
                                                 "100%cm+0px",
                                                 "100%cm+0px"
                                             ],
-                                            "collection_index": 17,
+                                            "collection_name": "netease_container",
                                             "layer": 1,
                                             "controls": [
                                                 {
-                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                    "slot@endernet_container_common.container_grid_item": {
+                                                        "collection_index": 17
+                                                    }
                                                 }
                                             ]
                                         }
@@ -402,11 +420,13 @@
                                                 "100%cm+0px",
                                                 "100%cm+0px"
                                             ],
-                                            "collection_index": 18,
+                                            "collection_name": "netease_container",
                                             "layer": 1,
                                             "controls": [
                                                 {
-                                                    "slot@endernet_container_common.container_grid_item": {}
+                                                    "slot@endernet_container_common.container_grid_item": {
+                                                        "collection_index": 18
+                                                    }
                                                 }
                                             ]
                                         }

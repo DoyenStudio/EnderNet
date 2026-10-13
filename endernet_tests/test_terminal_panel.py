@@ -2984,6 +2984,42 @@ class TestEngineBindingResolution(unittest.TestCase):
         # 少一条的表现是那一格／那一项／那一下点击永远是空的或没反应。
         self.assertEqual(registered, expected)
 
+    def test_preview_item_name_uses_localized_basic_info(self):
+        panel = self.panel()
+        model = order_preview.OrderPreviewModel()
+        model.rows = ({"name": "minecraft:stone", "demand": 1000,
+                       "allocated": 800, "planned": 204, "missing": False},)
+        panel.preview = model
+        from unittest.mock import patch
+        with patch.object(ItemStub, "GetBasicInfo", return_value=types.SimpleNamespace(
+                itemName=u"石头")):
+            self.assertEqual(panel.order_preview_row_name(0), u"石头")
+        self.assertEqual(panel.order_preview_row_name(1), "")
+        self.assertEqual(panel.order_preview_row_count(0), u"需要制作 200/1000")
+        self.assertEqual(panel.order_preview_row_color(0), order_preview.COLOR_CRAFTING)
+        panel.preview = None
+        self.assertEqual(panel.order_preview_row_name(0), "")
+        self.assertEqual(panel.order_preview_row_color(0), (1.0, 1.0, 1.0))
+
+    def test_preview_status_encodes_unicode_for_the_python2_engine(self):
+        from unittest.mock import patch
+        panel = self.panel()
+        model = order_preview.OrderPreviewModel()
+        panel.preview = model
+        cases = [
+            ({"demand": 1000, "allocated": 1000, "missing": False}, u"库存充足"),
+            ({"demand": 1000, "allocated": 800, "missing": False}, u"需要制作 200/1000"),
+            ({"demand": 1000, "allocated": 0, "missing": True, "shortfall": 600},
+             u"缺失 600/1000"),
+        ]
+        # Python 3 的 str 模拟 Python 2 unicode，检查传给 BindString 的字节串。
+        with patch.object(order_preview_bindings, "UNICODE_TYPE", str):
+            for row, expected in cases:
+                model.rows = (row,)
+                value = panel.order_preview_row_count(0)
+                self.assertIsInstance(value, bytes)
+                self.assertEqual(value.decode("utf-8"), expected)
+
     def test_the_runtime_registration_route_cannot_resolve_at_all(self):
         panel = self.panel()
 

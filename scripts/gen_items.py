@@ -1,5 +1,5 @@
 # coding=utf-8
-"""由定义表生成物品 JSON 与物品图集（存储介质 + 两类样板 + 内存条）。
+"""由定义表生成物品 JSON 与物品图集（存储介质 + 工厂样板 + 内存条）。
 
     python scripts/gen_items.py          # 生成
     python scripts/gen_items.py --check  # 只检查是否与当前文件一致（CI 用）
@@ -63,7 +63,7 @@ ITEM_FORMAT_VERSION = "1.10"
 #: 同样取 1。
 #:
 #: **样板不读这个默认值**：它们各自带 `TemplateSpec.max_stack_size`
-#: （`definitions.py`，2026-10-02 由 User 定：合成样板 1、工厂样板 64）。
+#: （`definitions.py`，2026-10-02 由 User 定：工厂样板 64）。
 #: 工厂样板取 64 是为样板终端的输入槽能一次放一叠，代价是一条**尚未验证**的
 #: 引擎风险——配方编码在 `userData` 里，若引擎会把 `userData` 不同的物品并成
 #: 一叠，两块不同配置的样板会互相覆盖。安全的机制是「引擎本就按 `userData`
@@ -121,7 +121,7 @@ def template_tip(spec, definitions):
     """
     names = [
         definitions.get(device_id).label
-        for device_id in sorted(devices_for_mode(spec.mode))
+        for device_id in sorted(devices_for_mode("crafting") | devices_for_mode("factory"))
         if definitions.has(device_id)
     ]
     where = "、".join(names) if names else "（尚未指定设备）"
@@ -169,6 +169,7 @@ def build_resource_json(spec):
 def build_item_texture(existing, definitions):
     """物品图集。保留已有条目，只补本模组自己的物品（介质与样板）。"""
     texture_data = dict(existing.get("texture_data", {}))
+    texture_data.pop("endernet:crafting_template", None)
     for spec in definitions.item_specs():
         texture_data[item_icon_key(spec.id)] = {
             "textures": "textures/items/" + item_texture_name(spec.id)

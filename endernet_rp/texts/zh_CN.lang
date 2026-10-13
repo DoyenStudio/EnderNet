@@ -23,7 +23,6 @@ tile.endernet:energy_input_interface.name=能源接入口
 tile.endernet:creative_energy_source.name=创造能量源
 item.endernet:singleside_tape.name=小型单面磁带
 item.endernet:softdisk_1k.name=1K软盘
-item.endernet:crafting_template.name=合成样板
 item.endernet:factorical_template.name=工厂样板
 item.endernet:memory_128b.name=128B 感应式内存块
 item.endernet:memory_256b.name=256B 感应式内存块

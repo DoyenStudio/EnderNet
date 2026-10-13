@@ -745,6 +745,14 @@ class TestContainerWriteDictionary(unittest.TestCase):
         self.component = Component()
         self.primitives = EngineItemPrimitives()
         self.primitives._container_comp = lambda: self.component
+        self.events = []
+        self.cancel_slots = set()
+
+        def broadcast(dimension, position, slot, data, inserting):
+            self.events.append((dimension, position, slot, dict(data), inserting))
+            return slot not in self.cancel_slots
+
+        self.primitives._broadcast_container_transfer = broadcast
         self.container = EngineItemContainer(self.primitives, 0, (28, 68, -4))
 
     def test_empty_insert_stack_and_clear_use_engine_empty_values(self):
@@ -784,6 +792,149 @@ class TestContainerWriteDictionary(unittest.TestCase):
         written = self.component.calls[-1][0]
         for field in ("enchantData", "modEnchantData", "userData"):
             self.assertIsNone(written[field])
+
+    def test_events_use_moved_counts_for_insert_merge_extract_and_clear(self):
+        self.container.insert("insert", STONE, 3)
+        self.container.insert_slot("merge", 0, STONE, 2)
+        self.container.extract_slot("extract", 0, STONE, 1)
+        self.container.extract("clear", STONE, 4)
+        self.assertEqual([(event[3]["count"], event[4]) for event in self.events],
+                         [(3, True), (2, True), (1, False), (4, False)])
+        for dimension, position, slot, data, _ in self.events:
+            self.assertEqual((dimension, position, slot), (0, (28, 68, -4), 0))
+            self.assertEqual(item_key_from_dict(data), STONE)
+        self.assertIsNone(self.component.item)
+
+    def test_cancelled_insert_and_extract_never_write(self):
+        self.cancel_slots.add(0)
+        refused = self.container.insert("refused", STONE, 3)
+        self.assertEqual(refused.moved, 0)
+        self.assertEqual(self.component.calls, [])
+        self.component.item = item_dict(STONE, 5)
+        for operation in (
+            lambda: self.container.extract("extract", STONE, 5),
+            lambda: self.container.extract_slot("slot", 0, STONE, 2),
+            lambda: self.container.insert_slot("insert-slot", 0, STONE, 2),
+        ):
+            self.assertEqual(operation().moved, 0)
+        self.assertEqual(self.component.calls, [])
+        self.assertEqual(self.component.item["count"], 5)
+
+    def test_cancelled_slot_is_skipped_for_bulk_transfers(self):
+        boxes = [item_dict(STONE, 3), item_dict(STONE, 4)]
+        self.component.GetContainerSize = lambda pos, dimension: len(boxes)
+        self.component.GetContainerItem = lambda pos, slot, dimension, user_data: boxes[slot]
+
+        def write(data, slot, pos, dimension):
+            self.component.calls.append((dict(data), slot, pos, dimension))
+            boxes[slot] = dict(data)
+            return True
+
+        self.component.SpawnItemToContainer = write
+        self.cancel_slots.add(0)
+        self.assertEqual(self.container.insert("insert", STONE, 2).moved, 2)
+        self.assertEqual([box["count"] for box in boxes], [3, 6])
+        self.assertEqual(self.container.extract("extract", STONE, 4).moved, 4)
+        self.assertEqual([box["count"] for box in boxes], [3, 2])
+        self.assertEqual([event[2] for event in self.events], [0, 1, 0, 1])
+        self.assertEqual([call[1] for call in self.component.calls], [1, 1])
+
+    def test_read_and_simulation_do_not_broadcast(self):
+        self.container.entries()
+        self.container.can_accept(STONE, 3)
+        self.assertEqual(self.events, [])
+
+    def test_listener_item_mutation_does_not_change_written_metadata(self):
+        data = item_dict(STONE, 2)
+        data["userData"] = {"custom": 1}
+
+        def broadcast(dimension, position, slot, piece, inserting):
+            self.assertEqual(self.component.calls, [])
+            piece["userData"]["custom"] = 99
+            piece["count"] = 100
+            return True
+
+        self.primitives._broadcast_container_transfer = broadcast
+        self.assertTrue(self.container.write_slot(0, data))
+        self.assertEqual(self.component.item["userData"], {"custom": 1})
+        self.assertEqual(self.component.item["count"], 2)
+        self.assertEqual(data["userData"], {"custom": 1})
+
+    def test_listener_slot_mutation_is_not_overwritten(self):
+        def broadcast(dimension, position, slot, piece, inserting):
+            self.component.item = item_dict(DIRT, 1)
+            return True
+
+        self.primitives._broadcast_container_transfer = broadcast
+        self.assertFalse(self.container.write_slot(0, item_dict(STONE, 2)))
+        self.assertEqual(self.component.calls, [])
+        self.assertEqual(item_key_from_dict(self.component.item), DIRT)
+
+
+class TestContainerTransferBroadcast(unittest.TestCase):
+    def test_event_fields_and_returned_cancel_are_used(self):
+        import builtins
+        import types
+        from unittest.mock import patch
+
+        events = []
+        block_reads = []
+
+        class Item(dict):
+            @classmethod
+            def from_dict(cls, data):
+                return cls(data)
+
+        class Push(object):
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+            def broadcast(self):
+                events.append(self)
+                # 返回值的原始数据承载取消；原始 event._orig 仍为空。
+                return types.SimpleNamespace(_orig={"cancel": cancel})
+
+        class Pull(Push):
+            pass
+
+        def block_name(dimension, position):
+            block_reads.append((dimension, position))
+            return "othermod:machine"
+
+        modules = {
+            "tooldelta.api.server": types.SimpleNamespace(GetBlockName=block_name),
+            "tooldelta.define.item": types.SimpleNamespace(Item=Item),
+            "tooldelta.events.server": types.SimpleNamespace(
+                ItemPushInCustomContainerServerEvent=Push,
+                ItemPullOutCustomContainerServerEvent=Pull),
+        }
+        original_import = builtins.__import__
+
+        def import_engine(name, globals=None, locals=None, fromlist=(), level=0):
+            if level == 4 and name in modules:
+                return modules[name]
+            return original_import(name, globals, locals, fromlist, level)
+
+        data = {"newItemName": STONE.name, "count": 2, "userData": {"custom": 1}}
+        primitives = EngineItemPrimitives()
+        with patch("builtins.__import__", side_effect=import_engine):
+            for inserting, event_class in ((True, Push), (False, Pull)):
+                for cancel in (False, True):
+                    allowed = primitives._broadcast_container_transfer(
+                        2, (3, 4, 5), 7, data, inserting)
+                    self.assertEqual(allowed, not cancel)
+                    event = events[-1]
+                    self.assertIs(type(event), event_class)
+                    self.assertEqual(event.collectionName, "othermod:machine")
+                    self.assertEqual((event.dimension, event.x, event.y, event.z,
+                                      event.collectionIndex), (2, 3, 4, 5, 7))
+                    self.assertEqual(event._orig, {})
+                    self.assertEqual(event.item["count"], 2)
+                    self.assertEqual(event.item["newAuxValue"], 0)
+                    self.assertTrue(event.item["showInHand"])
+                    event.item["userData"]["custom"] = 99
+                    self.assertEqual(data["userData"], {"custom": 1})
+        self.assertEqual(block_reads, [(2, (3, 4, 5))] * 4)
 
 
 class TestEmptyItemTranslation(unittest.TestCase):

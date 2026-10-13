@@ -1319,6 +1319,50 @@ class _PutEvent(object):
         self.cancelled = True
 
 
+class TestContainerEventUserData(unittest.TestCase):
+    def test_both_put_events_request_user_data_before_registering(self):
+        import sys
+        import types
+        from unittest.mock import patch
+        from endernet.server.adapters.events import ToolDeltaEventApi
+
+        calls = []
+
+        class PlayerPut(object):
+            name = "PlayerTryPutCustomContainerItemServerEvent"
+
+        class HopperPut(object):
+            name = "ItemPushInCustomContainerServerEvent"
+
+        class ItemComponent(object):
+            def GetUserDataInEvent(self, name):
+                calls.append(("userdata", name))
+
+        class Factory(object):
+            def CreateItem(self, level):
+                return ItemComponent()
+
+        class Bus(object):
+            def ListenEvent(self, event_cls, priority, static=False):
+                calls.append(("listen", event_cls.name))
+                return lambda callback: callback
+
+        engine = types.ModuleType("mod.server.extraServerApi")
+        engine.GetEngineCompFactory = lambda: Factory()
+        engine.GetLevelId = lambda: "level"
+        api = ToolDeltaEventApi.__new__(ToolDeltaEventApi)
+        api.PlayerTryPutCustomContainerItemServerEvent = PlayerPut
+        api.ItemPushInCustomContainerServerEvent = HopperPut
+        api._bus = Bus()
+        with patch.dict(sys.modules, {"mod": types.ModuleType("mod"),
+                                      "mod.server": types.ModuleType("mod.server"),
+                                      "mod.server.extraServerApi": engine}):
+            api.listen(PlayerPut)
+            api.listen(HopperPut)
+        self.assertEqual(calls, [("userdata", PlayerPut.name), ("listen", PlayerPut.name),
+                                 ("userdata", HopperPut.name), ("listen", HopperPut.name)])
+
+
 class TestPatternContainerEvents(unittest.TestCase):
     """容器事件 -> 样板索引（07）。
 
@@ -1459,6 +1503,31 @@ class TestPatternContainerEvents(unittest.TestCase):
         event = _PutEvent("endernet:crafting_template", 7, 64, 0)
         self.api.dispatch(self.api.event("PlayerTryPutCustomContainerItemServerEvent"), event)
         self.assertTrue(event.cancelled)
+
+    def test_assembly_player_and_hopper_put_check_encoded_mode(self):
+        from endernet.server.crafting.patterns import (
+            PatternDefinition, PatternStack, MODE_CRAFTING, MODE_FACTORY,
+        )
+        from endernet.common.resource_key import ResourceKey
+        self.place("endernet:assemble_chamber", 7)
+        iron = ResourceKey.item("minecraft:iron_ingot")
+        block = ResourceKey.item("minecraft:iron_block")
+        crafting = self.server.patterns.template_item(PatternDefinition(
+            MODE_CRAFTING, [PatternStack(iron, 1, slot=0)], [PatternStack(block, 1)]))
+        factory = self.server.patterns.template_item(PatternDefinition(
+            MODE_FACTORY, [PatternStack(iron, 1)], [PatternStack(block, 1)]))
+        for event_name in ("PlayerTryPutCustomContainerItemServerEvent",
+                           "ItemPushInCustomContainerServerEvent"):
+            for slot in (10, 18):
+                for item, rejected in ((crafting, False), (factory, True),
+                                       ({"newItemName": "endernet:factorical_template"}, True)):
+                    event = _PutEvent(item["newItemName"], 7, 64, 0)
+                    event.collectionIndex = slot
+                    event.dimension = 0
+                    # 对齐 ToolDelta Item.marshal 的包装路径。
+                    event.item.marshal = lambda item=item: item
+                    self.api.dispatch(self.api.event(event_name), event)
+                    self.assertEqual(event.cancelled, rejected, (event_name, slot, item))
 
     def test_a_factory_template_is_accepted(self):
         ref = self.place(TEMPLATE_IO, 7)

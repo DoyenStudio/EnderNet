@@ -2,7 +2,7 @@
 
 [返回目录](README.md) · [UI JSON](../../endernet_rp/ui/bus_template_io.json)
 
-namespace：`bus_template_io_ui`；内容模板：`bus_template_io_ui.content`。依据 2026-09-29 最新保存的 JSON 和 User 的槽位用途说明编写。UI 结构与槽位约定已记录；引擎容器容量对齐、专用脚本及游戏验证待完成。
+namespace：`bus_template_io_ui`；内容模板：`bus_template_io_ui.content`。依据 2026-09-29 JSON 和 User 的槽位用途说明编写。引擎容器已对齐为 18 格：索引 0–8 仅供样板，9–17 接收产物并通过外部输入转移回流入网。样板索引只读取前 9 格，原料缓冲仍独立于这两行。玩家及漏斗拒收检查按目标槽位区分用途。
 
 ## 1. 制作范围与要求
 

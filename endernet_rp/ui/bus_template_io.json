@@ -56,6 +56,14 @@
                             "bg@common.dialog_background_opaque": {
                                 "controls": [
                                     {
+                                        "inventory_selected_icon_button@common.inventory_selected_icon_button": {}
+                                    },
+                                    {
+                                        "gamepad_cursor_button@common.gamepad_cursor_button": {
+                                            "visible": true
+                                        }
+                                    },
+                                    {
                                         "close@common.close_button": {
                                             "size": [
                                                 18,

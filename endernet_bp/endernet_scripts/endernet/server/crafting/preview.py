@@ -706,7 +706,8 @@ class PreviewService(object):
 
         **行取自账本而不是 `plan.materials`**：后者把键压成了名字串，
         而客户端画图标要完整身份（`canonical` 与 `name` / `aux`）。
-        `demand <= 0` 的行是**纯副产物**——它出现在账本里是因为别的配方
+        最终目标不是原料，不进入原料行；整单阻塞仍按完整计划判定。
+        demand <= 0 的行是**纯副产物**——它出现在账本里是因为别的配方
         顺手产了它，那不是一条需求，显示出来只会让人以为要多备料。
         """
         blocked_by_canonical = {}
@@ -717,7 +718,7 @@ class PreviewService(object):
             parents.setdefault(child.canonical(), set()).add(parent.canonical())
         rows = []
         for row in job.job.ledger():
-            if row.demand <= 0:
+            if row.demand <= 0 or row.key == job.target:
                 continue
             canonical = row.key.canonical()
             entry = blocked_by_canonical.get(canonical)
@@ -731,6 +732,7 @@ class PreviewService(object):
                 "allocated": int(row.from_stock),
                 "planned": int(row.own_output),
                 "missing": entry is not None,
+                "shortfall": int(entry["shortfall"]) if entry is not None else 0,
                 "sources": sorted(parents.get(canonical, ())),
             })
         truncated = len(rows) > self.policy.max_rows

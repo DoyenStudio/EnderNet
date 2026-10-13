@@ -534,11 +534,10 @@ class TestMemorySpecs(unittest.TestCase):
 
 
 class TestPatternTemplates(unittest.TestCase):
-    """两类样板逐项对应 items.md 的「样板」一节（任务 07-01/07-02）。"""
+    """工厂样板逐项对应 items.md 的「样板」一节（任务 07-01/07-02）。"""
 
     #: items.md 给出的标识与中文名。**不擅自补全 items.md 之外的型号。**
     EXPECTED = {
-        "endernet:crafting_template": ("合成样板", "crafting"),
         "endernet:factorical_template": ("工厂样板", "factory"),
     }
 
@@ -559,8 +558,8 @@ class TestPatternTemplates(unittest.TestCase):
         self.assertIn("endernet:factorical_template", defs.templates)
         self.assertNotIn("endernet:factory_template", defs.templates)
 
-    def test_both_templates_are_registered_as_items(self):
-        """**两份样板都在「已注册为物品」的清单里。**
+    def test_factory_template_is_registered_as_item(self):
+        """**工厂样板在「已注册为物品」的清单里。**
 
         **断言写成派生式**（三类注册表之并），不写死那串标识：写死的话，
         每加一件物品都要来改一次这条，而改的人只会把数字加上去——
@@ -588,11 +587,10 @@ class TestPatternTemplates(unittest.TestCase):
             TemplateSpec("endernet:x", "x", "smelting", "")
 
     def test_item_id_is_found_by_mode(self):
-        """写样板物品时按模式反查标识，因此「模式与物品类型不符」这条路径
-        根本不存在——两者查的是同一个映射。"""
+        """两种模式均输出同一工厂样板物品。"""
         defs = DefinitionSet()
         self.assertEqual(
-            defs.item_id_for_template_mode("crafting"), "endernet:crafting_template"
+            defs.item_id_for_template_mode("crafting"), "endernet:factorical_template"
         )
         self.assertEqual(
             defs.item_id_for_template_mode("factory"), "endernet:factorical_template"
@@ -602,7 +600,7 @@ class TestPatternTemplates(unittest.TestCase):
     def test_template_mode_of_only_answers_for_templates(self):
         defs = DefinitionSet()
         self.assertEqual(
-            defs.template_mode_of("endernet:crafting_template"), "crafting"
+            defs.template_mode_of("endernet:crafting_template"), ""
         )
         self.assertEqual(defs.template_mode_of("endernet:singleside_tape"), "")
         self.assertEqual(defs.template_mode_of("minecraft:stone"), "")

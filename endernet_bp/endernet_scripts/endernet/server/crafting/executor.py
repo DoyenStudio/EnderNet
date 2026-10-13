@@ -227,7 +227,7 @@ class AbsentReturns(ReturnsSink):
 class OrderExecutor(object):
     """把一张订单从计划推到完成（或推到它真的走不动的地方）。
 
-    **它不持有状态**：订单、预留、等待台账都在门面（`FactoryService`）那边，
+    **它不持有权威状态**：订单、预留、等待台账都在门面（`FactoryService`）那边，
     本对象只是一组动作。这样做的理由是取消与恢复都要**从订单自己的账**出发
     去释放资源，而不是从执行器的临时字段出发——后者会随重建丢失。
     """
@@ -235,6 +235,8 @@ class OrderExecutor(object):
     def __init__(self, service):
         # type: (object) -> None
         self.service = service
+        #: 仅缓存已通过的样板检查；丢失后重验，不参与存档或资源处置。
+        self._pattern_checks = {}
 
     # -- 便捷读法 ------------------------------------------------------
 
@@ -290,6 +292,15 @@ class OrderExecutor(object):
         # type: () -> object
         storage = self._storage()
         return getattr(storage, "index_version", None) if storage is not None else None
+
+    def _pattern_check_key(self, plan, topology_version):
+        # type: (object, object) -> object
+        store = self._store()
+        revision = getattr(store, "dispatch_revision", None)
+        if not callable(revision):
+            # 旧的鸭子类型替身没有有效性版本时，不复用检查结果。
+            return None
+        return (plan, store, topology_version, revision())
 
     # -- 提交（09-02）--------------------------------------------------
 
@@ -483,6 +494,7 @@ class OrderExecutor(object):
                 captured[(ref.node_key.as_key(), ref.generation, slot)] = entry
             return entry, blocker
 
+        pattern_key = self._pattern_check_key(plan, topology_version)
         report = plan.revalidate(check_dispatch, fresh, topology_version)
         order.inventory_version = fresh.version
         order.topology_version = topology_version
@@ -507,6 +519,8 @@ class OrderExecutor(object):
                 )
             return self._reject_request(order, order.blockers, tick)
 
+        if pattern_key is not None:
+            self._pattern_checks[order.order_id] = pattern_key
         if not self._build_steps(order, plan, captured):
             return self._reject_request(
                 order,
@@ -746,6 +760,7 @@ class OrderExecutor(object):
 
         内存仍然按订单一次放光：它的拥有者就是订单（准入时一次性定值）。
         """
+        self._pattern_checks.pop(order.order_id, None)
         self._release_reservations(order)
         self._release_slots(order)
         self.service.memory.release(order.order_id)
@@ -795,6 +810,7 @@ class OrderExecutor(object):
         （全局约束 7）。
         """
         reasons = tuple(reasons or ())
+        self._pattern_checks.pop(order.order_id, None)
         self._release_reservations(order)
         self.service.rejected.add(
             # **记玩家那条命令的请求 ID，不是订单 ID。** 记录的意义就是
@@ -924,6 +940,7 @@ class OrderExecutor(object):
         属于谁、该退回哪里，是一条还没定案的规则——替身不替它做决定。
         """
         tick = int(getattr(self.runtime, "tick_count", 0) or 0)
+        self._pattern_checks.pop(order.order_id, None)
         order.move_to(OrderStatus.CANCELLING, u"正在释放资源", tick)
         residue = []
         for step in order.steps:
@@ -1068,6 +1085,10 @@ class OrderExecutor(object):
         service = self.service
         service.refresh_capacity()
         orders = service.orders.live()
+        live_ids = set(order.order_id for order in orders)
+        for order_id in list(self._pattern_checks):
+            if order_id not in live_ids:
+                self._pattern_checks.pop(order_id, None)
         if not orders:
             return 0
         spent = 0
@@ -1078,6 +1099,11 @@ class OrderExecutor(object):
                 break
             order = orders[(cursor + offset) % len(orders)]
             if order.paused:
+                # 暂停禁止业务推进，但恢复既有预留仍须完成，避免库存被新订单占走。
+                if order.recovery_pending:
+                    self._recover_order(order, tick)
+                    spent += 1
+                    advanced += 1
                 continue
             cost = self._advance(order, tick, budget - spent, frame)
             spent += max(0, cost)
@@ -1090,6 +1116,11 @@ class OrderExecutor(object):
         """推进一张订单，返回消耗的工作量。"""
         order.stats["ticks"] += 1
         order.mark(tick)
+        if order.recovery_error:
+            order.blockers = [BlockReason(Reason.CONTAINER_UNCERTAIN, order.recovery_error)]
+            return 1
+        if order.recovery_pending and not self._recover_order(order, tick):
+            return 1
         if order.status == OrderStatus.PLANNING:
             self._step_plan(order, PLAN_NODES_PER_TICK, tick, frame)
             return 1
@@ -1116,6 +1147,60 @@ class OrderExecutor(object):
         if order.status != OrderStatus.RUNNING:
             return 0
         return self._dispatch_round(order, tick, budget)
+
+    def _recover_order(self, order, tick):
+        """重启后的首次绑定与预留核对；未加载时只等待，不重发已投原料。"""
+        if order.recovery_error:
+            return False
+        master = getattr(self.runtime, "master", None)
+        if master is None or master.instance_id != order.master_instance_id:
+            order.blockers = self._order_obstacles(order)
+            return False
+        for step in order.steps:
+            node = NodeKey(*step.node_key) if isinstance(step.node_key, tuple) else step.node_key
+            record = self.service.registry.get(node)
+            if record is None or not record.loaded or record.device_id != step.device_id:
+                order.blockers = [BlockReason(Reason.DEVICE_GONE, u"恢复订单等待原样板提供者加载并核对")]
+                order.move_to(OrderStatus.BLOCKED, order.blockers[0].detail, tick)
+                return False
+        # 05 已按稳定介质身份恢复原预留，必须与订单镜像对得上。
+        storage = self._storage()
+        for canonical, row in sorted(order.reservations.items()):
+            count = int(row.get("reserved", 0))
+            actual = self._live_reserved(order, canonical)
+            if actual < count:
+                order.recovery_error = u"恢复订单的剩余预留与存储台账不一致，停止订单等待核对"
+                order.blockers = [BlockReason(Reason.CONTAINER_UNCERTAIN, order.recovery_error)]
+                return False
+            self._sync_reservation(order, canonical)
+        for step in order.steps:
+            node = NodeKey(*step.node_key) if isinstance(step.node_key, tuple) else step.node_key
+            record = self.service.registry.get(node)
+            step.generation = record.ref.generation
+            if order.plan is not None:
+                for dispatch in order.plan.seal.get("dispatch", ()):
+                    if dispatch["step"] == step.index:
+                        dispatch["generation"] = step.generation
+            for instance in step.executions:
+                if instance.assembly is not None and instance.assembly["phase"] != "done":
+                    holder = "%s" % (record.ref.as_key(),)
+                    assembly = self.service.patterns.assembly
+                    owner = assembly.leases.get(holder)
+                    if owner is not None and owner != instance.execution_id:
+                        order.recovery_error = u"恢复装配仓发现重复执行归属，停止订单等待核对"
+                        return False
+                    instance.assembly["holder"] = holder
+                    assembly.leases[holder] = instance.execution_id
+                    if assembly.on_changed is not None:
+                        assembly.on_changed(holder)
+        order.recovery_pending = False
+        order.topology_version = None
+        order.inventory_version = None
+        self._pattern_checks.pop(order.order_id, None)
+        order.blockers = []
+        if order.status == OrderStatus.PLANNING:
+            self._start_planning(order, tick)
+        return True
 
     def _resume_adoption(self, order, tick):
         # type: (object, int) -> bool
@@ -1302,16 +1387,31 @@ class OrderExecutor(object):
             # 出了偏差（`_advance` 只对已落地的订单调这一条），
             # **不在这里静默放行**：交给 `_resume_adoption` 判。
             return self._resume_adoption(order, tick)
+        pattern_key = self._pattern_check_key(order.plan, topology_version)
+        patterns_current = (
+            pattern_key is not None
+            and self._pattern_checks.get(order.order_id) == pattern_key
+        )
         if (
             order.topology_version == topology_version
             and order.inventory_version == inventory_version
         ):
             return True
-        report = order.plan.revalidate(
-            self._store().check_dispatch, None, topology_version
-        )
+        blockers = []
+        if not patterns_current:
+            report = order.plan.revalidate(
+                self._store().check_dispatch, None, topology_version
+            )
+            blockers.extend(report.reasons)
+            if pattern_key is not None and all(
+                reason.code == Reason.PLAN_TOPOLOGY_CHANGED for reason in report.reasons
+            ):
+                # 记检查开始前的版本；检查内若刷新改变版本，下次必须再核对。
+                # 拓扑腿的阻塞不代表样板腿失效；仍按既有恢复路径处置拓扑。
+                self._pattern_checks[order.order_id] = pattern_key
+            else:
+                self._pattern_checks.pop(order.order_id, None)
         order.stats["revalidations"] += 1
-        blockers = list(report.reasons)
         blockers.extend(self._stock_blockers(order))
         order.topology_version = topology_version
         order.inventory_version = inventory_version
@@ -2495,7 +2595,7 @@ def _batch_is_dead(port, step):
 def _owns_live_batch(port, step):
     # type: (object, object) -> bool
     """样板口上正在投的这一批**是本步**的吗，而且还有东西要投。"""
-    return _owns_batch(port, step) and not _batch_is_dead(port, step)
+    return _owns_batch(port, step) and not port.batch.is_complete() and not _batch_is_dead(port, step)
 
 
 def _port_stage_request_id(op_id, node_key):
@@ -2783,7 +2883,8 @@ class FactoryService(NetworkService):
 
         两个台账在同一份载荷里进出，**不单独恢复一个计数**：订单 ID 序号
         （`seq`）与订单条目一起存，等待台账与它们所等的执行实例一起存。
-        恢复后订单不续跑（保守口径），因此这份快照的用途是**可复核记录**。
+        `resume_orders` 保存完整计划、资源键与执行账；正常重启按主控位置
+        绑定到新运行时，再复核代次与样板，已投原料不重新派发。
 
         `attach()` 之前 `orders` 为 `None`（服务还没绑到运行时），
         此时返回一份合法的空簿——不返回 `None`：那会让调用方以为
@@ -2796,7 +2897,79 @@ class FactoryService(NetworkService):
         )
         book["waiting"] = self.waiting.export_book()
         book["master_instance_id"] = self._master_instance_id()
+        from .order_archive import VERSION, export_order, pack
+        book["resume_version"] = VERSION
+        book["resume_orders"] = [export_order(order) for order in self.orders.orders()] if self.orders else []
+        storage = self.executor._storage()
+        # 10 会为回流产物新建预留，订单镜像不一定已同步；以 05 的活账为准。
+        if storage is not None:
+            for data in book["resume_orders"]:
+                saved = data["reservations"]
+                for row in saved.values():
+                    row["reserved"] = 0
+                    row["reservation_id"] = None
+                for reservation in storage.reservations_of(data["order_id"]):
+                    canonical = reservation.key.canonical()
+                    row = saved.setdefault(canonical, {"key": pack(reservation.key), "claimed": 0,
+                                                        "reserved": 0, "reservation_id": None})
+                    row["reserved"] += reservation.count
+        book["receipt_ops"] = pack([(key, self.waiting._ops[key]) for key in self.waiting._op_order])
+        returns = getattr(self.returns, "service", None)
+        component_id = getattr(self.returns, "component_id", None)
+        book["return_ops"] = ([(key[1], returns._ops[key]) for key in returns._op_order
+                               if key[0] == component_id] if returns is not None else [])
+        book["return_waiting"] = ([(entry.execution_id, entry.canonical, entry.seq)
+                                  for entry in returns._entries(component_id)]
+                                 if returns is not None else [])
         return book
+
+    def import_order_book(self, book):
+        """按主控位置恢复订单簿；同一服务重复应用不复制订单或租约。"""
+        from .order_archive import VERSION, import_order, unpack
+        rows = book.get("resume_orders")
+        # 旧测试存档仅有审计摘要，按用户要求不迁移、不猜测执行进度。
+        if rows is None:
+            return 0
+        if book.get("resume_version") != VERSION:
+            raise ValueError("unsupported order resume version")
+        decoded = []
+        for row in rows:
+            order = import_order(row, self.runtime.component_id, self._master_instance_id())
+            if row["master_instance_id"] != book.get("master_instance_id") and not order.is_terminal():
+                order.recovery_error = u"存档订单属于另一主控实例，保留台账但不自动转交订单"
+                order.status = OrderStatus.BLOCKED
+                order.blockers = [BlockReason(Reason.MASTER_ABSENT, order.recovery_error)]
+            decoded.append(order)
+        if len(set(order.order_id for order in decoded)) != len(decoded):
+            raise ValueError("duplicate saved order identity")
+        self.orders.raise_sequence(book.get("seq", 0))
+        for order in decoded:
+            if self.orders.get(order.order_id) is not None:
+                continue
+            self.orders.add(order)
+            if order.is_terminal():
+                continue
+            if order.adopted:
+                order.memory_lease = self.memory.restore(order.order_id, order.memory_bytes)
+            for instance in order.inflight_executions():
+                self.slots.restore(instance.execution_id, 1)
+            for instance in order.executions():
+                if instance.status == StepStatus.WAITING_OUTPUTS or instance.blocked_from == StepStatus.WAITING_OUTPUTS:
+                    expectations = instance.outputs + instance.returns
+                    self.waiting.register(instance.execution_id, expectations)
+                    self.returns.register(instance.execution_id, expectations, order.order_id)
+        for key, accepted in unpack(book.get("receipt_ops", [])):
+            self.waiting._remember(key, accepted)
+        returns = getattr(self.returns, "service", None)
+        if returns is not None:
+            for op_id, accepted in book.get("return_ops", []):
+                returns._remember((self.runtime.component_id, op_id), accepted)
+            sequence = dict(((execution_id, canonical), int(seq))
+                            for execution_id, canonical, seq in book.get("return_waiting", []))
+            for entry in returns._entries(self.runtime.component_id):
+                entry.seq = sequence.get((entry.execution_id, entry.canonical), entry.seq)
+                returns._seq = max(returns._seq, entry.seq)
+        return len(decoded)
 
     def _master_instance_id(self):
         # type: () -> object

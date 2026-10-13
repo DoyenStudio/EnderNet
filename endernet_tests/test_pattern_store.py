@@ -717,6 +717,59 @@ class TestDispatchRecheck(StoreCase):
 # -- 写入口 ----------------------------------------------------------------
 
 
+class TestDispatchRevision(StoreCase):
+    def test_one_dirty_signal_reads_provider_once_for_multiple_dispatch_checks(self):
+        self.put_pattern(3, simple_pattern(1))
+        digest = self.state.entry_at(3).digest()
+        self.store.mark_dirty(self.ref.node_key)
+        before = self.state.stats["refreshes"]
+        for _ in range(5):
+            self.assertIsNone(self.store.check_dispatch(self.ref, 3, digest)[1])
+        self.assertEqual(self.state.stats["refreshes"], before + 1)
+        self.container.write_slot(3, None)
+        self.store.mark_dirty(self.ref.node_key)
+        self.assertEqual(self.store.check_dispatch(self.ref, 3, digest)[1].code, Reason.PATTERN_STALE)
+        self.assertEqual(self.state.stats["refreshes"], before + 2)
+
+    def test_dirty_signal_during_read_is_not_consumed_by_that_read(self):
+        self.put_pattern(3, simple_pattern(1))
+        digest = self.state.entry_at(3).digest()
+        original = self.store._read_slots
+        def read_then_change(state):
+            ok = original(state)
+            self.container.write_slot(3, None)
+            self.store.mark_dirty(self.ref.node_key)
+            return ok
+        self.store._read_slots = read_then_change
+        self.store.refresh(self.ref, force=True)
+        self.store._read_slots = original
+        self.assertEqual(self.store.check_dispatch(self.ref, 3, digest)[1].code, Reason.PATTERN_STALE)
+
+    def test_same_tick_dirty_marks_each_invalidate_dispatch(self):
+        before = self.store.dispatch_revision()
+        self.store.mark_dirty(self.ref.node_key)
+        first = self.store.dispatch_revision()
+        self.store.mark_dirty(self.ref.node_key)
+        self.assertNotEqual(before, first)
+        self.assertNotEqual(first, self.store.dispatch_revision())
+
+    def test_unchanged_refresh_does_not_invalidate_dispatch(self):
+        before = self.store.dispatch_revision()
+        self.assertTrue(self.store.refresh(self.ref, force=True))
+        self.assertEqual(self.store.dispatch_revision(), before)
+
+    def test_read_failure_and_recovery_each_invalidate_dispatch(self):
+        before = self.store.dispatch_revision()
+        original = self.store.container_at
+        self.store.container_at = lambda node_key: None
+        self.assertFalse(self.store.refresh(self.ref, force=True))
+        failed = self.store.dispatch_revision()
+        self.assertNotEqual(before, failed)
+        self.store.container_at = original
+        self.assertTrue(self.store.refresh(self.ref, force=True))
+        self.assertNotEqual(failed, self.store.dispatch_revision())
+
+
 class TestWritePath(StoreCase):
     def test_install_then_read_back(self):
         ok, detail = self.store.install(self.ref, 3, simple_pattern())
@@ -768,8 +821,10 @@ class TestWritePath(StoreCase):
         """样板是塞在容器里的实物，玩家只能靠悬停分辨——所以要有提示。"""
         self.store.install(self.ref, 3, simple_pattern())
         data = self.container.read_slot(3)
-        self.assertTrue(data["customTips"])
-        self.assertIn("minecraft:iron_block", data["customTips"])
+        lore = data["userData"]["display"]["Lore"]
+        self.assertTrue(lore)
+        self.assertIn("minecraft:iron_block", lore[0])
+        self.assertFalse(data.get("customTips"))
 
     def test_install_refuses_when_the_container_cannot_be_read(self):
         self.containers.fail = True
@@ -833,7 +888,7 @@ class TestWritePath(StoreCase):
         )
         self.assertEqual(
             self.store.template_item(crafting)["newItemName"],
-            "endernet:crafting_template",
+            "endernet:factorical_template",
         )
 
     def test_template_item_has_no_recipe_when_the_mode_has_no_item(self):

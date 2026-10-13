@@ -1,7 +1,9 @@
 # coding=utf-8
 """01-02 验收：资源身份规范化、无损还原与整数单位尺度。"""
 
+import copy
 import unittest
+from unittest.mock import patch
 
 import testsupport  # noqa: F401  设置 sys.path
 
@@ -349,6 +351,47 @@ class TestUnitScale(unittest.TestCase):
             total += fluid_micro_units(25)
         self.assertEqual(total, 1000)
         self.assertEqual(total, capacity_micro_units(20))
+
+
+class TestCanonicalCache(unittest.TestCase):
+    def test_warm_cache_does_not_encode_again(self):
+        for make in (ResourceKey.item, ResourceKey.fluid):
+            key = make("test:resource", user_data={"nested": [1, u"中文"]})
+            expected = u"%s|%s|%d|%s" % (
+                key.kind, key.name, key.aux, tree_text(key.identity))
+            self.assertEqual(key.canonical(), expected)
+            with patch("endernet.common.resource_key.tree_text",
+                       side_effect=AssertionError("identity encoded again")):
+                self.assertEqual(key.canonical(), expected)
+
+    def test_identity_cannot_be_reassigned_or_deleted(self):
+        key = ResourceKey.item(IRON)
+        expected = key.canonical()
+        inventory = {key: 7}
+        for field in ("_kind", "_name", "_aux", "_identity", "_raw"):
+            with self.assertRaises(AttributeError):
+                setattr(key, field, getattr(key, field))
+            with self.assertRaises(AttributeError):
+                delattr(key, field)
+        self.assertEqual(key.canonical(), expected)
+        self.assertEqual(inventory[ResourceKey.item(IRON)], 7)
+
+    def test_cold_and_warm_copies_and_restore(self):
+        for warm in (False, True):
+            for make in (ResourceKey.item, ResourceKey.fluid):
+                key = make("test:resource", user_data={"nested": [1]})
+                if warm:
+                    key.canonical()
+                copies = (copy.copy(key), copy.deepcopy(key),
+                          ResourceKey.from_dict(key.to_dict()))
+                for cloned in copies:
+                    self.assertIsNot(cloned, key)
+                    self.assertEqual(cloned, key)
+                    self.assertEqual(cloned.canonical(), key.canonical())
+                    self.assertEqual(cloned.to_dict(), key.to_dict())
+                    with self.assertRaises(AttributeError):
+                        cloned._aux = 3
+                self.assertNotIn("_canonical", key.to_dict())
 
 
 class TestConstructionValidation(unittest.TestCase):

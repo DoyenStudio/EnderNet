@@ -33,6 +33,7 @@ from ...common.definitions import (
     PASSIVE_PORT_SLOT_COUNT,
     PICKUP_FILTER_LIMIT,
     TEMPLATE_PATTERN_SLOT_COUNT,
+    TEMPLATE_CONTAINER_SLOT_COUNT,
 )
 from ...common.identity import FACING_NAMES, FACING_OFFSETS, NodeKey, node_key_text
 from ...common.protocol import (
@@ -567,6 +568,9 @@ class PortConfig(object):
         """能不能开工。**「空名单」在这里是唯一依赖未定案口径的分支。**"""
         if not self.enabled:
             return False
+        if role == TEMPLATE:
+            # Template inputs are selected by the order batch.
+            return True
         if self.filter:
             return True
         if role in (PASSIVE, OUTPUT):
@@ -1421,6 +1425,11 @@ class PortStore(object):
         target = state.target_key()
         if target is None:
             return (None, Reason.FACING_UNKNOWN, "朝向 %r 无法解析" % (state.facing,))
+        record = self.registry.get(target)
+        if record is not None and role_of(record.device_id) == TEMPLATE:
+            # 样板接口有真实容器，但不能把它当作外部加工机器。
+            # 通用容器写入会绕过样板准入校验，污染隔壁接口的样板槽。
+            return (None, Reason.NO_CONTAINER, "朝向位置是样板接口，不能作为投料容器")
         adapter = self.container_at(target)
         if adapter is None:
             return (
@@ -2497,6 +2506,9 @@ class PortDispatcher(object):
         中转位，批次状态记着「已投多少、还差多少」——06-07 明写后续推进
         交由 09 决定，本模块**不替它做决定**（不重投、不取消、不改配方）。
         """
+        returned = self._template_return(state, request_id, topology_version)
+        if returned is not None:
+            return returned
         batch = state.batch
         if batch is None or batch.is_complete():
             return self._idle(request_id, TEMPLATE, "没有待投的样板批次")
@@ -2541,6 +2553,28 @@ class PortDispatcher(object):
             batch.reason = ""
         result.payload["batch"] = batch.to_dict()
         return result
+
+    def _template_return(self, state, request_id, topology_version):
+        # type: (PortState, str, object) -> object
+        """只从第二行回流槽搬入网络，并发布外部产物回流回执。"""
+        adapter = self.ports.container_at(state.node_key)
+        if adapter is None:
+            return None
+        slot_count = adapter.slots_count()
+        if slot_count is None:
+            return None
+        for slot in range(TEMPLATE_PATTERN_SLOT_COUNT.value,
+                          min(slot_count, TEMPLATE_CONTAINER_SLOT_COUNT.value)):
+            endpoint = self.ports.supply_view(state, slot)
+            if endpoint is None:
+                return None
+            view = endpoint.slot_view()
+            if view["key"] is None or view["count"] <= 0:
+                continue
+            take = min(view["count"], state.config.effective_limit(self.ports.policy))
+            return self._pump(request_id, view["key"], take, endpoint, self.network,
+                              ORIGIN_EXTERNAL, topology_version)
+        return None
 
     def stage_batch(self, state, key, count, op_id, request_id, topology_version=None):
         # type: (PortState, ResourceKey, int, str, str, object) -> CommandResult

@@ -214,7 +214,7 @@ class Reservation(object):
     @classmethod
     def from_dict(cls, data):
         # type: (dict) -> Reservation
-        """`to_dict` 的逆。**用于存档审计，不用来复活预留**。
+        """`to_dict` 的逆。活预留仅允许绑定到已恢复的订单。
 
         「复活一份没有主的预留」会让库存被一条已经跑完（或已经作废）的订单
         永久锁住（见 `StorageService.import_network_state`）。
@@ -635,13 +635,12 @@ class StorageService(NetworkService):
             ),
         }
 
-    def import_network_state(self, payload):
+    def import_network_state(self, payload, restored_owners=()):
         # type: (dict) -> dict
         """读回网络级台账。返回处置统计。
 
-        **预留不复活。** 预留服务于在途订单，而订单一律不跨主控实例续跑
-        （12-04 的保守口径）——一份没有主的预留会把库存永久锁住，比丢了它
-        更糟。这里把存档里的预留**记进诊断等人工处置**，并把
+        只有 `restored_owners` 中已恢复的订单才能恢复活预留，其余预留
+        **记进诊断等人工处置**，避免无主预留永久锁住库存。并把
         `reservation_seq` 水位抬到已见过的最大号之上，避免新预留撞号。
 
         **待核对转移照常恢复**，但**只恢复成「待核对」，绝不重放**——
@@ -649,6 +648,7 @@ class StorageService(NetworkService):
         """
         stats = {
             "reservations_archived": 0,
+            "reservations_restored": 0,
             "pending_restored": 0,
             "reservation_seq": self._reservation_seq,
         }
@@ -659,8 +659,22 @@ class StorageService(NetworkService):
                 reservation = Reservation.from_dict(raw)
             except (KeyError, TypeError, ValueError):
                 continue
-            self._archived_reservations.append(reservation.to_dict())
-            stats["reservations_archived"] += 1
+            if reservation.owner_id in restored_owners:
+                if reservation.count <= 0 or any(count <= 0 for _, count in reservation.parts):
+                    raise ValueError("invalid restored reservation count")
+                if sum(count for _, count in reservation.parts) != reservation.count:
+                    raise ValueError("restored reservation parts mismatch")
+                existing = self._reservations.get(reservation.reservation_id)
+                if existing is not None and existing.to_dict() != reservation.to_dict():
+                    raise ValueError("restored reservation identity conflict")
+                if existing is None:
+                    self._reservations[reservation.reservation_id] = reservation
+                    self._note_reservation_parts(reservation)
+                    self._set_reserved(reservation.key, self._reserved_of(reservation.key))
+                    stats["reservations_restored"] += 1
+            else:
+                self._archived_reservations.append(reservation.to_dict())
+                stats["reservations_archived"] += 1
             # 水位抬高：不复活但也不撞号。号里的序号是可以复用的边界，
             # 撞号会让「同一 owner 的两份预留」共用 ID。
             sequence = self._reservation_sequence(reservation.reservation_id)
@@ -911,9 +925,9 @@ class StorageService(NetworkService):
                     "介质 %s 的贡献被重复扣减：%s 由 %d 变成 %d"
                     % (medium.medium_id, key.canonical(), before, after)
                 )
-            if before == 0 and after > 0:
+            if sign > 0 and count > 0:
                 self.item_sources.setdefault(key, set()).add(medium.medium_id)
-            elif before > 0 and after == 0:
+            elif sign < 0 and count > 0:
                 bucket = self.item_sources.get(key)
                 if bucket is not None:
                     bucket.discard(medium.medium_id)
@@ -1557,8 +1571,10 @@ class StorageService(NetworkService):
             # 样板终端（11-05）
             "template_mode": self._cmd_template_mode,
             "template_cell_put": self._cmd_template_cell_put,
+            "template_import": self._cmd_template_import,
             "template_universal_import": self._cmd_template_universal_import,
             "template_cell_clear": self._cmd_template_cell_clear,
+            "template_clear": self._cmd_template_clear,
             "template_cell_count": self._cmd_template_cell_count,
             "template_encode": self._cmd_template_encode,
             "template_input_put": self._cmd_template_input_put,
@@ -2777,6 +2793,72 @@ class StorageService(NetworkService):
             "state": self._template_state_payload(state),
         })
 
+    def _cmd_template_import(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """按产物导入虚拟配方；多配方先返回候选，不转移任何实物。"""
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        gate = self._template_gate(command, payload, state)
+        if gate is not None:
+            return gate
+        if state.config.mode != PATTERN_MODE_CRAFTING:
+            return self._reject(command, Reason.TEMPLATE_CELL_LOCKED,
+                                "只有合成样板支持导入配方")
+        try:
+            output = ResourceKey.from_dict(payload.get("key"))
+        except (KeyError, TypeError, ValueError):
+            return self._reject(command, Reason.BAD_PARAMETER, "产物 key 不合法")
+        if output.kind != "item":
+            return self._reject(command, Reason.BAD_PARAMETER, "产物必须是物品")
+        recipes, blocked = self._craft_recipes_for(output)
+        if blocked is not None:
+            return blocked
+        if recipes is None:
+            return self._reject(command, Reason.NO_ADAPTER, "未接入配方来源")
+        digest = payload.get("recipe")
+        if not recipes:
+            return CommandResult.ok(command.request_id, {"action": "template_import"})
+        chosen = next((row for row in recipes if row.digest() == digest), None)
+        if digest and chosen is None:
+            return self._reject(command, Reason.CRAFT_NO_RECIPE, "配方已失效，请重选")
+        if not digest and len(recipes) > 1:
+            return CommandResult.ok(command.request_id, {
+                "action": "template_import", "needs_choice": True,
+                "revision": state.revision,
+                "output": {"name": output.name, "aux": output.aux},
+                "candidates": [self._template_recipe_candidate(row) for row in recipes],
+            })
+        if chosen is None:
+            chosen = recipes[0]
+        source = [None] * 9
+        for index, alternatives, count in plan_import(chosen):
+            ingredient = alternatives[0]
+            key = ResourceKey.item(ingredient.name, aux=_aux_or_zero(ingredient))
+            invalid = self._template_stack_error(state, GROUP_SOURCE, index, key, count)
+            if invalid is not None or not 1 <= count <= self.template_policy.max_config_count:
+                return self._reject(command, Reason.PATTERN_INVALID,
+                                    invalid or "配方原料数量越界")
+            source[index] = (key, count)
+        state.config.replace_source(source)
+        return CommandResult.ok(command.request_id, {
+            "action": "template_import", "recipe": chosen.digest(),
+            "state": self._template_state_payload(state),
+        })
+
+    @staticmethod
+    def _template_recipe_candidate(recipe):
+        # type: (object) -> dict
+        """按实际导入的槽位展示候选，包含没有固定摆位的无序配方。"""
+        candidate = recipe.to_dict()
+        slots = [None] * 9
+        for index, alternatives, count in plan_import(recipe):
+            entry = alternatives[0].to_dict()
+            entry["count"] = count
+            slots[index] = entry
+        candidate["slots"] = slots
+        return candidate
+
     def _cmd_template_universal_import(self, command, payload):
         # type: (object, dict) -> CommandResult
         """采集器一次替换最多 9 输入、3 输出，仅修改虚拟配置。"""
@@ -2822,7 +2904,6 @@ class StorageService(NetworkService):
             "action": "template_universal_import",
             "state": self._template_state_payload(state),
         })
-
 
     def _cmd_template_cell_put(self, command, payload):
         # type: (object, dict) -> CommandResult
@@ -2884,6 +2965,21 @@ class StorageService(NetworkService):
         except (TypeError, ValueError) as error:
             return "这个物品不能进样板：%s" % (error,)
         return None
+
+    def _cmd_template_clear(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """原子清空九宫格与产物配置，保留模式和真实样板槽。"""
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        gate = self._template_gate(command, payload, state)
+        if gate is not None:
+            return gate
+        state.config.clear()
+        return CommandResult.ok(command.request_id, {
+            "action": "template_clear",
+            "state": self._template_state_payload(state),
+        })
 
     def _cmd_template_cell_clear(self, command, payload):
         # type: (object, dict) -> CommandResult
@@ -2988,7 +3084,7 @@ class StorageService(NetworkService):
                 command, Reason.OUT_OF_RANGE, "输入槽里的样板不够扣",
             )
 
-        key, _item = encode_template_item(definition)
+        key, _item = encode_template_item(definition, name_of=self.templates.name_of)
         room = self.templates.room_for(state, RESULT_SLOT, key)
         result = state.slots.entry(RESULT_SLOT)
         if result is not None and result[0] != key:

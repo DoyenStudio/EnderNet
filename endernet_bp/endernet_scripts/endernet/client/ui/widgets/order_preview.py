@@ -24,12 +24,10 @@ STAGE_LOADING = "loading"
 STAGE_READY = "ready"
 STAGE_BLOCKED = "blocked"
 
-#: 缺料行的背景色（契约第 4 节：RGB(255, 200, 200) 归一化）。
-COLOR_MISSING = [1.0, 200.0 / 255.0, 200.0 / 255.0]
-#: 正常行的背景色。**用白色而不是「不写」**：颜色绑定一旦生效，写回一个
-#: 明确的值才恢复得回来；靠「不写」恢复的行会留着上一次预览的红色
-#: ——契约第 4 节明写「不能保留上一预览的红色」。
-COLOR_NORMAL = [1.0, 1.0, 1.0]
+#: 原料行背景色，RGB 归一化到 0..1。
+COLOR_MISSING = (1.0, 200.0 / 255.0, 200.0 / 255.0)
+COLOR_NORMAL = (200.0 / 255.0, 1.0, 200.0 / 255.0)
+COLOR_CRAFTING = (200.0 / 255.0, 200.0 / 255.0, 1.0)
 
 #: 「还在算」的判据。**它是规划器自己的 `PlanStatus.RUNNING`**，
 #: 而 `client/` 不 import 领域层（分层由 `test_import_boundaries.py` 强制），
@@ -73,7 +71,7 @@ COLLECTION = "order_preview_src_items"
 ITEM_AUX_BINDING = BINDING_PREFIX + "row_id_aux"
 ROW_NAME_BINDING = BINDING_PREFIX + "row_name"
 ROW_COUNT_BINDING = BINDING_PREFIX + "row_count"
-ROW_MISSING_BINDING = BINDING_PREFIX + "row_missing"
+ROW_COLOR_BINDING = BINDING_PREFIX + "row_color"
 
 class OrderPreviewModel(object):
     """窗口的显示状态与分片拼装。
@@ -270,16 +268,28 @@ class OrderPreviewModel(object):
 
     def count_text(self, index):
         # type: (object) -> str
-        """一行的「库存 N 计划制作 M」。
-
-        **库存栏是「本计划分配到的份额」**，不是全网可用——同一份库存
-        不会在两行里各显示一遍（契约第 4 节末段）。制作量是这一步要
-        做出来的数量；两者加起来才是这一行从哪来。
-        """
+        """数量来自服务端账本；缺口使用包含子树影响的 shortfall。"""
         row = self.row_of(index)
         if row is None:
             return ""
-        return u"库存 %d 计划制作 %d" % (row["allocated"], row["planned"])
+        demand = row["demand"]
+        if row["missing"]:
+            shortfall = row.get("shortfall", max(0, demand - row["allocated"]))
+            return u"缺失 %d/%d" % (shortfall, demand)
+        if row["allocated"] >= demand:
+            return u"库存充足"
+        return u"需要制作 %d/%d" % (max(0, demand - row["allocated"]), demand)
+
+    def row_color(self, index):
+        # type: (object) -> tuple
+        row = self.row_of(index)
+        if row is None:
+            return (1.0, 1.0, 1.0)
+        if row["missing"]:
+            return COLOR_MISSING
+        if row["allocated"] >= row["demand"]:
+            return COLOR_NORMAL
+        return COLOR_CRAFTING
 
     def name_text(self, index):
         # type: (object) -> str

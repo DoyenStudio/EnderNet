@@ -205,3 +205,25 @@ JSON 背景初值为制作中的黄色，不代表真实阶段。初始化、刷
 进度条改用 `#clip_ratio` + `BF_BindFloat`（第 4 节原来那句「不能以 clip_ratio
 代替」不再有效），`active_orders_tip` 绑成「运行中／活跃总数」。**长文本处理
 仍不决定**（第 8 节那条保持「待确认」）。
+
+### 2026-10-04 订单绑定修复验证
+
+- 订单按钮的 `collection_details` 指向 `orders`，点击使用普通
+  `BF_ButtonClickUp` 事件绑定，从参数 `#collection_index` 查当前稳定订单 ID。
+- 全部工厂终端文本绑定在 Python 2 下返回 UTF-8 `str`；视图内部仍可使用
+  unicode。详情窗模板默认隐藏，继续按需创建并通过 `SetVisible` 复用。
+- 工厂终端独立视图每 100 个界面 tick 发送保活，与其他终端保持一致，避免
+  空闲约 20 秒后会话被回收、订单点击被拒绝。
+- 离线：58 项工厂终端测试通过；119 个运行期文件通过 Python 2.7 语法门禁。
+  全量 3856 项中有 4 个其他模块失败（执行器、IO、通知音效、订单预览 JSON）。
+- bridge 真机：重载后读取实际 label，名称为「1 x 红石炉」、进度为「0/20」；
+  调用屏幕点击回调后，动态 `/endernet_order_detail` 可见、标题正确；关闭后
+  切换第二单复用窗口；持续保活后会话仍有效。bridge 鼠标点击工具不可用，
+  实际鼠标输入与移动端触控仍待人工验证，以上回调验证不代替输入验收。
+
+颜色绑定补验：`#EnderNetFactoric.source_color` 是自定义绑定名，
+`binding_name_override` 将回调值直接写入实际 `#color`；PropertyBag 中自定义
+键仍可能保留模板初值，不代表存在两条颜色写者。真机 `BF_BindColor` 返回
+list 时实际 `#color` 为黑色；RGB tuple 可写入颜色但 alpha 为 -1，最终使用
+RGBA tuple（alpha=1.0）。实际控件读取为 `[0.7843137, 0.7843137, 1.0, 1.0]`，
+User 确认颜色正确。

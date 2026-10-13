@@ -54,7 +54,7 @@ ESC 关屏、以及设备状态栏与详情弹窗那组绑定（`DeviceStatusBin
 from ....tooldelta.ui import Binder, RegistToolDeltaScreen
 
 from . import stack_size
-from .terminal_panel import TerminalPanelBase
+from .terminal_panel import KEEPALIVE_FRAMES, TerminalPanelBase
 from .widgets import device_status
 from ..network_client import NetworkClient
 from ...common.identity import DeviceRef
@@ -214,6 +214,14 @@ def _text(value):
     return value
 
 
+def _ui_text(value):
+    # type: (object) -> str
+    """Python 2 的 UI 文本绑定只接受 UTF-8 str，不接受 unicode。"""
+    if isinstance(value, TEXT_TYPE) and not isinstance(value, str):
+        return value.encode("utf-8")
+    return value
+
+
 def item_label(item_id):
     # type: (object) -> object
     """资源名 → 中文显示名；取不到就退回资源名。
@@ -294,6 +302,7 @@ class FactoricView(object):
         self.receipts = []
         self.last_error = None
         self.errors = 0
+        self._keepalive_frames = 0
         #: `request_id -> action`，用来认领回执。
         self._requests = {}
 
@@ -686,6 +695,17 @@ class FactoricView(object):
         """
         if self.closed:
             return
+        # 工厂终端没有 TerminalListView，必须在自己的 tick 中保活。
+        if not self.client.has_session():
+            self._keepalive_frames = 0
+        else:
+            self._keepalive_frames += 1
+            if self._keepalive_frames >= KEEPALIVE_FRAMES:
+                self._keepalive_frames = 0
+                try:
+                    self.client.keepalive()
+                except Exception:
+                    pass
         taken = self.client.take_command_results()
         if not taken:
             return
@@ -823,8 +843,8 @@ class FactoricPanel(TerminalPanelBase):
     def memory_text(self):
         # type: () -> str
         if self.factoric is None:
-            return MEMORY_FORMAT % 0
-        return self.factoric.memory_text()
+            return _ui_text(MEMORY_FORMAT % 0)
+        return _ui_text(self.factoric.memory_text())
 
     @_bind(FLOAT_BINDING_FLAG, Binder.binding, BINDING_PREFIX + "memory_ratio")
     def memory_ratio(self):
@@ -836,8 +856,8 @@ class FactoricPanel(TerminalPanelBase):
     def active_tip(self):
         # type: () -> str
         if self.factoric is None:
-            return ACTIVE_TIP_FORMAT % (0, 0)
-        return self.factoric.active_tip()
+            return _ui_text(ACTIVE_TIP_FORMAT % (0, 0))
+        return _ui_text(self.factoric.active_tip())
 
     @Binder.binding(Binder.BF_BindBool, BINDING_PREFIX + "unavailable")
     def unavailable(self):
@@ -870,7 +890,7 @@ class FactoricPanel(TerminalPanelBase):
         Binder.BF_BindString, ORDER_COLLECTION, BINDING_PREFIX + "order_name")
     def order_name(self, index):
         # type: (object) -> str
-        return u"" if self.factoric is None else self.factoric.order_name(index)
+        return "" if self.factoric is None else _ui_text(self.factoric.order_name(index))
 
     @Binder.binding_collection(
         Binder.BF_BindString, ORDER_COLLECTION,
@@ -878,8 +898,8 @@ class FactoricPanel(TerminalPanelBase):
     def order_progress_text(self, index):
         # type: (object) -> str
         if self.factoric is None:
-            return u""
-        return self.factoric.order_progress_text(index)
+            return ""
+        return _ui_text(self.factoric.order_progress_text(index))
 
     @_bind(FLOAT_BINDING_FLAG, Binder.binding_collection,
            ORDER_COLLECTION, BINDING_PREFIX + "order_progress")
@@ -887,17 +907,16 @@ class FactoricPanel(TerminalPanelBase):
         # type: (object) -> float
         return 0.0 if self.factoric is None else self.factoric.order_progress(index)
 
-    @Binder.binding_collection(
-        Binder.BF_ButtonClickUp, ORDER_COLLECTION, BINDING_PREFIX + "order_click")
-    def OnOrderClick(self, index, params=None):
-        # type: (object, object) -> None
+    @Binder.binding(Binder.BF_ButtonClickUp, BINDING_PREFIX + "order_click")
+    def OnOrderClick(self, params):
+        # type: (dict) -> None
         """点一行订单 → 打开它的详情。
 
         **绑的是那一行的稳定订单 ID，不是显示下标**（交接第 5 节）：
         视图自己按下标去查当前数据，因此列表中途增删也不会点错单。
         """
-        if self.factoric is not None:
-            self.factoric.on_order_click(index, params)
+        if self.factoric is not None and isinstance(params, dict):
+            self.factoric.on_order_click(params.get("#collection_index"), params)
 
     # -- 配方树（详情窗） ----------------------------------------------
 
@@ -924,13 +943,13 @@ class FactoricPanel(TerminalPanelBase):
         Binder.BF_BindString, SOURCE_COLLECTION, BINDING_PREFIX + "source_name")
     def source_name(self, index):
         # type: (object) -> str
-        return u"" if self.factoric is None else self.factoric.source_name(index)
+        return "" if self.factoric is None else _ui_text(self.factoric.source_name(index))
 
     @Binder.binding_collection(
         Binder.BF_BindString, SOURCE_COLLECTION, BINDING_PREFIX + "source_stat")
     def source_stat(self, index):
         # type: (object) -> str
-        return u"" if self.factoric is None else self.factoric.source_stat(index)
+        return "" if self.factoric is None else _ui_text(self.factoric.source_stat(index))
 
     @_bind(FLOAT_BINDING_FLAG, Binder.binding_collection,
            SOURCE_COLLECTION, BINDING_PREFIX + "source_progress")
@@ -941,11 +960,13 @@ class FactoricPanel(TerminalPanelBase):
     @_bind(COLOR_BINDING_FLAG, Binder.binding_collection,
            SOURCE_COLLECTION, BINDING_PREFIX + "source_color")
     def source_color(self, index):
-        # type: (object) -> list
+        # type: (object) -> tuple
         """整项背景按制作阶段变色（交接第 4 节：三阶段三色）。"""
+        # BF_BindColor 要求 tuple；list 会被引擎写成黑色。
+        # 显式传 RGBA，三项 tuple 在本引擎上会留下 alpha=-1。
         if self.factoric is None:
-            return list(COLOR_RUNNING)
-        return self.factoric.source_color(index)
+            return COLOR_RUNNING + (1.0,)
+        return tuple(self.factoric.source_color(index)) + (1.0,)
 
     # -- 详情窗 --------------------------------------------------------
 
@@ -957,7 +978,7 @@ class FactoricPanel(TerminalPanelBase):
     @Binder.binding(Binder.BF_BindString, BINDING_PREFIX + "detail_title")
     def detail_title(self):
         # type: () -> str
-        return u"" if self.factoric is None else self.factoric.detail_title()
+        return "" if self.factoric is None else _ui_text(self.factoric.detail_title())
 
     @Binder.binding(Binder.BF_ButtonClickUp, BINDING_PREFIX + "cancel")
     def OnCancelOrder(self, params=None):

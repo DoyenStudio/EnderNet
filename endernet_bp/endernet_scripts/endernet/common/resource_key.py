@@ -215,11 +215,20 @@ class ResourceKey(object):
     """一种资源（物品或流体）的身份。不含数量。
 
     请用 `ResourceKey.item(...)` / `ResourceKey.fluid(...)` 构造，
-    不要直接调用 `__init__`。作为字典键使用期间，调用方不得修改身份字段。
-    构造及导出时复制元数据；不通过属性拦截强制冻结对象。
+    不要直接调用 `__init__`。身份字段初始化后禁止重新赋值或删除。
+    身份变化应构造新键，由业务层更新索引；构造及导出时复制元数据。
     """
 
-    __slots__ = ("_kind", "_name", "_aux", "_identity", "_raw")
+    __slots__ = ("_kind", "_name", "_aux", "_identity", "_raw", "_canonical")
+
+    def __setattr__(self, name, value):
+        # 逐字段只写一次，允许 copy/deepcopy 在新实例上按任意顺序恢复槽位。
+        if name != "_canonical" and hasattr(self, name):
+            raise AttributeError("ResourceKey identity is immutable: %s" % name)
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name):
+        raise AttributeError("ResourceKey fields cannot be deleted: %s" % name)
 
     def __init__(self, kind, name, aux, identity, raw_identity):
         self._kind = kind
@@ -227,6 +236,7 @@ class ResourceKey(object):
         self._aux = aux
         self._identity = identity
         self._raw = raw_identity
+        self._canonical = None
 
     @classmethod
     def _create(cls, kind, name, aux, raw, validate=False):
@@ -357,12 +367,14 @@ class ResourceKey(object):
     def canonical(self):
         # type: () -> str
         """稳定文本指纹，跨 py2/py3 一致，可用于存档与去重。"""
-        return u"%s|%s|%d|%s" % (
-            self._kind,
-            self._name,
-            self._aux,
-            tree_text(self._identity),
-        )
+        if self._canonical is None:
+            self._canonical = u"%s|%s|%d|%s" % (
+                self._kind,
+                self._name,
+                self._aux,
+                tree_text(self._identity),
+            )
+        return self._canonical
 
     # -- 序列化 --------------------------------------------------------
 

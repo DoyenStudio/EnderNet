@@ -21,6 +21,11 @@ import testsupport  # noqa: F401  设置 sys.path
 from endernet.client.ui import order_preview_window
 from endernet.client.ui.widgets import order_preview
 from endernet.common.protocol import (
+    BlockReason,
+    CommandResult,
+    CommandResultMessage,
+    Reason,
+    SyncError,
     PreviewChunkMessage,
     PreviewStateMessage,
 )
@@ -204,9 +209,31 @@ class TestRowText(ModelCase):
             row(STONE, missing=False, allocated=256, planned=0, demand=256),
         ]))
 
-    def test_the_label_names_both_numbers(self):
+    def test_stock_is_sufficient(self):
         """契约第 4 节：库存栏是**本计划分配的份额**，不是全网可用。"""
-        self.assertEqual(self.model.count_text(0), u"库存 256 计划制作 0")
+        self.assertEqual(self.model.count_text(0), u"库存充足")
+
+    def test_crafting_counts_demand_instead_of_rounded_output(self):
+        self.model.rows = (row(STONE, allocated=800, planned=204, demand=1000),)
+        self.assertEqual(self.model.count_text(0), u"需要制作 200/1000")
+        self.assertEqual(self.model.row_color(0), order_preview.COLOR_CRAFTING)
+
+    def test_missing_uses_achievable_shortfall_even_with_planned_output(self):
+        item = row(STONE, missing=True, allocated=200, planned=800, demand=1000)
+        item["shortfall"] = 600
+        self.model.rows = (item,)
+        self.assertEqual(self.model.count_text(0), u"缺失 600/1000")
+        self.assertEqual(self.model.row_color(0), order_preview.COLOR_MISSING)
+
+    def test_all_missing_and_color_reset(self):
+        item = row(STONE, missing=True, demand=1000)
+        item["shortfall"] = 1000
+        self.model.rows = (item,)
+        self.assertEqual(self.model.count_text(0), u"缺失 1000/1000")
+        self.assertEqual(self.model.row_color(0), order_preview.COLOR_MISSING)
+        self.model.rows = (row(STONE, allocated=1000, demand=1000),)
+        self.assertEqual(self.model.row_color(0), order_preview.COLOR_NORMAL)
+        self.assertEqual(self.model.count_text(0), u"库存充足")
 
     def test_an_out_of_range_index_is_answered_with_empty_text(self):
         for bad in (1, -1, True, "0", None):
@@ -256,6 +283,72 @@ class TestController(unittest.TestCase):
         envelope = type("E", (), {"session_id": session_id})()
         for handler in self.client.handlers:
             handler(envelope, message)
+
+    def ready_submit(self):
+        self.window.request(STONE, 4)
+        self.deliver(state(status="complete", submit_ok=True))
+        self.assertTrue(self.window.submit())
+        return self.window.request_id
+
+    def test_submit_success_closes_window(self):
+        request_id = self.ready_submit()
+        self.deliver(CommandResultMessage(
+            request_id, CommandResult.ok(request_id, {"order_id": "order-1"}).to_dict()))
+        self.assertFalse(self.window.model.visible)
+        self.assertFalse(self.window.model.loading())
+
+    def test_submit_refusal_shows_server_reason_and_requires_new_preview(self):
+        request_id = self.ready_submit()
+        self.deliver(CommandResultMessage(request_id, CommandResult.rejected(
+            request_id, [BlockReason(Reason.STALE_VERSION, u"预览过期，请重新预览")]
+        ).to_dict()))
+        self.assertTrue(self.window.model.visible)
+        self.assertFalse(self.window.model.loading())
+        self.assertFalse(self.window.model.can_submit())
+        self.assertEqual(self.window.model.detail, u"预览过期，请重新预览")
+        self.deliver(state(status="complete", submit_ok=True))
+        self.assertFalse(self.window.model.can_submit())
+        self.window.request(STONE, 4)
+        self.deliver(state(status="complete", submit_ok=True))
+        self.assertTrue(self.window.model.can_submit())
+
+    def test_unrelated_or_old_session_receipt_cannot_close_submission(self):
+        request_id = self.ready_submit()
+        self.deliver(CommandResultMessage(
+            "other", CommandResult.ok("other").to_dict()))
+        self.deliver(CommandResultMessage(
+            request_id, CommandResult.ok(request_id).to_dict()), session_id="old")
+        self.assertTrue(self.window.model.loading())
+        self.assertFalse(self.window.submit())
+
+    def test_late_preview_cannot_reenable_submit_while_waiting_for_receipt(self):
+        self.ready_submit()
+        self.deliver(state(status="complete", submit_ok=True))
+        self.assertTrue(self.window.model.loading())
+        self.assertFalse(self.window.model.can_submit())
+
+    def test_preview_command_rejection_stops_loading(self):
+        self.window.request(STONE, 4)
+        request_id = self.window.request_id
+        self.deliver(CommandResultMessage(request_id, CommandResult.blocked(
+            request_id, [BlockReason(Reason.SERVICE_NOT_READY, u"服务尚未就绪")]
+        ).to_dict()))
+        self.assertFalse(self.window.model.loading())
+        self.assertEqual(self.window.model.detail, u"服务尚未就绪")
+
+    def test_submit_protocol_error_stops_loading(self):
+        request_id = self.ready_submit()
+        self.deliver(SyncError(request_id, Reason.INTERNAL, u"订单执行异常"))
+        self.assertFalse(self.window.model.loading())
+        self.assertEqual(self.window.model.detail, u"订单执行异常")
+
+    def test_session_rejection_stops_loading_after_client_drops_session(self):
+        request_id = self.ready_submit()
+        self.client.session = False
+        self.deliver(SyncError(request_id, Reason.SESSION_INVALID, u"会话已失效"),
+                     session_id="")
+        self.assertFalse(self.window.model.loading())
+        self.assertEqual(self.window.model.detail, u"会话已失效")
 
     def test_a_request_opens_the_window_and_sends_one_command(self):
         self.assertTrue(self.window.request(STONE, 4))
@@ -399,9 +492,8 @@ class TestWindowJson(unittest.TestCase):
         cls.windows = ui("endernet_windows.json")
 
     def test_the_binding_names_match_the_python_constants(self):
-        row = bindings_of(control(self.windows["order_preview_src_item"]["controls"],
-                                  "bg"))
-        self.assertIn(order_preview.ROW_MISSING_BINDING, row)
+        row = bindings_of(self.windows["order_preview_src_item"])
+        self.assertIn(order_preview.ROW_COLOR_BINDING, row)
         window = self.windows["order_preview_window"]
         loading = bindings_of(control(window["controls"], "loading_panel"))
         self.assertIn(order_preview.LOADING_BINDING, loading)
@@ -418,7 +510,7 @@ class TestWindowJson(unittest.TestCase):
             "#item_id_aux",
         )
         for name, binding in (("item_name", order_preview.ROW_NAME_BINDING),
-                              ("label", order_preview.ROW_COUNT_BINDING)):
+                              ("stat_label", order_preview.ROW_COUNT_BINDING)):
             item = control(controls, name)
             self.assertIn(binding, bindings_of(item))
             # **label 必须自己写 `text: "#text"`**：只挂绑定不写 text 时，
@@ -435,59 +527,28 @@ class TestWindowJson(unittest.TestCase):
         """
         grid = self.windows["order_preview_src_items"]
         expected = grid["collection_name"]
+        row = self.windows["order_preview_src_item"]
+        nodes = [row] + [body for child in row["controls"] for body in child.values()]
         seen = 0
-        for control in self.windows["order_preview_src_item"]["controls"]:
-            for name, body in control.items():
-                for binding in body.get("bindings", ()):
-                    if binding.get("binding_type") != "collection":
-                        continue
+        for node in nodes:
+            for binding in node.get("bindings", ()):
+                if binding.get("binding_type") == "collection":
                     seen += 1
-                    self.assertEqual(
-                        binding.get("binding_collection_name"), expected,
-                        "%s 的绑定没写集合名" % (name,),
-                    )
-        self.assertEqual(
-            seen, 5,
-            "五条集合绑定：图标、名字、数量、缺料颜色、缺料遮罩的显隐")
+                    self.assertEqual(binding.get("binding_collection_name"), expected)
+        self.assertEqual(seen, 4)
 
-    def test_the_missing_row_has_a_mask_that_actually_renders(self):
-        """缺料行的红底**由一层遮罩实现**，不是靠 `bg` 的颜色绑定。
-
-        2026-10-03 上机实测：`#color` 绑在 **image** 上不生效（同一个
-        `BF_BindColor` 绑在 label 上是好的，11-13 的绿字在线验过）。
-        遮罩用的是 `#visible`——那条路在本仓库里有先例
-        （`item_can_be_selected/selected_frame`），而 `bg` 上那条颜色绑定
-        按契约原文保留着：它不生效也不碍事，引擎哪天认了就自动生效。
-        """
-        controls = self.windows["order_preview_src_item"]["controls"]
-        mask = control(controls, "missing_mask")
-        self.assertEqual(mask["type"], "image")
-        self.assertEqual(mask["color"], order_preview.COLOR_MISSING,
-                         "遮罩的静态色就是契约要的那个 RGB")
-        entry = bindings_of(mask)[order_preview.ROW_MISSING_BINDING]
-        self.assertEqual(entry["binding_name_override"], "#visible")
-        self.assertEqual(entry["binding_collection_name"],
-                         self.windows["order_preview_src_items"]["collection_name"])
-        # 遮罩要压在文字与图标**下面**，否则会把它们糊掉。
-        for name in ("item_renderer", "item_name", "label"):
-            self.assertLess(mask.get("layer", 0),
-                            control(controls, name).get("layer", 0),
-                            "%s 被遮罩糊住了" % (name,))
-
-    def test_the_row_background_is_not_clipped_away(self):
-        """**`clip_ratio: 0.0` 会让整块背景被裁掉**，于是缺料的红色永远看不见。
-
-        这一条钉的是那个属性的**缺席**：它一旦回来，颜色绑定照样生效、
-        日志里一个错都没有，而画面上什么都没有。
-        """
-        bg = control(self.windows["order_preview_src_item"]["controls"], "bg")
-        self.assertNotIn("clip_ratio", bg)
-        self.assertNotIn("clip_direction", bg)
-        self.assertEqual(
-            bindings_of(bg)[order_preview.ROW_MISSING_BINDING][
-                "binding_name_override"],
-            "#color",
-        )
+    def test_color_binds_directly_to_the_row_image_without_a_mask(self):
+        row = self.windows["order_preview_src_item"]
+        self.assertEqual(row["type"], "image")
+        self.assertTrue(row["texture"])
+        entry = bindings_of(row)[order_preview.ROW_COLOR_BINDING]
+        self.assertEqual(entry["binding_name_override"], "#color")
+        self.assertEqual(entry["binding_collection_name"], order_preview.COLLECTION)
+        names = [name for child in row["controls"] for name in child]
+        self.assertNotIn("missing_mask", names)
+        self.assertNotIn("bg", names)
+        self.assertNotIn("clip_ratio", row)
+        self.assertNotIn("clip_direction", row)
 
     def test_the_three_preview_buttons_have_their_own_events(self):
         """下单／取消／关闭**三个独立事件**。
