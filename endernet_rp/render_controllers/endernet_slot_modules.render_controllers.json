@@ -1,0 +1,91 @@
+{
+    "format_version": "1.8.0",
+    "render_controllers": {
+        "controller.render.endernet.memory_slot.modules": {
+            "geometry": "Geometry.default",
+            "materials": [
+                {
+                    "*": "Material.default"
+                }
+            ],
+            "textures": [
+                "Texture.default"
+            ],
+            "part_visibility": [
+                {
+                    "s0_default": "variable.s0 >= 1"
+                },
+                {
+                    "s1_default": "variable.s1 >= 1"
+                },
+                {
+                    "s2_default": "variable.s2 >= 1"
+                },
+                {
+                    "s3_default": "variable.s3 >= 1"
+                },
+                {
+                    "s4_default": "variable.s4 >= 1"
+                },
+                {
+                    "s5_default": "variable.s5 >= 1"
+                },
+                {
+                    "s6_default": "variable.s6 >= 1"
+                },
+                {
+                    "s7_default": "variable.s7 >= 1"
+                },
+                {
+                    "s8_default": "variable.s8 >= 1"
+                },
+                {
+                    "s9_default": "variable.s9 >= 1"
+                }
+            ]
+        },
+        "controller.render.endernet.storage_driver.modules": {
+            "geometry": "Geometry.default",
+            "materials": [
+                {
+                    "*": "Material.default"
+                }
+            ],
+            "textures": [
+                "Texture.default"
+            ],
+            "part_visibility": [
+                {
+                    "s0_default": "variable.s0 >= 1"
+                },
+                {
+                    "s1_default": "variable.s1 >= 1"
+                },
+                {
+                    "s2_default": "variable.s2 >= 1"
+                },
+                {
+                    "s3_default": "variable.s3 >= 1"
+                },
+                {
+                    "s4_default": "variable.s4 >= 1"
+                },
+                {
+                    "s5_default": "variable.s5 >= 1"
+                },
+                {
+                    "s6_default": "variable.s6 >= 1"
+                },
+                {
+                    "s7_default": "variable.s7 >= 1"
+                },
+                {
+                    "s8_default": "variable.s8 >= 1"
+                },
+                {
+                    "s9_default": "variable.s9 >= 1"
+                }
+            ]
+        }
+    }
+}

@@ -52,8 +52,8 @@
         "endernet:factoric_terminal_panel_front": {
             "textures": "textures/endernet/devices/factoric_terminal_panel_front"
         },
-        "endernet:memory_slot_front": {
-            "textures": "textures/endernet/devices/memory_slot_front"
+        "endernet:memory_slot_model": {
+            "textures": "textures/endernet/models/memory_slot"
         },
         "endernet:network_baseband_16_all": {
             "textures": "textures/endernet/devices/network_baseband_16_all"

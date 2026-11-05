@@ -24,7 +24,9 @@ def _on_server_uninit():
     """
     from .endernet.server.bootstrap import stop_server
     from .endernet.server.adapters.item_catalog import stop_catalog
+    from .endernet.server.adapters.slot_display import stop_slot_display
 
+    stop_slot_display()
     stop_catalog()
     stop_server()
 
@@ -48,9 +50,11 @@ class EnderNet(ToolDeltaMod):
         # 只在服务端系统真正初始化后才可用。
         from .endernet.server.bootstrap import start_server
         from .endernet.server.adapters.item_catalog import start_catalog
+        from .endernet.server.adapters.slot_display import start_slot_display
 
         start_server()
         start_catalog()
+        start_slot_display()
 
     def OnClientInited(self):
         from .endernet.client.bootstrap import start_client

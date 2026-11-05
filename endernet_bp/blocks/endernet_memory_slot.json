@@ -11,36 +11,37 @@
                 "level": 2
             },
             "minecraft:geometry": {
-                "identifier": "minecraft:geometry.full_block"
+                "identifier": "geometry.endernet.memory_slot"
+            },
+            "minecraft:light_dampening": 0,
+            "minecraft:collision_box": {
+                "origin": [
+                    -8,
+                    0,
+                    -8
+                ],
+                "size": [
+                    16,
+                    8,
+                    16
+                ]
+            },
+            "minecraft:selection_box": {
+                "origin": [
+                    -8,
+                    0,
+                    -8
+                ],
+                "size": [
+                    16,
+                    8,
+                    16
+                ]
             },
             "minecraft:material_instances": {
                 "*": {
                     "render_method": "opaque",
-                    "texture": "endernet:common_device_side"
-                },
-                "down": {
-                    "render_method": "opaque",
-                    "texture": "endernet:common_device_bottom"
-                },
-                "east": {
-                    "render_method": "opaque",
-                    "texture": "endernet:common_device_side"
-                },
-                "north": {
-                    "render_method": "opaque",
-                    "texture": "endernet:memory_slot_front"
-                },
-                "south": {
-                    "render_method": "opaque",
-                    "texture": "endernet:common_device_side"
-                },
-                "up": {
-                    "render_method": "opaque",
-                    "texture": "endernet:common_device_top"
-                },
-                "west": {
-                    "render_method": "opaque",
-                    "texture": "endernet:common_device_side"
+                    "texture": "endernet:memory_slot_model"
                 }
             },
             "netease:block_entity": {

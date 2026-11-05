@@ -84,15 +84,11 @@
         "sound": "stone"
     },
     "endernet:memory_slot": {
-        "textures": {
-            "up": "endernet:common_device_top",
-            "down": "endernet:common_device_bottom",
-            "north": "endernet:memory_slot_front",
-            "south": "endernet:common_device_side",
-            "east": "endernet:common_device_side",
-            "west": "endernet:common_device_side"
-        },
-        "sound": "stone"
+        "sound": "stone",
+        "client_entity": {
+            "hand_model_use_client_entity": false,
+            "identifier": "endernet:memory_slot_modules"
+        }
     },
     "endernet:network_baseband_16": {
         "textures": "endernet:network_baseband_16_all",
@@ -115,7 +111,11 @@
         "sound": "stone"
     },
     "endernet:storage_driver": {
-        "sound": "stone"
+        "sound": "stone",
+        "client_entity": {
+            "hand_model_use_client_entity": false,
+            "identifier": "endernet:storage_driver_modules"
+        }
     },
     "endernet:template_terminal_panel": {
         "textures": {
