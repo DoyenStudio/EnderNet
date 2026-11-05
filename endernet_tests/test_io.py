@@ -1798,6 +1798,14 @@ class TestDispatcherGuards(PortFixture):
         self.assertIsNone(gateway.submit(None))
         self.assertIsNone(gateway.topology_version())
 
+    def test_recreated_port_does_not_reuse_an_old_receipt_id(self):
+        first = PortState(self.ref, BUS, PASSIVE)
+        restored = PortState(self.ref, BUS, PASSIVE)
+        previous = first.next_request_id()
+        current = restored.next_request_id()
+        self.assertNotEqual(current, previous)
+        self.assertNotEqual(current, "port:%s:1" % (self.ref.node_key.as_key(),))
+
 
 class _FakeRuntime(object):
     def __init__(self, master=None, open_=True, version=3):

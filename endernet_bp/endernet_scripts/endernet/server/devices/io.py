@@ -27,6 +27,8 @@
 `source.device_ref` 缺失时回退到 `command.device_ref`，「正是到期任务的情形」）。
 """
 
+import random
+
 from ...common.definitions import (
     ITEM_INTAKE_PORT_SLOT_COUNT,
     ITEM_OUTPUT_PORT_SLOT_COUNT,
@@ -965,7 +967,10 @@ class PortState(object):
         回执说成功、东西没进网络，而它自己那份已经扣掉了。
         """
         self.attempt_seq += 1
-        return "port:%s:%d" % (self.node_key.as_key(), self.attempt_seq)
+        # 接口重新加载后本地序号会从头开始，回流账本却可能仍持有旧回执。
+        # 只在创建新命令时生成随机标识；重试和缓冲回放沿用原命令的 ID。
+        return "port:%s:%d:%032x" % (
+            self.node_key.as_key(), self.attempt_seq, random.getrandbits(128))
 
     def to_dict(self):
         # type: () -> dict

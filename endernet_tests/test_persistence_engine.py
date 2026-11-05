@@ -276,6 +276,21 @@ class TestIndexMaintenance(Fixture):
 class TestCommitSemantics(Fixture):
     """提交点只有一个，且**按调用次数付费**（§3.2）。"""
 
+    def test_hot_reload_keeps_pending_writes_from_a_legacy_repository(self):
+        self.write(MEDIUM, "old")
+        del self.repo._unfinished
+        self.assertEqual(self.repo.commit(), 1)
+        self.assertEqual(self.repo.dirty_count(), 0)
+        self.assertEqual(self.repo.list_ids(MEDIUM), ["old"])
+
+    def test_first_write_after_hot_reload_preserves_pending_count(self):
+        self.write(MEDIUM, "old")
+        del self.repo._unfinished
+        self.write(MEDIUM, "new")
+        self.assertEqual(self.repo.dirty_count(), 2)
+        self.assertEqual(self.repo.commit(), 2)
+        self.assertEqual(self.repo.list_ids(MEDIUM), ["new", "old"])
+
     def test_writes_are_visible_before_commit(self):
         """引擎读的是内存区，所以提交前就查得到——但它还没进 committed。"""
         self.write(MEDIUM, "medium:1")
@@ -320,6 +335,61 @@ class TestCommitSemantics(Fixture):
         self.write(MEDIUM, "medium:1")
         self.repo.commit()
         self.assertIn(index_key(MEDIUM), self.backend.committed)
+
+    def test_failed_body_or_index_is_retried_before_saving_the_batch(self):
+        for path in (record_key(MEDIUM, "new"), index_key(MEDIUM)):
+            for fault in (False, IOError("temporary failure")):
+                with self.subTest(path=path, fault=fault):
+                    backend = testsupport.MemoryExtraDataBackend()
+                    repo = ExtraDataRepository(backend)
+                    repo.write(Record(DRIVER, "other", {"n": 3}))
+                    original = backend.set
+
+                    def fail_key(key, value, auto_save):
+                        if key != path:
+                            return original(key, value, auto_save)
+                        if isinstance(fault, Exception):
+                            raise fault
+                        return fault
+
+                    with mock.patch.object(backend, "set", side_effect=fail_key):
+                        with self.assertRaises(IOError):
+                            repo.write(Record(MEDIUM, "new", {"items": 17}))
+                        with self.assertRaises(IOError):
+                            repo.commit()
+                        self.assertEqual(backend.committed, {})
+                        self.assertEqual(repo.dirty_count(), 2)
+                    self.assertEqual(repo.commit(), 2)
+                    self.assertEqual(repo.list_ids(MEDIUM), ["new"])
+                    self.assertEqual(repo.load(MEDIUM, "new").payload["items"], 17)
+                    self.assertIn(path, backend.committed)
+
+    def test_failed_delete_is_retried_with_its_index(self):
+        for method in ("set", "delete"):
+            for fault in (False, IOError("temporary failure")):
+                with self.subTest(method=method, fault=fault):
+                    self.write(MEDIUM, "old")
+                    self.repo.commit()
+                    with mock.patch.object(self.backend, method, side_effect=[fault, fault]):
+                        with self.assertRaises(IOError):
+                            self.repo.delete(MEDIUM, "old")
+                        with self.assertRaises(IOError):
+                            self.repo.commit()
+                    self.assertEqual(self.repo.commit(), 1)
+                    self.assertNotIn(record_key(MEDIUM, "old"), self.backend.committed)
+                    self.assertEqual(loads_index(self.backend.committed[index_key(MEDIUM)]), [])
+
+    def test_save_failure_preserves_the_complete_pending_batch(self):
+        self.write(MEDIUM, "new")
+        with mock.patch.object(self.backend, "save", side_effect=[False, IOError("temporary")]):
+            for _ in range(2):
+                with self.assertRaises(IOError):
+                    self.repo.commit()
+                self.assertEqual(self.repo.dirty_count(), 1)
+                self.assertEqual(self.backend.committed, {})
+        self.assertEqual(self.repo.commit(), 1)
+        self.assertIn(record_key(MEDIUM, "new"), self.backend.committed)
+        self.assertEqual(self.repo.dirty_count(), 0)
 
 
 class TestVersionGate(Fixture):

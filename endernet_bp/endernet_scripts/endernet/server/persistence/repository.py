@@ -516,6 +516,8 @@ class ExtraDataRepository(Repository):
         self._index_rewrites = 0
         #: 自上次提交以来有多少次写／删还没进盘。
         self._pending = 0
+        # 正文和索引是两次 SDK 调用。两者均确认后才能提交这一批。
+        self._unfinished = {}
         self._save_calls = 0
 
     # -- Repository ----------------------------------------------------
@@ -550,26 +552,45 @@ class ExtraDataRepository(Repository):
             raise TypeError("write 需要 Record，得到 %r" % (type(record),))
         self._write_attempts += 1
         require_writable(record, self.migrator)
-        # 索引先读后写：同一批里连写多条时，第二条要看得见第一条。
-        self._add_to_index(record.kind, record.record_id)
-        self.backend.set(
-            record_key(record.kind, record.record_id),
-            dumps_payload(record.to_dict()),
-            False,
-        )
+        self._stage(record.kind, record.record_id, dumps_payload(record.to_dict()))
         record.dirty = False
-        self._write_count += 1
-        self._pending += 1
         return True
 
     def delete(self, kind, record_id):
         # type: (str, str) -> bool
-        existed = self.backend.get(record_key(kind, record_id)) is not None
-        removed = self._remove_from_index(kind, record_id)
-        if not existed and not removed:
-            return False
-        self.backend.delete(record_key(kind, record_id))
-        self._deleted_count += 1
+        return self._stage(kind, record_id, None)
+
+    def _unfinished_operations(self):
+        # type: () -> dict
+        # 热更新会保留旧仓库实例，包括它已暂存、尚待提交的 _pending。
+        if not hasattr(self, "_unfinished"):
+            self._unfinished = {}
+        return self._unfinished
+
+    def _stage(self, kind, record_id, text):
+        # type: (str, str, object) -> bool
+        """保留当前操作的序列化内容；返回失败或抛异常时，提交前仍可幂等重试。"""
+        key = (kind, record_id)
+        unfinished = self._unfinished_operations()
+        retry = key in unfinished
+        unfinished[key] = text
+        path = record_key(kind, record_id)
+        if text is None:
+            existed = self.backend.get(path) is not None
+            removed = self._remove_from_index(kind, record_id)
+            if existed and not self.backend.delete(path):
+                raise IOError("CleanExtraData failed: %s" % path)
+            if not existed and not removed and not retry:
+                del unfinished[key]
+                return False
+            self._deleted_count += 1
+        else:
+            # 先写正文，避免新索引指向缺失记录。删除时则先摘索引。
+            if not self.backend.set(path, text, False):
+                raise IOError("SetExtraData failed: %s" % path)
+            self._add_to_index(kind, record_id)
+            self._write_count += 1
+        del unfinished[key]
         self._pending += 1
         return True
 
@@ -583,10 +604,13 @@ class ExtraDataRepository(Repository):
         「每帧最多写几条」由调用方在**写**的那一侧控（`WriteCoordinator`
         的批大小）——那才是省下固定开销的地方。
         """
+        for (kind, record_id), text in list(self._unfinished_operations().items()):
+            self._stage(kind, record_id, text)
         if self._pending <= 0:
             return 0
         written = self._pending
-        self.backend.save()
+        if not self.backend.save():
+            raise IOError("SaveExtraData failed")
         self._save_calls += 1
         self._pending = 0
         return written
@@ -598,7 +622,7 @@ class ExtraDataRepository(Repository):
     def dirty_count(self):
         # type: () -> int
         """还没进盘的改动数。**语义是「已写进引擎内存区」**，不是「没写」。"""
-        return self._pending
+        return self._pending + len(self._unfinished_operations())
 
     # -- 索引维护（`list_ids` 的唯一依据）-------------------------------
 
@@ -621,7 +645,9 @@ class ExtraDataRepository(Repository):
 
     def _write_index(self, kind, ids):
         # type: (str, list) -> None
-        self.backend.set(index_key(kind), dumps_index(ids), False)
+        path = index_key(kind)
+        if not self.backend.set(path, dumps_index(ids), False):
+            raise IOError("SetExtraData failed: %s" % path)
         self._index_rewrites += 1
 
     # -- 诊断 ----------------------------------------------------------
@@ -635,7 +661,7 @@ class ExtraDataRepository(Repository):
             "deletes": self._deleted_count,
             "index_rewrites": self._index_rewrites,
             "save_calls": self._save_calls,
-            "pending": self._pending,
+            "pending": self.dirty_count(),
             "unknown_version_skips": self._unknown_version_skips,
             "migrator": self.migrator.diagnostics(),
         }
