@@ -18,7 +18,7 @@ import os
 import sys
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -1889,6 +1889,47 @@ class TestQuickStore(PanelFixture):
         self.assertEqual(self.in_flight(), set())
 
 
+class TestDesktopDistribution(PanelFixture):
+    def test_held_icon_center_and_flight_endpoint_follow_the_mouse(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        router = self.panel.slot_input
+        router.desktop = True
+        self.client.cursor = {"key": STONE.to_dict(), "count": 2, "revision": 1}
+        router.cursor_icon, router.cursor_count = Mock(), Mock()
+        origin, api = Mock(), Mock()
+        origin.GetGlobalPosition.return_value = (40, 17)
+        api.GetToggleMode.return_value = 0
+        api.GetFocusPos.return_value = (100.5, 90)
+        with patch.object(terminal_input, "input_api", return_value=api), patch.object(
+                slot_layout, "control", return_value=origin), patch.object(router, "update_info"):
+            router.tick()
+        router.cursor_icon.SetPosition.assert_called_once_with((52.5, 65))
+        router.cursor_count.SetPosition.assert_called_once_with((54.5, 74))
+        flight_rect = terminal_input.cursor_item_rect(api.GetFocusPos())
+        self.assertEqual(flying_item.FlyingItemAnimator._corner(flight_rect, (40, 17)), (52.5, 65))
+
+    def test_dragging_one_item_across_three_slots_only_submits_one_move(self):
+        router = self.panel.slot_input
+        router.desktop = True
+        self.client.cursor = {"key": STONE.to_dict(), "count": 1, "revision": 7}
+        router.drag = {"slots": [("bag", 0), ("bag", 1)], "button": "right",
+                       "target": ("bag", 0), "shift": False, "space": False}
+        with patch.object(router, "click") as clicked:
+            router.finish("bag", 2, "right")
+            clicked.assert_called_once_with("bag", 0, "place", 1)
+
+    def test_uneven_left_drag_keeps_the_remainder_on_cursor(self):
+        router = self.panel.slot_input
+        router.desktop = True
+        self.client.cursor = {"key": STONE.to_dict(), "count": 5, "revision": 7}
+        router.drag = {"slots": [("bag", 0)], "button": "left", "target": ("bag", 0),
+                       "shift": False, "space": False}
+        with patch.object(router, "click") as clicked:
+            router.finish("bag", 1, "left")
+            self.assertEqual([call.args for call in clicked.call_args_list],
+                             [("bag", 0, "place", 2), ("bag", 1, "place", 2)])
+
+
 class TestTransferAnimation(PanelFixture):
     """搬运动画的**接线**：每一条真的把东西搬走的路径都要发起一次，而且
     「等待同步」的那几处 `return` 一次都不该发起。
@@ -1896,6 +1937,11 @@ class TestTransferAnimation(PanelFixture):
     坐标与缓动不在这里测（那要屏幕）；这里测的是「有没有发起」「用的是哪件
     物品」——接线断了的表现与「动画没做」完全一样。
     """
+
+    def confirm_flight(self, recorder):
+        self.assertEqual(recorder.calls, [])
+        command = self.commands()[-1]
+        self.panel.list_view._settle_action(self.result(command["request_id"]))
 
     def animator(self):
         recorder = RecordingAnimator()
@@ -1914,6 +1960,7 @@ class TestTransferAnimation(PanelFixture):
         recorder = self.animator()
         self.select(0)
         self.bind(BinderStub.BF_ButtonClickUp, "select", {"#collection_index": 0})
+        self.confirm_flight(recorder)
         self.assertEqual(len(recorder.calls), 1)
         self.assertEqual(recorder.calls[0][0].name, "minecraft:stone")
 
@@ -1922,6 +1969,7 @@ class TestTransferAnimation(PanelFixture):
         recorder = self.animator()
         self.select(0)
         self.bind(BinderStub.BF_ButtonClickUp, "quick_store", None)
+        self.confirm_flight(recorder)
         self.assertEqual(len(recorder.calls), 1)
         self.assertEqual(recorder.calls[0][0].name, "minecraft:stone")
 
@@ -1937,6 +1985,7 @@ class TestTransferAnimation(PanelFixture):
         self.select(0)
         self.bind(BinderStub.BF_ButtonClickUp, "select",
                   {"#collection_index": 0, "TouchPosX": 222.0, "TouchPosY": 111.5})
+        self.confirm_flight(recorder)
         self.assertEqual(recorder.calls[0][2], (222.0, 111.5, 0.0, 0.0))
 
     def test_quick_storing_a_whole_slot_flies_to_the_click_too(self):
@@ -1945,6 +1994,7 @@ class TestTransferAnimation(PanelFixture):
         self.select(0)
         self.bind(BinderStub.BF_ButtonClickUp, "quick_store",
                   {"TouchPosX": 240.5, "TouchPosY": 66.25})
+        self.confirm_flight(recorder)
         self.assertEqual(recorder.calls[0][2], (240.5, 66.25, 0.0, 0.0))
 
     def test_putting_into_a_backpack_slot_flies_to_that_slot(self):
@@ -1960,6 +2010,7 @@ class TestTransferAnimation(PanelFixture):
         self.bind(BinderStub.BF_ButtonClickUp, "select",
                   {"#collection_index": 0, "TouchPosX": 222.0, "TouchPosY": 111.5})
         self.view.on_backpack_put(0)
+        self.confirm_flight(recorder)
         self.assertEqual(len(recorder.calls), 1)
         self.assertNotEqual(recorder.calls[0][2], (222.0, 111.5, 0.0, 0.0))
         self.assertIsNone(recorder.calls[0][2])
@@ -1972,6 +2023,7 @@ class TestTransferAnimation(PanelFixture):
         recorder = self.animator()
         self.select(0)
         self.bind(BinderStub.BF_ButtonClickUp, "select", {"#collection_index": 0})
+        self.confirm_flight(recorder)
         self.assertIsNone(recorder.calls[0][2])
 
     def test_taking_from_the_network_flies_the_item_into_the_target_slot(self):
@@ -1979,6 +2031,7 @@ class TestTransferAnimation(PanelFixture):
         recorder = self.animator()
         self.bind(BinderStub.BF_ButtonClickUp, "select", {"#collection_index": 0})
         self.view.on_backpack_put(0)
+        self.confirm_flight(recorder)
         self.assertEqual(len(recorder.calls), 1)
         self.assertEqual(recorder.calls[0][0].name, "minecraft:stone")
 
@@ -1987,7 +2040,8 @@ class TestTransferAnimation(PanelFixture):
         recorder = self.animator()
         self.click(0)
         self.click(1)
-        self.assertEqual(len(recorder.calls), 1)
+        self.confirm_flight(recorder)
+        self.assertEqual([call[0].name for call in recorder.calls], ["minecraft:stone", "minecraft:dirt"])
         self.assertEqual(recorder.calls[0][0].name, "minecraft:stone")
         # 夹具的屏幕替身没有真的格子控件，因此两个坐标都是 `None`——**这不
         # 影响本用例**：要钉的是「这一下有没有发起动画」，坐标怎么算归
@@ -2976,7 +3030,7 @@ class TestEngineBindingResolution(unittest.TestCase):
         # 运行时注册声明——正是本条钉住的那条不通的路——因此搬到类体上
         # （`widgets/list_window_bindings.py`）。数在终端这一侧是因为
         # `TerminalPanelBase` 是它们的宿主。
-        expected = 24 + 11 + 1 + 12 + 3
+        expected = 24 + 11 + 1 + 12 + 3 + 3
         if terminal_panel._COLOR_BINDING_FLAG is None:
             expected -= 1
         if order_preview_bindings.COLOR_BINDING_FLAG is None:
@@ -3331,8 +3385,8 @@ class TestJsonContract(unittest.TestCase):
                              device_status.MASK_OFFLINE)
 
     def test_the_popup_close_button_uses_its_own_name(self):
-        close = self.windows["device_status_window_basic"]["controls"][2]
-        close = list(close.values())[0]
+        nodes = self.windows["device_status_window_basic"]["controls"]
+        close = next(v for node in nodes for k, v in node.items() if k.split("@")[0] == "close")
         self.assertEqual(close["$pressed_button_name"], device_status.CLOSE_BINDING)
         self.assertEqual(close["button_mappings"][0]["to_button_id"],
                          "$pressed_button_name")

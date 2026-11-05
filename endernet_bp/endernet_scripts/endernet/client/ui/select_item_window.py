@@ -5,6 +5,7 @@
 窗口打开时注册、关闭时解除绑定，不再查找网格格子或渲染器控件。
 """
 
+from .slot_layout import window_control
 from functools import partial
 
 from ....tooldelta.api.client.player import GetLocalPlayerHotbarAndInvItems
@@ -95,10 +96,9 @@ class SelectItemWindow(object):
     def _create_controls(self):
         screen = self.screen
         self._bind_grid()
-        self.root = screen.AddElement(
-            self.CONTROL_DEFINITION, self.CONTROL_NAME
-        )
-        self.root.SetLayer(50)
+        self.root = window_control(screen, self.CONTROL_NAME)
+        self.root.GetElement("item_search_editor").asTextEditBox().SetText("")
+        self.root.SetVisible(True)
         for source, path in SOURCE_BUTTONS:
             self.root.GetElement(path).asButton().SetCallback(partial(self._set_source, source))
         self.root.GetElement("close").asButton().SetCallback(self.close)
@@ -209,7 +209,7 @@ class SelectItemWindow(object):
                 self.screen.DynaUnbindingCollection(flag, collection)
         self.dynamic_bindings = []
         if self.screen._activated and self.root is not None:
-            self.root.Remove()
+            self.root.SetVisible(False)
         if self.screen._vars.get(self.WINDOW_ATTRIBUTE) is self:
             del self.screen._vars[self.WINDOW_ATTRIBUTE]
         self.select_callback = None

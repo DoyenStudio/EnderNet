@@ -207,6 +207,13 @@ class Screen(object):
         self.elements = {}
         self.scrolls = {}
         self.controls = {}
+        for name, definition in (("endernet_recipe_choice_window", "crafting_terminal_panel_ui.load_recipe_window"),
+                                 ("endernet_order_detail", "factoric_terminal_panel_ui.order_description_window"),
+                                 ("endernet_item_list_window", "endernet_windows.item_list_window"),
+                                 ("endernet_select_item_window", "endernet_windows.select_item_window")):
+            path = "/terminal/" + name
+            self.controls[path] = self.elements[path] = ControlStub(definition, name)
+            self.controls[path].SetVisible(False)
         self._activated = True
         self._vars = {}
 
@@ -986,50 +993,18 @@ class TestRecipeChoiceWindow(CraftingFixture):
         self.assertEqual(window.root.definition,
                          crafting_panel.RECIPE_WINDOW_DEFINITION)
 
-    def test_it_never_lays_out_more_rows_than_the_cap(self):
-        many = [dict(RECIPE_A, digest="d%04d" % (index,))
-                for index in range(crafting_panel.RECIPE_MAX_ROWS + 4)]
+    def test_all_candidates_are_reachable(self):
+        many = [dict(RECIPE_A, digest="d%04d" % i) for i in range(20)]
         window = self.open_window(many)
-        self.assertEqual(window.shown, crafting_panel.RECIPE_MAX_ROWS)
-
-    def test_each_row_shows_its_ingredients_and_output(self):
-        window = self.open_window([RECIPE_A])
-        section = window.root.GetElement("candidate_0")
-        slot0 = section.GetElement("input_slots/slot0")
-        self.assertTrue(slot0.visible)
-        self.assertEqual(slot0.GetElement("item_renderer").item.newItemName,
-                         "minecraft:oak_planks")
-        # 配方没有原料的位置留空：藏起来，而不是留一张空槽底图。
-        self.assertFalse(section.GetElement("input_slots/slot4").visible)
-        output = section.GetElement("output_slot")
-        self.assertTrue(output.visible)
-        self.assertEqual(output.GetElement("item_renderer").item.newItemName,
-                         "minecraft:crafting_table")
-
-    def test_the_count_label_only_shows_above_one(self):
-        window = self.open_window([RECIPE_A])
-        section = window.root.GetElement("candidate_0")
-        self.assertEqual(
-            section.GetElement("input_slots/slot0/item_count").text, "")
-
-    def test_the_confirm_button_reports_its_own_recipe(self):
-        chosen = []
-        self.craft.choice = {
-            "output": {"name": "minecraft:crafting_table", "aux": 0},
-            "candidates": [RECIPE_A, RECIPE_B],
-        }
-        window = crafting_panel.RecipeChoiceWindow(
-            self.screen, self.craft.choice["output"],
-            self.craft.choice["candidates"], chosen.append)
-        second = window.root.GetElement("candidate_1")
-        root = window.root
-        callback = second.GetElement("confirm_btn").callback
-        self.assertIsNotNone(callback)
-        callback(None)
-        self.assertEqual(chosen, ["bbbb2222"])
-        # 点完就关：窗口留着的话玩家会以为还能再点一次，而那条命令已经发出去了。
+        self.assertEqual(window.shown, len(many))
+        self.assertEqual(self.panel.recipe_choice_count(), 20)
+        self.assertTrue(self.panel.recipe_visible_0(19))
+        self.assertFalse(self.panel.recipe_visible_4(19))
+        self.assertTrue(self.panel.recipe_visible_9(19))
+        self.assertEqual(self.panel.recipe_count_0(19), "")
+        self.panel.recipe_choice_select({"#collection_index": 19})
         self.assertTrue(window.closed)
-        self.assertTrue(root.removed)
+        self.assertEqual(self.commands()[-1]["recipe"], "d0019")
 
     def test_opening_without_a_session_is_refused(self):
         self.client.drop_session()
@@ -1041,25 +1016,21 @@ class TestRecipeChoiceWindow(CraftingFixture):
         """引擎拒绝建控件时**只计数**：抛出会把一次界面故障变成整个面板的故障，
         而这两条路的风险完全不对等。"""
         self.craft.choice = {"output": {}, "candidates": [RECIPE_A]}
-        with patch.object(self.screen, "AddElement",
+        with patch.object(self.screen, "GetElement",
                           side_effect=ValueError("no such control")):
             self.assertFalse(self.craft.open_window())
         self.assertEqual(self.craft.errors, 1)
         self.assertIsNone(self.craft.window)
         self.assertEqual(self.panel._vars, {})
 
-    def test_the_window_prefers_the_scroll_content_and_falls_back_to_the_root(self):
-        """内容控件由引擎回答，不猜路径；取不到就退到窗口根（**可见的**故障，
-        比静默什么都不显示好查）。"""
-        content = ControlStub()
-        self.screen.controls[
-            crafting_panel.RECIPE_SCROLL_PATH + "/scroll_mouse/scroll_view"] = (
-                ScrollStub(content))
-        window = self.open_window([RECIPE_A])
-        self.assertIs(window._content(), content)
-        self.assertEqual(content.added,
-                         [(crafting_panel.RECIPE_SECTION_DEFINITION,
-                           "candidate_0")])
+    def test_reopen_reuses_root(self):
+        first = self.open_window([RECIPE_A])
+        root = first.root
+        first.close()
+        self.assertFalse(root.visible)
+        second = self.open_window([RECIPE_B])
+        self.assertIs(second.root, root)
+        self.assertTrue(root.visible)
 
 
 class TestPanelEntry(unittest.TestCase):
@@ -1257,9 +1228,7 @@ class TestRegistration(unittest.TestCase):
             TERMINAL_SCREENS.get("endernet:common_terminal_panel"))
 
     def test_register_screens_returns_both_panels(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import (
-            register_screens,
-        )
+        from testsupport import registered_device_screens as register_screens
         from endernet_bp.endernet_scripts.endernet.client.ui.terminal_panel import (
             CommonTerminalPanel,
         )
@@ -1478,7 +1447,7 @@ class TestJsonContract(unittest.TestCase):
         scroll = window["scroll_view"]
         self.assertEqual(scroll["$scrolling_content"],
                          "crafting_terminal_panel_ui.recipe_list")
-        self.assertEqual(self.panel["recipe_list"]["type"], "panel")
+        self.assertEqual(self.panel["recipe_list"]["type"], "grid")
         # `recipe_section` 的定义还在（脚本按名字实例化它）。
         self.assertIn("recipe_section", self.panel)
 

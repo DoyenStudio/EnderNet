@@ -34,10 +34,7 @@ class NumberControl(Control):
 
 
 class NumberScreen(Screen):
-    def AddElement(self, definition, name):
-        self.definition = definition
-        self.root = NumberControl()
-        return self.root
+    control_type = NumberControl
 
 
 class NumberSetWindowTests(unittest.TestCase):
@@ -103,7 +100,7 @@ class NumberSetWindowTests(unittest.TestCase):
     def test_open_initial_quantity_duplicate_and_set_number(self):
         self.open()
         self.assertEqual(self.screen.definition, "endernet_windows.number_set_window")
-        self.assertEqual(self.root.layer, 50)
+        self.assertEqual(self.root.layer, 65)
         self.assertEqual(self.editor.GetText(), "64")
         self.assertFalse(self.module.show_number_set_window(self.screen, 1, self.confirmed.append))
         self.window.set_number(128)
@@ -134,7 +131,7 @@ class NumberSetWindowTests(unittest.TestCase):
     def test_confirm_reads_latest_text_closes_before_callback_and_fires_once(self):
         def confirmed(number):
             self.assertNotIn(self.module.WINDOW_ATTRIBUTE, self.screen._vars)
-            self.assertTrue(self.root.removed)
+            self.assertFalse(self.root.visible)
             self.assert_closed_window_ignores_edits(self.window)
             self.confirmed.append(number)
 
@@ -203,7 +200,7 @@ class NumberSetWindowTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.open()
         self.assertNotIn(self.module.WINDOW_ATTRIBUTE, self.screen._vars)
-        self.assertTrue(self.screen.root.removed)
+        self.assertFalse(self.screen.root.visible)
         self.open()
 
     def test_bad_arguments_do_not_create_controls(self):

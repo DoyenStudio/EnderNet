@@ -119,7 +119,7 @@ class FluidListWindowTests(unittest.TestCase):
 
     def test_title_count_icons_and_selection_use_bindings(self):
         window = self.open(title="输入白名单")
-        self.assertEqual(window.root.layer, 30)
+        self.assertEqual(window.root.layer, 55)
         self.assertEqual(self.bind(BinderStub.BF_BindString, "title"), "输入白名单")
         self.assertEqual(self.bind(BinderStub.BF_BindInt, "count"), 2)
         self.assertEqual(self.cell_bind(BinderStub.BF_BindInt, "item_id_aux", 1), 12345)
@@ -234,7 +234,7 @@ class FluidListWindowTests(unittest.TestCase):
         self.assertFalse(picker.closed)
 
     def test_creation_failure_clears_the_marker_and_allows_retry(self):
-        with patch.object(self.screen, "AddElement", side_effect=RuntimeError("failed")):
+        with patch.object(self.screen, "GetElement", side_effect=RuntimeError("failed")):
             with self.assertRaises(RuntimeError):
                 self.module.show_fluid_list_window(self.screen, self.items, 4)
         self.assertEqual(self.screen._vars, {})

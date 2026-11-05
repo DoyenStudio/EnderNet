@@ -1228,9 +1228,7 @@ class TestRegistration(unittest.TestCase):
             TERMINAL_SCREENS.get("endernet:template_terminal_panel"))
 
     def test_register_screens_includes_the_template_panel(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import (
-            register_screens,
-        )
+        from testsupport import registered_device_screens as register_screens
         registered = register_screens()
         self.assertIn(template_panel.TemplatePanel, registered)
         self.assertEqual(

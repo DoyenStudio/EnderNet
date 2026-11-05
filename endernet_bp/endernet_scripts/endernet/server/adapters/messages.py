@@ -352,6 +352,37 @@ class AdapterSyncPort(object):
         self.binder.register(c2s, dispatch)
         return 1
 
+    def on_player_join(self, handler):
+        event_type = getattr(self.events(), "AddServerPlayerEvent", None)
+        if event_type is not None:
+            self.binder.register(event_type, lambda event: handler(event.id))
+
+    def on_player_death(self, handler, respawn):
+        base = getattr(self.events(), "ServerEvent", None)
+        if base is None:
+            return
+
+        class DeathEvent(base):
+            name = "PlayerDieEvent"
+
+            @classmethod
+            def unmarshal(cls, data):
+                event = cls()
+                event.id = data["id"]
+                return event
+
+        class RespawnEvent(DeathEvent):
+            name = "PlayerRespawnFinishServerEvent"
+
+            @classmethod
+            def unmarshal(cls, data):
+                event = cls()
+                event.id = data["playerId"]
+                return event
+
+        self.binder.register(DeathEvent, lambda event: handler(event.id))
+        self.binder.register(RespawnEvent, lambda event: respawn(event.id))
+
     def on_player_leave(self, handler):
         # type: (object) -> int
         """注册玩家离线回调，返回注册的监听器个数（恒为 1）。

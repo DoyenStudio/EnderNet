@@ -140,6 +140,7 @@ class FlyingItemAnimator(object):
             self.errors += 1
             return None
         if control is None or origin is None:
+            self._resolved = False
             return None
         self._control = control
         self._origin = origin
@@ -286,3 +287,39 @@ class FlyingItemAnimator(object):
             "flights": self.flights,
             "errors": self.errors,
         }
+
+
+class FlightPool(object):
+    """Use prefabricated renderers concurrently; keep overflow in order."""
+    def __init__(self, screen, path, origin):
+        from collections import deque
+        self.pending = deque()
+        self.icons = [FlyingItemAnimator(screen, path if i == 0 else "%s_%d" % (path, i),
+                                         origin) for i in range(6)]
+
+    def fly(self, key, source, target):
+        if key is None or source is None or target is None:
+            return False
+        for icon in self.icons:
+            if not icon.is_active():
+                return icon.fly(key, source, target)
+        self.pending.append((key, source, target))
+        return True
+
+    def tick(self):
+        for icon in self.icons:
+            icon.tick()
+            if self.pending and not icon.is_active():
+                icon.fly(*self.pending.popleft())
+
+    def clear(self):
+        self.pending.clear()
+        for icon in self.icons:
+            icon.clear()
+
+    def is_active(self):
+        return any(icon.is_active() for icon in self.icons)
+
+    def diagnostics(self):
+        return {"active": self.is_active(), "flights": sum(i.flights for i in self.icons),
+                "errors": sum(i.errors for i in self.icons), "queued": len(self.pending)}

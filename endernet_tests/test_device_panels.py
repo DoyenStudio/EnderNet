@@ -306,16 +306,12 @@ class TestRegistration(unittest.TestCase):
         """两条路不能混：终端屏是自有屏（`PushUI` 推），设备屏是代理（引擎开）。
         旗标反了的话，终端右键会去查一张 `_screen_cls` 为 `None` 的屏——
         直接抛异常。"""
-        from endernet_bp.endernet_scripts.endernet.client.ui import (
-            register_screens,
-        )
+        from testsupport import registered_device_screens as register_screens
         self.assertTrue(all(not getattr(cls, "_td_is_proxy", False)
                             for cls in register_screens()[:2]))
 
     def test_register_screens_includes_every_device_panel(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import (
-            register_screens,
-        )
+        from testsupport import registered_device_screens as register_screens
         registered = register_screens()
         for _, panel_cls in device_panels.PROXY_PANELS:
             self.assertIn(panel_cls, registered)
@@ -425,20 +421,12 @@ class TestPortConfigPanels(unittest.TestCase):
                     name, controls,
                     "%s 的 %s=%r 在界面 JSON 里找不到" % (device_id, label, name))
 
-    def test_the_settings_window_is_not_mounted_in_the_content_tree(self):
-        """它是一张**自由模板**，由脚本按需 `AddElement` 出来。
-
-        本轮把它挂进 `content` 没有意义：那会让它每次开屏都在树上，而
-        显隐还得另接一条绑定——命令式那边一个字节都不用改。
-        """
-        for device_id in ("endernet:bus_item_output_io",
-                          "endernet:bus_item_input_io"):
-            data = _load_ui(ui_file_of(device_id))
-            content = data["content"]
-            keys = [key for entry in content["controls"] for key in entry]
-            self.assertFalse(
-                [key for key in keys if "settings_window" in key],
-                "%s 的 content 里不该挂 settings_window" % (device_id,))
+    def test_settings_window_is_mounted_once_and_starts_hidden(self):
+        for device_id in ("endernet:bus_item_output_io", "endernet:bus_item_input_io"):
+            nodes = _load_ui(ui_file_of(device_id))["content"]["controls"]
+            windows = [v for node in nodes for k, v in node.items() if ".settings_window" in k]
+            self.assertEqual(len(windows), 1)
+            self.assertFalse(windows[0]["visible"])
 
 
 class TestPortConfigPanelLifecycle(unittest.TestCase):
@@ -1300,6 +1288,8 @@ class TestJsonContract(unittest.TestCase):
                         layer = value.get("layer") if isinstance(value, dict) else None
                         if key.startswith("device_status_popup@"):
                             found["popup"] = layer
+                        elif key.startswith("endernet_") and isinstance(value, dict) and value.get("visible") is False:
+                            continue
                         elif isinstance(layer, int):
                             found["others"].append(layer)
                         walk(value)

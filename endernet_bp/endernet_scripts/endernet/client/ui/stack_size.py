@@ -29,8 +29,8 @@ def reset():
     _CACHE.clear()
 
 
-def basic_info(item_id):
-    # type: (str) -> tuple
+def basic_info(item_id, aux=0):
+    # type: (str, int) -> tuple
     """`(id_aux, maxStackSize)`。查不到时退成 `(0, None)`。
 
     **不抛**：拿不到堆叠上限是要退化处理的事，不是错误——玩家仍然应该
@@ -42,22 +42,23 @@ def basic_info(item_id):
     生效了（那种错的表现是「测试改的堆叠上限没起作用」，而它看起来只是
     断言写错了）。
     """
-    info = _CACHE.get(item_id)
+    cache_key = (item_id, aux or 0)
+    info = _CACHE.get(cache_key)
     if info is None:
         try:
             from ....tooldelta.define.item import Item
-            basic = Item(item_id).GetBasicInfo()
+            basic = (Item(item_id, aux) if aux else Item(item_id)).GetBasicInfo()
             info = (basic.id_aux, basic.maxStackSize)
         except Exception:
             info = (0, None)
-        _CACHE[item_id] = info
+        _CACHE[cache_key] = info
     return info
 
 
-def id_aux(item_id):
-    # type: (str) -> int
+def id_aux(item_id, aux=0):
+    # type: (str, int) -> int
     """物品的数字 id，接集合绑定的 `#item_id_aux`。"""
-    value = basic_info(item_id)[0]
+    value = basic_info(item_id, aux)[0]
     if isinstance(value, bool) or not isinstance(value, INTEGER_TYPES):
         return 0
     return int(value)
@@ -75,3 +76,13 @@ def stack_limit(item_id):
     if isinstance(limit, bool) or not isinstance(limit, INTEGER_TYPES) or limit < 1:
         return 1
     return int(limit)
+
+
+def display_name(item_id):
+    # type: (object) -> object
+    try:
+        from ....tooldelta.define.item import Item
+        name = Item(item_id).GetBasicInfo().itemName
+        return name.decode("utf-8") if isinstance(name, bytes) else name
+    except (AttributeError, ImportError, ValueError, UnicodeError):
+        return item_id

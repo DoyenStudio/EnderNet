@@ -611,6 +611,7 @@ class TerminalSyncHub(object):
         order_of=None,
         preview_of=None,
         port_of=None,
+        return_cursor=None,
     ):
         self.registry = registry if registry is not None else SessionRegistry()
         self.policy = policy if policy is not None else SyncPolicy()
@@ -639,6 +640,7 @@ class TerminalSyncHub(object):
         #: 非接口设备取到 `None`，那条消息就不发（见 `read_config`）。
         self._port_of = port_of if port_of is not None else _no_port
         self.port = port
+        self._return_cursor = return_cursor
         self._subs = {}
         self._inventory_sent = {}
         #: 每会话上一次发出去的工作台状态，用来做变化去重。与
@@ -1203,7 +1205,10 @@ class TerminalSyncHub(object):
             rows = [dict(slot=row["slot"], canonical=row["canonical"],
                          count=row["count"], slot_version=row["version"])
                     for row in view["slots"]]
-            message = InventorySnapshot(view["revision"], rows)
+            cursor_of = getattr(provider, "cursor_of", None)
+            adapter = cursor_of(session.player_id) if cursor_of is not None else None
+            cursor = adapter.snapshot() if adapter is not None else None
+            message = InventorySnapshot(view["revision"], rows, cursor)
         except Exception:
             # 读取失败不伪造空背包；客户端旧版本仍由命令入口复核。
             return
@@ -1800,7 +1805,10 @@ class TerminalSyncHub(object):
 
     def _forget(self, session):
         # type: (object) -> None
-        self._inventory_sent.pop(session.session_id, None)
+        sent = self._inventory_sent.pop(session.session_id, None)
+        if (sent and "cursor" in sent and self._return_cursor is not None
+                and session.close_reason not in ("player_left", "player_died")):
+            self._return_cursor(session.player_id)
         self._craft_sent.pop(session.session_id, None)
         self._template_sent.pop(session.session_id, None)
         self._order_sent.pop(session.session_id, None)

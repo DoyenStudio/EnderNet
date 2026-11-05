@@ -931,6 +931,7 @@ class ServerBootstrap(object):
             policy=self.sync_policy,
             registry=SessionRegistry(self.session_policy),
             storage_of=self._sync_storage_of,
+            return_cursor=self._return_player_cursor,
             context_of=self._sync_context_of,
             # 手动存取命令的出口（11-03）。`submit_command` 只是
             # `application.submit` 的转发，注释写明**永不抛异常**——
@@ -1099,6 +1100,10 @@ class ServerBootstrap(object):
             # 另开一份账本的代价是热重载后同一个包被处理两次。
             self.sync_port.listen(self._on_sync_request)
             self.sync_port.on_player_leave(self._on_player_leave)
+            if hasattr(self.sync_port, "on_player_join") and hasattr(self.inventories, "cursor_of"):
+                self.sync_port.on_player_join(self._return_player_cursor)
+            if hasattr(self.sync_port, "on_player_death") and hasattr(self.inventories, "cursor_of"):
+                self.sync_port.on_player_death(self._on_cursor_death, self._return_player_cursor)
         self._backfill_generator = None
         self._backfill_finished = False
         # 启动时全量标脏：注册表里可能已有记录（重启、手动重扫），
@@ -1738,6 +1743,19 @@ class ServerBootstrap(object):
         # 同一个样子，而两者的查法完全不同。
         self.sync_port.send(player_id, payload)
         return payload
+
+    def _on_cursor_death(self, player_id):
+        cursor = self.inventories.cursor_of(player_id)
+        if cursor is not None:
+            if not cursor.primitives.keep_inventory():
+                cursor.drop_remaining()
+            self.sync.close_for_player(player_id, "player_died")
+
+    def _return_player_cursor(self, player_id):
+        cursor_of = getattr(self.inventories, "cursor_of", None)
+        cursor = cursor_of(player_id) if cursor_of else None
+        if cursor is not None:
+            return cursor.return_to_player(self.inventories.inventory_of(player_id))
 
     def _on_player_leave(self, player_id):
         # type: (str) -> int

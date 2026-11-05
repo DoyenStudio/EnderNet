@@ -1018,6 +1018,110 @@
                         0
                     ]
                 }
+            },
+            {
+                "endernet_number_set_window@endernet_windows.number_set_window": {
+                    "visible": false,
+                    "layer": 65
+                }
+            },
+            {
+                "endernet_item_list_window@endernet_windows.item_list_window": {
+                    "visible": false,
+                    "layer": 55
+                }
+            },
+            {
+                "endernet_select_item_window@endernet_windows.select_item_window": {
+                    "visible": false,
+                    "layer": 65
+                }
+            },
+            {
+                "endernet_recipe_choice_window@crafting_terminal_panel_ui.load_recipe_window": {
+                    "visible": false,
+                    "layer": 65
+                }
+            },
+            {
+                "flying_item_1@endernet_container_common.flying_item_renderer": {
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "visible": false
+                }
+            },
+            {
+                "flying_item_2@endernet_container_common.flying_item_renderer": {
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "visible": false
+                }
+            },
+            {
+                "flying_item_3@endernet_container_common.flying_item_renderer": {
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "visible": false
+                }
+            },
+            {
+                "flying_item_4@endernet_container_common.flying_item_renderer": {
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "visible": false
+                }
+            },
+            {
+                "flying_item_5@endernet_container_common.flying_item_renderer": {
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "visible": false
+                }
+            },
+            {
+                "cursor_item@endernet_container_common.flying_item_renderer": {
+                    "visible": false,
+                    "layer": 80,
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left"
+                }
+            },
+            {
+                "slot_info": {
+                    "type": "label",
+                    "anchor_from": "bottom_middle",
+                    "anchor_to": "top_middle",
+                    "visible": false,
+                    "offset": [
+                        0,
+                        0
+                    ],
+                    "shadow": true,
+                    "layer": 83,
+                    "text": ""
+                }
+            },
+            {
+                "cursor_count": {
+                    "type": "label",
+                    "size": [
+                        16,
+                        9
+                    ],
+                    "text_alignment": "right",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "visible": false,
+                    "shadow": true,
+                    "font_size": "small",
+                    "layer": 81,
+                    "text": ""
+                }
+            },
+            {
+                "endernet_importer_overlay@endernet_universal_importer_ui.overlay_panel": {
+                    "visible": false
+                }
             }
         ]
     },
@@ -1031,7 +1135,24 @@
         "$item_id_aux_binding": "#EnderNetTemplate.input_item_id_aux",
         "$item_select_button": "#EnderNetTemplate.input_click",
         "$item_selected_binding": "#EnderNetTemplate.input_selected",
-        "$item_visible_binding": "#EnderNetTemplate.input_visible"
+        "$item_visible_binding": "#EnderNetTemplate.input_visible",
+        "$slot_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "to_button_id": "$item_select_button",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "to_button_id": "#EnderNetTerminal.secondary",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "to_button_id": "#EnderNetTerminal.quick",
+                "mapping_type": "pressed"
+            }
+        ]
     },
     "template_outputs_cell@endernet_windows.item_can_be_selected": {
         "$item_collection_name": "endernet_template_outputs",
@@ -1039,7 +1160,24 @@
         "$item_id_aux_binding": "#EnderNetTemplate.outputs_item_id_aux",
         "$item_select_button": "#EnderNetTemplate.outputs_click",
         "$item_selected_binding": "#EnderNetTemplate.outputs_selected",
-        "$item_visible_binding": "#EnderNetTemplate.outputs_visible"
+        "$item_visible_binding": "#EnderNetTemplate.outputs_visible",
+        "$slot_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "to_button_id": "$item_select_button",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "to_button_id": "#EnderNetTerminal.secondary",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "to_button_id": "#EnderNetTerminal.quick",
+                "mapping_type": "pressed"
+            }
+        ]
     },
     "template_result_cell@endernet_windows.item_can_be_selected": {
         "$item_collection_name": "endernet_template_result",
@@ -1047,7 +1185,24 @@
         "$item_id_aux_binding": "#EnderNetTemplate.result_item_id_aux",
         "$item_select_button": "#EnderNetTemplate.result_click",
         "$item_selected_binding": "#EnderNetTemplate.result_selected",
-        "$item_visible_binding": "#EnderNetTemplate.result_visible"
+        "$item_visible_binding": "#EnderNetTemplate.result_visible",
+        "$slot_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "to_button_id": "$item_select_button",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "to_button_id": "#EnderNetTerminal.secondary",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "to_button_id": "#EnderNetTerminal.quick",
+                "mapping_type": "pressed"
+            }
+        ]
     },
     "template_source_cell@endernet_windows.item_can_be_selected": {
         "$item_collection_name": "endernet_template_source",
@@ -1055,7 +1210,24 @@
         "$item_id_aux_binding": "#EnderNetTemplate.source_item_id_aux",
         "$item_select_button": "#EnderNetTemplate.source_click",
         "$item_selected_binding": "#EnderNetTemplate.source_selected",
-        "$item_visible_binding": "#EnderNetTemplate.source_visible"
+        "$item_visible_binding": "#EnderNetTemplate.source_visible",
+        "$slot_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "to_button_id": "$item_select_button",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "to_button_id": "#EnderNetTerminal.secondary",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "to_button_id": "#EnderNetTerminal.quick",
+                "mapping_type": "pressed"
+            }
+        ]
     },
     "terminal_items_grid": {
         "type": "grid",
@@ -1102,6 +1274,23 @@
         "$item_id_aux_binding": "#EnderNetTerminal.item_id_aux",
         "$item_select_button": "#EnderNetTerminal.select",
         "$item_selected_binding": "#EnderNetTerminal.selected",
-        "$item_visible_binding": "#EnderNetTerminal.has_item"
+        "$item_visible_binding": "#EnderNetTerminal.has_item",
+        "$slot_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "to_button_id": "$item_select_button",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "to_button_id": "#EnderNetTerminal.secondary",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "to_button_id": "#EnderNetTerminal.quick",
+                "mapping_type": "pressed"
+            }
+        ]
     }
 }

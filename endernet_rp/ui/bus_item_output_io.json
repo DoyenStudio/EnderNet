@@ -496,6 +496,29 @@
                         200
                     ]
                 }
+            },
+            {
+                "endernet_port_settings@bus_item_output_io_ui.settings_window": {
+                    "visible": false,
+                    "layer": 42
+                }
+            },
+            {
+                "endernet_item_list_window@endernet_windows.item_list_window": {
+                    "visible": false,
+                    "layer": 55
+                }
+            },
+            {
+                "endernet_select_item_window@endernet_windows.select_item_window": {
+                    "visible": false,
+                    "layer": 65
+                }
+            },
+            {
+                "endernet_importer_overlay@endernet_universal_importer_ui.overlay_panel": {
+                    "visible": false
+                }
             }
         ]
     },
@@ -510,6 +533,9 @@
             100
         ],
         "controls": [
+            {
+                "modal_backdrop@endernet_windows.modal_backdrop": {}
+            },
             {
                 "bg": {
                     "type": "image",

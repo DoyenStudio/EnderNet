@@ -16,6 +16,7 @@ from ....tooldelta.api.common import ExecLater
 from ....tooldelta.events.basic import ClientEvent
 from ....tooldelta.events.client.ui import ScreenSizeChangedClientEvent
 from ....tooldelta.ui import RegistToolDeltaScreen, SCREEN_BASE_PATH, ToolDeltaScreen
+from . import slot_layout
 from .universal_importer_config import save_config
 
 
@@ -111,6 +112,7 @@ class UniversalImporterScreen(ToolDeltaScreen):
         self._selection_order = []
         self._view_host = None
         self._view_root = None
+        self._view_prebuilt = False
         self._view_path = None
         self._view_bound = False
         self._board_position = None
@@ -181,8 +183,14 @@ class UniversalImporterScreen(ToolDeltaScreen):
         parent = (host.GetElement(parent_path)
                   if source.GetBaseUIControl(parent_path) is not None else None)
         # 空白自定义屏可能没有可查询的根控件，None 表示直接挂到画布根。
-        root = host.AddElement(PANEL_DEFINITION, "endernet_importer_overlay",
-                               _parent=parent)
+        path = slot_layout.path_of(host, "/endernet_importer_overlay")
+        self._view_prebuilt = path is not None
+        if self._view_prebuilt:
+            root = host.GetElement(path)
+            root.SetVisible(True)
+        else:
+            # The JSON control tree of a third-party screen belongs to that addon.
+            root = host.AddElement(PANEL_DEFINITION, "endernet_importer_overlay", _parent=parent)
         self._view_host = host
         self._view_root = root
         self._view_path = root.getFullPath()
@@ -216,8 +224,12 @@ class UniversalImporterScreen(ToolDeltaScreen):
         if self._view_alive():
             if self._view_bound:
                 self._board_position = self.GetElement("/control_board").GetPos()
-            self._view_root.Remove()
+            if self._view_prebuilt:
+                self._view_root.SetVisible(False)
+            else:
+                self._view_root.Remove()
         self._view_root = None
+        self._view_prebuilt = False
         self._view_path = None
         self._view_host = None
         self._view_bound = False

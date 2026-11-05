@@ -132,7 +132,7 @@ class ItemListWindowTests(unittest.TestCase):
 
     def test_title_count_icons_and_selection_use_bindings(self):
         window = self.open(title="输入白名单")
-        self.assertEqual(window.root.layer, 30)
+        self.assertEqual(window.root.layer, 55)
         self.assertEqual(self.bind(BinderStub.BF_BindString, "title"), "输入白名单")
         self.assertEqual(self.bind(BinderStub.BF_BindInt, "count"), 2)
         self.assertEqual(self.cell_bind(BinderStub.BF_BindInt, "item_id_aux", 1), 12345)
@@ -252,7 +252,7 @@ class ItemListWindowTests(unittest.TestCase):
         self.assertFalse(picker.closed)
 
     def test_creation_failure_clears_the_marker_and_allows_retry(self):
-        with patch.object(self.screen, "AddElement", side_effect=RuntimeError("failed")):
+        with patch.object(self.screen, "GetElement", side_effect=RuntimeError("failed")):
             with self.assertRaises(RuntimeError):
                 self.module.show_item_list_window(self.screen, self.items, 4)
         self.assertEqual(self.screen._vars, {})
@@ -301,7 +301,7 @@ class ItemListWindowTests(unittest.TestCase):
         # 按键映射指向的是**控件自己的那个属性**，属性里装的才是绑定名，因此
         # 要按 `$pressed_button_name` 取一次值、再把这个值当变量填一次。
         self.assertEqual(
-            filled(button[button["button_mappings"][0]["to_button_id"]]),
+            filled(button[template["$slot_mappings|default"][0]["to_button_id"]]),
             self.module.BINDING_PREFIX + "select")
         self.assertEqual(
             filled(button["bindings"][0]["binding_collection_name"]), self.module.COLLECTION)

@@ -9,6 +9,9 @@
         "visible": false,
         "controls": [
             {
+                "modal_backdrop@endernet_windows.modal_backdrop": {}
+            },
+            {
                 "bg": {
                     "type": "image",
                     "layer": 1,
@@ -392,6 +395,9 @@
         "layer": 1,
         "controls": [
             {
+                "modal_backdrop@endernet_windows.modal_backdrop": {}
+            },
+            {
                 "bg": {
                     "type": "image",
                     "layer": 1,
@@ -752,13 +758,7 @@
                     "$pressed_texture": "",
                     "$texture_layer": 2,
                     "layer": 2,
-                    "button_mappings": [
-                        {
-                            "to_button_id": "$pressed_button_name",
-                            "from_button_id": "button.menu_select",
-                            "mapping_type": "pressed"
-                        }
-                    ],
+                    "button_mappings": "$slot_mappings",
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,
@@ -804,6 +804,13 @@
                     ]
                 }
             }
+        ],
+        "$slot_mappings|default": [
+            {
+                "to_button_id": "$pressed_button_name",
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed"
+            }
         ]
     },
     "item_list_grid": {
@@ -841,6 +848,9 @@
         ],
         "layer": 1,
         "controls": [
+            {
+                "modal_backdrop@endernet_windows.modal_backdrop": {}
+            },
             {
                 "bg": {
                     "type": "image",
@@ -1112,6 +1122,9 @@
         ],
         "layer": 1,
         "controls": [
+            {
+                "modal_backdrop@endernet_windows.modal_backdrop": {}
+            },
             {
                 "bg": {
                     "type": "image",
@@ -1824,7 +1837,8 @@
                             "binding_type": "collection",
                             "binding_name": "#EnderNetPreview.row_count"
                         }
-                    ]
+                    ],
+                    "text": "#text"
                 }
             }
         ]
@@ -1860,6 +1874,9 @@
             200.0
         ],
         "controls": [
+            {
+                "modal_backdrop@endernet_windows.modal_backdrop": {}
+            },
             {
                 "bg": {
                     "type": "image",
@@ -2248,6 +2265,9 @@
         "layer": 1,
         "controls": [
             {
+                "modal_backdrop@endernet_windows.modal_backdrop": {}
+            },
+            {
                 "bg": {
                     "type": "image",
                     "layer": 1,
@@ -2616,6 +2636,9 @@
         ],
         "layer": 1,
         "controls": [
+            {
+                "modal_backdrop@endernet_windows.modal_backdrop": {}
+            },
             {
                 "bg": {
                     "type": "image",
@@ -3099,6 +3122,31 @@
                         }
                     ]
                 }
+            }
+        ]
+    },
+    "modal_backdrop": {
+        "type": "button",
+        "size": [
+            8192,
+            8192
+        ],
+        "layer": -1,
+        "button_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "to_button_id": "button.no_action",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "to_button_id": "button.no_action",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "to_button_id": "button.no_action",
+                "mapping_type": "pressed"
             }
         ]
     }

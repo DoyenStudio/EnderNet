@@ -152,7 +152,7 @@ class FluidWindowTests(unittest.TestCase):
     def test_all_network_and_backpack_use_canonical_fluid_ids(self):
         window = self.open(["mod:oil", "mod:oil", "minecraft:water"])
         self.assertEqual(self.screen.definition, "endernet_windows.select_fluid_window")
-        self.assertEqual(window.root.layer, 50)
+        self.assertEqual(window.root.layer, 65)
         self.assertEqual(window.COLLECTION, "endernet_select_fluids")
         self.assertEqual(window.visible_ids, ["minecraft:water", "mod:oil"])
         self.assertEqual(window.get_item_id_aux(0), 7654)
@@ -197,7 +197,7 @@ class FluidWindowTests(unittest.TestCase):
         fluid_click = self.screen.callback(window.BINDING_PREFIX + "select")
 
         def selected(fluid_id):
-            self.assertTrue(root.removed)
+            self.assertFalse(root.visible)
             self.assertNotIn(self.fluids.WINDOW_ATTRIBUTE, self.screen._vars)
             # **两条绑定同时活在宿主类体上，各认各的 `_vars` 槽**（11-07）。
             # 关掉流体窗既不摘掉自己那条（静态绑定摘不掉），也不碰物品窗
@@ -239,7 +239,7 @@ class FluidWindowTests(unittest.TestCase):
         self.assertEqual(self.catalog.bus.handles, [])
 
     def test_create_failure_removes_fluid_marker(self):
-        with patch.object(self.screen, "AddElement", side_effect=RuntimeError("failed")):
+        with patch.object(self.screen, "GetElement", side_effect=RuntimeError("failed")):
             with self.assertRaises(RuntimeError):
                 self.fluids.show_select_fluid_window(self.screen, [], self.received.append)
         self.assertEqual(self.screen._vars, {})

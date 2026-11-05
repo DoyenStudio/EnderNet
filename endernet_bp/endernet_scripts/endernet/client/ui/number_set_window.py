@@ -14,6 +14,7 @@
 其余控件走 `SetCallback`，不经 `Binder` 注册表，原样保留。
 """
 
+from .slot_layout import window_control
 from functools import partial
 
 from .widgets.window_identity import (
@@ -89,8 +90,8 @@ class NumberSetWindow(object):
         self.editor = None
         screen._vars[self.WINDOW_ATTRIBUTE] = self
         try:
-            self.root = screen.AddElement(self.CONTROL_DEFINITION, self.CONTROL_NAME)
-            self.root.SetLayer(50)
+            self.root = window_control(screen, self.CONTROL_NAME)
+            self.root.SetVisible(True)
             # The heading is a plain label, so write its text directly: the same
             # control in other panels proved a binding would not draw here.
             self.root.GetElement(TITLE_PATH).asLabel().SetText(title)
@@ -165,7 +166,7 @@ class NumberSetWindow(object):
         self.closed = True
         # **不摘绑定**：绑定在宿主类体上，是静态的（见模块 docstring）。
         if self.screen._activated and self.root is not None:
-            self.root.Remove()
+            self.root.SetVisible(False)
         if self.screen._vars.get(self.WINDOW_ATTRIBUTE) is self:
             del self.screen._vars[self.WINDOW_ATTRIBUTE]
         self.confirm_callback = None

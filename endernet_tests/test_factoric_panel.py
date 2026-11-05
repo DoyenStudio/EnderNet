@@ -302,13 +302,13 @@ class TestDetailWindow(FactoricFixture):
     """详情窗**按需创建**（User 2026-10-03 定），建好留着、靠显隐开关。"""
 
     def window(self):
-        return self.screen.controls.get(factoric_panel.DETAIL_NAME)
+        return self.screen.controls.get("/terminal/" + factoric_panel.DETAIL_NAME)
 
     def test_the_window_is_not_built_until_the_first_open(self):
         """不点开就不该有任何控件树——主面板上那个 180×200 的常驻实例已经去掉。"""
         self.apply()
         self.assertIsNone(self.view.detail_window())
-        self.assertIsNone(self.window())
+        self.assertFalse(self.window().visible)
 
     def test_the_first_open_builds_it_hidden_then_shows_it(self):
         self.apply()
@@ -334,7 +334,7 @@ class TestDetailWindow(FactoricFixture):
         """关一扇从没建过的窗不该为它造一棵控件树。"""
         self.apply()
         self.view.on_detail_close()
-        self.assertIsNone(self.window())
+        self.assertFalse(self.window().visible)
 
     def test_clicking_a_row_opens_its_detail_and_the_close_button_only_closes(self):
         self.apply()
@@ -369,11 +369,11 @@ class TestDetailWindow(FactoricFixture):
         不然每次点击都会再抛一遍。"""
         attempts = []
 
-        def broken(definition, name):
+        def broken(name):
             attempts.append(name)
             raise ValueError("no such control definition")
 
-        self.screen.AddElement = broken
+        self.screen.GetElement = broken
         self.apply()
         self.view.on_order_click(0)
         self.view.on_order_click(0)
@@ -573,9 +573,7 @@ class TestRegistration(unittest.TestCase):
         self.assertEqual(SCREEN_NAME, TERMINAL_SCREENS[DEVICE_ID])
 
     def test_register_screens_includes_the_panel(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import (
-            register_screens,
-        )
+        from testsupport import registered_device_screens as register_screens
         registered = register_screens()
         self.assertIn(factoric_panel.FactoricPanel, registered)
         self.assertEqual(

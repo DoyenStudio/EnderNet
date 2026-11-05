@@ -34,6 +34,7 @@
    只涨不落，而症状是「改过一次之后再也发不出命令」。
 """
 
+from .slot_layout import window_control
 from ...common.protocol import MSG_PORT_CONFIG
 from . import port_config_model, slot_layout
 from .item_list_window import WINDOW_ATTRIBUTE as ITEM_LIST_WINDOW_ATTRIBUTE
@@ -218,14 +219,14 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
         self._refresh_controls()
 
     def _settings(self):
-        """设置窗控件：按需建、建好留着（`SetVisible` 控显隐）。"""
+        """查找宿主内预制的设置窗，缓存它的关闭按钮。"""
         if self.settings is not None:
             return self.settings
         if not self.SETTINGS_DEFINITION:
             self._missing("settings_window")
             return None
         try:
-            created = self.AddElement(self.SETTINGS_DEFINITION, SETTINGS_INSTANCE)
+            created = window_control(self, SETTINGS_INSTANCE)
         except Exception:
             self._missing("settings_window")
             return None

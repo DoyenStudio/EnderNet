@@ -22,6 +22,7 @@
 它只关掉自己开的选择器、移除根控件、清掉 `_vars` 里的打开标记。
 """
 
+from .slot_layout import window_control
 from ....tooldelta.define.item import Item
 from .select_item_window import (
     WINDOW_ATTRIBUTE as SELECT_WINDOW_ATTRIBUTE,
@@ -78,11 +79,9 @@ class ItemListWindow(object):
         self._icons = {}
         screen._vars[self.WINDOW_ATTRIBUTE] = self
         try:
-            self.root = screen.AddElement(
-                self.CONTROL_DEFINITION, self.CONTROL_NAME
-            )
+            self.root = window_control(screen, self.CONTROL_NAME)
             # Leave room for the scroll panel's own layers below the picker (50).
-            self.root.SetLayer(30)
+            self.root.SetVisible(True)
             self.root.GetElement("add_btn").asButton().SetCallback(self.add)
             self.root.GetElement("del_btn").asButton().SetCallback(self.delete_selected)
             self.root.GetElement("close").asButton().SetCallback(self.close)
@@ -172,7 +171,7 @@ class ItemListWindow(object):
             self.picker.close()
             self.picker = None
         if self.root is not None and self.screen._activated:
-            self.root.Remove()
+            self.root.SetVisible(False)
         if self.screen._vars.get(self.WINDOW_ATTRIBUTE) is self:
             del self.screen._vars[self.WINDOW_ATTRIBUTE]
         self.root = None

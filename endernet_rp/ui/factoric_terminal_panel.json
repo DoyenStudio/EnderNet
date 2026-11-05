@@ -325,6 +325,17 @@
                     ],
                     "layer": 40
                 }
+            },
+            {
+                "endernet_order_detail@factoric_terminal_panel_ui.order_description_window": {
+                    "visible": false,
+                    "layer": 51
+                }
+            },
+            {
+                "endernet_importer_overlay@endernet_universal_importer_ui.overlay_panel": {
+                    "visible": false
+                }
             }
         ]
     },
@@ -598,6 +609,9 @@
         ],
         "visible": false,
         "controls": [
+            {
+                "modal_backdrop@endernet_windows.modal_backdrop": {}
+            },
             {
                 "bg": {
                     "type": "image",

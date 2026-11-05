@@ -46,6 +46,7 @@ except ImportError:
     # 是同一手法。
     OnKeyPressInGame = None
 from . import flying_item, order_preview_window, slot_layout, stack_size
+from .terminal_input import TerminalInput
 from .number_set_window import show_number_set_window
 from .widgets import device_status
 from .backpack_model import (
@@ -211,6 +212,37 @@ def _listen_key_event(func):
     return ToolDeltaScreen.Listen(OnKeyPressInGame, 0)(func)
 
 
+def _edit_finished(func):
+    flag = getattr(Binder, "BF_EditFinished", None)
+    return Binder.binding(flag, SEARCH_BINDING)(func) if flag is not None else func
+
+
+def _listen_middle(func):
+    try:
+        from ....tooldelta.events.basic import ClientEvent
+    except ImportError:
+        return func
+
+    class MouseMiddle(ClientEvent):
+        name = "OnMouseMiddleDownClientEvent"
+
+        @classmethod
+        def unmarshal(cls, data):
+            event = cls()
+            event.down = int(data.get("isDown", 0)) == 1
+            return event
+
+    return ToolDeltaScreen.Listen(MouseMiddle, 0)(func) if hasattr(ToolDeltaScreen, "Listen") else func
+
+
+def _listen_wheel(func):
+    try:
+        from ....tooldelta.events.client.control import MouseWheelClientEvent
+    except ImportError:
+        return func
+    return ToolDeltaScreen.Listen(MouseWheelClientEvent, 0)(func)
+
+
 def _text(value):
     # type: (object) -> object
     """统一成 unicode。py2 下输入框回传的是 utf-8 字节串，直接 `.lower()`
@@ -218,6 +250,43 @@ def _text(value):
     if isinstance(value, TEXT_TYPE):
         return value
     return value.decode("utf-8")
+
+
+class RecipeChoiceBindings(object):
+    @Binder.binding(Binder.BF_BindInt, "#EnderNetRecipe.count")
+    def recipe_choice_count(self):
+        window = self._vars.get("_endernet_recipe_choice_window")
+        return window.shown if window is not None else 0
+
+    @Binder.binding(Binder.BF_ButtonClickUp, "#EnderNetRecipe.choose")
+    def recipe_choice_select(self, params):
+        window = self._vars.get("_endernet_recipe_choice_window")
+        index = params.get("#collection_index")
+        if (window is not None and isinstance(index, INTEGER_TYPES)
+                and not isinstance(index, bool) and 0 <= index < window.shown):
+            window._on_confirm(window.candidates[index])
+
+
+def _bind_recipe_cell(cell, field, flag):
+    def read_cell(self, row):
+        window = self._vars.get("_endernet_recipe_choice_window")
+        entry = window.entry(row, cell) if window is not None else None
+        if field == "visible":
+            return bool(entry and entry.get("name"))
+        if field == "count":
+            count = entry.get("count", 0) if entry else 0
+            return str(count) if count > 1 else ""
+        return stack_size.id_aux(entry["name"], entry.get("aux") or 0) if entry else 0
+    name = "%s_%d" % (field, cell)
+    read_cell.__name__ = "recipe_" + name
+    binder = Binder.binding_collection(flag, "endernet_recipe_choices", "#EnderNetRecipe." + name)
+    setattr(RecipeChoiceBindings, read_cell.__name__, binder(read_cell))
+
+
+for _cell in range(10):
+    for _field, _flag in (("icon", Binder.BF_BindInt), ("visible", Binder.BF_BindBool),
+                          ("count", Binder.BF_BindString)):
+        _bind_recipe_cell(_cell, _field, _flag)
 
 
 class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
@@ -280,6 +349,7 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         ToolDeltaScreen.__init__(self, screen_name, screen_instance, params)
         self.backpack = BackpackModel()
         self._poll_frames = 0
+        self._slot_input = TerminalInput(self)
         #: 长按判定（`inv_split` 的手势）。**按下记时、抬起判时**：引擎只有
         #: 「按下」与「抬起」两个相位，没有「长按」这一档绑定，时长只能在
         #: 脚本侧算（见 `_press` 与 `_click`）。
@@ -292,8 +362,14 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         #: 不做任何事），因此这里不等 `OnCreate`，也不会因为没有它而失败。
         #: 两条路径都是**内容区相对**的，由 `slot_layout.control` 按本界面的
         #: 屏幕挂法解析（两种挂法见 `slot_layout._candidates`）。
-        self.fly = flying_item.FlyingItemAnimator(
+        self.fly = flying_item.FlightPool(
             self, slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH)
+
+    @property
+    def slot_input(self):
+        if not hasattr(self, "_slot_input"):
+            self._slot_input = TerminalInput(self)
+        return self._slot_input
 
     def OnCreate(self):
         # 先读一次。读失败时 `replace_from_engine` 返回空表，界面停在「全空」
@@ -329,7 +405,12 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
     def terminal_search(self, params):
         # type: (object) -> None
         if self.list_view is not None:
+            self.slot_input.editing = bool((params or {}).get("Text"))
             self.list_view.on_search_changed(params)
+
+    @_edit_finished
+    def terminal_search_finished(self, params=None):
+        self.slot_input.editing = False
 
     @Binder.binding(Binder.BF_ButtonClickUp, SORT_METHOD_BINDING)
     def terminal_sort_method(self, params=None):
@@ -356,13 +437,18 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         模板（上半屏与背包也在用）不为这个功能动。
         """
         if self.list_view is not None:
-            self.list_view.on_row_press(params)
+            if not self.slot_input.press("left", ("network", params.get("#collection_index", -1))):
+                self.list_view.on_row_press(params)
 
     @Binder.binding(Binder.BF_ButtonClickUp, SELECT_BINDING)
     def terminal_select(self, params):
         # type: (object) -> None
         if self.list_view is not None:
-            self.list_view.on_select(params)
+            craft = getattr(self, "craft", None)
+            if craft is not None and craft.put_selected("network", params.get("#collection_index", -1)):
+                return
+            if not self.slot_input.primary("network", params.get("#collection_index", -1)):
+                self.list_view.on_select(params)
 
     @Binder.binding_collection(
         Binder.BF_BindBool, COLLECTION, BINDING_PREFIX + "has_item")
@@ -494,7 +580,7 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         entry = self._slot_entry(segment, index)
         if entry is None:
             return 0
-        return stack_size.id_aux(entry.key.name)
+        return stack_size.id_aux(entry.key.name, entry.key.aux)
 
     def _slot_selected(self, segment, index):
         # type: (tuple, object) -> bool
@@ -522,6 +608,7 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         的 `OnTicking` 没有 `super()`，基类加一个同名方法会被覆盖而**永不执行
         且不报错**——那种错在游戏里只表现为「背包一直不更新」。
         """
+        self.slot_input.tick()
         self._poll_frames += 1
         if self._poll_frames >= BACKPACK_POLL_FRAMES:
             self._poll_frames = 0
@@ -550,6 +637,11 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         # 里可以接着点，每一轮都作用在虚拟空间上、并记进 `_pending`。真值
         # 沿队列从头兑现（`BackpackModel._retire`）。
         ui_index = start + index
+        craft = getattr(self, "craft", None)
+        if craft is not None and craft.put_selected("bag", ui_index):
+            return
+        if self.slot_input.primary("bag", ui_index):
+            return
         # **长按是另一条手势，先判它。** `inv_split`（把这一槽的一半存进网络）
         # 由 User 2026-10-01 定为长按；引擎没有「长按」这一档绑定，所以时长
         # 在这里按「按下 - 抬起」算（`_press` 记的）。
@@ -622,6 +714,8 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
                 or not 0 <= index < count):
             self._press_index = None
             return
+        if self.slot_input.press("left", ("bag", start + index)):
+            return
         self._press_index = start + index
         self._press_at = self._clock()
 
@@ -641,6 +735,18 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
     def OnHotbarClick(self, params):
         self._click(params, HOTBAR_START, HOTBAR_COUNT)
 
+    @Binder.binding(Binder.BF_ButtonClickDown, "#EnderNetTerminal.secondary")
+    def desktop_secondary_press(self, params):
+        self.slot_input.press("right")
+
+    @Binder.binding(Binder.BF_ButtonClickUp, "#EnderNetTerminal.secondary")
+    def desktop_secondary(self, params):
+        self.slot_input.mapped_click("right", params)
+
+    @Binder.binding(Binder.BF_ButtonClickUp, "#EnderNetTerminal.quick")
+    def desktop_quick(self, params):
+        self.slot_input.mapped_click("quick", params)
+
     @Binder.binding(Binder.BF_ButtonClickUp, QUICK_STORE_BINDING)
     def OnQuickStoreClick(self, params=None):
         # type: (object) -> None
@@ -659,7 +765,36 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         没有会话（`OpenDemo`）时列表视图缺席，这一下什么也不做。
         """
         if self.list_view is not None:
-            self.list_view.on_quick_store(params)
+            craft = getattr(self, "craft", None)
+            if craft is not None and craft.put_selected("network", -1):
+                return
+            if not self.slot_input.primary("network", -1):
+                self.list_view.on_quick_store(params)
+
+    def top_modal(self):
+        for name in ("select_item_window", "select_fluid_window", "number_set_window",
+                     "recipe_choice_window", "item_list_window", "fluid_list_window"):
+            window = getattr(self, "_vars", {}).get("_endernet_" + name)
+            if window is not None:
+                return window.close
+        if self.order_preview_visible():
+            return self.preview.dismiss
+        if self.status is not None and self.status.popup_visible():
+            return self.status.close_popup
+        detail = getattr(self, "factoric", None)
+        if detail is not None and detail.detail_visible():
+            return detail.on_detail_close
+        return None
+
+    @_listen_middle
+    def OnTerminalMiddle(self, event):
+        if self._activated:
+            self.slot_input.pointer("middle", event.down)
+
+    @_listen_wheel
+    def OnTerminalWheel(self, event):
+        if self._activated:
+            self.slot_input.wheel(event.direction)
 
     @_listen_key_event
     def OnEscapeKey(self, event):
@@ -679,11 +814,26 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         """
         if not self._activated:
             return
-        if getattr(event, "isDown", 0) != 1:
+        board = getattr(OnKeyPressInGame, "KeyBoardType", None)
+        key = getattr(event, "key", None)
+        down = getattr(event, "isDown", 0) == 1
+        if board is not None and self.slot_input.desktop and not self.slot_input.editing:
+            if key == getattr(board, "KEY_LSHIFT", None):
+                was_shift = self.slot_input.shift
+                self.slot_input.shift = down
+                if was_shift and not down and self.list_view is not None:
+                    self.list_view.refresh()
+            elif key == getattr(board, "KEY_SPACE", None):
+                self.slot_input.space = down
+        if not down:
             return
         if ESCAPE_KEY is None or getattr(event, "key", None) != ESCAPE_KEY:
             return
-        self.RemoveUI()
+        modal = self.top_modal()
+        if modal is not None:
+            modal()
+        else:
+            self.RemoveUI()
 
     @Binder.binding(Binder.BF_ButtonClickUp, "#EnderNetTerminal.close")
     def OnCloseClick(self, params):
@@ -697,6 +847,8 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         一个没人绑的死方法。加方法时贴着别人的装饰器插，就是这个下场：
         装饰器与它修饰的函数之间没有任何语法约束，错了不报错。
         """
+        if self.top_modal() is not None:
+            return
         self.backpack.clear_selection()
         # 半空中的那一个要收起来：界面都没了，`OnTicking` 不再推进它，
         # 留着下一次打开时还挂在半路。
@@ -707,6 +859,7 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         # 界面隐藏后 `OnTicking` 不再跑，选中态留着只会在下次打开时冒出来
         # 指向一个早就过期的东西。控件不用管：绑定每渲染帧重取一次。
         # 动画同理——它也是「没人推进就永远停在那一帧」的东西。
+        self.slot_input.reset()
         self.backpack.clear_selection()
         self.fly.clear()
         # 详情弹窗也收起来：界面隐藏后没人再点它，留着的话下次打开时它
@@ -715,6 +868,7 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
             self.status.close_popup()
 
     def OnDestroy(self):
+        self.slot_input.reset()
         self.backpack.clear_selection()
         self.fly.clear()
 
@@ -801,6 +955,7 @@ class TerminalListView(object):
         #: 同一格」之后槽号与发命令时一模一样，而那是两次不同的意图。
         #: **不改点击抑制**：防抖与连击合并属 R12。
         self._action_requests = {}
+        self._flights = {}
         self._scroll = None
         self._sort_uv = {SORT_METHOD_ICON_PATH: None, SORT_ORDER_ICON_PATH: None}
         if self.scroll_path is not None:
@@ -829,7 +984,7 @@ class TerminalListView(object):
         """可见行数，接 `#maximum_grid_items`。"""
         if self.closed:
             return 0
-        return self.cache.model.count()
+        return len(self.rows) if getattr(getattr(self.screen, "slot_input", None), "shift", False) else self.cache.model.count()
 
     def is_unavailable(self):
         # type: () -> bool
@@ -847,18 +1002,6 @@ class TerminalListView(object):
                 and isinstance(index, INTEGER_TYPES)
                 and 0 <= index < len(self.rows))
 
-    def _basic_info(self, item_id):
-        # type: (str) -> tuple
-        """`(id_aux, maxStackSize)`。**委托给 `stack_size`**，不在这里缓存。
-
-        「一组是多少」只能有一份定义：上半屏发 `inv_put`、下半屏发
-        `inv_take`，两处各写一份的代价不是重复代码，而是**两个方向的天花板
-        会悄悄分家**——同一个键在「取」的时候按 64 算、在「存」的时候按 1 算，
-        界面上没有任何东西看得出来。因此缓存也挂在 `stack_size` 的模块上，
-        不跟视图实例走。
-        """
-        return stack_size.basic_info(item_id)
-
     def _stack_limit(self, item_id):
         # type: (str) -> int
         """一组是多少。退化的方向见 `stack_size.stack_limit`。"""
@@ -868,7 +1011,8 @@ class TerminalListView(object):
         # type: (object) -> int
         if not self.has_item(index):
             return 0
-        return self._basic_info(self.rows[index].key.name)[0]
+        key = self.rows[index].key
+        return stack_size.id_aux(key.name, key.aux)
 
     def is_selected(self, index):
         # type: (object) -> bool
@@ -1017,6 +1161,15 @@ class TerminalListView(object):
             return
         entry = self.rows[index]
         self._row_press = (entry.key, entry.has_pattern, self._clock())
+        self._row_touch = slot_layout.click_rect(params)
+        self._row_scroll = self._scroll_position()
+
+    def _scroll_position(self):
+        scroll = self._scroll or slot_layout.scroll_view(self.screen)
+        try:
+            return scroll.GetScrollViewPercentValue() if scroll is not None else None
+        except (AttributeError, ValueError, RuntimeError):
+            return None
 
     def _take_long_press(self):
         # type: () -> object
@@ -1092,6 +1245,14 @@ class TerminalListView(object):
         # 释放产生的短按，不能同时存取、取消选中或清空样板配置」。因此命中
         # 就开数量窗并**在这里返回**——判定放在下标范围与会话检查之前，是因为
         # 它要的是「刚才那一下按下」，与这一行现在是什么无关。
+        press = self._row_press
+        start = getattr(self, "_row_touch", None)
+        end = slot_layout.click_rect(params)
+        scroll = getattr(self, "_row_scroll", None)
+        if press and ((start and end and max(abs(start[i] - end[i]) for i in (0, 1)) > 5)
+                      or (scroll is not None and self._scroll_position() != scroll)):
+            self._row_press = None
+            return
         long_key = self._take_long_press()
         if long_key is not None:
             self.open_quantity(long_key)
@@ -1123,6 +1284,8 @@ class TerminalListView(object):
         if not 0 <= index < len(self.rows):
             return
         entry = self.rows[index]
+        if press and press[0] != entry.key:
+            return
         model = self.cache.model
         # **点终端行分两种含义，按「背包里有没有选中」分流。**
         #
@@ -1201,7 +1364,7 @@ class TerminalListView(object):
         # 是同一个道理。两者共用 `_action_requests`，按 `kind` 分开收尾。
         self._action_requests[request_id] = ("row", key)
         # 落点就是**那一格**：这一次客户端真的知道是哪一格（是玩家点的）。
-        self._fly(key, self._network_rect(key),
+        self._schedule_flight(request_id, key, self._network_rect(key),
                   slot_layout.backpack_slot_rect(self.screen, ui_index))
 
     def _send_take(self, params=None):
@@ -1240,7 +1403,7 @@ class TerminalListView(object):
         # 记下**发命令时**的选中修订号：回执只该清这一个选中。
         self._action_requests[request_id] = (
             "bag", self.backpack.selection_revision())
-        self._fly(key, slot_layout.backpack_slot_rect(self.screen, ui_index),
+        self._schedule_flight(request_id, key, slot_layout.backpack_slot_rect(self.screen, ui_index),
                   self._entry_target(params, key))
 
     def _send_quick_move(self, params=None):
@@ -1281,7 +1444,7 @@ class TerminalListView(object):
         # 没有意义。回执按同一张表清（`_settle_action` 不按动作分家）。
         self._action_requests[request_id] = (
             "bag", self.backpack.selection_revision())
-        self._fly(key, slot_layout.backpack_slot_rect(self.screen, ui_index),
+        self._schedule_flight(request_id, key, slot_layout.backpack_slot_rect(self.screen, ui_index),
                   self._entry_target(params, key))
 
     def on_backpack_split(self, ui_index, params=None):
@@ -1328,7 +1491,7 @@ class TerminalListView(object):
         )
         self._action_requests[request_id] = (
             "bag", self.backpack.selection_revision())
-        self._fly(key, slot_layout.backpack_slot_rect(self.screen, ui_index),
+        self._schedule_flight(request_id, key, slot_layout.backpack_slot_rect(self.screen, ui_index),
                   self._entry_target(params, key))
 
     def on_quick_store(self, params=None):
@@ -1427,6 +1590,7 @@ class TerminalListView(object):
         # 装上之后**立刻清掉选中**：动作在画面上已经完成了，再留一个指向
         # 源槽的高亮会让玩家以为还能接着点。（没装上时不在这里清，那条路
         # 仍由回执去清——退化成加虚拟空间之前的行为。）
+        reverse_entry = self.backpack.entry(ui_index)
         if self.backpack.apply_exchange(
                 request_id, action, source_index, ui_index, count):
             self.backpack.clear_selection()
@@ -1437,9 +1601,17 @@ class TerminalListView(object):
         # **同一份虚拟空间里的两个槽位**，两端都精确：这一条是唯一两个落点
         # 都拿得出真实坐标的搬运。目标槽是玩家刚点的那一格，所以**用
         # `ui_index` 算坐标，而不是用源槽**——写反了就是物品从目标飞回源槽。
-        self._fly(entry.key,
+        self._schedule_flight(request_id, entry.key,
                   slot_layout.backpack_slot_rect(self.screen, source_index),
                   slot_layout.backpack_slot_rect(self.screen, ui_index))
+
+        if action == "inv_swap" and reverse_entry is not None:
+            self._schedule_flight(request_id, reverse_entry.key,
+                                  slot_layout.backpack_slot_rect(self.screen, ui_index),
+                                  slot_layout.backpack_slot_rect(self.screen, source_index))
+
+    def _schedule_flight(self, request_id, key, source, target):
+        self._flights.setdefault(request_id, []).append((key, source, target))
 
     # -- 动画 ----------------------------------------------------------
 
@@ -1496,6 +1668,8 @@ class TerminalListView(object):
         坐标现问 `slot_layout`，不缓存。
         """
         index = self.cache.model.index_of(key)
+        if index >= len(self.rows) or (index >= 0 and self.rows[index].key != key):
+            index = next((i for i, row in enumerate(self.rows) if row.key == key), -1)
         if index >= 0:
             rect = slot_layout.network_row_rect(self.screen, index)
             if rect is not None:
@@ -1569,6 +1743,9 @@ class TerminalListView(object):
         if self.closed:
             return
         model = self.cache.model
+        router = getattr(self.screen, "slot_input", None)
+        if router is not None and router.shift:
+            return
         generation, keys = model.query()
         self.rows = model.query_page(generation, 0, len(keys))
         self._shown = set(keys)
@@ -1657,6 +1834,7 @@ class TerminalListView(object):
                 and not self.backpack.has_pending()):
             return
         self._action_requests = {}
+        self._flights.clear()
         # **本地操作也要撤。** 它们是一份「服务端答应过但还没兑现」的画面，
         # 而会话都没了，那份答应已经作废。留着它，界面会一直显示一个不存在
         # 的交换结果，玩家点哪儿也都不对。
@@ -1688,6 +1866,11 @@ class TerminalListView(object):
         for message in taken:
             self.receipts.append(message.result)
             self._settle_action(message.result)
+            router = getattr(self.screen, "slot_input", None)
+            if router is not None:
+                if message.result.get("status") not in (STATUS_OK, "partial"):
+                    router.notice(message.result)
+                router.settle(message.result)
         del self.receipts[:-RECEIPT_MEMORY]
         if self.receipt_sink is not None:
             self.receipt_sink(taken)
@@ -1714,6 +1897,11 @@ class TerminalListView(object):
         会把别人的结果算到自己头上。
         """
         request_id = result.get("request_id")
+        flights = self._flights.pop(request_id, ())
+        receipt = (result.get("payload") or {}).get("receipt") or {}
+        if result.get("status") in (STATUS_OK, "partial") and receipt.get("moved", 1) > 0:
+            for flight in flights:
+                self._fly(*flight)
         if request_id not in self._action_requests:
             return
         kind, token = self._action_requests.pop(request_id)

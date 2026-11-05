@@ -52,7 +52,7 @@
 from functools import partial
 
 from ....tooldelta.ui import Binder, RegistToolDeltaScreen
-from . import stack_size
+from . import slot_layout, stack_size
 from . import universal_importer_config
 from .number_set_window import WINDOW_ATTRIBUTE as NUMBER_WINDOW_ATTRIBUTE
 from .number_set_window import show_number_set_window
@@ -61,6 +61,7 @@ from .crafting_panel import RecipeChoiceWindow, RECIPE_WINDOW_ATTRIBUTE
 from .terminal_cache import TerminalCache
 from .terminal_panel import (
     LONG_PRESS_SECONDS,
+    RecipeChoiceBindings,
     TerminalListView,
     TerminalPanelBase,
 )
@@ -243,6 +244,10 @@ class TemplateView(object):
         #: 算到 B 区头上。
         self.presses = {}
         self.receipts = []
+        self.flights = {}
+        self.stamps = []
+        self.stamp_request = None
+        self.stamp_revision = -1
         self.last_error = None
         self.errors = 0
         self._requests = {}
@@ -343,7 +348,7 @@ class TemplateView(object):
         cell = self.cell(surface, index)
         if cell is None or not cell["name"]:
             return 0
-        return stack_size.id_aux(cell["name"])
+        return stack_size.id_aux(cell["name"], cell.get("aux") or 0)
 
     def count_text(self, surface, index):
         # type: (str, object) -> str
@@ -573,6 +578,28 @@ class TemplateView(object):
         # type: (str, int, int) -> object
         self._send(ACTION_CELL_COUNT, target=surface, cell=index, count=number)
 
+    def pc_cell(self, surface, index, button, hand, count):
+        if button == "place":
+            self.stamps.append((surface, index, hand["key"], count))
+            return
+        if self.locked(surface, index):
+            if button == "middle":
+                self._on_long_press(surface, index)
+            return
+        current = self.cell(surface, index)
+        if button == "middle":
+            self.open_quantity(surface, index)
+        elif hand.get("key"):
+            key = ResourceKey.from_dict(hand["key"])
+            amount = count or (1 if button == "right" else hand["count"])
+            if current and button == "right" and current["canonical"] == key.canonical():
+                amount += current["count"]
+            self._send(ACTION_CELL_PUT, target=surface, cell=index, key=key, count=amount)
+        elif current and button == "right" and current["count"] > 1:
+            self._on_quantity(surface, index, current["count"] - 1)
+        elif current:
+            self._send(ACTION_CELL_CLEAR, target=surface, cell=index)
+
     def on_real_slot_click(self, surface):
         # type: (str) -> None
         """点真实槽（`input` / `result`）。
@@ -705,7 +732,34 @@ class TemplateView(object):
             config=config,
         )
         self._requests[request_id] = action
+        if action == ACTION_CELL_PUT:
+            view = self.screen.list_view
+            selected = self.screen.backpack.selected
+            if selected is not None:
+                origin = slot_layout.backpack_slot_rect(self.screen, selected)
+            elif view is not None and view.cache.model.selected_key() is not None:
+                origin = view._network_rect(key)
+            else:
+                origin = self._pointer_rect()
+            self.flights[request_id] = (key, origin, slot_layout.slot_rect(self.screen, target, cell))
+        elif action in (ACTION_INPUT_PUT, ACTION_INPUT_TAKE, ACTION_OUTPUT_TAKE):
+            put = action == ACTION_INPUT_PUT
+            area = SURFACE_RESULT if action == ACTION_OUTPUT_TAKE else SURFACE_INPUT
+            device_rect = slot_layout.slot_rect(self.screen, area, 0)
+            bag_rect = (slot_layout.backpack_slot_rect(self.screen, (slot - 9) % 36)
+                        if slot is not None else slot_layout.backpack_area_rect(self.screen))
+            entry = self.cell(area, 0)
+            icon = key if put else (ResourceKey.item(entry["name"], entry["aux"]) if entry else None)
+            self.flights[request_id] = (icon, bag_rect if put else device_rect,
+                                         device_rect if put else bag_rect)
         return request_id
+
+    @staticmethod
+    def _pointer_rect():
+        from .terminal_input import cursor_item_rect, input_api
+        api = input_api()
+        pos = api.GetFocusPos() if api is not None else None
+        return cursor_item_rect(pos)
 
     # -- 回执 ----------------------------------------------------------
 
@@ -734,6 +788,26 @@ class TemplateView(object):
         action = self._requests.pop(result.get("request_id"), None)
         if action is None:
             return
+        flight = self.flights.pop(result.get("request_id"), None)
+        payload = result.get("payload") or {}
+        if self.stamp_request == result.get("request_id"):
+            self.stamp_request = None
+            if result.get("status") != STATUS_OK:
+                self.stamps = []
+            self.stamp_revision = (payload.get("state") or {}).get("revision", self.revision)
+        if flight and result.get("status") == STATUS_OK and getattr(self.screen, "fly", None):
+            slots = payload.get("bag_slots") or ()
+            if slots:
+                for slot in slots:
+                    self.screen.fly.fly(ResourceKey.from_dict(payload["key"]), flight[1],
+                                        slot_layout.backpack_slot_rect(self.screen, (slot - 9) % 36))
+            else:
+                self.screen.fly.fly(*flight)
+        if (action == ACTION_ENCODE and payload.get("template") and result.get("status") == STATUS_OK
+                and getattr(self.screen, "fly", None)):
+            key = ResourceKey.item(payload["template"]["name"])
+            self.screen.fly.fly(key, slot_layout.slot_rect(self.screen, SURFACE_INPUT, 0),
+                                slot_layout.slot_rect(self.screen, SURFACE_RESULT, 0))
         pending_import = self._universal_import
         if (pending_import is not None
                 and pending_import[0] == result.get("request_id")):
@@ -807,6 +881,11 @@ class TemplateView(object):
             return
         self._settle_lost_session()
         self._settle_long_press()
+        if self.stamps and not self.stamp_request and self.revision >= self.stamp_revision:
+            surface, index, wire_key, count = self.stamps.pop(0)
+            if not self.locked(surface, index):
+                self.stamp_request = self._send(ACTION_CELL_PUT, target=surface, cell=index,
+                                                key=ResourceKey.from_dict(wire_key), count=count)
 
     def _settle_lost_session(self):
         # type: () -> None
@@ -819,6 +898,9 @@ class TemplateView(object):
         if self.client.has_session():
             return
         self._requests = {}
+        self.stamps = []
+        self.stamp_request = None
+        self.flights.clear()
         self.selection = None
         self._universal_import = None
         self.presses.clear()
@@ -850,6 +932,8 @@ class TemplateView(object):
         self.close_number_window()
         self.close_recipe_windows()
         self._requests = {}
+        self.flights.clear()
+        self.stamps = []
         self._universal_import = None
         self.selection = None
         self.presses = {}
@@ -876,7 +960,7 @@ class TemplateView(object):
 
 
 @RegistToolDeltaScreen("template_terminal_panel_ui.main")
-class TemplatePanel(ItemListWindowBindingsMixin, TerminalPanelBase):
+class TemplatePanel(RecipeChoiceBindings, ItemListWindowBindingsMixin, TerminalPanelBase):
     """样板终端：通用终端的一切 + 四个格子区。
 
     接线与 `CraftingPanel.OnCreate` 逐条对应，多出来的只有 `template` 这一个
@@ -1170,6 +1254,8 @@ class TemplatePanel(ItemListWindowBindingsMixin, TerminalPanelBase):
     def OnSourcePress(self, params=None):
         # type: (object) -> None
         if self.template is not None:
+            if self.slot_input.press("left", (SURFACE_SOURCE, (params or {}).get("#collection_index", -1))):
+                return
             self.template.on_cell_press(SURFACE_SOURCE, params, 0, CELLS_OF[
                 SURFACE_SOURCE])
 
@@ -1177,6 +1263,8 @@ class TemplatePanel(ItemListWindowBindingsMixin, TerminalPanelBase):
     def OnSourceRelease(self, params=None):
         # type: (object) -> None
         if self.template is not None:
+            if self.slot_input.primary(SURFACE_SOURCE, (params or {}).get("#collection_index", -1)):
+                return
             self.template.on_cell_release(SURFACE_SOURCE, params, 0, CELLS_OF[
                 SURFACE_SOURCE])
 
@@ -1184,6 +1272,8 @@ class TemplatePanel(ItemListWindowBindingsMixin, TerminalPanelBase):
     def OnOutputsPress(self, params=None):
         # type: (object) -> None
         if self.template is not None:
+            if self.slot_input.press("left", (SURFACE_OUTPUTS, (params or {}).get("#collection_index", -1))):
+                return
             self.template.on_cell_press(SURFACE_OUTPUTS, params, 0, CELLS_OF[
                 SURFACE_OUTPUTS])
 
@@ -1191,6 +1281,8 @@ class TemplatePanel(ItemListWindowBindingsMixin, TerminalPanelBase):
     def OnOutputsRelease(self, params=None):
         # type: (object) -> None
         if self.template is not None:
+            if self.slot_input.primary(SURFACE_OUTPUTS, (params or {}).get("#collection_index", -1)):
+                return
             self.template.on_cell_release(SURFACE_OUTPUTS, params, 0, CELLS_OF[
                 SURFACE_OUTPUTS])
 
@@ -1198,13 +1290,15 @@ class TemplatePanel(ItemListWindowBindingsMixin, TerminalPanelBase):
     def OnInputSlotClick(self, params=None):
         # type: (object) -> None
         if self.template is not None:
-            self.template.on_real_slot_click(SURFACE_INPUT)
+            if not self.slot_input.primary(SURFACE_INPUT, 0):
+                self.template.on_real_slot_click(SURFACE_INPUT)
 
     @Binder.binding(Binder.BF_ButtonClickUp, BINDING_PREFIX + "result_click")
     def OnResultSlotClick(self, params=None):
         # type: (object) -> None
         if self.template is not None:
-            self.template.on_real_slot_click(SURFACE_RESULT)
+            if not self.slot_input.primary(SURFACE_RESULT, 0):
+                self.template.on_real_slot_click(SURFACE_RESULT)
 
     # -- 生命周期 ------------------------------------------------------
 

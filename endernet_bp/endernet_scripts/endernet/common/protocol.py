@@ -1530,9 +1530,9 @@ class InventorySnapshot(SyncMessage):
     """当前玩家背包的服务端观察版本，槽号使用引擎顺序。"""
 
     kind = MSG_INVENTORY_SNAPSHOT
-    __slots__ = ("revision", "slots")
+    __slots__ = ("revision", "slots", "cursor")
 
-    def __init__(self, revision, slots):
+    def __init__(self, revision, slots, cursor=None):
         require_count(revision, "revision")
         if not isinstance(slots, (list, tuple)) or len(slots) != 36:
             raise ValueError("inventory snapshot requires 36 slots")
@@ -1550,15 +1550,26 @@ class InventorySnapshot(SyncMessage):
             rows.append(dict(row))
         self.revision = revision
         self.slots = tuple(rows)
+        self.cursor = cursor
+        if cursor is not None:
+            _require_fields(cursor, ("revision", "key", "count"), "terminal cursor")
+            require_count(cursor["revision"], "cursor revision")
+            require_count(cursor["count"], "cursor count")
+            if cursor["key"] is not None:
+                ResourceKey.from_dict(cursor["key"])
 
     def to_dict(self, descriptions=None):
-        return {"kind": self.kind, "revision": self.revision,
+        data = {"kind": self.kind, "revision": self.revision,
                 "slots": [dict(row) for row in self.slots]}
+        if self.cursor is not None:
+            data["cursor"] = self.cursor
+        return data
 
     @classmethod
     def from_dict(cls, data, descriptions=None):
-        _require_fields(data, ("kind", "revision", "slots"), "inventory_snapshot")
-        return cls(data["revision"], data["slots"])
+        fields = ("kind", "revision", "slots")
+        _require_fields(data, fields + (("cursor",) if "cursor" in data else ()), "inventory_snapshot")
+        return cls(data["revision"], data["slots"], data.get("cursor"))
 
 
 def _require_slot_row(row, index, extra=()):

@@ -37,24 +37,11 @@ User 交接的 `crafting_grid` 引用 `endernet_container_common.custom_slot`，
 `grid_dimensions: [1, 1]` 的 grid（集合 `endernet_craft_output`）、模板仍是那个
 薄包装——渲染出来还是 18×18 的一格，只是它现在有集合身份了。
 
-## 已知缺项（如实记，不补假实现）
-
-- **合成没有专属飞行动画。** `flying_item` 控件在面板上，本类也照常推进
-  `self.fly`，但**本轮不发起任何一次飞行**：起终点要现算控件矩形，而本界面
-  的控件根路径还没在运行时核实过（`plans/ui/crafting_terminal_panel.md` 交接
-  时也记着「合成专属动画未定义」）。发一个飞向 `(0, 0)` 的动画比不飞更糟。
-- **失败原因没有显示位置。** 与通用终端的命令回执同一处境：原因码留在
-  `CraftingView.last_error` 与 `diagnostics()` 里，界面上**没有控件显示它**。
-  本轮不新增控件（按 11.md 第 25 行，新增控件由 User 负责）。
-- **滚动重锚缺席。** 网络列表那一半的锚点要读滚动条的百分比，而本界面的
-  滚动控件路径同样没有运行时结论，因此 `TerminalListView` 在这里不接管滚动条
-  （`scroll_path=None`）：列表内容、搜索、排序照常，只有「重排后把玩家盯着的
-  那一行拉回视野」这一条不做。
+双端手势与服务端命令见 plans/technical_notes/terminal_slot_interaction.md。
 """
 
 from functools import partial
 
-from ....tooldelta.define.item import Item
 from ....tooldelta.ui import Binder, RegistToolDeltaScreen
 from . import slot_layout, stack_size
 from .select_item_window import (
@@ -62,9 +49,9 @@ from .select_item_window import (
     show_select_item_window,
 )
 from .terminal_cache import TerminalCache
-from .terminal_panel import TerminalListView, TerminalPanelBase
+from .slot_layout import window_control
+from .terminal_panel import RecipeChoiceBindings, TerminalListView, TerminalPanelBase
 from .widgets import device_status
-from .widgets.control_api import show_item
 from ..network_client import NetworkClient
 from ...common.identity import DeviceRef
 from ...common.protocol import (
@@ -138,20 +125,11 @@ REASON_TEXTS = {
 #: 显示位置，取走后只留最近几条。
 RECEIPT_MEMORY = 8
 
-#: 候选配方窗口。**用本界面自己的模板**，不改 JSON、不新造控件：窗口是
-#: 运行动态创建的（与 `select_item_window` 同一手法），候选逐条铺 `recipe_section`。
+# 宿主预制的配方候选窗口及其 collection 滚动区域。
 RECIPE_WINDOW_ATTRIBUTE = "_endernet_recipe_choice_window"
 RECIPE_WINDOW_DEFINITION = "crafting_terminal_panel_ui.load_recipe_window"
 RECIPE_WINDOW_NAME = "endernet_recipe_choice_window"
-RECIPE_SECTION_DEFINITION = "crafting_terminal_panel_ui.recipe_section"
-#: 窗口里那个滚动区的名字（`main` 之下的一层）。内容控件由引擎回答
-#: （`GetScrollViewContentControl`），不猜路径。
 RECIPE_SCROLL_PATH = "/" + RECIPE_WINDOW_NAME + "/scroll_view"
-#: 候选逐条往上摆：`recipe_section` 高 62，留 2 像素缝。
-RECIPE_ROW_HEIGHT = 64.0
-#: 一屏最多铺几条。**超过它就不再铺**（不是假装能滚动）：滚动区能不能跟着
-#: 内容长大是没实测过的，铺出屏幕外只会让玩家以为「只有这几条」。
-RECIPE_MAX_ROWS = 3
 
 
 def _text(value):
@@ -242,6 +220,9 @@ class CraftingView(object):
         #: 服务端推来的九宫格版本。**只接受不比它旧的**，乱序到达时不会把
         #: 旧画面盖回来。
         self.revision = -1
+        self.selected_grid = None
+        self.batch = None
+        self.grid_flights = {}
         self.cells = (None,) * CRAFT_SLOT_COUNT
         #: 保留的配方标识（`PresetRecipe.digest()`）。**只是备忘**：能不能合成
         #: 看的是格子里实际有什么（服务端那侧的口径），这里只用来在界面上
@@ -308,7 +289,7 @@ class CraftingView(object):
         cell = self.cell(index)
         if cell is None or not cell.get("name"):
             return 0
-        return stack_size.id_aux(cell["name"])
+        return stack_size.id_aux(cell["name"], cell.get("aux") or 0)
 
     def cell_count(self, index):
         # type: (object) -> str
@@ -335,7 +316,7 @@ class CraftingView(object):
         name = self.preview.get("name")
         if not name:
             return 0
-        return stack_size.id_aux(name)
+        return stack_size.id_aux(name, self.preview.get("aux") or 0)
 
     def output_count(self):
         # type: () -> str
@@ -397,6 +378,36 @@ class CraftingView(object):
             return None
         return self._send(ACTION_IMPORT, key=ResourceKey.item(item_id))
 
+    def take_desktop(self, button, shift, space, hand):
+        if self.closed or not self.client.has_session() or not self.preview:
+            return
+        target = "bag" if shift or space else "cursor"
+        count = self.preview.get("count") or 1
+        limit = self.screen.list_view._stack_limit(self.preview["name"])
+        crafts = max(1, (limit * (36 if space else 1)) // count)
+        self.start_batch(target, crafts if shift or space or button == "right" else 1)
+
+    def start_batch(self, target, crafts):
+        if self.batch or not self.preview or not self.client.has_session():
+            return
+        self.batch = {"target": target, "remaining": crafts, "output": dict(self.preview),
+                      "revision": self.revision, "request": None}
+        self._advance_batch()
+
+    def _advance_batch(self):
+        batch = self.batch
+        if not batch or batch["request"] or self.revision < batch["revision"]:
+            return
+        if (not self.client.has_session() or batch["output"] != self.preview
+                or self.revision != batch["revision"]):
+            self.batch = None
+            return
+        hand = self.client.cursor or {}
+        request = self.client.send_command(ACTION_TAKE, target=batch["target"],
+            slot_version=self.revision, config={"revision": hand.get("revision")})
+        batch["request"] = request
+        self._requests[request] = ACTION_TAKE
+
     def on_take(self, params=None):
         # type: (object) -> object
         """点输出槽：执行**一次**合成。一次就是一次，不连做。"""
@@ -413,14 +424,52 @@ class CraftingView(object):
 
     def on_grid_click(self, params=None):
         # type: (object) -> None
-        """点九宫格的一格。**R12 未定案，本轮什么都不做。**
+        index = (params or {}).get("#collection_index")
+        if (not self.client.has_session() or isinstance(index, bool)
+                or not isinstance(index, INTEGER_TYPES) or not 0 <= index < CRAFT_SLOT_COUNT):
+            return
+        selected = self.selected_grid
+        if selected is not None:
+            self.selected_grid = None
+            if selected != index:
+                self.move_grid(selected, "grid", index, False, None)
+            return
+        bag = self.screen.backpack
+        view = self.screen.list_view
+        if bag.selected is not None and bag.entry(bag.selected):
+            self.move_grid(index, "bag", bag.selected, True, bag.entry(bag.selected).key)
+        elif view is not None and view.cache.model.selected_key() is not None:
+            key = view.cache.model.selected_key()
+            self.move_grid(index, "network", -1, True, key)
+        elif self.has_cell(index):
+            self.selected_grid = index
 
-        放入／取出／拖拽、长按、左右键与光标持有物的退出规则都还没有结论
-        （UI 文档第 8 节），自己发明一套就是把未定玩法悄悄定案。这里显式留一个
-        **不做任何事**的方法，只是为了让 JSON 里那个名字有主——查不到绑定时
-        引擎安静地什么都不发生，而「安静地什么都不发生」正是要避开的那种错。
-        """
-        return None
+    def put_selected(self, area, index):
+        selected = self.selected_grid
+        if selected is None:
+            return False
+        self.selected_grid = None
+        self.move_grid(selected, area, index, False, None)
+        return True
+
+    def move_grid(self, cell, area, index, placing, key):
+        fields = {"cell": cell, "target": area, "key": key,
+                  "config": {"placing": placing, "grid_revision": self.revision}}
+        if area == "bag":
+            from .backpack_model import engine_slot_of
+            slot = engine_slot_of(index)
+            view = self.client.inventory_slots.get(slot)
+            if view is None:
+                return
+            fields.update(slot=slot, slot_version=view["slot_version"])
+            fields["config"]["fingerprint"] = view["canonical"]
+        elif area == "grid":
+            fields["into_slot"] = index
+        request = self.client.send_command("grid_move", **fields)
+        self._requests[request] = "grid_move"
+        self.grid_flights[request] = (cell, area, index, placing)
+        self.screen.backpack.clear_selection()
+        self.screen.list_view.cache.model.clear_selection()
 
     def _send(self, action, key=None, recipe=None):
         # type: (str, object, object) -> str
@@ -552,6 +601,20 @@ class CraftingView(object):
         action = self._requests.pop(result.get("request_id"), None)
         if action is None:
             return
+        request = result.get("request_id")
+        payload = result.get("payload") or {}
+        flight = self.grid_flights.pop(request, None)
+        applied = result.get("status") in (STATUS_OK, "partial")
+        batch = self.batch
+        if batch and batch["request"] == request:
+            if applied:
+                batch["remaining"] -= 1
+                batch["revision"] = payload["grid"]["revision"]
+                batch["request"] = None
+            if not applied or batch["remaining"] <= 0:
+                self.batch = None
+        if applied:
+            self._animate_result(action, payload, flight, batch)
         if result.get("status") != STATUS_OK:
             self.last_error = self._error_text(result)
             return
@@ -561,6 +624,44 @@ class CraftingView(object):
             return
         if action == ACTION_IMPORT and payload.get("needs_choice"):
             self._open_choice(payload)
+
+    def _animate_result(self, action, payload, flight, batch):
+        fly = getattr(self.screen, "fly", None)
+        if not fly:
+            return
+        hand = payload.get("cursor")
+        if hand and (not self.client.cursor or hand["revision"] >= self.client.cursor["revision"]):
+            self.client.cursor = hand
+        if flight and payload.get("key"):
+            cell, area, index, placing = flight
+            key = ResourceKey.from_dict(payload["key"])
+            grid = slot_layout.slot_rect(self.screen, "grid", cell)
+            other = self.screen.list_view._network_rect(key) if area == "network" else slot_layout.slot_rect(self.screen, area, index)
+            fly.fly(key, other if placing else grid, grid if placing else other)
+        for movement in payload.get("movements", ()):
+            key = ResourceKey.from_dict(movement["key"])
+            cell = slot_layout.slot_rect(self.screen, "grid", movement["cell"])
+            if movement["from"] == "inventory":
+                slot = movement["slot"]
+                other = slot_layout.backpack_slot_rect(self.screen, (slot - 9) % 36)
+            else:
+                other = self.screen.list_view._network_rect(key)
+            placing = movement["to"] == "grid"
+            fly.fly(key, other if placing else cell, cell if placing else other)
+        if action == ACTION_TAKE:
+            dest = slot_layout.backpack_area_rect(self.screen)
+            if batch and batch["target"] == "cursor":
+                from .terminal_input import cursor_item_rect, input_api
+                dest = cursor_item_rect(input_api().GetFocusPos())
+            for i, item in enumerate(payload.get("outputs", ())):
+                key = ResourceKey.item(item["name"], item.get("aux") or 0)
+                start = slot_layout.slot_rect(self.screen, "output", 0)
+                slots = payload.get("bag_slots", ())
+                if i < len(slots) and slots[i]:
+                    for slot in slots[i]:
+                        fly.fly(key, start, slot_layout.backpack_slot_rect(self.screen, (slot - 9) % 36))
+                else:
+                    fly.fly(key, start, dest)
 
     @staticmethod
     def _error_text(result):
@@ -587,6 +688,11 @@ class CraftingView(object):
         if self.closed:
             return
         self._settle_lost_session()
+        if self.client.has_session():
+            self._advance_batch()
+        else:
+            self.batch = self.selected_grid = None
+            self.grid_flights.clear()
 
     def _settle_lost_session(self):
         # type: () -> None
@@ -615,6 +721,9 @@ class CraftingView(object):
         self.close_picker()
         self._requests = {}
         self.choice = None
+        self.selected_grid = None
+        self.batch = None
+        self.grid_flights = {}
         self.cells = (None,) * CRAFT_SLOT_COUNT
         self.preview = None
         self.recipe = ""
@@ -635,45 +744,8 @@ class CraftingView(object):
         }
 
 
-def _item_of(entry):
-    # type: (object) -> object
-    """一个 `{name, aux, count}` → `Item`；形状不对返回 `None`。
-
-    配方投影里的 `name` 是**普通物品 ID 字符串**（`"minecraft:stick"`），
-    不是 `ResourceKey`——`PresetRecipe.to_dict()` 的文档写明了这一点。
-    """
-    if not isinstance(entry, dict):
-        return None
-    name = entry.get("name")
-    if not name:
-        return None
-    aux = entry.get("aux")
-    if isinstance(aux, bool) or not isinstance(aux, INTEGER_TYPES):
-        aux = 0
-    count = entry.get("count")
-    if isinstance(count, bool) or not isinstance(count, INTEGER_TYPES) or count < 1:
-        count = 1
-    return Item(name, aux, count)
-
-
 class RecipeChoiceWindow(object):
-    """多配方候选：一个产物有好几条配方时，让玩家挑一条再导入。
-
-    **运行动态创建，不改 JSON。** 用的是本界面自己的 `load_recipe_window`
-    与 `recipe_section` 两个模板——它们本来就是给这件事画的，只是交接时是
-    静态的一个占位实例（UI 文档第 4 节：「当前 `load_recipe_window` 滚动内容
-    仅引用一个 `recipe_section`，未声明多项 collection 或动态工厂。接入时须让
-    全部候选配方各有一个预览项及"导入"按钮」）。本轮按这句话逐条铺实例。
-
-    **为什么不走集合绑定**（像九宫格那样）：一条配方要同时画 9 格原料 + 1 个
-    产物 + 1 个按钮，而集合绑定一格里只能放一个值，`recipe_section` 的内层
-    槽位没有嵌套集合可用。这条路在 JSON UI 里表达不出来，只能脚本铺。
-
-    代价如实记：铺出来的候选**不参与滚动**（见 `RECIPE_MAX_ROWS`），且每一格
-    是脚本按控件路径写进去的——这正是 11-03 从网络列表上撤下来的那条路。
-    区别在**格子是它自己刚建的、当帧就填**（不是去摸一个由渲染器延迟生成、
-    之后还会被回收换出的格子），因此不存在「拿到过期引用」那个已知故障。
-    """
+    """Bind a reusable scrolling grid to the server-provided candidates."""
 
     WINDOW_ATTRIBUTE = RECIPE_WINDOW_ATTRIBUTE
 
@@ -697,89 +769,26 @@ class RecipeChoiceWindow(object):
     def _create_controls(self):
         # type: () -> None
         screen = self.screen
-        self.root = screen.AddElement(
-            RECIPE_WINDOW_DEFINITION, RECIPE_WINDOW_NAME)
+        self.root = window_control(screen, RECIPE_WINDOW_NAME)
         # 压在主面板之上：主面板的遮罩是 layer 20、接近 30 的控件也有，
         # 这里取 50（与 `select_item_window` 同一个层）。
-        self.root.SetLayer(50)
-        content = self._content()
-        for index in range(min(len(self.candidates), RECIPE_MAX_ROWS)):
-            candidate = self.candidates[index]
-            if not isinstance(candidate, dict):
-                continue
-            section = content.AddElement(
-                RECIPE_SECTION_DEFINITION, "candidate_%d" % (index,))
-            section.SetAnchorFrom("top_left")
-            section.SetAnchorTo("top_left")
-            # 窗口根不是 3×3 的网格，逐条往下排：`recipe_section` 高 62，
-            # 留 2 像素缝。
-            section.SetPos((6.0, index * RECIPE_ROW_HEIGHT))
-            self._fill(section, candidate)
-            section.GetElement("confirm_btn").asButton().SetCallback(
-                partial(self._on_confirm, candidate))
-            self.shown += 1
+        self.root.SetVisible(True)
+        self.shown = len(self.candidates)
         self.root.GetElement("close").asButton().SetCallback(self.close)
 
-    def _content(self):
-        # type: () -> object
-        """候选铺进去的那一层：窗口里滚动区的内容控件。
-
-        **路径不写死**：内容在 `scroll_view` 之下，而那一层的名字随输入方式
-        分叉（鼠标端 `scroll_mouse`、触控端 `scroll_touch`），引擎自己知道
-        内容是谁。取不到就退回窗口根——铺上去仍然看得见（会盖住标题，属于
-        「窗口没按预期搭起来」的可见故障，比静默什么都不显示好查）。
-        """
-        content = slot_layout.scroll_content_at(self.screen, RECIPE_SCROLL_PATH)
-        if content is not None:
-            return content
-        return self.root
-
-    def _fill(self, section, candidate):
-        # type: (object, dict) -> None
-        """把一条配方投影画进这个 section。不持有任何实物。"""
-        slots = candidate.get("slots")
-        if not isinstance(slots, list):
-            slots = []
-        for index in range(CRAFT_SLOT_COUNT):
-            cell = section.GetElement("input_slots/slot%d" % (index,))
-            entry = slots[index] if index < len(slots) else None
-            self._paint(cell, entry)
-        outputs = candidate.get("outputs")
-        if not isinstance(outputs, list):
-            outputs = []
-        self._paint(section.GetElement("output_slot"),
-                    outputs[0] if outputs else None)
-
-    @staticmethod
-    def _paint(cell, entry):
-        # type: (object, object) -> None
-        """一格原料／产物：有东西就画，没有就**藏起来**。
-
-        藏而不是留空底图：配方本来没有原料的位置保持为空（UI 文档第 4 节），
-        一格空的槽底会让玩家以为「这里要放东西但预览没显示出来」。
-        """
-        item = _item_of(entry)
-        if item is None:
-            cell.SetVisible(False)
-            return
-        cell.SetVisible(True)
-        # 形状是 `(name, aux)`，不是 `Item` 对象（2026-10-03 真机实测，
-        # 见 `widgets/control_api.py`）。原先传对象，症状是**原料格全空
-        # 而不报错**——而这一屏至今没上过机，所以一直没被发现。
-        show_item(cell.GetElement("item_renderer"),
-                  item.newItemName, item.newAuxValue)
-        count = entry.get("count") if isinstance(entry, dict) else None
-        label = cell.GetElement("item_count").asLabel()
-        if (isinstance(count, INTEGER_TYPES) and not isinstance(count, bool)
-                and count > 1):
-            label.SetText(str(count))
-        else:
-            label.SetText("")
+    def entry(self, row, cell):
+        if self.closed or not 0 <= row < self.shown:
+            return None
+        candidate = self.candidates[row]
+        slots = candidate.get("outputs" if cell == 9 else "slots") or []
+        index = 0 if cell == 9 else cell
+        return slots[index] if index < len(slots) else None
 
     def _on_confirm(self, candidate, params=None):
         # type: (dict, object) -> None
         digest = candidate.get("digest") if isinstance(candidate, dict) else None
         callback = self.choose
+        self.cancel = None
         self.close()
         if callback is not None and digest:
             callback(digest)
@@ -791,7 +800,7 @@ class RecipeChoiceWindow(object):
             return
         self.closed = True
         if self.screen._activated and self.root is not None:
-            self.root.Remove()
+            self.root.SetVisible(False)
         if self.screen._vars.get(self.WINDOW_ATTRIBUTE) is self:
             del self.screen._vars[self.WINDOW_ATTRIBUTE]
         cancel = self.cancel
@@ -804,7 +813,7 @@ class RecipeChoiceWindow(object):
 
 
 @RegistToolDeltaScreen("crafting_terminal_panel_ui.main")
-class CraftingPanel(TerminalPanelBase):
+class CraftingPanel(RecipeChoiceBindings, TerminalPanelBase):
     """合成终端：通用终端的一切 + 九宫格工作台。
 
     接线与 `CommonTerminalPanel.OnCreate` 逐条对应，多出来的只有 `craft`
@@ -858,7 +867,7 @@ class CraftingPanel(TerminalPanelBase):
         """九宫格**没有选中态**。模板声明了这个变量，因此必须有人答它——
         答假值是「这里没有选中这回事」，而漏答是引擎拿模板默认值（指向上半屏
         的集合），那是另一回事。"""
-        return False
+        return self.craft is not None and self.craft.selected_grid == index
 
     @Binder.binding_collection(
         Binder.BF_BindBool, OUTPUT_COLLECTION, OUTPUT_VISIBLE_BINDING)
@@ -893,17 +902,34 @@ class CraftingPanel(TerminalPanelBase):
     #: 四条按钮绑定。**都不看 `params`**，但签名里必须收它——引擎按位置传。
     #: 转发到工作台而不是就地处理：会话与在途的账都在那边。
 
+    @Binder.binding(Binder.BF_ButtonClickDown, GRID_CLICK_BINDING)
+    def OnCraftGridPress(self, params=None):
+        self.slot_input.press("left", ("grid", (params or {}).get("#collection_index", -1)))
+
     @Binder.binding(Binder.BF_ButtonClickUp, GRID_CLICK_BINDING)
     def OnCraftGridClick(self, params=None):
         # type: (object) -> None
         if self.craft is not None:
-            self.craft.on_grid_click(params)
+            if not self.slot_input.primary("grid", (params or {}).get("#collection_index", -1)):
+                self.craft.on_grid_click(params)
+
+    @Binder.binding(Binder.BF_ButtonClickDown, OUTPUT_TAKE_BINDING)
+    def OnCraftOutputPress(self, params=None):
+        self._output_pressed = self._clock()
 
     @Binder.binding(Binder.BF_ButtonClickUp, OUTPUT_TAKE_BINDING)
     def OnCraftTake(self, params=None):
         # type: (object) -> None
         if self.craft is not None:
-            self.craft.on_take(params)
+            if not self.slot_input.primary("output", 0):
+                pressed = getattr(self, "_output_pressed", None)
+                self._output_pressed = None
+                if pressed is not None and self._clock() - pressed >= 0.4 and self.craft.preview:
+                    from .number_set_window import show_number_set_window
+                    show_number_set_window(self, 1, partial(self.craft.start_batch, "bag"),
+                                           max_number=2304, title=u"合成次数")
+                else:
+                    self.craft.on_take(params)
 
     @Binder.binding(Binder.BF_ButtonClickUp, IMPORT_BINDING)
     def OnCraftImport(self, params=None):

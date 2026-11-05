@@ -427,6 +427,34 @@ class EngineItemPrimitives(object):
         # type: (str) -> int
         return PLAYER_SLOT_COUNT
 
+    def cursor_record(self, player_id):
+        from mod.server.extraServerApi import GetEngineCompFactory
+        import json
+        value = GetEngineCompFactory().CreateExtraData(player_id).GetExtraData("endernet:terminal_cursor")
+        if isinstance(value, dict):
+            return value
+        return json.loads(value) if value else {}
+
+    def save_cursor(self, player_id, record):
+        from mod.server.extraServerApi import GetEngineCompFactory
+        import json
+        from .engine_text import engine_text
+        data = engine_text(json.dumps(record, ensure_ascii=True, separators=(",", ":")))
+        return GetEngineCompFactory().CreateExtraData(player_id).SetExtraData(
+            "endernet:terminal_cursor", data, True)
+
+    def keep_inventory(self):
+        from mod.server.extraServerApi import GetEngineCompFactory, GetLevelId
+        rules = GetEngineCompFactory().CreateGame(GetLevelId()).GetGameRulesInfoServer()
+        return rules["cheat_info"]["keep_inventory"]
+
+    def drop_cursor(self, player_id, data):
+        from mod.server.extraServerApi import GetEngineCompFactory
+        factory = GetEngineCompFactory()
+        pos = factory.CreatePos(player_id).GetFootPos()
+        dimension = factory.CreateDimension(player_id).GetEntityDimensionId()
+        return self._player_comp(player_id).SpawnItemToLevel(data, dimension, pos)
+
     def player_item(self, player_id, slot):
         # type: (str, int) -> object
         from mod.server.extraServerApi import GetMinecraftEnum
@@ -577,6 +605,128 @@ class EnginePlayerInventory(SlotBackedContainer):
 # -- 提供者 -----------------------------------------------------------------
 
 
+class PlayerCursor(SlotBackedContainer):
+    """One persistent stack per player, shared across terminal sessions."""
+    def __init__(self, primitives, player_id, stack_limit):
+        SlotBackedContainer.__init__(self, stack_limit)
+        self.primitives = primitives
+        self.player_id = player_id
+
+    def slot_count(self):
+        return 1
+
+    def read_slot(self, slot):
+        return self.primitives.cursor_record(self.player_id).get("item")
+
+    def _write_slot(self, slot, data):
+        record = self.primitives.cursor_record(self.player_id)
+        if record.get("pending"):
+            return False
+        return self.primitives.save_cursor(self.player_id, {
+            "revision": record.get("revision", 0) + 1,
+            "item": None if _is_empty(data) else data,
+        })
+
+    @staticmethod
+    def same_stack(first, second):
+        if _is_empty(first) or _is_empty(second):
+            return _is_empty(first) and _is_empty(second)
+        return first["count"] == second["count"] and item_key_from_dict(first) == item_key_from_dict(second)
+
+    def reconcile(self, adapter, area, identity):
+        record = self.primitives.cursor_record(self.player_id)
+        pending = record.get("pending")
+        if not pending:
+            return True
+        if pending["area"] != area or pending["identity"] != identity:
+            return False
+        current = adapter.read_slot(pending["slot"])
+        current = None if _is_empty(current) else current
+        if self.same_stack(current, pending["after"]):
+            item = pending["hand_after"]
+        elif self.same_stack(current, pending["before"]):
+            item = record.get("item")
+        else:
+            return False
+        return self.primitives.save_cursor(self.player_id, {
+            "revision": record["revision"] + 1, "item": item})
+
+    def replace_pair(self, adapter, slot, area, identity, after, hand_after):
+        if not self.reconcile(adapter, area, identity):
+            return False
+        record = dict(self.primitives.cursor_record(self.player_id))
+        before = adapter.read_slot(slot)
+        before = None if _is_empty(before) else before
+        record["revision"] = record.get("revision", 0) + 1
+        record["pending"] = {"area": area, "identity": identity, "slot": slot,
+                             "before": before, "after": after, "hand_after": hand_after}
+        if not self.primitives.save_cursor(self.player_id, record):
+            return False
+        adapter.write_slot(slot, after)
+        actual = adapter.read_slot(slot)
+        actual = None if _is_empty(actual) else actual
+        return self.reconcile(adapter, area, identity) and self.same_stack(actual, after)
+
+    def exchange(self, adapter, slot, area, identity):
+        return self.replace_pair(adapter, slot, area, identity, self.read_slot(0),
+                                 adapter.read_slot(slot))
+
+    def return_to_player(self, bag):
+        if not self.reconcile(bag, "bag", self.player_id):
+            return False
+        item = self.read_slot(0)
+        if _is_empty(item):
+            return True
+        key = item_key_from_dict(item)
+        limit = bag.stack_limit_of(key)
+        # Merge before using empty slots, as in the vanilla inventory.
+        for empty in (False, True):
+            for slot in range(bag.slot_count()):
+                other = bag.read_slot(slot)
+                if _is_empty(other) != empty:
+                    continue
+                if not empty and item_key_from_dict(other) != key:
+                    continue
+                previous = 0 if empty else other["count"]
+                moved = min(item["count"], limit - previous)
+                if moved <= 0:
+                    continue
+                after = dict(item if empty else other, count=previous + moved)
+                rest = dict(item, count=item["count"] - moved) if item["count"] > moved else None
+                if not self.replace_pair(bag, slot, "bag", self.player_id, after, rest):
+                    return False
+                item = rest
+                if not item:
+                    return True
+        return self.drop_remaining()
+
+    def drop_remaining(self):
+        record = self.primitives.cursor_record(self.player_id)
+        item = record.get("item")
+        if record.get("pending") or _is_empty(item):
+            return not record.get("pending")
+        # Journal the drop before calling the engine. An interrupted spawn is
+        # ambiguous and must never be retried as another item entity.
+        record = dict(self.primitives.cursor_record(self.player_id))
+        record["pending"] = {"area": "drop", "identity": self.player_id}
+        if not self.primitives.save_cursor(self.player_id, record):
+            return False
+        dropped = self.primitives.drop_cursor(self.player_id, item)
+        if dropped:
+            return self.primitives.save_cursor(self.player_id, {
+                "revision": record["revision"] + 1, "item": None})
+        del record["pending"]
+        self.primitives.save_cursor(self.player_id, record)
+        return False
+
+    def snapshot(self):
+        record = self.primitives.cursor_record(self.player_id)
+        item = record.get("item")
+        return {"revision": record.get("revision", 0),
+                "key": item_key_from_dict(item).to_dict() if item else None,
+                "count": item["count"] if item else 0}
+
+
 class EngineContainerProvider(object):
     """位置 -> 容器适配器。
 
@@ -654,6 +804,11 @@ class EngineInventoryProvider(object):
         self._stack_limit = stack_limit
         self._cache = {}
         self._endpoints = {}
+
+    def cursor_of(self, player_id):
+        if hasattr(self.primitives, "cursor_record"):
+            return PlayerCursor(self.primitives, player_id, self._stack_limit)
+        return None
 
     def inventory_of(self, player_id):
         # type: (str) -> object

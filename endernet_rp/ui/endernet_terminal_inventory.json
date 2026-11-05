@@ -5,7 +5,24 @@
         "$item_id_aux_binding": "#EnderNetTerminal.backpack_item_id_aux",
         "$item_selected_binding": "#EnderNetTerminal.backpack_selected",
         "$item_count_binding": "#EnderNetTerminal.backpack_item_count",
-        "$item_select_button": "#EnderNetTerminal.backpack_click"
+        "$item_select_button": "#EnderNetTerminal.backpack_click",
+        "$slot_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "to_button_id": "$item_select_button",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "to_button_id": "#EnderNetTerminal.secondary",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "to_button_id": "#EnderNetTerminal.quick",
+                "mapping_type": "pressed"
+            }
+        ]
     },
     "hotbar_slot@endernet_windows.item_can_be_selected": {
         "$item_collection_name": "endernet_terminal_hotbar",
@@ -13,7 +30,24 @@
         "$item_id_aux_binding": "#EnderNetTerminal.hotbar_item_id_aux",
         "$item_selected_binding": "#EnderNetTerminal.hotbar_selected",
         "$item_count_binding": "#EnderNetTerminal.hotbar_item_count",
-        "$item_select_button": "#EnderNetTerminal.hotbar_click"
+        "$item_select_button": "#EnderNetTerminal.hotbar_click",
+        "$slot_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "to_button_id": "$item_select_button",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "to_button_id": "#EnderNetTerminal.secondary",
+                "mapping_type": "pressed"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "to_button_id": "#EnderNetTerminal.quick",
+                "mapping_type": "pressed"
+            }
+        ]
     },
     "inventory": {
         "type": "panel",

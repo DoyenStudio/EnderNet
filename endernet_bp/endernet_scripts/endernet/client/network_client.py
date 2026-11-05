@@ -415,6 +415,7 @@ class NetworkClient(object):
         #: `session_open` 发出时还没有会话，`session_ready` 才给出 id。
         self.session_id = ""
         self.inventory_slots = {}
+        self.cursor = None
         self.inventory_revision = -1
         self.network_id = ""
         self.epoch = ""
@@ -547,6 +548,7 @@ class NetworkClient(object):
     def _forget_session(self):
         # type: () -> None
         self.inventory_slots = {}
+        self.cursor = None
         self.inventory_revision = -1
         self.session_id = ""
         self.network_id = ""
@@ -853,6 +855,9 @@ class NetworkClient(object):
             if message.revision < self.inventory_revision:
                 return None
             self.inventory_slots = {row["slot"]: dict(row) for row in message.slots}
+            if (message.cursor is not None and (self.cursor is None
+                    or message.cursor["revision"] >= self.cursor["revision"])):
+                self.cursor = message.cursor
             self.inventory_revision = message.revision
             return envelope
         self._absorb(envelope)
@@ -972,6 +977,7 @@ class NetworkClient(object):
         message = envelope.message
         if message.kind == MSG_SESSION_READY:
             self.inventory_slots = {}
+            self.cursor = None
             self.inventory_revision = -1
             self.index_version = message.index_version
             self.item_view_version = message.item_view_version

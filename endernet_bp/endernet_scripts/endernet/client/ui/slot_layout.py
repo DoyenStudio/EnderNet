@@ -169,6 +169,15 @@ def path_of(screen, path):
     return None
 
 
+def window_control(screen, name):
+    # type: (object, str) -> object
+    """Resolve a named prefab through the active screen's content root."""
+    path = path_of(screen, "/" + name)
+    if path is None:
+        raise ValueError("Missing window control: %s" % name)
+    return screen.GetElement(path)
+
+
 def _rect(control):
     # type: (object) -> object
     """控件的全局矩形 `(x, y, 宽, 高)`；取不到返回 `None`。
@@ -256,7 +265,7 @@ def _content_of(view):
     return None
 
 
-def _grid_cell_rect(screen, path, index):
+def _grid_cell_rect(screen, path, index, columns=COLUMNS):
     # type: (object, str, int) -> object
     """某个网格里第 `index` 格（按行优先、每行 `COLUMNS` 格）的矩形。"""
     found = control(screen, path)
@@ -269,7 +278,7 @@ def _grid_cell_rect(screen, path, index):
     if grid is None:
         return None
     try:
-        cell = grid.GetGridItem(index % COLUMNS, index // COLUMNS)
+        cell = grid.GetGridItem(index % columns, index // columns)
     except Exception:
         return None
     return _rect(cell)
@@ -325,8 +334,19 @@ def network_row_rect(screen, row):
     try:
         cell = grid.GetGridItem(row % COLUMNS, row // COLUMNS)
     except Exception:
-        return None
-    return _rect(cell)
+        cell = None
+    rect = _rect(cell)
+    if rect is None:
+        origin = _rect(content)
+        if origin and origin[2] > 0:
+            size = float(origin[2]) / COLUMNS
+            rect = (origin[0] + row % COLUMNS * size, origin[1] + row // COLUMNS * size, size, size)
+    clip = network_area_rect(screen)
+    if rect and clip:
+        x, y, w, h = rect
+        if y + h <= clip[1] or y >= clip[1] + clip[3]:
+            return (x, clip[1] if y < clip[1] else clip[1] + clip[3], w, 0)
+    return rect
 
 
 def network_area_rect(screen):
@@ -377,3 +397,74 @@ def click_rect(params):
         return (float(raw_x), float(raw_y), 0.0, 0.0)
     except (TypeError, ValueError):
         return None
+
+
+DEVICE_GRIDS = {
+    "grid": ("/crafting_panel/crafting_grid", 3, 9),
+    "output": ("/crafting_panel/output_slot", 1, 1),
+    "source": ("/template_panel/source_grid", 3, 9),
+    "outputs": ("/template_panel/outputs_grid", 1, 3),
+    "input": ("/template_panel/template_input_slot", 1, 1),
+    "result": ("/template_panel/template_output_slot", 1, 1),
+}
+
+
+def slot_rect(screen, area, index):
+    if area == "bag":
+        return backpack_slot_rect(screen, index)
+    if area == "network":
+        return network_row_rect(screen, index) if index >= 0 else network_area_rect(screen)
+    path, columns, count = DEVICE_GRIDS[area]
+    if not 0 <= index < count:
+        return None
+    cell = _grid_cell_rect(screen, path, index, columns)
+    if cell is not None and min(cell[2:]) > 0:
+        return cell
+    # Hidden result renderers can report 0x0 just after the last craft.
+    grid = _rect(control(screen, path))
+    if grid is None or min(grid[2:]) <= 0:
+        return None
+    width = float(grid[2]) / columns
+    height = float(grid[3]) / ((count + columns - 1) // columns)
+    return (grid[0] + index % columns * width, grid[1] + index // columns * height, width, height)
+
+
+def contains(rect, point):
+    return bool(rect and point and rect[0] <= point[0] < rect[0] + rect[2]
+                and rect[1] <= point[1] < rect[1] + rect[3])
+
+
+def slot_at(screen, point):
+    """Hit-test only on input. Scroll clipping has priority over offscreen cells."""
+    area = network_area_rect(screen)
+    if contains(area, point):
+        content = scroll_content(screen)
+        try:
+            rect = _rect(content.asGrid().GetGridItem(0, 0)) if content else None
+        except (AttributeError, ValueError, RuntimeError):
+            rect = None
+        if not rect or min(rect[2:]) <= 0:
+            origin = _rect(content)
+            if origin and origin[2] > 0:
+                size = float(origin[2]) / COLUMNS
+                rect = (origin[0], origin[1], size, size)
+        if rect and rect[2] > 0 and rect[3] > 0:
+            x = int((point[0] - rect[0]) // rect[2])
+            y = int((point[1] - rect[1]) // rect[3])
+            index = y * COLUMNS + x
+            if 0 <= x < COLUMNS and y >= 0 and screen.list_view.has_item(index):
+                return "network", index
+        return "network", -1
+    groups = [("bag", BACKPACK_GRID_PATH, 9, 27, 0),
+              ("bag", HOTBAR_GRID_PATH, 9, 9, 27)]
+    for name, (path, cols, count) in DEVICE_GRIDS.items():
+        groups.append((name, path, cols, count, 0))
+    for name, path, cols, count, offset in groups:
+        rect = _grid_cell_rect(screen, path, 0, cols)
+        if not rect or min(rect[2:]) <= 0:
+            continue
+        x = int((point[0] - rect[0]) // rect[2])
+        y = int((point[1] - rect[1]) // rect[3])
+        if 0 <= x < cols and y >= 0 and y * cols + x < count:
+            return name, offset + y * cols + x
+    return None

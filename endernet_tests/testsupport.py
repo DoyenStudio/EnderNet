@@ -646,3 +646,16 @@ def load_dotted_module(real_name, path, fake=None):
         sys.modules.pop(real_name, None)
         raise
     return module
+
+
+def registered_device_screens():
+    """Exercise production registration without loading the live importer event bus."""
+    import sys
+    import types
+    from unittest.mock import patch
+    from endernet_bp.endernet_scripts.endernet.client import ui
+    name = ui.__name__ + ".universal_importer"
+    importer = types.ModuleType(name)
+    importer.UniversalImporterScreen = type("UniversalImporterScreen", (), {})
+    with patch.dict(sys.modules, {name: importer}):
+        return ui.register_screens()

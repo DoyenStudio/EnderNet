@@ -91,9 +91,12 @@ from .medium import (
     MediumRecovery,
     TransferBudget,
 )
+from .terminal_slots import DeviceSlots
 from .transfer import (
     CURSOR_IGNORE,
     NetworkEndpoint,
+    SlotView,
+    ContainerEndpoint,
     SlotAnchor,
     TransferCoordinator,
     TransferPolicy,
@@ -1560,6 +1563,9 @@ class StorageService(NetworkService):
             # 自定义背包槽（06-09，服务端半边）
             "inv_take": self._cmd_inv_take,
             "inv_put": self._cmd_inv_put,
+            "slot_click": self._cmd_slot_click,
+            "grid_move": self._cmd_grid_move,
+            "cursor_return": self._cmd_cursor_return,
             "inv_split": self._cmd_inv_split,
             "inv_merge": self._cmd_inv_merge,
             "inv_swap": self._cmd_inv_swap,
@@ -2441,17 +2447,19 @@ class StorageService(NetworkService):
                 "candidates": [recipe.to_dict() for recipe in recipes],
             })
 
-        imported, missing = self._fill_grid(command, payload, grid, chosen)
+        movements = []
+        imported, missing = self._fill_grid(command, payload, grid, chosen, movements)
         grid.set_recipe(chosen.digest(), {"name": output.name, "aux": output.aux})
         return CommandResult.ok(command.request_id, {
             "action": "craft_import",
             "recipe": chosen.digest(),
             "imported": imported,
+            "movements": movements,
             "missing": list(missing),
             "grid": self._craft_grid_payload(grid),
         })
 
-    def _fill_grid(self, command, payload, grid, recipe):
+    def _fill_grid(self, command, payload, grid, recipe, movements):
         # type: (object, dict, object, object) -> tuple
         """按计划往九宫格里摆原料。返回 `(摆了几格, 缺料的格子)`。"""
         container = WorkbenchContainer(grid, limit_of=self.grid_stack_limit)
@@ -2468,14 +2476,14 @@ class StorageService(NetworkService):
                 moved += 1
                 continue
             if self._fill_slot(op_id, container, slot, alternatives, count,
-                               endpoint):
+                               endpoint, movements):
                 moved += 1
             else:
                 # **不因为一格缺料取消整次导入**（文档 5.2 第 5 条）。
                 missing.append(slot)
         return moved, missing
 
-    def _fill_slot(self, op_id, container, slot, alternatives, count, inventory):
+    def _fill_slot(self, op_id, container, slot, alternatives, count, inventory, movements=None):
         # type: (str, object, int, tuple, int, object) -> bool
         """给某一格凑一件原料。凑到返回真。"""
         for ingredient in alternatives:
@@ -2492,10 +2500,13 @@ class StorageService(NetworkService):
                 continue
             receipt = container.insert_at(borrow_id, slot, key, count)
             if receipt.moved >= count:
+                if movements is not None:
+                    movements.append({"key": key.to_dict(), "from": origin[0],
+                                      "slot": origin[2], "cell": slot, "to": "grid"})
                 return True
             # 借来了却放不进去：**原路还回去**。留下的那半件对不上任何配方，
             # 只会让玩家看见一格来路不明的物品。
-            if not self._return_borrowed(borrow_id, key, receipt.moved, origin):
+            if not self._return_borrowed(borrow_id, key, count - receipt.moved, origin):
                 self.craft_undo_failures += 1
             return False
         return False
@@ -2557,6 +2568,8 @@ class StorageService(NetworkService):
         grid, refusal = self._workbench_for(command)
         if refusal is not None:
             return refusal
+        if payload.get("slot_version") is not None and payload["slot_version"] != grid.revision:
+            return self._reject(command, Reason.STALE_VERSION, "合成格已变化")
         recipe = self._retained_recipe(grid)
         if recipe is None:
             return self._reject(command, Reason.CRAFT_NO_RECIPE, "还没有导入配方")
@@ -2570,6 +2583,15 @@ class StorageService(NetworkService):
             return refusal
         op_id = payload.get("op_id") or command.request_id
 
+        destination = payload.get("target")
+        cursor = None
+        if destination == "cursor":
+            cursor = self.inventories.cursor_of(command.source.player_id)
+            if cursor.snapshot()["revision"] != (payload.get("config") or {}).get("revision"):
+                return self._reject(command, Reason.STALE_VERSION, "持物已变化")
+            endpoint = ContainerEndpoint(cursor, "cursor:%s" % command.source.player_id)
+        original = grid.cells()
+        before = endpoint.inventory_view()["slots"] if hasattr(endpoint, "inventory_view") else ()
         delivered = []
         for index, item in enumerate(recipe.outputs):
             key = ResourceKey.item(item.name, aux=_aux_or_zero(item))
@@ -2584,7 +2606,19 @@ class StorageService(NetworkService):
 
         for slot, count in found.consumed:
             grid.take_at(slot, count)
+        movements = []
+        if destination in ("cursor", "bag"):
+            from ..crafting.workbench import plan_refill
+            container = WorkbenchContainer(grid, limit_of=self.grid_stack_limit)
+            for cell, alternatives, need in plan_refill(recipe, original):
+                if grid.count_at(cell) == 0:
+                    self._fill_slot(op_id + ":refill", container, cell, alternatives, need,
+                                    None, movements)
         return CommandResult.ok(command.request_id, {
+            "cursor": cursor.snapshot() if cursor else None,
+            "movements": movements,
+            "bag_slots": [self._new_stack_slots(endpoint, before, key) if before else []
+                          for key, _ in delivered],
             "action": "craft_take",
             "outputs": [{"name": key.name, "aux": key.aux, "count": count}
                         for key, count in delivered],
@@ -2620,6 +2654,7 @@ class StorageService(NetworkService):
             return refusal
         op_id = payload.get("op_id") or command.request_id
         returned = 0
+        movements = []
         kept = []
         for slot in grid.occupied_slots():
             key, count = grid.entry(slot)
@@ -2627,6 +2662,7 @@ class StorageService(NetworkService):
             if receipt.moved > 0:
                 grid.take_at(slot, receipt.moved)
                 returned += receipt.moved
+                movements.append({"from": "grid", "cell": slot, "key": key.to_dict(), "to": "network"})
             if receipt.moved < count:
                 kept.append(slot)
         if not kept:
@@ -2634,6 +2670,7 @@ class StorageService(NetworkService):
         return CommandResult.ok(command.request_id, {
             "action": "craft_clear",
             "returned": returned,
+            "movements": movements,
             "kept": list(kept),
             "grid": self._craft_grid_payload(grid),
         })
@@ -3222,6 +3259,7 @@ class StorageService(NetworkService):
             return refusal
         op_id = payload.get("op_id") or command.request_id
         anchor = self._anchor_of(payload)
+        before = endpoint.inventory_view()["slots"] if anchor is None else ()
         if anchor is not None and anchor.slot is not None:
             # **锚上的 key 必须换成「要放进去的那一件」。** `anchored_insert`
             # 把 `expected_key` 同时当**插入物**与**目标槽的指纹**用
@@ -3251,9 +3289,256 @@ class StorageService(NetworkService):
         return CommandResult.ok(command.request_id, {
             "action": "template_input_take" if index == INPUT_SLOT
             else "template_output_take",
-            "moved": receipt.moved,
+            "moved": receipt.moved, "key": key.to_dict(),
+            "bag_slots": self._new_stack_slots(endpoint, before, key) if before else [anchor.slot],
             "state": self._template_state_payload(state),
         })
+
+    def _cmd_cursor_return(self, command, payload):
+        bag, error = self._inventory_endpoint_for(command, payload)
+        if error is not None:
+            return error
+        cursor = self.inventories.cursor_of(command.source.player_id)
+        if cursor is None or not cursor.return_to_player(bag.adapter):
+            return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持物等待归还")
+        return CommandResult.ok(command.request_id, {"cursor": cursor.snapshot()})
+
+    @staticmethod
+    def _slot_operation_id(command):
+        return "%s/%s/%s" % (command.source.player_id, command.source.session_id, command.request_id)
+
+    def _cmd_grid_move(self, command, payload):
+        """Two-tap Pocket transfer between a crafting slot and a named endpoint."""
+        grid, error = self._workbench_for(command)
+        if error is not None:
+            return error
+        config = payload.get("config") or {}
+        cell = payload.get("cell")
+        if (not isinstance(cell, INTEGER_TYPES) or not 0 <= cell < 9
+                or config.get("grid_revision") != grid.revision):
+            return self._reject(command, Reason.STALE_VERSION, "原料格已变化")
+        inventory, error = self._inventory_endpoint_for(command, payload)
+        if error is not None:
+            return error
+        area = payload.get("target")
+        adapter = DeviceSlots(grid, inventory.adapter.stack_limit_of)
+        device = SlotView(adapter, cell, "workbench:%s" % command.device_ref)
+        placing = config.get("placing") is True
+        key = self._key_from(payload) if placing else grid.key_at(cell)
+        if key is None or key.kind != "item":
+            return self._reject(command, Reason.BAD_PARAMETER, "需要物品")
+        if area == "bag":
+            slot = payload.get("slot")
+            if not isinstance(slot, INTEGER_TYPES) or not 0 <= slot < 36:
+                return self._reject(command, Reason.BAD_PARAMETER, "背包槽号无效")
+            view = inventory.slot_view(slot)
+            if view["version"] != payload.get("slot_version") or view["canonical"] != config.get("fingerprint"):
+                return self._reject(command, Reason.SLOT_CHANGED, "背包槽已变化")
+            other = SlotView(inventory.adapter, slot, inventory.endpoint_id())
+        elif area == "network":
+            other = NetworkEndpoint(self, self._network_id())
+        elif area == "grid":
+            into = payload.get("into_slot")
+            if not isinstance(into, INTEGER_TYPES) or not 0 <= into < 9 or cell == into:
+                return self._reject(command, Reason.BAD_PARAMETER, "目标格无效")
+            other = SlotView(adapter, into, "workbench:%s" % command.device_ref)
+        else:
+            return self._reject(command, Reason.BAD_PARAMETER, "目标区域无效")
+        src, dst = (other, device) if placing else (device, other)
+        request = TransferRequest(self._slot_operation_id(command), src.endpoint_id(), dst.endpoint_id(),
+                                  key, inventory.adapter.stack_limit_of(key), command.topology_version,
+                                  owner_id=command.source.player_id,
+                                  origin=ORIGIN_INTERNAL)
+        receipt = self.transfer().commit(request, src, dst)
+        result = self._receipt_result(command, receipt, "grid_move")
+        if receipt.moved:
+            self._match_manual_grid(grid)
+            result.payload["key"] = key.to_dict()
+        return result
+
+    def _cmd_slot_click(self, command, payload):
+        """Resolve one physical slot gesture against authoritative stacks."""
+        bag, error = self._inventory_endpoint_for(command, payload)
+        if error is not None:
+            return error
+        owner = command.source.player_id
+        cursor = self.inventories.cursor_of(owner)
+        if cursor is None:
+            return self._reject(command, Reason.NO_ADAPTER, "此玩家没有持物适配器")
+        area = payload.get("target")
+        pending = cursor.primitives.cursor_record(owner).get("pending")
+        if pending:
+            if pending["area"] == "bag":
+                cursor.reconcile(bag.adapter, "bag", owner)
+            elif area == pending["area"] and area in ("grid", "input", "result"):
+                if area == "grid":
+                    slots, refusal = self._workbench_for(command)
+                else:
+                    device, refusal = self._template_state_for(command)
+                    slots = device.slots if device is not None else None
+                if refusal is None:
+                    cursor.reconcile(DeviceSlots(slots, bag.adapter.stack_limit_of),
+                                     area, str(command.device_ref))
+            if cursor.primitives.cursor_record(owner).get("pending"):
+                return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持物交易等待核对")
+        hand = cursor.snapshot()
+        options = payload.get("config") or {}
+        mode = options.get("gesture")
+        if (mode not in ("left", "right", "one_in", "one_out", "quick", "place")
+                or options.get("revision") != hand["revision"]):
+            return self._reject(command, Reason.STALE_VERSION, "持物已变化")
+        held = ResourceKey.from_dict(hand["key"]) if hand["key"] else None
+        hand_end = ContainerEndpoint(cursor, "cursor:%s" % owner)
+        area = payload.get("target")
+        index = payload.get("cell")
+        network = NetworkEndpoint(self, self._network_id())
+        limit = bag.adapter.stack_limit_of
+        grid = None
+        state = None
+        if area == "network":
+            key = self._key_from(payload) if payload.get("key") else None
+            if key is not None and key.kind != "item":
+                return self._reject(command, Reason.BAD_PARAMETER, "需要物品")
+            available = network.probe_supply(key, limit(key)) if key else 0
+            other = network
+        elif area == "bag":
+            slot = payload.get("slot")
+            if not isinstance(slot, INTEGER_TYPES) or not 0 <= slot < 36:
+                return self._reject(command, Reason.BAD_PARAMETER, "背包槽号无效")
+            view = bag.slot_view(slot)
+            if (view["version"] != payload.get("slot_version")
+                    or view["canonical"] != options.get("fingerprint")):
+                return self._reject(command, Reason.SLOT_CHANGED, "背包槽已变化")
+            key = ResourceKey.from_dict(view["key"]) if view["key"] else None
+            available = view["count"]
+            other = SlotView(bag.adapter, slot, bag.endpoint_id())
+        elif area in ("grid", "input", "result"):
+            if area == "grid":
+                grid, error = self._workbench_for(command)
+                if error is not None:
+                    return error
+                slots, revision = grid, grid.revision
+                if not isinstance(index, INTEGER_TYPES) or not 0 <= index < 9:
+                    return self._reject(command, Reason.BAD_PARAMETER, "工作台槽号无效")
+            else:
+                state, error = self._template_state_for(command)
+                if error is not None:
+                    return error
+                slots, revision = state.slots, state.revision
+                index = INPUT_SLOT if area == "input" else RESULT_SLOT
+            if revision != payload.get("slot_version"):
+                return self._reject(command, Reason.STALE_VERSION, "设备槽已变化")
+            adapter = DeviceSlots(slots, limit)
+            other = SlotView(adapter, index, "%s:%s" % (area, command.device_ref))
+            key, available = slots.entry(index) or (None, 0)
+        else:
+            return self._reject(command, Reason.BAD_PARAMETER, "槽位区域无效")
+
+        putting = held is not None and mode not in ("one_out", "quick")
+        source, target = (hand_end, other) if putting else (other, hand_end)
+        if mode == "quick":
+            target = network if area == "bag" else bag
+        if mode in ("one_in", "place") and not putting:
+            return self._reject(command, Reason.INSUFFICIENT_STOCK, "手中没有物品")
+        if putting and area == "result":
+            return self._reject(command, Reason.UNSUPPORTED, "成品槽只能取出")
+        if putting and area == "input":
+            reason, detail = self._template_template_error(held)
+            if reason is not None:
+                return self._reject(command, reason, detail)
+        if putting and key is not None and key != held and area != "network":
+            if mode != "left" or area not in ("bag", "grid"):
+                return self._reject(command, Reason.SLOT_OCCUPIED, "槽位已占用")
+            if not cursor.exchange(other.adapter, other.slot, area, owner if area == "bag" else str(command.device_ref)):
+                return self._reject(command, Reason.CONTAINER_UNCERTAIN, "交换尚待核对")
+            result = CommandResult.ok(command.request_id, {"moved": hand["count"],
+                                      "reverse": key.to_dict()})
+        else:
+            resource = held if putting else key
+            if resource is None:
+                return self._reject(command, Reason.INSUFFICIENT_STOCK, "槽位为空")
+            count = min(hand["count"] if putting else available or 0, limit(resource))
+            if mode == "right":
+                count = 1 if putting else (count + 1) // 2
+            elif mode in ("one_in", "one_out"):
+                count = 1
+            elif mode == "place":
+                if not isinstance(payload.get("count"), INTEGER_TYPES):
+                    return self._reject(command, Reason.BAD_PARAMETER, "无效分配数量")
+                count = min(count, payload["count"])
+            if putting and state is not None:
+                count = min(count, self.templates.room_for(state, index, held))
+            if count <= 0:
+                return self._reject(command, Reason.INSUFFICIENT_STOCK, "可移动数量为零")
+            if mode != "quick" and area in ("bag", "grid", "input", "result"):
+                # The two physical slots have readable before/after images. Journal
+                # the cursor before changing the other owner, including ordinary pickups.
+                from ...common.item_codec import item_dict_from_key
+                capacity = target.probe_space(resource, count)
+                moved = min(count, capacity or 0)
+                if moved <= 0:
+                    return self._reject(command, Reason.NO_CAPACITY, "目标槽已满")
+                hand_count = hand["count"] + (-moved if putting else moved)
+                cell_count = available + (moved if putting else -moved)
+                after = item_dict_from_key(resource, cell_count) if cell_count else None
+                hand_after = item_dict_from_key(resource, hand_count) if hand_count else None
+                identity = owner if area == "bag" else str(command.device_ref)
+                if not cursor.replace_pair(other.adapter, other.slot, area, identity, after, hand_after):
+                    return self._reject(command, Reason.CONTAINER_UNCERTAIN, "槽位变化尚待核对")
+                result = CommandResult.ok(command.request_id, {"moved": moved})
+            else:
+                bag_before = bag.inventory_view()["slots"] if target is bag else ()
+                request = TransferRequest(self._slot_operation_id(command), source.endpoint_id(), target.endpoint_id(),
+                                          resource, count, command.topology_version, owner_id=owner,
+                                          origin=ORIGIN_EXTERNAL if target is network else ORIGIN_INTERNAL)
+                receipt = self.transfer().commit(request, source, target)
+                result = self._receipt_result(command, receipt, "slot_click")
+                if bag_before and receipt.moved and result.payload is not None:
+                    result.payload["bag_slots"] = self._new_stack_slots(bag, bag_before, resource)
+        if grid is not None and result.is_applied():
+            self._match_manual_grid(grid)
+        if result.payload is not None:
+            result.payload["cursor"] = cursor.snapshot()
+            if area == "bag":
+                result.payload["bag_after"] = bag.slot_view(slot)
+            result.payload["putting"] = putting
+            result.payload["key"] = (held if putting else key).to_dict()
+            if grid is not None:
+                result.payload["device_revision"] = grid.revision
+        return result
+
+    @staticmethod
+    def _new_stack_slots(bag, before, key):
+        return [new["slot"] for old, new in zip(before, bag.inventory_view()["slots"])
+                if new["canonical"] == key.canonical() and new["count"] > old["count"]]
+
+    def _match_manual_grid(self, grid):
+        cells = grid.cells()
+        recipe = self._retained_recipe(grid)
+        if recipe is not None and match(recipe, cells) is not None:
+            return
+        if not self.recipes:
+            grid.set_recipe(None, None)
+            return
+        seen = set()
+        for i in grid.occupied_slots():
+            key = grid.key_at(i)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                candidates = self.recipes.recipes_for_input(key)
+            except Exception:
+                # The slot transaction already committed; preserve its receipt.
+                self.stats["recipe_lookup_errors"] = self.stats.get("recipe_lookup_errors", 0) + 1
+                grid.set_recipe(None, None)
+                return
+            for recipe in candidates:
+                if match(recipe, cells) is not None:
+                    item = recipe.output_preview()
+                    grid.set_recipe(recipe.digest(), {"name": item.name, "aux": item.aux or 0})
+                    return
+        grid.set_recipe(None, None)
 
     def _cmd_inv_take(self, command, payload):
         # type: (object, dict) -> CommandResult

@@ -139,6 +139,11 @@
                         200
                     ]
                 }
+            },
+            {
+                "endernet_importer_overlay@endernet_universal_importer_ui.overlay_panel": {
+                    "visible": false
+                }
             }
         ]
     },

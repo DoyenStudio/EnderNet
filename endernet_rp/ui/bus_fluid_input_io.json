@@ -359,6 +359,29 @@
                         200
                     ]
                 }
+            },
+            {
+                "endernet_importer_overlay@endernet_universal_importer_ui.overlay_panel": {
+                    "visible": false
+                }
+            },
+            {
+                "endernet_fluid_list_window@endernet_windows.fluid_list_window": {
+                    "visible": false,
+                    "layer": 55
+                }
+            },
+            {
+                "endernet_select_fluid_window@endernet_windows.select_fluid_window": {
+                    "visible": false,
+                    "layer": 65
+                }
+            },
+            {
+                "endernet_port_settings@bus_fluid_input_io_ui.settings_window": {
+                    "visible": false,
+                    "layer": 45
+                }
             }
         ]
     },

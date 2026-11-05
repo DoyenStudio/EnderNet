@@ -52,7 +52,10 @@ class Control(object):
     def asButton(self):
         return self
 
-    asImage = asGrid = asItemRenderer = asButton
+    asImage = asGrid = asItemRenderer = asTextEditBox = asButton
+
+    def SetText(self, text):
+        self.text = text
 
     def SetCallback(self, callback):
         self.callback = callback
@@ -170,9 +173,25 @@ class Screen(load_dynamic_screen()):
         self._dyna_bindings = {}
         self._screen_instance = self._screen_node = DynamicEngine()
 
-    def AddElement(self, definition, name):
-        self.definition = definition
-        self.root = Control()
+    control_type = Control
+
+    def GetBaseUIControl(self, path):
+        return self.get_prefab(path)
+
+    def get_prefab(self, path):
+        if not hasattr(self, "prefabs"):
+            self.prefabs = {}
+        name = path.rsplit("/", 1)[-1].replace("endernet_", "", 1)
+        if name not in self.prefabs:
+            root = self.control_type()
+            root.SetVisible(False)
+            root.SetLayer(55 if name.endswith("list_window") else 65)
+            self.prefabs[name] = root
+        return self.prefabs[name]
+
+    def GetElement(self, path):
+        self.definition = "endernet_windows." + path.rsplit("/", 1)[-1].replace("endernet_", "", 1)
+        self.root = self.get_prefab(path)
         return self.root
 
     def callback(self, name):
@@ -285,7 +304,7 @@ class SelectorTests(unittest.TestCase):
         raise AssertionError("missing binding: " + suffix)
 
     def test_default_and_search_entire_catalog_before_limit(self):
-        self.assertEqual(self.screen.root.layer, 50)
+        self.assertEqual(self.screen.root.layer, 65)
         self.assertEqual(len(self.window.visible_ids), 40)
         self.search(" \t ")
         self.assertEqual(len(self.window.visible_ids), 40)
@@ -318,7 +337,7 @@ class SelectorTests(unittest.TestCase):
         click = self.screen.callback(self.module.BINDING_PREFIX + "select")
 
         def callback(item_id):
-            self.assertTrue(old_root.removed)
+            self.assertFalse(old_root.visible)
             # **绑定不随窗口摘除**：它在宿主类体上，是静态的（11-07 改法）。
             # 关窗后回调照样解析得到，只是窗口自己提前返回——这一条正是
             # 类体绑定与「运行时注册、关窗时摘掉」那条路的分水岭。
@@ -342,7 +361,7 @@ class SelectorTests(unittest.TestCase):
         old_root = self.window.root
         old_callback = self.window.select_callback
         self.search("ITEM_54")
-        with patch.object(self.screen, "AddElement") as create:
+        with patch.object(self.screen, "GetElement") as create:
             self.assertIs(self.module.show_select_item_window(self.screen, [], lambda _: None), False)
             create.assert_not_called()
         self.assertIs(self.screen._vars[self.module.WINDOW_ATTRIBUTE], self.window)
@@ -360,7 +379,7 @@ class SelectorTests(unittest.TestCase):
             self.assertIs(self.module.show_select_item_window(self.screen, [], self.selected.append), False)
             raise RuntimeError("creation failed")
 
-        with patch.object(self.screen, "AddElement", side_effect=fail_creation):
+        with patch.object(self.screen, "GetElement", side_effect=fail_creation):
             with self.assertRaises(RuntimeError):
                 self.module.show_select_item_window(self.screen, [], self.selected.append)
         self.assertNotIn(self.module.WINDOW_ATTRIBUTE, self.screen._vars)

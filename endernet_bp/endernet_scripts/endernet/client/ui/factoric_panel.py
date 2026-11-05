@@ -25,32 +25,10 @@ ESC 关屏、以及设备状态栏与详情弹窗那组绑定（`DeviceStatusBin
 的清理点：那一单从推送里消失（结单、被取消）时自动关窗——不这么做，详情会
 停在一份**永远不会再更新**的旧画面上。
 
-## 详情窗是按需建的，不在主面板上
-
-`order_description_window` **不写在 `content.controls` 里**（User 2026-10-03 定）：
-点第一行订单时才 `AddElement` 出来，建好立刻藏起来，**之后留着不销毁**——
-再打开只是把可见性恢复回去。理由与做法见 `FactoricView` 详情窗那一段。
-
-**显隐只有 `SetVisible` 一个写者**，没有 `#visible` 绑定：绑定每帧重新求值，
-会与运行期写进去的值互相盖。
-
-## 已知缺项（如实记，不补假实现）
-
-- **提交订单、材料缺口、规划预览、阻塞原因没有控件**：交接第 1 节明写这四件
-  本次未补设，`plans/ui/factoric_terminal_panel.md` 第 8 节也标着待确认。
-  界面上因此**没有下单入口**，只有取消。
-- **失败原因没有显示位置**：与通用／合成／样板三台同一处境，原因码只进
-  `last_error` 与 `diagnostics()`。
-- **详情窗的防穿透与重复打开策略**：交接第 5 节自己标着「待确认」。这扇窗
-  **没有全屏遮罩**，因此它开着时点得到底下的控件。
-- **详情窗里的绑定能不能生效，真机没验过**：它是在运行期 `AddElement` 出来的，
-  而实测过的两条路都只在**静态**控件上验过类体绑定（11-13）与运行期注册
-  （后者在本引擎上无效）。模板根上那条显隐已经不靠绑定了，行内的文字／颜色／
-  进度仍靠它——落空的表现是「窗口开着、里面是空的」。
-- **内存单位是字节（B）**：任务文档定的口径；JSON 里那句静态「0KB」是资源
-  初值，运行期一律以这里写的为准。
+详情窗口随宿主预制，点击订单后绑定该订单的实时详情。
 """
 
+from .slot_layout import window_control
 from ....tooldelta.ui import Binder, RegistToolDeltaScreen
 
 from . import stack_size
@@ -136,9 +114,7 @@ STATUS_TEXTS = {
 #: （它是显示提示，不是控制输入），客户端只需要认得这一个值。
 STATUS_RUNNING = "running"
 
-#: 详情窗：**按需创建**（User 2026-10-03 定），因此它不在 `content.controls` 里，
-#: 而是运行期 `AddElement` 出来的。三个常量必须与 JSON 里那个顶层模板**逐字
-#: 相同**（`Screen.AddElement` 查不到定义时会抛）。
+# 宿主 JSON 中预制的订单详情。
 DETAIL_DEFINITION = "factoric_terminal_panel_ui.order_description_window"
 DETAIL_NAME = "endernet_order_detail"
 #: 与 `select_item_window` 同一个层：盖住主面板，又不遮住设备状态弹窗（40）。
@@ -546,16 +522,11 @@ class FactoricView(object):
 
     def _ensure_detail_window(self):
         # type: () -> object
-        """按需建出详情窗，**建好之后立刻 SetVisible(False)**。
-
-        失败只记一次（`_detail_broken`）：`AddElement` 抛异常时每帧／每次点击
-        重试都只会再抛一次，而症状是「点了没反应 + 日志刷屏」。
-        建不出来时**订单列表照常工作**，只是点不开详情。
-        """
+        """首次打开时查找预制实例，随后复用同一控件。"""
         if self._detail is not None or self._detail_broken:
             return self._detail
         try:
-            root = self.screen.AddElement(DETAIL_DEFINITION, DETAIL_NAME)
+            root = window_control(self.screen, DETAIL_NAME)
             # 与 `select_item_window` 同一个层：盖住主面板、又不遮住状态弹窗。
             root.SetLayer(DETAIL_LAYER)
             # **建完先藏起来**（User 2026-10-03 定）。模板里那句 `visible: false`
