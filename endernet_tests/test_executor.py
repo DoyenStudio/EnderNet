@@ -1043,6 +1043,44 @@ class TestStaging(OneLevel):
         self.assertEqual(state.batch.op_id, first_op)
 
 
+class TestBatchHandoff(OneLevel):
+    extra_devices = TestStaging.extra_devices
+    patterns = {0: factory([stack(IRON, 1), stack(GOLD, 1)], [stack(BLOCK, 1)])}
+
+    def test_poll_confirms_each_input_before_another_execution_can_stage(self):
+        self.seed(IRON, 4)
+        self.seed(GOLD, 4, request_id="gold")
+        self.containers.boxes.pop(MACHINE_KEY.as_key())
+        order_id = self.submit_order(amount=2).payload["order_id"]
+        self.drive(16)
+        port = self.server.ports.get(PORT_KEY)
+        order = self.service.orders.get(order_id)
+        self.assertEqual(len(order.inflight), 2)
+        owner = next(i for i in order.inflight.values() if i.op_id == port.batch.op_id)
+        self.containers.boxes[MACHINE_KEY.as_key()] = self.machine
+
+        # 仅运行接口的投料命令，订单尚未得到下一轮调度。
+        self.service.executor._port_dispatch(port)
+        self.assertTrue(port.batch.is_complete())
+        item = next(i for i in owner.inputs if i.key == port.batch.resource_key)
+        self.assertEqual(item.delivered, 1)
+        self.assertEqual(owner.status, StepStatus.STAGING)
+        # 每次只让执行器备料；恢复机器后，由接口轮询单独投完这一批。
+        # 最后一种料投完时就要登记产物，机器可能在下一次订单调度前回流。
+        for _ in range(3):
+            self.containers.boxes.pop(MACHINE_KEY.as_key())
+            self.drive(5)
+            self.assertFalse(port.batch.is_complete())
+            self.containers.boxes[MACHINE_KEY.as_key()] = self.machine
+            self.service.executor._port_dispatch(port)
+            self.assertTrue(port.batch.is_complete())
+        self.assertEqual(self.sink.flush(self.service.executor), 2)
+        self.drive(3)
+        self.assertEqual(order.status, OrderStatus.COMPLETED)
+        self.assertEqual(self.stock(IRON).payload["entry"]["stored"], 2)
+        self.assertEqual(self.stock(GOLD).payload["entry"]["stored"], 2)
+
+
 class StaleMirror(OneLevel):
     """原料缓冲只装得下一件：**备走一件之后，另一件还被锁着**。
 

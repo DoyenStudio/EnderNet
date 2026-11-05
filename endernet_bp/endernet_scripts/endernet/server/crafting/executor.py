@@ -2184,6 +2184,9 @@ class OrderExecutor(object):
             # 两边同时做不会超发：`dispatch_template` 每次都用**当时的**
             # `batch.remaining()` 夹一次，而两次调用在同一线程里是先后发生的。
             self._port_dispatch(port)
+            if instance.op_id is None:
+                # 投料命令已同步确认这一批，并推进到下一种原料或等待产物。
+                return 1
             # 推完**再读一次**：这一次可能就投完了，而多等一帧纯属浪费。
             self._sync_own_batch(instance, port)
         if _batch_is_dead(port, instance):
@@ -2228,6 +2231,22 @@ class OrderExecutor(object):
                 device_ref=ref,
             )
         )
+
+    def confirm_dispatched_batch(self, port, tick):
+        # type: (object, int) -> None
+        """单格批次槽仍指向刚投完的批次时，将终值写回所属执行。"""
+        for order in self.orders.live():
+            for instance in order.inflight.values():
+                if instance.op_id != port.batch.op_id or self._step_ref(instance) != port.ref:
+                    continue
+                self._sync_own_batch(instance, port)
+                if instance.all_inputs_delivered():
+                    self._finish_inputs(order, instance, tick)
+                else:
+                    instance.op_id = None
+                    instance.status = StepStatus.STAGING
+                order.mark(tick)
+                return
 
     def _sync_own_batch(self, instance, port):
         # type: (object, object) -> int

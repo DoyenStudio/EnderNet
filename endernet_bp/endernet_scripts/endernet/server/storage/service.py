@@ -2090,9 +2090,17 @@ class StorageService(NetworkService):
         blocker = port_blocker(state)
         if blocker is not None:
             return CommandResult.blocked(command.request_id, [blocker])
-        return self._dispatcher().dispatch(
+        result = self._dispatcher().dispatch(
             state, command.request_id, command.topology_version
         )
+        # 轮询和订单主动投料共用这里。在下一条命令复用批次槽之前记账。
+        if (state.role == TEMPLATE and (result.payload or {}).get("batch")
+                and state.batch.is_complete()):
+            factory = self.runtime.services.get(ServiceId.FACTORY)
+            executor = getattr(factory, "executor", None)
+            if executor is not None:
+                executor.confirm_dispatched_batch(state, self.runtime.tick_count)
+        return result
 
     def _cmd_port_stage(self, command, payload):
         # type: (object, dict) -> CommandResult
