@@ -9,6 +9,8 @@
 import io
 import json
 import os
+import re
+import struct
 import sys
 import unittest
 
@@ -55,6 +57,36 @@ def item_file_name(item_id):
 def item_texture_name(item_id):
     """与 scripts/gen_items.py 保持一致：`endernet_<短名>`。"""
     return "endernet_" + item_id.split(":", 1)[1]
+
+
+#: 界面 JSON 里引用本模组贴图的字符串
+UI_TEXTURE_PATTERN = re.compile(r'"(textures/endernet/[^"]+)"')
+
+
+def _gen_blocks():
+    scripts = os.path.join(REPO, "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import gen_blocks
+
+    return gen_blocks
+
+
+def declared_layouts():
+    """`gen_blocks.BLOCK_LAYOUTS` 的读数：设备 -> uniform / front / model。"""
+    return _gen_blocks().BLOCK_LAYOUTS
+
+
+def declared_models():
+    """`gen_blocks.MODELS` 的读数：设备 -> (几何体标识, 基名)。"""
+    return _gen_blocks().MODELS
+
+
+def png_size(path):
+    """读 PNG 头里的宽高，不依赖 PIL。"""
+    with open(path, "rb") as handle:
+        header = handle.read(24)
+    return struct.unpack(">II", header[16:24])
 
 
 class AssetFixture(unittest.TestCase):
@@ -147,12 +179,128 @@ class TestBlockJsonCoverage(AssetFixture):
     def test_textures_component_points_at_terrain_key(self):
         for device_id in self.block_ids:
             components = self.read_block_json(device_id)["minecraft:block"]["components"]
-            texture = components["minecraft:material_instances"]["*"]["texture"]
-            self.assertIn(
-                texture,
-                self.terrain_data,
-                "%s 引用了未登记的地形贴图 %s" % (device_id, texture),
+            for face, instance in components["minecraft:material_instances"].items():
+                texture = instance["texture"]
+                self.assertIn(
+                    texture,
+                    self.terrain_data,
+                    "%s 的 %s 面引用了未登记的地形贴图 %s" % (device_id, face, texture),
+                )
+
+    def test_material_instances_follow_the_layout(self):
+        """三种布局各有固定的贴图名，测试**独立写出**期望值，不从生成器反推。
+
+        - `uniform`：只有 `*`，指向 `<短名>_all`；
+        - `front`：north 是 `<短名>_front`，其余面是通用机壳；
+        - `model`：只有 `*`，指向 `<基名>_model`。
+        """
+        for device_id in self.block_ids:
+            components = self.read_block_json(device_id)["minecraft:block"]["components"]
+            actual = dict(
+                (face, item["texture"])
+                for face, item in components["minecraft:material_instances"].items()
             )
+            name = short_name(device_id)
+            layout = declared_layouts()[device_id]
+            if layout == "uniform":
+                expected = {"*": "endernet:%s_all" % name}
+            elif layout == "model":
+                expected = {"*": "endernet:%s_model" % declared_models()[device_id][1]}
+            else:
+                side = "endernet:common_device_side"
+                expected = {
+                    "*": side,
+                    "up": "endernet:common_device_top",
+                    "down": "endernet:common_device_bottom",
+                    "north": "endernet:%s_front" % name,
+                    "south": side,
+                    "east": side,
+                    "west": side,
+                }
+            self.assertEqual(actual, expected, device_id)
+
+    def test_every_device_declares_a_layout(self):
+        self.assertEqual(sorted(declared_layouts()), self.block_ids)
+
+    def test_rotating_layouts_turn_with_the_facing(self):
+        """正面与模型布局必须带朝向 trait，并为四个朝向各写一条旋转。
+
+        数值与 SkyblueTech 逐字一致：正面画在 north，`y_rotation_offset = 180`，
+        south 180 / north 0 / east -90 / west 90。少一条，那个朝向放下去正面就朝错。
+        """
+        expected = {"south": 180, "north": 0, "east": -90, "west": 90}
+        for device_id in self.block_ids:
+            block = self.read_block_json(device_id)["minecraft:block"]
+            permutations = block.get("permutations", [])
+            if declared_layouts()[device_id] == "uniform":
+                self.assertEqual(permutations, [], device_id)
+                continue
+            trait = block["description"]["traits"]["minecraft:placement_direction"]
+            self.assertEqual(trait["enabled_states"], ["minecraft:cardinal_direction"], device_id)
+            self.assertEqual(trait["y_rotation_offset"], 180.0, device_id)
+            rotations = {}
+            for permutation in permutations:
+                facing = permutation["condition"].split("==")[1].strip().strip("'")
+                rotation = permutation["components"]["minecraft:transformation"]["rotation"]
+                self.assertEqual((rotation[0], rotation[2]), (0, 0), device_id)
+                rotations[facing] = rotation[1]
+            self.assertEqual(rotations, expected, device_id)
+
+    def test_front_blocks_use_the_full_block_geometry(self):
+        for device_id in self.block_ids:
+            if declared_layouts()[device_id] != "front":
+                continue
+            components = self.read_block_json(device_id)["minecraft:block"]["components"]
+            self.assertEqual(
+                components["minecraft:geometry"],
+                {"identifier": "minecraft:geometry.full_block"},
+                device_id,
+            )
+
+
+class TestBlockModels(AssetFixture):
+    """自定义模型：行为包引用的几何体必须真的在资源包里，且贴图尺寸对得上。"""
+
+    def geometry_of(self, device_id):
+        base = declared_models()[device_id][1]
+        path = os.path.join(RP_ROOT, "models", "blocks", base + ".geo.json")
+        self.assertTrue(os.path.isfile(path), path)
+        return read_json(path)
+
+    def test_block_points_at_an_existing_geometry(self):
+        for device_id, (identifier, _base) in sorted(declared_models().items()):
+            components = self.read_block_json(device_id)["minecraft:block"]["components"]
+            self.assertEqual(components["minecraft:geometry"], {"identifier": identifier})
+            geometries = self.geometry_of(device_id)["minecraft:geometry"]
+            names = [g["description"]["identifier"] for g in geometries]
+            self.assertEqual(names, [identifier], device_id)
+
+    def test_geometry_format_is_one_the_netease_runtime_loads(self):
+        """`1.21.110`（Blockbench 默认导出）在网易运行时上没有证据能加载；
+
+        SkyblueTech 在同一环境里实际用的是 1.12.0 / 1.21.0 / 1.21.70，
+        其中带逐面 `uv_rotation` 的模型用的是 1.21.0 与 1.21.70。
+        """
+        for device_id in sorted(declared_models()):
+            version = self.geometry_of(device_id)["format_version"]
+            self.assertIn(version, ("1.12.0", "1.21.0", "1.21.70"), device_id)
+
+    def test_model_texture_size_matches_the_geometry(self):
+        for device_id, (_identifier, base) in sorted(declared_models().items()):
+            description = self.geometry_of(device_id)["minecraft:geometry"][0]["description"]
+            path = os.path.join(RP_ROOT, "textures", "endernet", "models", base + ".png")
+            self.assertTrue(os.path.isfile(path), path)
+            self.assertEqual(
+                png_size(path),
+                (description["texture_width"], description["texture_height"]),
+                device_id,
+            )
+
+    def test_model_block_lets_light_through(self):
+        """非整块模型若挡光，凹进去的部分会落在自己的阴影里发黑。"""
+        for device_id in sorted(declared_models()):
+            components = self.read_block_json(device_id)["minecraft:block"]["components"]
+            self.assertEqual(components.get("minecraft:light_dampening"), 0, device_id)
 
 
 class TestResourcePackMapping(AssetFixture):
@@ -161,10 +309,44 @@ class TestResourcePackMapping(AssetFixture):
         self.assertEqual(missing, [], "blocks.json 缺少：%r" % (missing,))
 
     def test_blocks_json_texture_keys_are_registered(self):
+        """六面同图写一个键；正面布局逐面写；模型方块不写（照 SkyblueTech 充电器）。"""
         for device_id in self.block_ids:
-            key = self.blocks_json[device_id]["textures"]
-            self.assertIsNotNone(key, "%s 的贴图为 null，游戏内会显示为缺失贴图" % device_id)
-            self.assertIn(key, self.terrain_data, "%s -> %s 未登记" % (device_id, key))
+            entry = self.blocks_json[device_id]
+            layout = declared_layouts()[device_id]
+            if layout == "model":
+                self.assertNotIn("textures", entry, device_id)
+                continue
+            textures = entry["textures"]
+            if layout == "uniform":
+                textures = {"*": textures}
+            else:
+                self.assertEqual(
+                    sorted(textures), ["down", "east", "north", "south", "up", "west"], device_id
+                )
+            for face, key in sorted(textures.items()):
+                self.assertIsNotNone(
+                    key, "%s 的 %s 面贴图为 null，游戏内会显示为缺失贴图" % (device_id, face)
+                )
+                self.assertIn(key, self.terrain_data, "%s.%s -> %s 未登记" % (device_id, face, key))
+
+    def test_ui_textures_of_this_pack_exist(self):
+        """界面 JSON 引用本模组的贴图时，文件必须真的在。
+
+        2026-11-05 之前，四个接口界面的装饰带引用了 `devices/network_baseband_8`；
+        贴图改名后这里不会报错，界面上只是静默缺图——这条测试就是为它加的。
+        原版贴图（`textures/ui/...`）不在本资源包里，不查。
+        """
+        missing = []
+        for name in sorted(os.listdir(RP_UI)):
+            if not name.endswith(".json"):
+                continue
+            with io.open(os.path.join(RP_UI, name), encoding="utf-8") as handle:
+                text = handle.read()
+            for path in sorted(set(UI_TEXTURE_PATTERN.findall(text))):
+                base = os.path.join(RP_ROOT, *path.split("/"))
+                if not any(os.path.isfile(base + ext) for ext in (".png", ".jpg", ".tga")):
+                    missing.append((name, path))
+        self.assertEqual(missing, [], "界面引用了不存在的贴图：%r" % (missing,))
 
     def test_terrain_entries_have_texture_paths(self):
         for key, entry in self.terrain_data.items():

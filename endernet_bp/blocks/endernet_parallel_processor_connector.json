@@ -13,7 +13,7 @@
             "minecraft:material_instances": {
                 "*": {
                     "render_method": "opaque",
-                    "texture": "endernet:parallel_processor_connector"
+                    "texture": "endernet:parallel_processor_connector_all"
                 }
             },
             "netease:block_entity": {

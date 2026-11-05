@@ -128,7 +128,7 @@
                                                             {
                                                                 "bg": {
                                                                     "type": "image",
-                                                                    "texture": "textures/endernet/devices/network_baseband_8",
+                                                                    "texture": "textures/endernet/devices/network_baseband_8_all",
                                                                     "tiled": true
                                                                 }
                                                             },

@@ -1,94 +1,135 @@
 {
     "endernet:assemble_chamber": {
-        "textures": "endernet:assemble_chamber",
+        "textures": {
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom",
+            "north": "endernet:assemble_chamber_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side"
+        },
         "sound": "stone"
     },
     "endernet:bus_fluid_input_io": {
-        "textures": "endernet:bus_fluid_input_io",
+        "textures": "endernet:bus_fluid_input_io_all",
         "sound": "stone"
     },
     "endernet:bus_fluid_io": {
-        "textures": "endernet:bus_fluid_io",
+        "textures": "endernet:bus_fluid_io_all",
         "sound": "stone"
     },
     "endernet:bus_fluid_output_io": {
-        "textures": "endernet:bus_fluid_output_io",
+        "textures": "endernet:bus_fluid_output_io_all",
         "sound": "stone"
     },
     "endernet:bus_item_input_io": {
-        "textures": "endernet:bus_item_input_io",
+        "textures": "endernet:bus_item_input_io_all",
         "sound": "stone"
     },
     "endernet:bus_item_io": {
-        "textures": "endernet:bus_item_io",
+        "textures": "endernet:bus_item_io_all",
         "sound": "stone"
     },
     "endernet:bus_item_output_io": {
-        "textures": "endernet:bus_item_output_io",
+        "textures": "endernet:bus_item_output_io_all",
         "sound": "stone"
     },
     "endernet:bus_template_io": {
-        "textures": "endernet:bus_template_io",
+        "textures": "endernet:bus_template_io_all",
         "sound": "stone"
     },
     "endernet:common_terminal_panel": {
-        "textures": "endernet:common_terminal_panel",
+        "textures": {
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom",
+            "north": "endernet:common_terminal_panel_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side"
+        },
         "sound": "stone"
     },
     "endernet:crafting_terminal_panel": {
-        "textures": "endernet:crafting_terminal_panel",
+        "textures": {
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom",
+            "north": "endernet:crafting_terminal_panel_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side"
+        },
         "sound": "stone"
     },
     "endernet:creative_energy_source": {
-        "textures": "endernet:creative_energy_source",
+        "textures": "endernet:creative_energy_source_all",
         "sound": "stone"
     },
     "endernet:dos_network_endpoint": {
-        "textures": "endernet:dos_network_endpoint",
+        "textures": "endernet:dos_network_endpoint_all",
         "sound": "stone"
     },
     "endernet:energy_input_interface": {
-        "textures": "endernet:energy_input_interface",
+        "textures": "endernet:energy_input_interface_all",
         "sound": "stone"
     },
     "endernet:factoric_terminal_panel": {
-        "textures": "endernet:factoric_terminal_panel",
+        "textures": {
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom",
+            "north": "endernet:factoric_terminal_panel_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side"
+        },
         "sound": "stone"
     },
     "endernet:memory_slot": {
-        "textures": "endernet:memory_slot",
+        "textures": {
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom",
+            "north": "endernet:memory_slot_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side"
+        },
         "sound": "stone"
     },
     "endernet:network_baseband_16": {
-        "textures": "endernet:network_baseband_16",
+        "textures": "endernet:network_baseband_16_all",
         "sound": "stone"
     },
     "endernet:network_baseband_32": {
-        "textures": "endernet:network_baseband_32",
+        "textures": "endernet:network_baseband_32_all",
         "sound": "stone"
     },
     "endernet:network_baseband_8": {
-        "textures": "endernet:network_baseband_8",
+        "textures": "endernet:network_baseband_8_all",
         "sound": "stone"
     },
     "endernet:parallel_processor": {
-        "textures": "endernet:parallel_processor",
+        "textures": "endernet:parallel_processor_all",
         "sound": "stone"
     },
     "endernet:parallel_processor_connector": {
-        "textures": "endernet:parallel_processor_connector",
+        "textures": "endernet:parallel_processor_connector_all",
         "sound": "stone"
     },
     "endernet:storage_driver": {
-        "textures": "endernet:frame_top",
         "sound": "stone"
     },
     "endernet:template_terminal_panel": {
-        "textures": "endernet:template_terminal_panel",
+        "textures": {
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom",
+            "north": "endernet:template_terminal_panel_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side"
+        },
         "sound": "stone"
     },
     "endernet:tiny_network_endpoint": {
-        "textures": "endernet:tiny_network_endpoint",
+        "textures": "endernet:tiny_network_endpoint_all",
         "sound": "stone"
     },
     "format_version": [
