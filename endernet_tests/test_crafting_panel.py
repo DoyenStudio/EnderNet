@@ -1334,6 +1334,7 @@ class TestJsonContract(unittest.TestCase):
         """**同一个终端，同一套绑定名**：合成终端不是另一个终端。"""
         content = self.content()
         scroll = content["terminal_items_scroll"]
+        self.assertIs(scroll.get("visible", True), True)
         self.assertEqual(scroll["$scrolling_content"],
                          "crafting_terminal_panel_ui.terminal_items_grid")
         self.assertEqual(scroll["$scroll_background_image_control"],
