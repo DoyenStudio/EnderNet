@@ -257,11 +257,12 @@ def normalize_engine_item(data):
     """
     if not data or is_empty_item(data):
         return data
-    # **认不出的字段要炸，不能丢。** 「只保留我认识的」听起来温和，
-    # 实际效果是把新出现的身份字段静默抹掉——那正是 `_check_fields`
-    # 存在的理由。因此这里只放行**已知**的两类额外字段（引擎派生），
-    # 其余一律拒绝。
     unknown = set(data) - _KNOWN_FIELDS
+    # 新版引擎也给普通物品返回两个空的冒险模式限制列表。
+    # 只忽略实测的空列表；非空限制会影响物品行为，不能在取放时丢失。
+    for field in ("canPlaceOn", "canDestroy"):
+        if data.get(field) == []:
+            unknown.discard(field)
     if unknown:
         raise ValueError(
             "引擎返回了未登记的物品字段 %r；不确定它是否参与身份，"

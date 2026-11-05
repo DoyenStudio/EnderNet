@@ -479,6 +479,16 @@ class TestEngineItemNormalization(unittest.TestCase):
             item_key_from_dict(written),
         )
 
+    def test_nonempty_adventure_restrictions_are_rejected(self):
+        from endernet.server.adapters.containers_engine import normalize_engine_item
+
+        for field in ("canPlaceOn", "canDestroy"):
+            with self.subTest(field=field):
+                raw = dict(self.MEASURED, canPlaceOn=[], canDestroy=[])
+                raw[field] = ["minecraft:stone"]
+                with self.assertRaises(ValueError):
+                    normalize_engine_item(raw)
+
     def test_an_unknown_field_still_raises(self):
         """**只放行已知派生字段。** 再出现别的未知字段仍然要炸——
         「不静默丢弃潜在身份数据」这条守卫不能因为「引擎字段多」就放开。"""

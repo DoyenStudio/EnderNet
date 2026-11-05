@@ -295,6 +295,17 @@ class TestTemplateState(TemplateFixture):
 
 
 class TestCellAccessors(TemplateFixture):
+    def test_factory_template_in_first_hotbar_slot(self):
+        raw = testsupport.engine_item(FACTORY.name, 1, canPlaceOn=[], canDestroy=[])
+        self.engine_items[0] = ItemStub(FACTORY.name, 1, orig=raw)
+        with patch.object(backpack_model, "_read_engine_items", return_value=self.engine_items):
+            self.backpack.replace_from_engine()
+
+        self.assertEqual(self.panel.GetBackpackItems()[27], (FACTORY.name, 1))
+        with patch.object(stack_size, "id_aux", return_value=32047104) as icon:
+            self.assertEqual(self.panel.hotbar_item_id_aux(0), 32047104)
+            icon.assert_called_once_with(FACTORY.name, 0)
+            self.assertEqual(self.panel.backpack_item_id_aux(0), 0)
 
     def test_locked_is_read_even_for_an_empty_cell(self):
         """合成模式中间那格没有配方时是空的，但一样不许玩家往里放东西。"""
