@@ -18,6 +18,7 @@ import ast
 import io
 import os
 import unittest
+from unittest.mock import Mock, patch
 
 import testsupport  # noqa: F401  设置 sys.path
 
@@ -724,6 +725,32 @@ class TestEngineBoundary(unittest.TestCase):
         """注入一个「一碰就炸」的原语：只要没人调用，整条链路照常构造。"""
         provider = EngineContainerProvider(_MissingEngine())
         self.assertEqual(provider.diagnostics()["cached"], 0)
+
+
+class TestPlayerWriteDictionary(unittest.TestCase):
+    def test_journaled_template_written_to_one_slot_with_utf8_metadata(self):
+        target = (0, 23)
+        api = Mock()
+        api.GetMinecraftEnum.return_value.ItemPosType.INVENTORY = target[0]
+        primitives = EngineItemPrimitives()
+        component = Mock()
+        primitives._player_comp = lambda owner: component
+        lore = "§r制作：牛排"
+        data = item_dict(ResourceKey.item("endernet:factorical_template"), 1)
+        data["userData"] = {"display": {"Lore": [lore]}, "endernet:pattern": {
+            "outputs": [{"name": "minecraft:cooked_beef", "count": 1}]}}
+        with patch.dict("sys.modules", {"mod.server.extraServerApi": api}):
+            component.SetPlayerAllItems.return_value = {target: True}
+            self.assertTrue(primitives.set_player_item("p1", target[1], data))
+            written, = component.SetPlayerAllItems.call_args.args
+            self.assertEqual(set(written), {target})
+            self.assertEqual(written[target][b"userData"], {
+                b"display": {b"Lore": [lore.encode("utf-8")]},
+                b"endernet:pattern": {b"outputs": [{b"name": b"minecraft:cooked_beef", b"count": 1}]},
+            })
+            self.assertEqual(data["userData"]["display"]["Lore"], [lore])
+            component.SetPlayerAllItems.return_value = {target: False}
+            self.assertFalse(primitives.set_player_item("p1", target[1], data))
 
 
 class TestContainerWriteDictionary(unittest.TestCase):

@@ -60,4 +60,18 @@ def engine_text(value):
     return engine_text(u"%s" % (value,))
 
 
-__all__ = ["engine_text"]
+def engine_item_data(value):
+    # type: (object) -> object
+    """将物品字典内的文本转为引擎可写的 UTF-8 字节串，保留 NBT 数值与结构。"""
+    if isinstance(value, _UNICODE):
+        return engine_text(value)
+    if isinstance(value, dict):
+        return dict((engine_item_data(k), engine_item_data(v)) for k, v in value.items())
+    if isinstance(value, list):
+        return [engine_item_data(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(engine_item_data(v) for v in value)
+    return value
+
+
+__all__ = ["engine_text", "engine_item_data"]

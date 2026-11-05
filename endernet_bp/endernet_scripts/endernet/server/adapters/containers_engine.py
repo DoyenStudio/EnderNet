@@ -61,7 +61,7 @@ from ...common.protocol import (
 from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
 from ..storage.transfer import InventoryEndpoint, slot_extract, slot_insert
 from .containers import ContainerAdapter, ContainerEntry
-from .engine_text import engine_text
+from .engine_text import engine_item_data, engine_text
 
 #: 玩家背包的槽位数：27 格背包 + 9 格快捷栏。
 #: 与 `client/ui/inventory_model.py` 的 `SLOT_COUNT` 是同一个数，
@@ -453,7 +453,7 @@ class EngineItemPrimitives(object):
         factory = GetEngineCompFactory()
         pos = factory.CreatePos(player_id).GetFootPos()
         dimension = factory.CreateDimension(player_id).GetEntityDimensionId()
-        return self._player_comp(player_id).SpawnItemToLevel(data, dimension, pos)
+        return self._player_comp(player_id).SpawnItemToLevel(engine_item_data(data), dimension, pos)
 
     def player_item(self, player_id, slot):
         # type: (str, int) -> object
@@ -465,17 +465,14 @@ class EngineItemPrimitives(object):
 
     def set_player_item(self, player_id, slot, data):
         # type: (str, int, dict) -> bool
-        """写一个背包槽。
-
-        两条路径分开：放东西用 `SpawnItemToPlayerInv`（单槽、不动别人），
-        清空用 `SetInvItemNum(slot, 0)`（同样是单槽）。**不使用
-        `SetPlayerAllItems` 整表替换**——那会覆盖同一帧内其它槽的改动，
-        而改动就发生在我们读完那 36 个槽之后。
-        """
+        """按目标数量替换单槽。持物日志经 JSON 读回后，样板配方和 Lore 都需要转回字节串。"""
         comp = self._player_comp(player_id)
-        if not _is_empty(data):
-            return bool(comp.SpawnItemToPlayerInv(dict(data), player_id, slot))
-        return bool(comp.SetInvItemNum(slot, 0))
+        if _is_empty(data):
+            return bool(comp.SetInvItemNum(slot, 0))
+        from mod.server.extraServerApi import GetMinecraftEnum
+        target = (GetMinecraftEnum().ItemPosType.INVENTORY, slot)
+        result = comp.SetPlayerAllItems({target: engine_item_data(data)})
+        return bool(result and result.get(target))
 
     def swap_player_items(self, player_id, slot_a, slot_b):
         # type: (str, int, int) -> bool
