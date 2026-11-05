@@ -737,6 +737,7 @@ class TestPlayerWriteDictionary(unittest.TestCase):
         primitives._player_comp = lambda owner: component
         lore = "§r制作：牛排"
         data = item_dict(ResourceKey.item("endernet:factorical_template"), 1)
+        data.update(customTips=None, extraId=None, durability=None)
         data["userData"] = {"display": {"Lore": [lore]}, "endernet:pattern": {
             "outputs": [{"name": "minecraft:cooked_beef", "count": 1}]}}
         with patch.dict("sys.modules", {"mod.server.extraServerApi": api}):
@@ -744,13 +745,61 @@ class TestPlayerWriteDictionary(unittest.TestCase):
             self.assertTrue(primitives.set_player_item("p1", target[1], data))
             written, = component.SetPlayerAllItems.call_args.args
             self.assertEqual(set(written), {target})
+            self.assertEqual(
+                (written[target][b"customTips"], written[target][b"extraId"],
+                 written[target][b"durability"]), (b"", b"", 0))
+            self.assertEqual((data["customTips"], data["extraId"], data["durability"]),
+                             (None, None, None))
             self.assertEqual(written[target][b"userData"], {
                 b"display": {b"Lore": [lore.encode("utf-8")]},
                 b"endernet:pattern": {b"outputs": [{b"name": b"minecraft:cooked_beef", b"count": 1}]},
             })
             self.assertEqual(data["userData"]["display"]["Lore"], [lore])
             component.SetPlayerAllItems.return_value = {target: False}
-            self.assertFalse(primitives.set_player_item("p1", target[1], data))
+            self.assertIs(primitives.set_player_item("p1", target[1], data), False)
+
+    def test_player_write_distinguishes_missing_receipt_from_slot_refusal(self):
+        target = (0, 23)
+        api = Mock()
+        api.GetMinecraftEnum.return_value.ItemPosType.INVENTORY = target[0]
+        primitives = EngineItemPrimitives()
+        component = api.GetEngineCompFactory.return_value.CreateItem.return_value
+        with patch.dict("sys.modules", {"mod.server.extraServerApi": api}):
+            for result in (None, {}, {(0, 4): False}, {target: None}, False):
+                with self.subTest(result=result):
+                    component.SetPlayerAllItems.return_value = result
+                    self.assertIsNone(primitives.set_player_item("p1", target[1], item_dict(STONE, 1)))
+            for receipt in (True, False, None):
+                with self.subTest(clear_receipt=receipt):
+                    component.SetInvItemNum.return_value = receipt
+                    self.assertIs(primitives.set_player_item("p1", target[1], EMPTY_ITEM), receipt)
+                    component.SetInvItemNum.assert_called_with(target[1], 0)
+
+    def test_dropped_cursor_uses_engine_fields_and_spawn_result(self):
+        api = Mock()
+        factory = api.GetEngineCompFactory.return_value
+        pos = (4, 65, -7)
+        factory.CreatePos.return_value.GetFootPos.return_value = pos
+        factory.CreateDimension.return_value.GetEntityDimensionId.return_value = 1
+        spawn = factory.CreateItem.return_value.SpawnItemToLevel
+        primitives = EngineItemPrimitives()
+        data = item_dict(STONE, 3)
+        data["userData"] = {"display": {"Lore": ["样板"]}}
+        with patch.dict("sys.modules", {"mod.server.extraServerApi": api}):
+            spawn.return_value = True
+            self.assertTrue(primitives.drop_cursor("p1", data))
+            written, dimension, position = spawn.call_args.args
+            self.assertEqual((dimension, position), (1, pos))
+            self.assertEqual((written[b"customTips"], written[b"extraId"], written[b"durability"]),
+                             (b"", b"", 0))
+            self.assertEqual(written[b"userData"], {b"display": {b"Lore": ["样板".encode("utf-8")]}})
+            self.assertNotIn("durability", data)
+            data.update(customTips="说明", extraId="pattern", durability=7)
+            spawn.return_value = False
+            self.assertFalse(primitives.drop_cursor("p1", data))
+            written = spawn.call_args.args[0]
+            self.assertEqual((written[b"customTips"], written[b"extraId"], written[b"durability"]),
+                             ("说明".encode("utf-8"), b"pattern", 7))
 
 
 class TestContainerWriteDictionary(unittest.TestCase):

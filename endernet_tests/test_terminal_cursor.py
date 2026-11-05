@@ -7,6 +7,8 @@ from test_containers_engine import FakePlayerPrimitives
 from endernet.common.item_codec import item_dict_from_key, item_key_from_dict
 from endernet.common.resource_key import ResourceKey
 from endernet.server.adapters.containers_engine import EngineInventoryProvider
+from endernet.server.crafting.patterns import MODE_CRAFTING, PatternDefinition, PatternStack
+from endernet.server.crafting.template_terminal import encode_template_item
 
 
 class CursorPrimitives(FakePlayerPrimitives):
@@ -106,17 +108,113 @@ class TestTerminalCursor(Fixture):
         self.assertTrue(self.hand.return_to_player(self.bag.adapter))
         self.assertEqual([7], [x["count"] for x in self.engine.drops])
 
-    def test_recovery_finishes_either_side_of_an_interrupted_write(self):
-        for written in (False, True):
-            before = item_dict_from_key(PLANKS, 4)
-            after = item_dict_from_key(PLANKS, 2)
-            self.engine.record = {"revision": 2, "item": None, "pending": {
-                "area": "bag", "identity": "p1", "slot": 3, "before": before,
-                "after": after, "hand_after": after}}
-            self.engine.slots[3] = after if written else before
-            self.assertTrue(self.hand.return_to_player(self.bag.adapter))
-            self.assertEqual(self.bag.adapter.count_of(PLANKS), 4)
-            self.assertEqual(self.hand.snapshot()["count"], 0)
+    def test_legacy_interrupted_pickup_waits_for_its_exact_landing(self):
+        before = item_dict_from_key(PLANKS, 4)
+        after = item_dict_from_key(PLANKS, 2)
+        self.engine.record = {"revision": 2, "item": None, "pending": {
+            "area": "bag", "identity": "p1", "slot": 3, "before": before,
+            "after": after, "hand_after": after}}
+        for unconfirmed in (before, item_dict_from_key(STICK, 2)):
+            self.engine.slots[3] = unconfirmed
+            self.assertFalse(self.hand.return_to_player(self.bag.adapter))
+            self.assertIn("pending", self.engine.record)
+            self.assertEqual(self.engine.record["revision"], 2)
+            self.assertEqual(self.engine.slots[3], unconfirmed)
+        self.engine.slots[3] = after
+        self.assertTrue(self.hand.return_to_player(self.bag.adapter))
+        self.assertEqual(self.bag.adapter.count_of(PLANKS), 4)
+        self.assertEqual(self.hand.snapshot()["count"], 0)
+
+    def test_accepted_template_write_with_delayed_readback_is_never_delivered_twice(self):
+        definition = PatternDefinition(MODE_CRAFTING, [PatternStack(PLANKS, 1, slot=0)],
+                                       [PatternStack(STICK, 1)])
+        key, template = encode_template_item(definition)
+        self.hand.write_slot(0, template)
+        submitted = []
+
+        def deferred(owner, slot, data):
+            submitted.append((slot, data))
+            return True
+
+        self.engine.set_player_item = deferred
+        self.assertFalse(self.click("bag", 8, "left").is_applied())
+        self.assertFalse(self.click("bag", 9, "left").is_applied())
+        self.assertFalse(self.hand.return_to_player(self.bag.adapter))
+        self.assertEqual(len(submitted), 1)
+        self.assertEqual(self.engine.record["pending"]["slot"], 8)
+        self.assertFalse(self.engine.drops)
+
+        # Reconnect with fresh adapters while the same player journal survives.
+        provider = EngineInventoryProvider(self.engine)
+        hand, bag = provider.cursor_of("p1"), provider.inventory_of("p1")
+        self.assertFalse(hand.return_to_player(bag))
+        slot, data = submitted[0]
+        self.engine.slots[slot] = data
+        self.assertTrue(hand.return_to_player(bag))
+        self.assertTrue(hand.return_to_player(bag))
+        self.assertNotIn("pending", self.engine.record)
+        self.assertEqual((hand.snapshot()["count"], bag.count_of(key), len(submitted)), (0, 1, 1))
+
+    def test_explicit_refusal_without_a_slot_change_allows_a_new_placement(self):
+        self.hand.write_slot(0, item_dict_from_key(STICK, 2))
+        write = self.engine.set_player_item
+        self.engine.set_player_item = lambda owner, slot, data: False
+        self.assertFalse(self.click("bag", 8, "left").is_applied())
+        self.assertNotIn("pending", self.engine.record)
+        self.assertEqual(self.hand.snapshot()["count"], 2)
+        self.engine.set_player_item = write
+        self.ok("bag", 9, "left")
+        self.assertEqual((self.hand.snapshot()["count"], self.bag.adapter.count_of(STICK)), (0, 2))
+
+    def test_missing_write_result_keeps_the_journal_with_the_old_slot(self):
+        self.hand.write_slot(0, item_dict_from_key(STICK, 2))
+        self.engine.set_player_item = lambda owner, slot, data: None
+        self.assertFalse(self.hand.return_to_player(self.bag.adapter))
+        self.assertFalse(self.hand.return_to_player(self.bag.adapter))
+        self.assertIn("pending", self.engine.record)
+
+    def test_landing_proves_delivery_even_if_the_primitive_reported_failure(self):
+        self.hand.write_slot(0, item_dict_from_key(STICK, 2))
+        write = self.engine.set_player_item
+
+        def put_and_report_failure(owner, slot, data):
+            write(owner, slot, data)
+            return False
+
+        self.engine.set_player_item = put_and_report_failure
+        self.ok("bag", 8, "left")
+        self.assertEqual((self.hand.snapshot()["count"], self.bag.adapter.count_of(STICK)), (0, 2))
+
+    def test_interrupted_write_before_landing_cannot_be_sent_again(self):
+        self.hand.write_slot(0, item_dict_from_key(STICK, 2))
+        attempts = []
+
+        def interrupted(owner, slot, data):
+            self.assertEqual(self.engine.record["pending"]["after"], data)
+            attempts.append(slot)
+            raise IOError("lost acknowledgement")
+
+        self.engine.set_player_item = interrupted
+        with self.assertRaises(IOError):
+            self.hand.return_to_player(self.bag.adapter)
+        self.assertFalse(self.hand.return_to_player(self.bag.adapter))
+        self.assertEqual(attempts, [0])
+        self.assertIn("pending", self.engine.record)
+
+    def test_readback_during_write_settles_the_same_journal_only_once(self):
+        self.hand.write_slot(0, item_dict_from_key(STICK, 2))
+        write = self.engine.set_player_item
+        revision = self.hand.snapshot()["revision"]
+
+        def write_and_notify(owner, slot, data):
+            accepted = write(owner, slot, data)
+            self.assertTrue(self.hand.reconcile(self.bag.adapter, "bag", owner))
+            return accepted
+
+        self.engine.set_player_item = write_and_notify
+        self.ok("bag", 8, "left")
+        self.assertEqual(self.hand.snapshot()["revision"], revision + 2)
+        self.assertEqual((self.hand.snapshot()["count"], self.bag.adapter.count_of(STICK)), (0, 2))
 
     def test_quick_move_targets_player_slots_and_leaves_hand_available(self):
         payload = self.ok("network", 0, "quick", PLANKS)
@@ -146,6 +244,15 @@ class TestTerminalCursor(Fixture):
         self.engine.drop_cursor = interrupted
         with self.assertRaises(IOError):
             self.hand.return_to_player(self.bag.adapter)
+        self.assertFalse(self.hand.return_to_player(self.bag.adapter))
+        self.assertEqual(len(self.engine.drops), 1)
+        self.assertEqual(self.engine.record["pending"]["area"], "drop")
+
+    def test_missing_drop_receipt_leaves_the_first_spawn_pending(self):
+        self.hand.write_slot(0, item_dict_from_key(STICK, 1))
+        self.engine.slots[:] = [item_dict_from_key(PLANKS, 64) for _ in range(36)]
+        self.engine.drop_cursor = lambda owner, data: self.engine.drops.append(data)
+        self.assertFalse(self.hand.return_to_player(self.bag.adapter))
         self.assertFalse(self.hand.return_to_player(self.bag.adapter))
         self.assertEqual(len(self.engine.drops), 1)
         self.assertEqual(self.engine.record["pending"]["area"], "drop")

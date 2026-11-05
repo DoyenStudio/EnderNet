@@ -415,6 +415,32 @@ class TestInventoryVersions(Fixture):
         self.hub.tick()
         self.assertEqual(len(self.of_kind("inventory_snapshot")), 1)
 
+    def test_reopen_reconciles_returned_template_before_showing_cursor(self):
+        from test_terminal_cursor import CursorPrimitives
+        from endernet.common.item_codec import item_dict_from_key
+        from endernet.server.adapters.containers_engine import EngineInventoryProvider
+        from endernet.server.crafting.patterns import MODE_CRAFTING, PatternDefinition, PatternStack
+        from endernet.server.crafting.template_terminal import encode_template_item
+
+        recipe = PatternDefinition(MODE_CRAFTING, (PatternStack(LOG, 1, slot=0),),
+                                   (PatternStack(STONE, 1),))
+        key, item = encode_template_item(recipe)
+        engine = CursorPrimitives()
+        self.service.inventories = EngineInventoryProvider(engine)
+        engine.record = {"revision": 7, "item": item, "pending": {
+            "area": "bag", "identity": "p1", "slot": 10, "before": None,
+            "after": item, "hand_after": None}}
+        engine.slots[10] = item_dict_from_key(key, 1)
+        self.hub.tick()
+        self.client.receive(self.latest().to_dict())
+        self.assertEqual(self.client.inventory_slots[10]["canonical"], key.canonical())
+        self.assertEqual(self.client.inventory_slots[10]["count"], 1)
+        self.assertEqual(self.client.cursor, {"revision": 8, "key": None, "count": 0})
+        self.assertNotIn("pending", engine.record)
+        self.hub.tick()
+        self.assertEqual(len(self.of_kind("inventory_snapshot")), 1)
+        self.assertEqual([stack for stack in engine.slots if stack], [item])
+
     def test_player_and_session_isolation_and_close_cleanup(self):
         other, reply = self.open_view(player_id="p2", request_id="r2")
         self.set_slot("minecraft:stone")

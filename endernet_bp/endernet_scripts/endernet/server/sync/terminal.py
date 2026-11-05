@@ -1201,13 +1201,13 @@ class TerminalSyncHub(object):
             endpoint = provider.endpoint_of(session.player_id)
             if endpoint is None or not endpoint.can_read():
                 return
+            cursor_of = getattr(provider, "cursor_of", None)
+            adapter = cursor_of(session.player_id) if cursor_of is not None else None
+            cursor = adapter.snapshot(endpoint.adapter) if adapter is not None else None
             view = endpoint.inventory_view()
             rows = [dict(slot=row["slot"], canonical=row["canonical"],
                          count=row["count"], slot_version=row["version"])
                     for row in view["slots"]]
-            cursor_of = getattr(provider, "cursor_of", None)
-            adapter = cursor_of(session.player_id) if cursor_of is not None else None
-            cursor = adapter.snapshot() if adapter is not None else None
             message = InventorySnapshot(view["revision"], rows, cursor)
         except Exception:
             # 读取失败不伪造空背包；客户端旧版本仍由命令入口复核。

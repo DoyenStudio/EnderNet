@@ -349,15 +349,20 @@ def item_dict_from_key(key, count=1):
     return data
 
 
+def with_engine_empty_values(data):
+    # type: (dict) -> dict
+    """为背包、容器和掉落物写入还原引擎的三个空值，保留源字典与其余物品字段。"""
+    item = dict(data)
+    for field, empty in (("customTips", ""), ("extraId", ""), ("durability", 0)):
+        if item.get(field) is None:
+            item[field] = empty
+    return item
+
+
 #: `CreateEngineItemEntity`（掉落物）要的**旧式键名**。2026-10-02 真机逐字段
 #: 二分出来的：给它 `newItemName` / `newAuxValue` 会报
 #: 「expected string or Unicode object, NoneType found」——它读的是这两个名。
 _DROP_FIELD_ALIASES = (("itemName", "newItemName"), ("auxValue", "newAuxValue"))
-
-#: 掉落 API **不接受 `None`** 的三个字段与各自的空写法（真机逐字段二分）。
-#: 其余身份字段（`enchantData` / `modEnchantData` / `userData`）给 `None`
-#: 也能生成实体，因此原样传，不在这里补。
-_DROP_NEVER_NONE = (("customTips", ""), ("extraId", ""), ("durability", 0))
 
 
 def item_dict_for_drop(key, count=1):
@@ -379,16 +384,12 @@ def item_dict_for_drop(key, count=1):
     补进去的是引擎自己的空值写法（`""` / `0`），与读回时的归一
     （`_EMPTY_IDENTITY` 把 `""` / `0` 归成 `None`）正好相消，身份往返不变。
     """
-    data = item_dict_from_key(key, count)
+    data = with_engine_empty_values(item_dict_from_key(key, count))
     out = {"count": data["count"]}
     for alias, engine in _DROP_FIELD_ALIASES:
         out[alias] = data[engine]
-    blanks = dict(_DROP_NEVER_NONE)
-    for field, engine in ITEM_FIELDS:
-        value = data[engine]
-        if value is None and engine in blanks:
-            value = blanks[engine]
-        out[engine] = value
+    for _, engine in ITEM_FIELDS:
+        out[engine] = data[engine]
     return out
 
 

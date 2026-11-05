@@ -46,6 +46,7 @@
 
 from copy import deepcopy
 
+from ...common import item_codec
 from ...common.item_codec import (
     is_empty_item,
     item_dict_from_key,
@@ -109,7 +110,7 @@ class SlotBackedContainer(ContainerAdapter):
 
     - `slot_count()` -> int
     - `read_slot(slot)` -> dict | None     该槽的原始物品字典
-    - `_write_slot(slot, data)` -> bool    **按原始数据写回**（`data` 是字典）
+    - `_write_slot(slot, data)` -> bool | None    写回结果，None 表示缺少明确回执
     - `stack_limit_of(key)` -> int         该资源的堆叠上限
 
     **`None` 到空气字典的翻译放在基类**（`write_slot`），子类只实现
@@ -139,11 +140,11 @@ class SlotBackedContainer(ContainerAdapter):
         raise NotImplementedError
 
     def _write_slot(self, slot, data):
-        # type: (int, dict) -> bool
+        # type: (int, dict) -> object
         raise NotImplementedError
 
     def write_slot(self, slot, data):
-        # type: (int, object) -> bool
+        # type: (int, object) -> object
         """写回一个槽。`data is None` 表示清空。"""
         return self._write_slot(
             slot, dict(EMPTY_ITEM) if data is None else dict(data)
@@ -383,10 +384,7 @@ class EngineItemPrimitives(object):
         # 内部身份把空值归一为 None，但写入引擎需要恢复这三个字段。
         # 2026-10-04 红石熔炉实测：任一个传 None 都会写入成功，却不派发
         # ContainerItemChangedServerEvent；传 0 / 空字符串后事件恢复。
-        item = dict(data)
-        for field, empty in (("durability", 0), ("customTips", ""), ("extraId", "")):
-            if item.get(field) is None:
-                item[field] = empty
+        item = item_codec.with_engine_empty_values(data)
         # **返回值必须看。** `tooldelta` 的 `PutItemIntoContainer` 正是在这里
         # 丢掉了布尔值，才出现「空槽路径报告全部放入」的缺陷。
         # 参数顺序照 `tooldelta/api/server/container.py`：`(item, slot, pos, dim)`。
@@ -453,7 +451,8 @@ class EngineItemPrimitives(object):
         factory = GetEngineCompFactory()
         pos = factory.CreatePos(player_id).GetFootPos()
         dimension = factory.CreateDimension(player_id).GetEntityDimensionId()
-        return self._player_comp(player_id).SpawnItemToLevel(engine_item_data(data), dimension, pos)
+        item = engine_item_data(item_codec.with_engine_empty_values(data))
+        return self._player_comp(player_id).SpawnItemToLevel(item, dimension, pos)
 
     def player_item(self, player_id, slot):
         # type: (str, int) -> object
@@ -464,15 +463,18 @@ class EngineItemPrimitives(object):
         )
 
     def set_player_item(self, player_id, slot, data):
-        # type: (str, int, dict) -> bool
-        """按目标数量替换单槽。持物日志经 JSON 读回后，样板配方和 Lore 都需要转回字节串。"""
+        # type: (str, int, dict) -> object
+        """按目标数量替换单槽。返回逐槽布尔回执，缺少明确回执时返回 None。"""
         comp = self._player_comp(player_id)
         if _is_empty(data):
-            return bool(comp.SetInvItemNum(slot, 0))
-        from mod.server.extraServerApi import GetMinecraftEnum
-        target = (GetMinecraftEnum().ItemPosType.INVENTORY, slot)
-        result = comp.SetPlayerAllItems({target: engine_item_data(data)})
-        return bool(result and result.get(target))
+            receipt = comp.SetInvItemNum(slot, 0)
+        else:
+            from mod.server.extraServerApi import GetMinecraftEnum
+            target = (GetMinecraftEnum().ItemPosType.INVENTORY, slot)
+            item = engine_item_data(item_codec.with_engine_empty_values(data))
+            result = comp.SetPlayerAllItems({target: item})
+            receipt = result.get(target) if isinstance(result, dict) else None
+        return receipt if isinstance(receipt, bool) else None
 
     def swap_player_items(self, player_id, slot_a, slot_b):
         # type: (str, int, int) -> bool
@@ -580,7 +582,7 @@ class EnginePlayerInventory(SlotBackedContainer):
         return normalize_engine_item(self.primitives.player_item(self.player_id, slot))
 
     def _write_slot(self, slot, data):
-        # type: (int, dict) -> bool
+        # type: (int, dict) -> object
         if not self.valid:
             return False
         return self.primitives.set_player_item(self.player_id, slot, data)
@@ -630,6 +632,15 @@ class PlayerCursor(SlotBackedContainer):
             return _is_empty(first) and _is_empty(second)
         return first["count"] == second["count"] and item_key_from_dict(first) == item_key_from_dict(second)
 
+    def _finish_pair(self, record, item):
+        # A synchronous inventory callback may already have settled this write.
+        revision = record["revision"] + 1
+        latest = self.primitives.cursor_record(self.player_id)
+        if latest.get("revision") != record["revision"]:
+            return (latest.get("revision") == revision and not latest.get("pending")
+                    and self.same_stack(latest.get("item"), item))
+        return self.primitives.save_cursor(self.player_id, {"revision": revision, "item": item})
+
     def reconcile(self, adapter, area, identity):
         record = self.primitives.cursor_record(self.player_id)
         pending = record.get("pending")
@@ -638,20 +649,16 @@ class PlayerCursor(SlotBackedContainer):
         if pending["area"] != area or pending["identity"] != identity:
             return False
         current = adapter.read_slot(pending["slot"])
-        current = None if _is_empty(current) else current
-        if self.same_stack(current, pending["after"]):
-            item = pending["hand_after"]
-        elif self.same_stack(current, pending["before"]):
-            item = record.get("item")
-        else:
+        # A journal survives a crash both before and after the engine call.
+        # Reading the old contents cannot establish that a write was refused.
+        if not self.same_stack(current, pending["after"]):
             return False
-        return self.primitives.save_cursor(self.player_id, {
-            "revision": record["revision"] + 1, "item": item})
+        return self._finish_pair(record, pending["hand_after"])
 
     def replace_pair(self, adapter, slot, area, identity, after, hand_after):
-        if not self.reconcile(adapter, area, identity):
-            return False
         record = dict(self.primitives.cursor_record(self.player_id))
+        if record.get("pending"):
+            return False
         before = adapter.read_slot(slot)
         before = None if _is_empty(before) else before
         record["revision"] = record.get("revision", 0) + 1
@@ -659,10 +666,13 @@ class PlayerCursor(SlotBackedContainer):
                              "before": before, "after": after, "hand_after": hand_after}
         if not self.primitives.save_cursor(self.player_id, record):
             return False
-        adapter.write_slot(slot, after)
+        accepted = adapter.write_slot(slot, after)
         actual = adapter.read_slot(slot)
-        actual = None if _is_empty(actual) else actual
-        return self.reconcile(adapter, area, identity) and self.same_stack(actual, after)
+        if self.same_stack(actual, after):
+            return self._finish_pair(record, hand_after)
+        if accepted is False and self.same_stack(actual, before):
+            self._finish_pair(record, record.get("item"))
+        return False
 
     def exchange(self, adapter, slot, area, identity):
         return self.replace_pair(adapter, slot, area, identity, self.read_slot(0),
@@ -712,12 +722,17 @@ class PlayerCursor(SlotBackedContainer):
         if dropped:
             return self.primitives.save_cursor(self.player_id, {
                 "revision": record["revision"] + 1, "item": None})
-        del record["pending"]
-        self.primitives.save_cursor(self.player_id, record)
+        if dropped is False:
+            del record["pending"]
+            self.primitives.save_cursor(self.player_id, record)
         return False
 
-    def snapshot(self):
+    def snapshot(self, bag=None):
         record = self.primitives.cursor_record(self.player_id)
+        if bag is not None and (record.get("pending") or {}).get("area") == "bag":
+            # 上次归还可能在背包写入后中断。发布持物前先核对原槽，只结账，不再发物。
+            if self.reconcile(bag, "bag", self.player_id):
+                record = self.primitives.cursor_record(self.player_id)
         item = record.get("item")
         return {"revision": record.get("revision", 0),
                 "key": item_key_from_dict(item).to_dict() if item else None,
