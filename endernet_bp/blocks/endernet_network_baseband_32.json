@@ -13,7 +13,7 @@
             "minecraft:material_instances": {
                 "*": {
                     "render_method": "opaque",
-                    "texture": "endernet:network_baseband_32"
+                    "texture": "endernet:network_baseband_32_all"
                 }
             },
             "netease:block_entity": {

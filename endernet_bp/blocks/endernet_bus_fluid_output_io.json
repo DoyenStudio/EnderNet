@@ -13,7 +13,7 @@
             "minecraft:material_instances": {
                 "*": {
                     "render_method": "opaque",
-                    "texture": "endernet:bus_fluid_output_io"
+                    "texture": "endernet:bus_fluid_output_io_all"
                 }
             },
             "netease:block_entity": {

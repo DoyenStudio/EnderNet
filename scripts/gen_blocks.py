@@ -61,22 +61,76 @@ FORMAT_VERSION = "1.21.70"
 #: 创造栏分类，需与 endernet_bp/netease_tab/endernet_category_config.json 的 name 一致
 CREATIVE_CATEGORY = "endernet"
 
-#: 贴图键与路径。未列出的方块默认用自己的短名。
-#: 已有美术资源的方块在这里指过去，不为它们生成占位图。
-TEXTURE_OVERRIDES = {
-    "endernet:bus_item_io": "endernet:bus_item_io",
-    "endernet:storage_driver": "endernet:frame_top",
-    "endernet:network_baseband_8": "endernet:network_baseband_8",
-    "endernet:network_baseband_16": "endernet:network_baseband_16",
+#: 方块的外观分三种，写法全部照同环境可运行的 SkyblueTech：
+#:
+#: - `uniform`：六面同一张贴图 `<短名>_all.png`，`material_instances` 只写 `*`
+#:   （SkyblueTech 有 47 个方块是这个形状）。
+#: - `front`：正面 `<短名>_front.png` 画在 **north** 面，其余各面用通用机壳
+#:   `common_device_{top,side,bottom}.png`；几何体为 `minecraft:geometry.full_block`，
+#:   按 `cardinal_direction` 用 `minecraft:transformation` 旋转，正面朝向放置者
+#:   （照 `skybluetech_alloy_furnace.json`）。
+#: - `model`：自定义几何体（`endernet_rp/models/blocks/*.geo.json`）+ 一张模型贴图，
+#:   同样按朝向旋转（照 `skybluetech_charger.json`）。物品栏里直接渲染同一个几何体，
+#:   不需要 `minecraft:item_visual`——那只在方块本体几何为空时才用（`skybluetech_digger`）。
+LAYOUT_UNIFORM = "uniform"
+LAYOUT_FRONT = "front"
+LAYOUT_MODEL = "model"
+
+BLOCK_LAYOUTS = {
+    # 六面同图：传输介质、无朝向的设备、以及 User 2026-11-05 指定改回单图的设备
+    "endernet:network_baseband_8": LAYOUT_UNIFORM,
+    "endernet:network_baseband_16": LAYOUT_UNIFORM,
+    "endernet:network_baseband_32": LAYOUT_UNIFORM,
+    "endernet:parallel_processor": LAYOUT_UNIFORM,
+    "endernet:creative_energy_source": LAYOUT_UNIFORM,
+    "endernet:dos_network_endpoint": LAYOUT_UNIFORM,
+    "endernet:tiny_network_endpoint": LAYOUT_UNIFORM,
+    "endernet:bus_item_io": LAYOUT_UNIFORM,
+    "endernet:bus_fluid_io": LAYOUT_UNIFORM,
+    "endernet:bus_item_input_io": LAYOUT_UNIFORM,
+    "endernet:bus_item_output_io": LAYOUT_UNIFORM,
+    "endernet:bus_fluid_input_io": LAYOUT_UNIFORM,
+    "endernet:bus_fluid_output_io": LAYOUT_UNIFORM,
+    "endernet:bus_template_io": LAYOUT_UNIFORM,
+    "endernet:parallel_processor_connector": LAYOUT_UNIFORM,
+    "endernet:energy_input_interface": LAYOUT_UNIFORM,
+    # 正面 + 通用机壳
+    "endernet:assemble_chamber": LAYOUT_FRONT,
+    "endernet:common_terminal_panel": LAYOUT_FRONT,
+    "endernet:crafting_terminal_panel": LAYOUT_FRONT,
+    "endernet:template_terminal_panel": LAYOUT_FRONT,
+    "endernet:factoric_terminal_panel": LAYOUT_FRONT,
+    "endernet:memory_slot": LAYOUT_FRONT,
+    # 自定义模型
+    "endernet:storage_driver": LAYOUT_MODEL,
 }
 
-#: 已经存在贴图文件的贴图键，生成占位图时跳过这些。
-EXISTING_TEXTURE_FILES = {
-    "endernet:bus_item_io": "textures/endernet/devices/bus_item_io",
-    "endernet:frame_top": "textures/endernet/devices/frame_top",
-    "endernet:network_baseband_8": "textures/endernet/devices/network_baseband_8",
-    "endernet:network_baseband_16": "textures/endernet/devices/network_baseband_16",
+#: 自定义模型：设备 -> (几何体标识, 模型文件与贴图的基名)。
+#: 几何体在 `endernet_rp/models/blocks/<基名>.geo.json`，
+#: 贴图在 `textures/endernet/models/<基名>.png`，图集键 `endernet:<基名>_model`。
+MODELS = {
+    "endernet:storage_driver": ("geometry.endernet.storage_driver", "storage_driver"),
 }
+
+#: 通用机壳贴图：`front` 布局的方块共用。面 -> 贴图基名。
+COMMON_DEVICE_TEXTURES = (
+    ("top", "common_device_top"),
+    ("side", "common_device_side"),
+    ("bottom", "common_device_bottom"),
+)
+
+#: 设备与模型贴图目录（资源包内的相对路径）
+DEVICE_TEXTURE_DIR = "textures/endernet/devices"
+MODEL_TEXTURE_DIR = "textures/endernet/models"
+
+#: 朝向 -> 绕 Y 轴旋转角。正面画在 north 面；`placement_direction` 的
+#: `y_rotation_offset = 180` 让方块朝向放置者，数值与 SkyblueTech 逐字一致。
+FACING_ROTATIONS = (
+    ("south", 180),
+    ("north", 0),
+    ("east", -90),
+    ("west", 90),
+)
 
 #: 需要逐 tick 的设备（`netease:block_entity.tick = true`）。
 #: 依据是该设备是否要被动推进：控制器排程、总线搬运、装配仓加工、处理器工作态、
@@ -257,8 +311,80 @@ def block_file_name(device_id):
     return device_id.replace(":", "_") + ".json"
 
 
-def texture_key(device_id):
-    return TEXTURE_OVERRIDES.get(device_id, "endernet:" + short_name(device_id))
+def layout_of(device_id):
+    # type: (str) -> str
+    """该方块的外观布局（`uniform` / `front` / `model`）。"""
+    if device_id not in BLOCK_LAYOUTS:
+        raise KeyError("%s 没有在 BLOCK_LAYOUTS 里声明外观布局" % device_id)
+    return BLOCK_LAYOUTS[device_id]
+
+
+def _device_texture(name):
+    # type: (str) -> tuple
+    return ("endernet:" + name, DEVICE_TEXTURE_DIR + "/" + name)
+
+
+def uniform_texture(device_id):
+    # type: (str) -> tuple
+    """六面同图：`(图集键, 路径)`，文件名 `<短名>_all`。"""
+    return _device_texture(short_name(device_id) + "_all")
+
+
+def front_texture(device_id):
+    # type: (str) -> tuple
+    """正面：`(图集键, 路径)`，文件名 `<短名>_front`。"""
+    return _device_texture(short_name(device_id) + "_front")
+
+
+def common_device_texture(face):
+    # type: (str) -> tuple
+    """通用机壳的某一面：`(图集键, 路径)`。"""
+    return _device_texture(dict(COMMON_DEVICE_TEXTURES)[face])
+
+
+def model_texture(device_id):
+    # type: (str) -> tuple
+    """模型贴图：`(图集键, 路径)`，图集键带 `_model` 后缀以免与设备贴图同名。"""
+    base = MODELS[device_id][1]
+    return ("endernet:" + base + "_model", MODEL_TEXTURE_DIR + "/" + base)
+
+
+def model_geometry_file(device_id):
+    # type: (str) -> str
+    return os.path.join(RP_ROOT, "models", "blocks", MODELS[device_id][1] + ".geo.json")
+
+
+def face_textures(device_id):
+    # type: (str) -> dict
+    """`material_instances` 的面名 -> 图集键。"""
+    layout = layout_of(device_id)
+    if layout == LAYOUT_UNIFORM:
+        return {"*": uniform_texture(device_id)[0]}
+    if layout == LAYOUT_MODEL:
+        return {"*": model_texture(device_id)[0]}
+    side = common_device_texture("side")[0]
+    return {
+        "*": side,
+        "up": common_device_texture("top")[0],
+        "down": common_device_texture("bottom")[0],
+        "north": front_texture(device_id)[0],
+        "south": side,
+        "east": side,
+        "west": side,
+    }
+
+
+def textures_of(device_id):
+    # type: (str) -> list
+    """该方块用到的全部 `(图集键, 路径)`。"""
+    layout = layout_of(device_id)
+    if layout == LAYOUT_UNIFORM:
+        return [uniform_texture(device_id)]
+    if layout == LAYOUT_MODEL:
+        return [model_texture(device_id)]
+    return [front_texture(device_id)] + [
+        common_device_texture(face) for face, _ in COMMON_DEVICE_TEXTURES
+    ]
 
 
 def plural_dumps(payload):
@@ -279,12 +405,25 @@ def build_block_json(device_id, definition):
         "digger": DIGGER,
         "level": TIER_LEVEL.get(category, DEFAULT_TIER_LEVEL),
     }
-    components["minecraft:material_instances"] = {
-        "*": {
-            "render_method": "opaque",
-            "texture": texture_key(device_id),
-        }
-    }
+    layout = layout_of(device_id)
+    if layout != LAYOUT_UNIFORM and not DIRECTIONAL.get(device_id):
+        raise ValueError(
+            "%s 的外观布局是 %s，需要随朝向旋转，但它不在 DIRECTIONAL 里" % (device_id, layout)
+        )
+    if layout == LAYOUT_FRONT:
+        components["minecraft:geometry"] = {"identifier": "minecraft:geometry.full_block"}
+    elif layout == LAYOUT_MODEL:
+        components["minecraft:geometry"] = {"identifier": MODELS[device_id][0]}
+        # 非整块模型：不挡光，否则凹进去的部分落在自己的阴影里发黑
+        # （照 skybluetech_charger.json）。
+        components["minecraft:light_dampening"] = 0
+    # 模型贴图里有透明像素（从正面开口能看到的内部底板就有），`opaque` 会把它们
+    # 画成黑点；`alpha_test` 让它们镂空，与 Blockbench 里看到的一致。整块方块不透明。
+    render_method = "alpha_test" if layout == LAYOUT_MODEL else "opaque"
+    components["minecraft:material_instances"] = dict(
+        (face, {"render_method": render_method, "texture": key})
+        for face, key in sorted(face_textures(device_id).items())
+    )
 
     # 自定义方块实体：tick 决定是否派发 ServerBlockEntityTickEvent（每秒 20 次）。
     # 即使不需要 tick 也要声明，否则方块实体数据无处存放。
@@ -321,40 +460,68 @@ def build_block_json(device_id, definition):
             }
         }
 
+    block = {
+        "components": components,
+        "description": description,
+    }
+    if layout != LAYOUT_UNIFORM:
+        # 正面画在 north 面，按朝向整体旋转（照 skybluetech_alloy_furnace.json）。
+        block["permutations"] = [
+            {
+                "condition": "q.block_state('minecraft:cardinal_direction') == '%s'" % facing,
+                "components": {"minecraft:transformation": {"rotation": [0, angle, 0]}},
+            }
+            for facing, angle in FACING_ROTATIONS
+        ]
     return {
         "format_version": FORMAT_VERSION,
-        "minecraft:block": {
-            "components": components,
-            "description": description,
-        },
+        "minecraft:block": block,
     }
 
 
 def build_blocks_json(definitions):
-    """资源包的 blocks.json：方块标识 -> 贴图键。"""
+    """资源包的 blocks.json：方块标识 -> 贴图。
+
+    六面同图与模型方块写一个图集键（破坏粒子取它）；正面布局逐面写明，
+    与行为包的 `material_instances` 一致（照 SkyblueTech 的六面写法）。
+    """
     payload = {}
     for device_id in sorted(definitions.devices):
-        payload[device_id] = {
-            "textures": texture_key(device_id),
-            "sound": "stone",
-        }
+        layout = layout_of(device_id)
+        entry = {"sound": "stone"}
+        if layout == LAYOUT_MODEL:
+            # 模型方块不写 textures（照 SkyblueTech 充电器）：外观与物品栏图标都由
+            # 行为包的几何体 + material_instances 决定；写了反而可能让引擎退回
+            # 「把 32x32 的 UV 图贴满一整块」的平面方块。
+            payload[device_id] = entry
+            continue
+        faces = face_textures(device_id)
+        if layout == LAYOUT_FRONT:
+            entry["textures"] = dict(
+                (face, faces[face]) for face in ("up", "down", "north", "south", "east", "west")
+            )
+        else:
+            entry["textures"] = faces["*"]
+        payload[device_id] = dict(sorted(entry.items(), key=lambda kv: kv[0] != "textures"))
     payload["format_version"] = [1, 1, 0]
     return payload
 
 
 def build_terrain_texture(existing, definitions):
-    """在地形图集里保证每个方块都有贴图条目，保留已有条目。"""
-    texture_data = dict(existing.get("texture_data", {}))
+    """地形图集：设备与模型贴图条目按布局整体重建，其它条目原样保留。
+
+    设备 / 模型目录下的条目**不沿用旧值**：换布局后旧键留在图集里会指向
+    已删除的文件，游戏里不报错、`test_every_referenced_texture_file_exists` 却会红。
+    """
+    prefixes = (DEVICE_TEXTURE_DIR + "/", MODEL_TEXTURE_DIR + "/")
+    texture_data = dict(
+        (key, entry)
+        for key, entry in existing.get("texture_data", {}).items()
+        if not str(entry.get("textures", "")).startswith(prefixes)
+    )
     for device_id in sorted(definitions.devices):
-        key = texture_key(device_id)
-        if key in texture_data:
-            continue
-        if key in EXISTING_TEXTURE_FILES:
-            texture_data[key] = {"textures": EXISTING_TEXTURE_FILES[key]}
-        else:
-            texture_data[key] = {
-                "textures": "textures/endernet/devices/" + short_name(device_id)
-            }
+        for key, path in textures_of(device_id):
+            texture_data[key] = {"textures": path}
     payload = dict(existing)
     payload["resource_pack_name"] = existing.get("resource_pack_name", "vanilla")
     payload["texture_name"] = existing.get("texture_name", "atlas.terrain")
@@ -385,17 +552,19 @@ def write_json(path, payload, check_only):
 
 
 def missing_textures(definitions):
-    """列出还没有贴图文件的方块。"""
+    """列出还缺文件的 `(方块, 路径, 说明)`：贴图与模型几何体。"""
     out = []
+    seen = set()
     for device_id in sorted(definitions.devices):
-        key = texture_key(device_id)
-        if key in EXISTING_TEXTURE_FILES:
-            continue
-        path = os.path.join(
-            RP_ROOT, "textures", "endernet", "devices", short_name(device_id) + ".png"
-        )
-        if not os.path.isfile(path):
-            out.append((device_id, path, key))
+        for key, path in textures_of(device_id):
+            full = os.path.join(RP_ROOT, *(path + ".png").split("/"))
+            if full not in seen and not os.path.isfile(full):
+                seen.add(full)
+                out.append((device_id, full, key))
+        if layout_of(device_id) == LAYOUT_MODEL:
+            geo = model_geometry_file(device_id)
+            if not os.path.isfile(geo):
+                out.append((device_id, geo, MODELS[device_id][0]))
     return out
 
 
@@ -434,7 +603,7 @@ def main(argv=None):
 
     print("已生成 %d 个方块定义，更新 %d 个文件" % (len(definitions.devices), len(changed)))
     if missing:
-        print("仍需补贴图的方块（%d 个）：" % len(missing))
+        print("仍缺文件（%d 个）；贴图可先用 scripts/gen_device_textures.py 补占位：" % len(missing))
         for device_id, path, key in missing:
             print("  %-40s -> %s" % (device_id, os.path.relpath(path, REPO)))
     return 0

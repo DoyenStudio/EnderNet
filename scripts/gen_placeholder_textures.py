@@ -1,34 +1,30 @@
 # coding=utf-8
-"""为缺少美术资源的设备生成 16x16 占位贴图。
+"""为缺少美术资源的**物品**生成 16x16 占位贴图。
 
     python scripts/gen_placeholder_textures.py            # 只补缺失的
     python scripts/gen_placeholder_textures.py --force    # 全部重写
 
-**这些是占位图，不是成品美术。** 它们的作用是让方块在游戏里可辨认、
-不至于显示为紫黑缺失贴图。每个方块用分类底色 + 分类图形 + 序号圆点区分。
-用真实贴图覆盖同名文件即可，不需要改任何 JSON。
+**这些是占位图，不是成品美术。** 它们的作用是让物品在游戏里可辨认、
+不至于显示为紫黑缺失贴图。用真实贴图覆盖同名文件即可，不需要改任何 JSON。
 
-只依赖标准库（zlib + struct 手写 PNG），因此不需要 PIL。
+设备方块的贴图不由本脚本生成，见 `scripts/gen_device_textures.py`。
+样板与内存的图标已有美术基调版本（`scripts/gen_item_textures.py`），文件
+存在时本脚本会跳过它们；目前只有介质（磁带、软盘）还是占位图。
+
+只依赖标准库（`_png.py` 手写 PNG），因此不需要 PIL。
 """
 
 import argparse
 import os
-import struct
 import sys
-import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _console import use_utf8_stdout  # noqa: E402
-from gen_blocks import (  # noqa: E402
-    EXISTING_TEXTURE_FILES,
-    short_name,
-    texture_key,
-)
+from _png import write_png  # noqa: E402
 from gen_items import item_texture_name  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS_ROOT = os.path.join(REPO, "endernet_bp", "endernet_scripts")
-OUT_DIR = os.path.join(REPO, "endernet_rp", "textures", "endernet", "devices")
 #: 介质物品的贴图**必须**单独一个目录。放进 devices/ 会立刻撞上
 #: `test_assets.TestResourcePackMapping.test_no_unreferenced_device_textures`——
 #: 那条测试拿地形图集的引用去比对该目录下的每张图。
@@ -37,153 +33,11 @@ ITEM_OUT_DIR = os.path.join(REPO, "endernet_rp", "textures", "items")
 if SCRIPTS_ROOT not in sys.path:
     sys.path.insert(0, SCRIPTS_ROOT)
 
-from endernet.common.definitions import (  # noqa: E402
-    CATEGORY_ASSEMBLY,
-    CATEGORY_BASEBAND,
-    CATEGORY_BUS,
-    CATEGORY_CONTROLLER,
-    CATEGORY_ENERGY_INPUT,
-    CATEGORY_MEMORY,
-    CATEGORY_PROCESSOR,
-    CATEGORY_PROCESSOR_CONNECTOR,
-    CATEGORY_STORAGE,
-    CATEGORY_TERMINAL,
-    DefinitionSet,
-)
+from endernet.common.definitions import DefinitionSet  # noqa: E402
 
 SIZE = 16
 
-#: 每个分类的 基色 / 边框色 / 图形色
-PALETTE = {
-    CATEGORY_CONTROLLER: ("#6A3FB5", "#3A2064", "#C9A9F0"),
-    CATEGORY_BASEBAND: ("#2E8B84", "#16443F", "#8FE0D8"),
-    CATEGORY_BUS: ("#3A6EA5", "#1D3A59", "#9CC4EA"),
-    CATEGORY_TERMINAL: ("#3F8B4A", "#1F4A26", "#A3E0AC"),
-    CATEGORY_STORAGE: ("#8B6A3F", "#4A3820", "#E0C79C"),
-    CATEGORY_PROCESSOR: ("#A5443A", "#5A211C", "#EFA79E"),
-    CATEGORY_PROCESSOR_CONNECTOR: ("#7A2F28", "#3F1713", "#D08C84"),
-    CATEGORY_MEMORY: ("#B5A03F", "#5F5320", "#EDDF9C"),
-    CATEGORY_ASSEMBLY: ("#B5762E", "#5F3D17", "#EDC28F"),
-    CATEGORY_ENERGY_INPUT: ("#2FA8C4", "#165669", "#9CE0F0"),
-}
-FALLBACK_PALETTE = ("#777777", "#3B3B3B", "#CCCCCC")
-
-#: 8x8 分类图形。1 = 画图形色。刻意做得一眼能认出类别。
-GLYPHS = {
-    CATEGORY_CONTROLLER: (
-        ".#....#.",
-        ".#....#.",
-        ".######.",
-        ".#....#.",
-        ".######.",
-        ".#....#.",
-        ".#....#.",
-        "........",
-    ),
-    CATEGORY_BASEBAND: (
-        "........",
-        "........",
-        "########",
-        "........",
-        "........",
-        "########",
-        "........",
-        "........",
-    ),
-    CATEGORY_BUS: (
-        "........",
-        "###..###",
-        "........",
-        "........",
-        "###..###",
-        "........",
-        "........",
-        "........",
-    ),
-    CATEGORY_TERMINAL: (
-        "########",
-        "#......#",
-        "#.####.#",
-        "#.####.#",
-        "#......#",
-        "########",
-        "...##...",
-        "........",
-    ),
-    CATEGORY_STORAGE: (
-        "########",
-        "#......#",
-        "########",
-        "#......#",
-        "########",
-        "#......#",
-        "########",
-        "........",
-    ),
-    CATEGORY_PROCESSOR: (
-        "########",
-        "#......#",
-        "#.####.#",
-        "#.#..#.#",
-        "#.#..#.#",
-        "#.####.#",
-        "#......#",
-        "########",
-    ),
-    CATEGORY_PROCESSOR_CONNECTOR: (
-        "........",
-        "..####..",
-        "..####..",
-        "........",
-        "..####..",
-        "..####..",
-        "........",
-        "........",
-    ),
-    CATEGORY_MEMORY: (
-        "........",
-        ".#.#.#.#",
-        ".#.#.#.#",
-        ".#.#.#.#",
-        ".#.#.#.#",
-        ".#.#.#.#",
-        "#.#.#.#.",
-        "........",
-    ),
-    CATEGORY_ASSEMBLY: (
-        "...##...",
-        "..####..",
-        ".######.",
-        "########",
-        "#......#",
-        "#.####.#",
-        "#......#",
-        "########",
-    ),
-    CATEGORY_ENERGY_INPUT: (
-        "...###..",
-        "..###...",
-        ".###....",
-        "########",
-        "...###..",
-        "..###...",
-        ".###....",
-        "........",
-    ),
-}
-FALLBACK_GLYPH = (
-    "........",
-    ".######.",
-    ".#....#.",
-    ".#....#.",
-    ".#....#.",
-    ".#....#.",
-    ".######.",
-    "........",
-)
-
-#: 介质物品的占位配色与图形。介质不是设备分类，因此不复用 PALETTE——
-#: 免得将来给某个分类调色时把物品贴图一起改掉。
+#: 介质物品的占位配色与图形。
 ITEM_PALETTE = ("#8B6A3F", "#4A3820", "#E0C79C")
 ITEM_GLYPH = (
     "########",
@@ -198,7 +52,7 @@ ITEM_GLYPH = (
 
 #: 样板的占位配色与图形。**必须与介质区分开**：两者都是物品、都会被玩家
 #: 拿在手里，同一套底色会让「放进去的是盘还是样板」要靠读名字才知道。
-#: 用终端那档绿色，图形画成网格状——工作台摆位的意象。
+#: 用绿色，图形画成网格状——工作台摆位的意象。
 TEMPLATE_PALETTE = ("#3F8B4A", "#1F4A26", "#A3E0AC")
 TEMPLATE_GLYPH = (
     "########",
@@ -211,10 +65,9 @@ TEMPLATE_GLYPH = (
     "########",
 )
 
-#: 内存条的占位配色与图形。**第三套，与介质、样板都不同**（同 `:199-202` 的
-#: 理由：三样都是拿在手里的物品，同底色就只能靠读名字分辨）。取内存槽方块
-#: 那档金色（`PALETTE[CATEGORY_MEMORY]`），图形画成记忆体的金手指——一排在
-#: 边框内的方点，与介质的「盘」、样板的「网格」都不同形。
+#: 内存条的占位配色与图形。**第三套，与介质、样板都不同**（理由同上：
+#: 三样都是拿在手里的物品，同底色就只能靠读名字分辨）。用金色，图形画成
+#: 记忆体的金手指——一排在边框内的方点，与介质的「盘」、样板的「网格」都不同形。
 MEMORY_PALETTE = ("#B5A03F", "#5F5320", "#EDDF9C")
 MEMORY_GLYPH = (
     "########",
@@ -243,36 +96,6 @@ def blend(base, tint, ratio):
     return tuple(
         int(round(base[i] + (tint[i] - base[i]) * ratio)) for i in range(3)
     ) + (255,)
-
-
-def write_png(path, pixels):
-    """把 SIZE x SIZE 的 RGBA 像素写成 PNG。纯标准库。"""
-    height = len(pixels)
-    width = len(pixels[0])
-    raw = b"".join(
-        b"\x00" + b"".join(struct.pack("BBBB", *px) for px in row) for row in pixels
-    )
-
-    def chunk(tag, data):
-        payload = tag + data
-        return (
-            struct.pack(">I", len(data))
-            + payload
-            + struct.pack(">I", zlib.crc32(payload) & 0xFFFFFFFF)
-        )
-
-    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
-    blob = (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", header)
-        + chunk(b"IDAT", zlib.compress(raw, 9))
-        + chunk(b"IEND", b"")
-    )
-    directory = os.path.dirname(path)
-    if directory and not os.path.isdir(directory):
-        os.makedirs(directory)
-    with open(path, "wb") as handle:
-        handle.write(blob)
 
 
 def render_pixels(palette, pattern, pips):
@@ -314,15 +137,6 @@ def render_pixels(palette, pattern, pips):
     return rows
 
 
-def build_pixels(category, index_in_category):
-    """设备方块的占位图。"""
-    return render_pixels(
-        PALETTE.get(category, FALLBACK_PALETTE),
-        GLYPHS.get(category, FALLBACK_GLYPH),
-        index_in_category,
-    )
-
-
 def build_item_pixels(index_in_items):
     """介质物品的占位图。"""
     return render_pixels(ITEM_PALETTE, ITEM_GLYPH, index_in_items)
@@ -339,30 +153,12 @@ def build_memory_pixels(index_in_items):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="生成 EnderNet 占位贴图")
+    parser = argparse.ArgumentParser(description="生成 EnderNet 物品占位贴图")
     parser.add_argument("--force", action="store_true", help="覆盖已存在的贴图")
     use_utf8_stdout()
     args = parser.parse_args(argv)
 
     definitions = DefinitionSet()
-    by_category = {}
-    for device_id in sorted(definitions.devices):
-        # 复用已有美术的方块不需要占位图，否则会留下没人引用的散图。
-        if texture_key(device_id) in EXISTING_TEXTURE_FILES:
-            continue
-        by_category.setdefault(definitions.category_of(device_id), []).append(device_id)
-
-    written = []
-    skipped = []
-    for category in sorted(by_category):
-        for index, device_id in enumerate(by_category[category]):
-            name = short_name(device_id)
-            path = os.path.join(OUT_DIR, name + ".png")
-            if os.path.isfile(path) and not args.force:
-                skipped.append(name)
-                continue
-            write_png(path, build_pixels(category, index))
-            written.append(name)
 
     # 物品：文件名与图集键都由 gen_items.py 的命名规则决定，这里保持一致
     # （`item_texture_name(item_id)`），否则图集指向的路径会落空。
@@ -386,7 +182,6 @@ def main(argv=None):
             write_png(path, painter(index))
             item_written.append(name)
 
-    print("已生成 %d 张占位贴图（设备方块），跳过 %d 张已存在的" % (len(written), len(skipped)))
     print("已生成 %d 张占位贴图（物品），跳过 %d 张已存在的" % (len(item_written), len(item_skipped)))
     print("这些是**占位图，不是成品美术**；用同名真实贴图覆盖即可，无需改动 JSON。")
     return 0
