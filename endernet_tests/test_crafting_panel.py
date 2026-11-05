@@ -1440,16 +1440,19 @@ class TestJsonContract(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_the_recipe_window_lists_into_its_own_container(self):
-        """候选逐条铺进 `recipe_list`，而不是原来那个占位的 `recipe_section`：
-        脚本要往内容控件里 `AddElement`，而内容控件就是 `$scrolling_content`
-        指名的那个。"""
+        """每张候选卡与单列网格对齐，滚动条另占 8 个 UI 单位。"""
         window = self.controls(self.panel["load_recipe_window"])
         scroll = window["scroll_view"]
         self.assertEqual(scroll["$scrolling_content"],
                          "crafting_terminal_panel_ui.recipe_list")
-        self.assertEqual(self.panel["recipe_list"]["type"], "grid")
-        # `recipe_section` 的定义还在（脚本按名字实例化它）。
-        self.assertIn("recipe_section", self.panel)
+        grid = self.panel["recipe_list"]
+        self.assertEqual(grid["type"], "grid")
+        self.assertEqual(grid["grid_dimensions"][0], 1)
+        self.assertEqual(grid["grid_item_template"], "crafting_terminal_panel_ui.recipe_section")
+        card = self.panel["recipe_section"]
+        self.assertEqual(card.get("anchor_from", "center"), "center")
+        self.assertEqual(card.get("anchor_to", "center"), "center")
+        self.assertEqual(card["size"][0], scroll["size"][0] - 8)
 
     def test_the_flying_item_is_anchored_where_the_script_measures_it(self):
         flying = self.content()["flying_item"]

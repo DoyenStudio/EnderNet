@@ -1044,7 +1044,7 @@
                         20
                     ],
                     "size": [
-                        116,
+                        124,
                         "100%+-30px"
                     ]
                 }
@@ -1057,6 +1057,8 @@
     "namespace": "crafting_terminal_panel_ui",
     "recipe_list": {
         "type": "grid",
+        "anchor_from": "top_left",
+        "anchor_to": "top_left",
         "size": [
             "100%",
             "default"
