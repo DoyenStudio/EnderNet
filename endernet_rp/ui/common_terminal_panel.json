@@ -192,14 +192,7 @@
         ]
     },
     "main@common.base_screen": {
-        "absorbs_input": true,
-        "controls": [
-            {
-                "terminal@common_terminal_panel_ui.content": {}
-            }
-        ],
-        "is_showing_menu": true,
-        "render_game_behind": true
+        "$screen_content": "common_terminal_panel_ui.content"
     },
     "namespace": "common_terminal_panel_ui",
     "terminal_items_grid@endernet_ui_common.terminal_items_grid": {
