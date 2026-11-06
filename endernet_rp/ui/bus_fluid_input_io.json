@@ -41,6 +41,9 @@
                             "bg@common.dialog_background_opaque": {
                                 "controls": [
                                     {
+                                        "inventory_selected_icon_button@common.inventory_selected_icon_button": {}
+                                    },
+                                    {
                                         "close@common.close_button": {
                                             "size": [
                                                 18,
