@@ -461,7 +461,9 @@ def ui(name):
     import os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     path = os.path.join(root, "endernet_rp", "ui", name)
-    return json.load(_io.open(path, encoding="utf-8"))
+    from ui_terminal_templates import inline_terminal_controls
+    with _io.open(path, encoding="utf-8") as handle:
+        return inline_terminal_controls(json.load(handle))
 
 
 def control(controls, name):

@@ -1284,7 +1284,8 @@ class TestJsonContract(unittest.TestCase):
     def load(name):
         path = os.path.join(ROOT, "endernet_rp", "ui", name)
         with open(path, encoding="utf-8") as handle:
-            return json.load(handle)
+            from ui_terminal_templates import inline_terminal_controls
+            return inline_terminal_controls(json.load(handle))
 
     def controls(self, node):
         return {key.split("@")[0]: value

@@ -1268,11 +1268,12 @@ class TestJsonContract(unittest.TestCase):
         with open(os.path.join(ROOT, "endernet_rp", "ui",
                                "crafting_terminal_panel.json"),
                   encoding="utf-8") as handle:
-            cls.panel = json.load(handle)
+            from ui_terminal_templates import inline_terminal_controls
+            cls.panel = inline_terminal_controls(json.load(handle))
         with open(os.path.join(ROOT, "endernet_rp", "ui",
                                "common_terminal_panel.json"),
                   encoding="utf-8") as handle:
-            cls.common_panel = json.load(handle)
+            cls.common_panel = inline_terminal_controls(json.load(handle))
         with open(os.path.join(ROOT, "endernet_rp", "ui",
                                "endernet_windows.json"),
                   encoding="utf-8") as handle:

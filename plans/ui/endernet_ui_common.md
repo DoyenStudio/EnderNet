@@ -133,3 +133,28 @@ User 先填写字段含义及已有 JSON 配置，脚本接入方核对后补充
 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
 | 2026-10-02 | 11-07 只读接入（离线） | `device_stat_bar` 的十一条绑定被提成共用 mixin（`client/ui/widgets/device_status_bindings.py`），**四台容器类设备的代理屏**（取货口／存货口／样板接口／装配仓）与终端屏共用同一份 | 覆盖集与既有断言逐条对得上；**离线 40 项新用例**（见 [11 交付说明](../tasks/11-交付说明.md) 第二十一节） | ~~**游戏内零**：代理屏拿不拿得到回调、状态栏在设备屏上真的画不画得出来，都没跑过~~ **当日稍后已上机**：`bus_template_io` 那台的 `stat_bar` **截图确认渲染出绿色信号图标 + 绿字「在线」**，点开详情两行绿勾；其余三台未逐台右键、移动端未验 |
 | 2026-10-02（同日稍后） | 11-07 **游戏内实测**（真人右键 `bus_template_io` @ (20,68,−6)） | `device_stat_bar` 在**设备代理屏**上的完整链路：身份认领 → 会话 → `device_status` → 绑定取值 → 渲染 | 截图（界面右上绿字「在线」+ 信号图标）与绑定读数（`在线` / `[0,1,0]` / `network_ok_icon` / `已连接控制器` / `带宽满足，能源满足`）一致 | 四台里只打了这一台；移动端未验。见 [11 交付说明](../tasks/11-交付说明.md) 第二十三节 |
+
+
+## 终端公共控件提取（2026-11-06）
+
+通用终端、合成终端、样板终端共同使用以下 `endernet_ui_common` 模板：
+
+| 模板 | 用途与实例覆盖 |
+| --- | --- |
+| `terminal_items_grid`、`terminal_slot` | 网络物品列表与槽位，统一 `terminal_slots` 集合及 `#EnderNetTerminal.*` 绑定；面板保留本地同名模板作为兼容入口 |
+| `terminal_items_scroll`、`terminal_scroll_background` | 滚动样式与空白处整槽存入按钮；尺寸、位置、层级、触屏配置及面板内模板引用由实例保留 |
+| `terminal_search_editor` | 通用／合成终端搜索框，保留输入与右键清空映射；样板终端原本没有搜索框，本次不新增 |
+| `terminal_sort_method_button`、`terminal_sort_order_button`、`terminal_sort_icon` | 排序按钮及图标；原有 `bindings`、纹理与 UV 差异由实例保留 |
+| `terminal_title`、`terminal_title_text`、`terminal_close_button` | 标题与关闭按钮；标题文本、阴影、九宫格与关闭按钮位置由实例保留 |
+| `terminal_unavailable_mask`、`terminal_mask_image` | 离线遮罩；吞输入、图片显隐和裁切差异由实例保留 |
+| `terminal_device_status_popup`、`terminal_order_preview` | 设备状态与订单预览弹窗的公共实例配置；窗口主体仍由 `endernet_windows` 定义 |
+| `terminal_flying_item`、`terminal_slot_info` | 搬运动画实例配置与槽位提示；原实例名称和层级保持不变 |
+
+本次只增加继承层，没有新增容器层。脚本使用的 `/sort_method_btn/icon`、
+`/title/title_text`、`/unavailable_mask/mask_img` 和飞行物品路径保持不变。
+合成配方选择窗已由样板终端引用同一份定义，不属于重复定义，本次保留。
+
+验证：将新公共继承展开后，三个面板与重构前 JSON 逐字段相等（包括控件顺序、
+绑定、按钮映射和显示参数）。现有 JSON 契约测试增加公共模板展开步骤。
+未在游戏中验证，也未执行或导入模组 Python；需在游戏中检查三个终端的打开、
+搜索／排序、存取物品、弹窗与关闭，以及 PC／触屏布局。
