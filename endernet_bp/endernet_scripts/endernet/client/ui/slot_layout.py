@@ -5,7 +5,7 @@
 免得同一条路径在两个文件里各写一份——那种重复的代价不是多打几个字，而是
 改了 JSON 只改到一处，另一处静默指向一个不存在的控件。
 
-**路径一律写成「内容区相对」的形式**（`/flying_item`、`/inventory/backpack`），
+**路径一律写成「内容区相对」的形式**（`/flying_items/flying_item`、`/inventory/backpack`），
 由 `control()` 按 `_candidates` 补前缀。**四台终端面板有两种屏幕挂法**，同
 一个控件因此在两个命名空间里（通用终端是 `/terminal/…`，另外三台是
 `SCREEN_BASE_PATH + …`）；写死其中一种，另一类面板上**每一个槽位都取不到**，
@@ -28,7 +28,7 @@
 就会缩两遍——而两遍差 1 像素，只在屏幕上看得见。
 """
 
-#: 内容区本身（飞行动画的坐标系原点——`flying_item` 是它的子控件）。
+#: 内容区本身。
 #: 空串＝「这一层的内容区」，由 `_candidates` 补上两种挂法各自的前缀。
 CONTENT_PATH = ""
 
@@ -51,8 +51,9 @@ INVENTORY_PATH = "/inventory"
 BACKPACK_GRID_PATH = INVENTORY_PATH + "/backpack"
 HOTBAR_GRID_PATH = INVENTORY_PATH + "/hotbar"
 
-#: 飞行动画用的那个图标控件。
-FLYING_ITEM_PATH = "/flying_item"
+#: 飞行动画面板作为图标的坐标系原点。
+FLYING_ITEMS_PATH = "/flying_items"
+FLYING_ITEM_PATH = FLYING_ITEMS_PATH + "/flying_item"
 
 try:
     INTEGER_TYPES = (int, long)

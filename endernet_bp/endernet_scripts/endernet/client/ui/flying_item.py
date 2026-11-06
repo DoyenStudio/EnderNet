@@ -1,5 +1,5 @@
 # coding=utf-8
-"""槽位之间的飞行动画：把 `content.flying_item` 当一个会动的图标用。
+"""槽位之间的飞行动画：把 `content.flying_items/flying_item` 当一个会动的图标用。
 
 **为什么是脚本逐帧推，而不是引擎的 UI 属性动画。** 引擎那套属性动画
 （`RegisterUIAnimations` / `SetAnimation`）要在数据里写死 `from` / `to`，
@@ -87,10 +87,10 @@ class FlyingItemAnimator(object):
 
     **同一时刻只有一次飞行**：新的一次直接顶掉旧的那次。玩家连点两下时
     看到的是最后那一下的方向，而不是两次叠加——叠加需要同时持有多个控件，
-    而 `content` 下只有一个 `flying_item`。
+    每个动画器只管理一个控件；`FlightPool` 用多个动画器支持并发飞行。
 
     **取不到控件就永久退化成「什么也不做」。** 本类是给整个
-    `TerminalPanelBase` 家族用的，而 `content.flying_item` 只长在其中几个
+    `TerminalPanelBase` 家族用的，而 `content.flying_items/flying_item` 只长在其中几个
     界面上；缺控件时 `fly()` 返回 `False` 且**不抛**——表现层的缺项不该
     让搬运本身失败。解析结果（成功或失败）都只算一次，之后不再重试，
     免得每个界面上都留一条每帧都要炸一遍的路径。

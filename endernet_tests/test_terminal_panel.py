@@ -2325,7 +2325,7 @@ class FlyScreen(object):
     def GetBaseUIControl(self, path):
         if path == slot_layout.FLYING_ITEM_PATH:
             return self.control
-        if path == slot_layout.CONTENT_PATH:
+        if path == slot_layout.FLYING_ITEMS_PATH:
             return self.origin
         return None
 
@@ -2357,7 +2357,7 @@ class TestFlyingItem(unittest.TestCase):
         self.clock = FlyClock()
         self.animator = flying_item.FlyingItemAnimator(
             FlyScreen(self.control, self.origin),
-            slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH,
+            slot_layout.FLYING_ITEM_PATH, slot_layout.FLYING_ITEMS_PATH,
             now=self.clock,
         )
         #: 源槽在 (118, 68) 处、18x18；目标在 (218, 168) 处、18x18。
@@ -2463,7 +2463,7 @@ class TestFlyingItem(unittest.TestCase):
         clock = FlyClock()
         animator = flying_item.FlyingItemAnimator(
             FlyScreen(control, self.origin),
-            slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH, now=clock)
+            slot_layout.FLYING_ITEM_PATH, slot_layout.FLYING_ITEMS_PATH, now=clock)
         animator.fly(STONE, self.source, self.target)
         for _ in range(5):
             clock.advance(half / 5.0)
@@ -2486,7 +2486,7 @@ class TestFlyingItem(unittest.TestCase):
     def test_a_missing_control_degrades_to_flying_nothing(self):
         animator = flying_item.FlyingItemAnimator(
             FlyScreen(None, self.origin),
-            slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH,
+            slot_layout.FLYING_ITEM_PATH, slot_layout.FLYING_ITEMS_PATH,
             now=self.clock,
         )
         self.assertFalse(animator.fly(STONE, self.source, self.target))
@@ -2502,7 +2502,7 @@ class TestFlyingItem(unittest.TestCase):
         control = FlyControl(broken=True)
         animator = flying_item.FlyingItemAnimator(
             FlyScreen(control, self.origin),
-            slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH,
+            slot_layout.FLYING_ITEM_PATH, slot_layout.FLYING_ITEMS_PATH,
             now=self.clock,
         )
         self.assertFalse(animator.fly(STONE, self.source, self.target))
@@ -2625,11 +2625,11 @@ class TestSlotLayoutCandidates(unittest.TestCase):
         那个错的症状看起来像缓动写错了。"""
         screen = LayoutScreen()
         screen.tree["/FAKE_BASE" + slot_layout.FLYING_ITEM_PATH] = "fly"
-        screen.tree["/FAKE_BASE" + slot_layout.CONTENT_PATH] = "origin"
+        screen.tree["/FAKE_BASE" + slot_layout.FLYING_ITEMS_PATH] = "origin"
         self.assertEqual("fly", slot_layout.control(
             screen, slot_layout.FLYING_ITEM_PATH))
         self.assertEqual("origin", slot_layout.control(
-            screen, slot_layout.CONTENT_PATH))
+            screen, slot_layout.FLYING_ITEMS_PATH))
 
 
 class TestSlotLayout(unittest.TestCase):
@@ -3443,7 +3443,7 @@ class TestJsonContract(unittest.TestCase):
         """飞行动画按**父节点坐标**摆位（`SetPosition`），因此这个控件必须
         左上锚定：锚在中心的话，脚本算出来的每一个位置都会偏半格。"""
         content = self.controls(self.panel["content"])
-        flying = content["flying_item"]
+        flying = self.controls(content["flying_items"])["flying_item"]
         self.assertEqual(flying["anchor_from"], "top_left")
         self.assertEqual(flying["anchor_to"], "top_left")
         # 初始不可见：没有搬运时它应当在画面上不存在。

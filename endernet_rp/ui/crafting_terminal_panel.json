@@ -438,7 +438,40 @@
                 }
             },
             {
-                "flying_item@endernet_ui_common.terminal_flying_item": {}
+                "flying_items": {
+                    "type": "panel",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "size": [
+                        "100%",
+                        "100%"
+                    ],
+                    "offset": [
+                        0,
+                        0
+                    ],
+                    "layer": 0,
+                    "controls": [
+                        {
+                            "flying_item@endernet_ui_common.terminal_flying_item": {}
+                        },
+                        {
+                            "flying_item_1@endernet_ui_common.terminal_flying_item": {}
+                        },
+                        {
+                            "flying_item_2@endernet_ui_common.terminal_flying_item": {}
+                        },
+                        {
+                            "flying_item_3@endernet_ui_common.terminal_flying_item": {}
+                        },
+                        {
+                            "flying_item_4@endernet_ui_common.terminal_flying_item": {}
+                        },
+                        {
+                            "flying_item_5@endernet_ui_common.terminal_flying_item": {}
+                        }
+                    ]
+                }
             },
             {
                 "device_status_popup@endernet_ui_common.terminal_device_status_popup": {}
@@ -463,21 +496,6 @@
                     "visible": false,
                     "layer": 65
                 }
-            },
-            {
-                "flying_item_1@endernet_ui_common.terminal_flying_item": {}
-            },
-            {
-                "flying_item_2@endernet_ui_common.terminal_flying_item": {}
-            },
-            {
-                "flying_item_3@endernet_ui_common.terminal_flying_item": {}
-            },
-            {
-                "flying_item_4@endernet_ui_common.terminal_flying_item": {}
-            },
-            {
-                "flying_item_5@endernet_ui_common.terminal_flying_item": {}
             },
             {
                 "cursor_host@endernet_container_common.cursor_host": {}

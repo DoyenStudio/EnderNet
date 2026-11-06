@@ -363,7 +363,7 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         #: 两条路径都是**内容区相对**的，由 `slot_layout.control` 按本界面的
         #: 屏幕挂法解析（两种挂法见 `slot_layout._candidates`）。
         self.fly = flying_item.FlightPool(
-            self, slot_layout.FLYING_ITEM_PATH, slot_layout.CONTENT_PATH)
+            self, slot_layout.FLYING_ITEM_PATH, slot_layout.FLYING_ITEMS_PATH)
 
     @property
     def slot_input(self):
