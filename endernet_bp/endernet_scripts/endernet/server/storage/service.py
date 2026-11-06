@@ -34,6 +34,7 @@ from ...common.protocol import (
     TransferReceipt,
     TransferRequest,
     TransferStatus,
+    validate_slot_batch,
 )
 from ...common.crafting_recipe import match
 from ...common.item_codec import item_dict_from_key, item_key_from_dict
@@ -1581,6 +1582,7 @@ class StorageService(NetworkService):
             "inv_take": self._cmd_inv_take,
             "inv_put": self._cmd_inv_put,
             "slot_click": self._cmd_slot_click,
+            "slot_batch": self._cmd_slot_batch,
             "grid_move": self._cmd_grid_move,
             "cursor_return": self._cmd_cursor_return,
             "inv_split": self._cmd_inv_split,
@@ -3376,6 +3378,74 @@ class StorageService(NetworkService):
             self._match_manual_grid(grid)
             result.payload["key"] = key.to_dict()
         return result
+
+    def _cmd_slot_batch(self, command, payload):
+        """Check initial anchors once; stop at the first incomplete placement."""
+        config = payload.get("config")
+        validate_slot_batch(config)
+        bag, error = self._inventory_endpoint_for(command, payload)
+        if error is not None:
+            return error
+        cursor = self.inventories.cursor_of(command.source.player_id)
+        if cursor is None:
+            return self._reject(command, Reason.NO_ADAPTER, "此玩家没有持物适配器")
+        hand = cursor.snapshot()
+        if hand["revision"] != config["revision"] or not hand["key"]:
+            return self._reject(command, Reason.STALE_VERSION, "持物已变化")
+        if cursor.primitives.cursor_record(command.source.player_id).get("pending"):
+            return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持物交易等待核对")
+        devices = {}
+        for entry in config["placements"]:
+            area = entry["target"]
+            if area == "bag":
+                view = bag.slot_view(entry["cell"])
+                if (view["version"] != entry["slot_version"]
+                        or view["canonical"] != entry["fingerprint"]):
+                    return self._reject(command, Reason.SLOT_CHANGED, "背包槽已变化")
+            else:
+                group = "grid" if area == "grid" else "template"
+                if group not in devices:
+                    device, error = (self._workbench_for(command) if group == "grid"
+                                     else self._template_state_for(command))
+                    if error is not None:
+                        return error
+                    devices[group] = device
+                if devices[group].revision != entry["slot_version"]:
+                    return self._reject(command, Reason.STALE_VERSION, "设备槽已变化")
+
+        results, applied = [], False
+        status, reasons = "ok", ()
+        for entry in config["placements"]:
+            area = entry["target"]
+            fields = dict(entry)
+            fields["config"] = {"gesture": "place", "revision": cursor.snapshot()["revision"]}
+            if area == "bag":
+                fields["slot"] = entry["cell"]
+                fields["config"]["fingerprint"] = entry["fingerprint"]
+            else:
+                fields["slot_version"] = devices["grid" if area == "grid" else "template"].revision
+            virtual = area in ("source", "outputs")
+            fields["key"] = hand["key"]
+            try:
+                handler = self._cmd_template_cell_put if virtual else self._cmd_slot_click
+                result = handler(command, fields)
+            except Exception as error:
+                # Earlier placements are committed; preserve their receipt even if
+                # a later engine write fails. Its cursor journal remains authoritative.
+                result = self._reject(command, Reason.INTERNAL, "分配中断：%s" % (error,))
+            amount = (entry["count"] if result.is_applied() else 0) if virtual else result.payload.get("moved", 0)
+            results.append({"target": area, "cell": entry["cell"], "count": amount})
+            applied = applied or result.is_applied()
+            if result.status != "ok" or amount != entry["count"]:
+                status = "partial" if applied else result.status
+                reasons = result.reasons or (BlockReason(Reason.NO_CAPACITY, "未完成全部分配"),)
+                break
+        out = {"placements": results, "cursor": cursor.snapshot()}
+        out["bag_after"] = [bag.slot_view(entry["cell"]) for entry in config["placements"]
+                            if entry["target"] == "bag"]
+        for group, device in devices.items():
+            out[group + "_revision"] = device.revision
+        return CommandResult(command.request_id, status, out, reasons)
 
     def _cmd_slot_click(self, command, payload):
         """Resolve one physical slot gesture against authoritative stacks."""

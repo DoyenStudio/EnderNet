@@ -295,11 +295,11 @@ class TerminalInput(object):
 
     def retire_distribution(self):
         # type: () -> None
-        # Keep the released layout visible while its sequential placements settle.
+        # Keep the released layout visible until the batch and device snapshots settle.
         if not self.settling_drag or self.active or self.pending:
             return
         template = getattr(self.screen, "template", None)
-        if template and (template.stamps or template.stamp_request or template.revision < template.stamp_revision):
+        if template and template.revision < self.settling_drag.get("template_revision", -1):
             return
         craft = getattr(self.screen, "craft", None)
         if craft and craft.revision < self.settling_drag.get("grid_revision", -1):
@@ -357,8 +357,7 @@ class TerminalInput(object):
             self.end_drag()
             if drag["placements"]:
                 self.settling_drag = drag
-            for region, slot, amount in drag["placements"]:
-                self.click(region, slot, "place", amount)
+                self.submit_distribution(drag)
             return
         self.drag = None
         if drag["target"] == (area, index):
@@ -373,6 +372,27 @@ class TerminalInput(object):
                 self.quick_region(area, index)
             else:
                 self.click(area, index, gesture)
+
+    def submit_distribution(self, drag):
+        self.last_left = None
+        client = self.screen.list_view.cache.client
+        placements = []
+        for area, index, amount in drag["placements"]:
+            entry = {"target": area, "cell": index, "count": amount}
+            if area == "bag":
+                entry["cell"] = engine_slot_of(index)
+                row = client.inventory_slots.get(entry["cell"])
+                if row is None:
+                    self.settling_drag = None
+                    return
+                entry.update(slot_version=row["slot_version"], fingerprint=row["canonical"])
+            else:
+                model = self.screen.craft if area == "grid" else self.screen.template
+                entry["slot_version"] = model.revision
+            placements.append(entry)
+        fields = {"config": {"revision": drag["revision"], "placements": placements}}
+        self.pending.append((fields, "batch", None, None))
+        self.dispatch()
 
     def quick_region(self, area, index, matching=None):
         if area == "bag":
@@ -475,8 +495,9 @@ class TerminalInput(object):
         if not hand or not client.has_session():
             return
         fields, area, index, key = self.pending.popleft()
-        fields["config"]["revision"] = hand["revision"]
-        request = client.send_command("slot_click", **fields)
+        if area != "batch":
+            fields["config"]["revision"] = hand["revision"]
+        request = client.send_command("slot_batch" if area == "batch" else "slot_click", **fields)
         point = input_api().GetFocusPos()
         self.active = (request, area, index, key, hand, point, fields)
 
@@ -484,13 +505,38 @@ class TerminalInput(object):
         if self.active is None or self.active[0] != result.get("request_id"):
             return
         _, area, index, key, before, point, sent = self.active
-        gesture, version = sent["config"]["gesture"], sent.get("slot_version")
+        gesture, version = sent["config"].get("gesture"), sent.get("slot_version")
         self.active = None
         payload = result.get("payload") or {}
         client = self.screen.list_view.cache.client
         hand = payload.get("cursor")
         if hand and (not client.cursor or hand["revision"] >= client.cursor["revision"]):
             client.cursor = hand
+        if area == "batch":
+            if result.get("status") != "ok":
+                self.pending.clear()
+                self.settling_drag = None
+                self.notice(result)
+            elif self.settling_drag:
+                for name in ("grid_revision", "template_revision"):
+                    if name in payload:
+                        self.settling_drag[name] = payload[name]
+            anchors = dict((entry["cell"], entry) for entry in sent["config"]["placements"]
+                           if entry["target"] == "bag")
+            after = dict((entry["slot"], entry) for entry in payload.get("bag_after", ()))
+            grid_before = next((entry["slot_version"] for entry in sent["config"]["placements"]
+                                if entry["target"] == "grid"), None)
+            for fields, region, _, __ in self.pending:
+                slot = fields.get("slot")
+                if (region == "bag" and slot in after and slot in anchors
+                        and fields.get("slot_version") == anchors[slot]["slot_version"]):
+                    fields["slot_version"] = after[slot]["version"]
+                    fields["config"]["fingerprint"] = after[slot]["canonical"]
+                elif region == "grid" and fields.get("slot_version") == grid_before:
+                    fields["slot_version"] = payload.get("grid_revision", grid_before)
+            self.screen.backpack.replace_from_engine()
+            self.retire_distribution()
+            return
         if result.get("status") not in ("ok", "partial"):
             # The first click can try to place into a full matching stack. The second
             # click still has a valid source and unchanged cursor/slot anchors.
@@ -503,11 +549,6 @@ class TerminalInput(object):
             self.settling_drag = None
             self.last_left = None
             return
-        if gesture == "place" and self.settling_drag:
-            if payload.get("moved") != sent["count"]:
-                self.settling_drag = None
-            elif area == "grid" and "device_revision" in payload:
-                self.settling_drag["grid_revision"] = payload["device_revision"]
         if payload.get("key"):
             key = ResourceKey.from_dict(payload["key"])
         rect = (self.screen.list_view._network_rect(key) if area == "network" and key

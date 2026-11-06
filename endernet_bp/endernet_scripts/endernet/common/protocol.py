@@ -2550,6 +2550,38 @@ class SyncError(SyncMessage):
         return cls(data["request_id"], data["code"], data["detail"])
 
 
+def validate_slot_batch(config):
+    # type: (dict) -> None
+    """One ordered drag release, anchored to the state before any placement."""
+    _require_fields(config, ("revision", "placements"), "slot_batch")
+    require_count(config["revision"], "cursor revision")
+    placements = config["placements"]
+    if not isinstance(placements, list) or not 1 <= len(placements) <= 64:
+        raise ValueError("slot_batch requires 1..64 placements")
+    seen = set()
+    for entry in placements:
+        if not isinstance(entry, dict):
+            raise ValueError("placement must be a dictionary")
+        area = entry.get("target")
+        if area not in ("bag", "grid", "source", "outputs"):
+            raise ValueError("invalid placement target")
+        fields = ("target", "cell", "count", "slot_version")
+        if area == "bag":
+            fields += ("fingerprint",)
+        _require_fields(entry, fields, "placement")
+        for name in ("cell", "count", "slot_version"):
+            require_count(entry[name], name)
+        size = 36 if area == "bag" else (3 if area == "outputs" else 9)
+        if entry["count"] == 0 or entry["cell"] >= size:
+            raise ValueError("placement count or cell out of range")
+        if area == "bag" and not isinstance(entry["fingerprint"], _TEXT_TYPES):
+            raise ValueError("fingerprint must be text")
+        identity = (area, entry["cell"])
+        if identity in seen:
+            raise ValueError("duplicate placement target")
+        seen.add(identity)
+
+
 class TerminalCommand(SyncMessage):
     """终端发来的一条手动存取命令（11-03）。
 
@@ -2746,6 +2778,8 @@ class TerminalCommand(SyncMessage):
         #: 也不是虚格下标，共用一个字段会让「这个数属于哪个空间」变成逐动作
         #: 去猜的事。服务端读的键就叫 `config`，因此 `payload()` 是直传。
         self.config = config
+        if action == "slot_batch":
+            validate_slot_batch(config)
 
     def payload(self):
         # type: () -> dict

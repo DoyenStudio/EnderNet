@@ -245,9 +245,6 @@ class TemplateView(object):
         self.presses = {}
         self.receipts = []
         self.flights = {}
-        self.stamps = []
-        self.stamp_request = None
-        self.stamp_revision = -1
         self.last_error = None
         self.errors = 0
         self._requests = {}
@@ -579,9 +576,6 @@ class TemplateView(object):
         self._send(ACTION_CELL_COUNT, target=surface, cell=index, count=number)
 
     def pc_cell(self, surface, index, button, hand, count):
-        if button == "place":
-            self.stamps.append((surface, index, hand["key"], count))
-            return
         if self.locked(surface, index):
             if button == "middle":
                 self._on_long_press(surface, index)
@@ -790,12 +784,6 @@ class TemplateView(object):
             return
         flight = self.flights.pop(result.get("request_id"), None)
         payload = result.get("payload") or {}
-        if self.stamp_request == result.get("request_id"):
-            self.stamp_request = None
-            if result.get("status") != STATUS_OK:
-                self.stamps = []
-                self.screen.slot_input.settling_drag = None
-            self.stamp_revision = (payload.get("state") or {}).get("revision", self.revision)
         if flight and result.get("status") == STATUS_OK and getattr(self.screen, "fly", None):
             slots = payload.get("bag_slots") or ()
             if slots:
@@ -882,11 +870,6 @@ class TemplateView(object):
             return
         self._settle_lost_session()
         self._settle_long_press()
-        if self.stamps and not self.stamp_request and self.revision >= self.stamp_revision:
-            surface, index, wire_key, count = self.stamps.pop(0)
-            if not self.locked(surface, index):
-                self.stamp_request = self._send(ACTION_CELL_PUT, target=surface, cell=index,
-                                                key=ResourceKey.from_dict(wire_key), count=count)
 
     def _settle_lost_session(self):
         # type: () -> None
@@ -899,8 +882,6 @@ class TemplateView(object):
         if self.client.has_session():
             return
         self._requests = {}
-        self.stamps = []
-        self.stamp_request = None
         self.flights.clear()
         self.selection = None
         self._universal_import = None
@@ -934,7 +915,6 @@ class TemplateView(object):
         self.close_recipe_windows()
         self._requests = {}
         self.flights.clear()
-        self.stamps = []
         self._universal_import = None
         self.selection = None
         self.presses = {}

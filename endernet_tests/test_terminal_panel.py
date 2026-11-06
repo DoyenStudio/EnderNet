@@ -1996,22 +1996,22 @@ class TestDesktopDistribution(PanelFixture):
         self.client.cursor = {"key": STONE.to_dict(), "count": 1, "revision": 7}
         router.press("right", ("bag", 0), (10, 10))
         router.visit(("bag", 1))
-        with patch.object(router, "click") as clicked:
+        with patch.object(router, "submit_distribution") as clicked:
             self.assertEqual(router.drag["remainder"], 0)
             self.assertIsNone(router.preview_cell("bag", 1))
             self.assertEqual(self.panel.backpack_item_id_aux(0), stack_size.id_aux(STONE.name))
             router.finish("bag", 2, "right")
-            clicked.assert_called_once_with("bag", 0, "place", 1)
+            self.assertEqual(clicked.call_args.args[0]["placements"], [("bag", 0, 1)])
 
     def test_uneven_left_drag_keeps_the_remainder_on_cursor(self):
         router = self.panel.slot_input
         router.desktop = True
         self.client.cursor = {"key": STONE.to_dict(), "count": 5, "revision": 7}
         router.press("left", ("bag", 0), (10, 10))
-        with patch.object(router, "click") as clicked:
+        with patch.object(router, "submit_distribution") as clicked:
             router.finish("bag", 1, "left")
-            self.assertEqual([call.args for call in clicked.call_args_list],
-                             [("bag", 0, "place", 2), ("bag", 1, "place", 2)])
+            self.assertEqual(clicked.call_args.args[0]["placements"],
+                             [("bag", 0, 2), ("bag", 1, 2)])
 
     def test_right_button_bindings_place_one_per_distinct_visited_slot(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
@@ -2021,7 +2021,7 @@ class TestDesktopDistribution(PanelFixture):
         router.desktop = True
         with patch.object(terminal_input, "input_api", return_value=api), patch.object(
                 slot_layout, "slot_at", side_effect=lambda screen, point: ("bag", point[0])), patch.object(
-                router, "click") as clicked:
+                router, "submit_distribution") as clicked:
             api.GetFocusPos.return_value = (0, 10)
             self.bind(BinderStub.BF_ButtonClickDown, "secondary", {})
             for slot in (27, 0, 1):
@@ -2034,8 +2034,8 @@ class TestDesktopDistribution(PanelFixture):
             api.GetFocusPos.return_value = (1, 10)
             self.bind(BinderStub.BF_ButtonClickUp, "secondary", {})
             self.bind(BinderStub.BF_ButtonClickUp, "secondary", {})
-            self.assertEqual([call.args for call in clicked.call_args_list],
-                             [("bag", 0, "place", 1), ("bag", 27, "place", 1), ("bag", 1, "place", 1)])
+            self.assertEqual(clicked.call_args.args[0]["placements"],
+                             [("bag", 0, 1), ("bag", 27, 1), ("bag", 1, 1)])
 
     def test_moving_the_mouse_rebalances_previous_slots_and_cursor_before_release(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
@@ -2049,7 +2049,7 @@ class TestDesktopDistribution(PanelFixture):
         # Map the mock X coordinate to the UI index, including the hotbar.
         with patch.object(terminal_input, "input_api", return_value=api), patch.object(
                 slot_layout, "slot_at", side_effect=lambda screen, point: ("bag", point[0])), patch.object(
-                router, "update_info"), patch.object(router, "click") as clicked:
+                router, "update_info"), patch.object(router, "submit_distribution") as clicked:
             router.press("left", ("bag", 0), (0, 10))
             for slot in (1, 2, 27):
                 api.GetFocusPos.return_value = (slot, 10)
@@ -2069,8 +2069,8 @@ class TestDesktopDistribution(PanelFixture):
             clicked.assert_not_called()
             router.primary("bag", 0)
             router.primary("bag", 3)
-            self.assertEqual([call.args for call in clicked.call_args_list],
-                             [("bag", 0, "place", 1), ("bag", 27, "place", 3), ("bag", 3, "place", 3)])
+            self.assertEqual(clicked.call_args.args[0]["placements"],
+                             [("bag", 0, 1), ("bag", 27, 3), ("bag", 3, 3)])
 
     def test_releasing_off_grid_or_opening_a_modal_discards_the_preview(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
@@ -2078,7 +2078,7 @@ class TestDesktopDistribution(PanelFixture):
         router = self.panel.slot_input
         router.desktop = True
         with patch.object(terminal_input, "input_api", return_value=Mock()), patch.object(
-                slot_layout, "slot_at", return_value=None), patch.object(router, "click") as clicked:
+                slot_layout, "slot_at", return_value=None), patch.object(router, "submit_distribution") as clicked:
             for button in ("left", "right"):
                 router.press(button, ("bag", 0), (10, 10))
                 router.visit(("bag", 1))
@@ -2111,6 +2111,8 @@ class TestDesktopDistribution(PanelFixture):
         with patch.object(terminal_input, "input_api", return_value=api):
             for rejected in (False, True):
                 self.client.cursor = {"key": STONE.to_dict(), "count": 6, "revision": 7}
+                before = len(self.commands())
+                router.last_left = {"slot": 9}
                 router.press("left", ("bag", 0), (10, 10))
                 router.visit(("bag", 1))
                 router.finish("bag", 1, "left")
@@ -2122,20 +2124,52 @@ class TestDesktopDistribution(PanelFixture):
                 else:
                     for slot in (0, 1):
                         self.put_engine(9 + slot, STONE.name, 3)
-                        result = self.result(self.take_command()["request_id"])
-                        result["payload"] = {"moved": 3, "putting": True, "key": STONE.to_dict(),
-                                             "cursor": {"key": STONE.to_dict() if not slot else None,
-                                                        "revision": 8 + slot, "count": 3 if not slot else 0}}
-                        router.settle(result)
-                        router.retire_distribution()
-                        if not slot:
-                            self.assertEqual(self.panel.backpack_item_count(1), "3")
-                            router.dispatch()
+                    result = self.result(request)
+                    result["payload"] = {"cursor": {"key": None, "revision": 9, "count": 0}}
+                    router.settle(result)
+                    router.retire_distribution()
+                self.assertEqual(self.take_command()["action"], "slot_batch")
+                self.assertEqual(len(self.commands()), before + 1)
+                self.assertIsNone(router.last_left)
+                self.assertEqual(len(self.take_command()["config"]["placements"]), 2)
+                self.assertEqual(self.panel.fly.calls, [])
+                self.assertFalse(router.pending)
                 self.assertIsNone(router.settling_drag)
                 self.assertEqual(self.panel.backpack_item_count(1), "" if rejected else "3")
                 self.clear_engine(9)
                 self.clear_engine(10)
                 self.backpack.replace_from_engine()
+
+    def test_batch_receipt_updates_queued_click_and_partial_cancels_it(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        for partial in (False, True):
+            with self.subTest(partial=partial), patch.object(terminal_input, "input_api", return_value=Mock()):
+                router = self.panel.slot_input
+                router.reset()
+                router.desktop = True
+                self.engine_backpack()
+                self.client.cursor = {"key": STONE.to_dict(), "count": 6, "revision": 7}
+                router.press("left", ("bag", 0), (10, 10))
+                router.finish("bag", 1, "left")
+                command = self.take_command()
+                router.click("bag", 0, "right")
+                self.assertEqual(len(router.pending), 1)
+                result = self.result(command["request_id"])
+                result["status"] = "partial" if partial else "ok"
+                result["payload"] = {"cursor": {"key": None, "count": 0, "revision": 9},
+                                     "bag_after": [{"slot": 9, "version": 4,
+                                                    "canonical": STONE.canonical()}]}
+                with patch.object(router, "notice"), patch.object(self.panel.fly, "fly") as fly:
+                    router.settle(result)
+                    fly.assert_not_called()
+                if partial:
+                    self.assertFalse(router.pending)
+                    self.assertIsNone(router.settling_drag)
+                else:
+                    router.dispatch()
+                    self.assertEqual(self.take_command()["slot_version"], 4)
+                    self.assertEqual(self.take_command()["config"]["revision"], 9)
+                    self.assertEqual(self.take_command()["config"]["fingerprint"], STONE.canonical())
 
 
 class TestTransferAnimation(PanelFixture):

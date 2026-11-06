@@ -21,7 +21,7 @@
 import json
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import testsupport  # noqa: F401  设置 sys.path
 
@@ -453,8 +453,27 @@ class TestTwoWayModel(TemplateFixture):
             self.assertEqual(self.panel.backpack_item_count(index), "4")
         self.assertEqual(self.panel.outputs_item_id_aux(1), 0)
         self.assertEqual(router.drag["remainder"], 1)
-        self.assertEqual(self.view.stamps, [])
+        self.assertEqual(list(router.pending), [])
         self.assertEqual(self.view.cell(SURFACE_SOURCE, 0)["name"], STICK.name)
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        with patch.object(terminal_input, "input_api", return_value=Mock()):
+            with patch.object(self.client, "send_command", wraps=self.client.send_command) as send:
+                router.finish("bag", 1, "left")
+                send.assert_called_once()
+                self.assertEqual(send.call_args.args[0], "slot_batch")
+                config = send.call_args.kwargs["config"]
+                self.assertEqual([(p["target"], p["cell"], p["count"]) for p in config["placements"]],
+                                 [("source", 0, 9), ("source", 1, 9), ("bag", 9, 4), ("bag", 10, 4)])
+            result = {"request_id": router.active[0], "status": "ok", "payload": {
+                "cursor": {"key": STONE.to_dict(), "count": 1, "revision": 9},
+                "template_revision": self.view.revision + 2}}
+            with patch.object(self.panel.fly, "fly") as fly:
+                router.settle(result)
+                self.assertIsNotNone(router.settling_drag)
+                self.view.revision += 2
+                router.retire_distribution()
+                self.assertIsNone(router.settling_drag)
+                fly.assert_not_called()
 
     def select_network(self, stored=40, reserved=0, has_pattern=False):
         view = terminal_panel.TerminalListView(
