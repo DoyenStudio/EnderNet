@@ -53,7 +53,7 @@ UI 交接：2026-10-02 已记录 User 本次确认的控件用途和两张参考
 | `memory_left_bar.memory_left_label` | `<主内容>/memory_left_bar/memory_left_label` | label，展示剩余可用内存；静态“剩余可用内存 0KB”，单位差异见第 8 节 |
 | `order.res_item_name` | `<订单项>/res_item_name` | label，静态“999 x 某某某”；主产物数量含义与文本格式待确认 |
 | `order.progress_text` | `<订单项>/progress_text` | label，整体进度文字，静态 `100.0%%`；接入时核对百分号格式 |
-| `order.progress_bar`、`progress_bar/mask` | `<订单项>/progress_bar/mask` | panel 内 image 填充，以 relative x 尺寸显示订单整体完成比例；外层保持布局尺寸 |
+| `order.progress_bar`、`progress_bar/mask` | `<订单项>/progress_bar/mask` | panel 内 image 使用完整可用宽度，以 `clip_ratio=1-p` 从左向右显示订单整体完成比例；外层保持布局尺寸 |
 | `order.res_item_renderer` | `<订单项>/res_item_renderer` | custom `inventory_item_renderer`，12×12，显示订单结果（主）物品；静态 `#item_id_aux=131072` |
 | `order.interact_btn` | `<订单项>/interact_btn` | button，点击打开当前订单详情；事件仍为占位 |
 | `order_description_window.title/title_text` | `<详情>/title/title_text` | label，静态“当前正在制作： 未知”；展示订单状态的具体标题格式待确认 |
@@ -63,7 +63,7 @@ UI 交接：2026-10-02 已记录 User 本次确认的控件用途和两张参考
 | `order_description_window.confirm_btn` | `<详情>/confirm_btn` | 48×20“确认”按钮，按下只关闭详情 |
 | `order_sources_grid` | `<配方滚动内容>` | grid，collection `order_sources`，模板 `factoric_terminal_panel_ui.order_source_status` |
 | `order_source_status` | `<配方项>` | image，整项背景按制作阶段变色 |
-| `order_source_status.progress_bar` | `<配方项>/progress_bar` | image，高 2px，静态宽度 `50%+-2px`，以 relative x 尺寸显示本种源物品制作进度 |
+| `order_source_status.progress_bar` | `<配方项>/progress_bar` | image，高 2px，完整宽度 `100%+-2px`，以 `clip_ratio=1-p` 显示本种源物品制作进度；按进度分红、橙、绿三档 |
 | `order_source_status.item_renderer` | `<配方项>/item_renderer` | custom `inventory_item_renderer`，16×16，显示当前需求物，即当前配方产物；静态 `#item_id_aux=131072` |
 | `order_source_status.item_name_text` | `<配方项>/item_name_text` | label，显示该物品 `GetBasicInfo().itemName` 提供的中文名 |
 | `order_source_status.process_stat_text` | `<配方项>/process_stat_text` | label，展示制作阶段、数量进度、投料／产物状态三要素 |
@@ -90,6 +90,16 @@ UI 交接：2026-10-02 已记录 User 本次确认的控件用途和两张参考
 > 正是 `$clip_ratio`；User 当日选定**改用 `#clip_ratio` + `BF_BindFloat`**。
 > 「不能把外层 panel 当作填充缩放」这半句仍然成立，改的是填充节点的驱动方式。
 > 逐条见 [11-交付说明](../tasks/11-交付说明.md) 第三十节第 5 小节。
+
+> **2026-11-06 进度显示修复**：两处填充使用完整可用宽度，关闭 `tiled` 和
+> `clip_pixelperfect`，避免 2×2 白色纹理的平铺／纹理像素裁剪导致进度不连续。
+> 同时关闭 `keep_ratio`，使纹理拉伸至整条可用区域。
+> `BF_BindFloat` 提供完成比例 `p`，JSON view binding 将 `1-p` 写入
+> `#clip_ratio`（0 为全显，1 为全隐），方向为 `left`。0% 空条，100% 满条。
+> 详情底部条按本种物品的数量比例变色：`p<25%` 红色、`25%≤p<75%`
+> 橙色（`#FFA500`）、`75%≤p≤100%` 绿色。颜色由独立的 `source_progress_color` 提供
+> RGBA tuple；整项背景仍按制作阶段使用 `source_color`。比例越界钳制到
+> `[0,1]`，总数为 0 或数据缺失时为空条。
 
 `process_stat_text` 为一个包含以下三要素的文本，按此顺序展示：
 
@@ -227,3 +237,19 @@ JSON 背景初值为制作中的黄色，不代表真实阶段。初始化、刷
 list 时实际 `#color` 为黑色；RGB tuple 可写入颜色但 alpha 为 -1，最终使用
 RGBA tuple（alpha=1.0）。实际控件读取为 `[0.7843137, 0.7843137, 1.0, 1.0]`，
 User 确认颜色正确。
+
+### 2026-11-06 进度条修复验证
+
+- 离线：工厂终端 65 项测试通过；全量 4117 项测试及 131 个运行期文件的
+  Python 2.7 语法门禁通过。覆盖 25%／75% 边界、空进度、越界钳制、快照更新、
+  订单切换以及 JSON 与 Python 绑定接线。
+- bridge 游戏内：在无服务端会话的临时预览中注入 0、13、25、74、75、100%
+  客户端显示数据，截图确认订单蓝条从左向右增长、0% 空条、100% 满条，
+  详情底条按阈值切换红／黄／绿。实际控件完整区域为 78×16 和 78×2，
+  `#clip_ratio` 分别为 1、0.87、0.75、0.26、0.25、0，颜色 alpha 为 1。
+- 同一行由 13% 更新至 80% 后，两处裁剪值都更新为约 0.2，详情底条变绿；
+  检查结束已关闭预览。未创建或修改服务端订单；本次不代替真实制作流程、
+  超长列表滚动或触屏输入验收。
+
+- 同日后续调整：按用户要求将底条 25%≤p<75% 档由黄色改为橙色
+  `#FFA500`，同步更新阈值和刷新测试的颜色断言；上面的截图验证记录为调整前颜色。

@@ -463,27 +463,36 @@
                                 "anchor_from": "left_middle",
                                 "anchor_to": "left_middle",
                                 "size": [
-                                    "50%+0px",
+                                    "100%+0px",
                                     "default"
                                 ],
                                 "layer": 4,
                                 "alpha": 0.25,
                                 "clip_direction": "left",
-                                "clip_ratio": 0.0,
+                                "clip_ratio": 1.0,
+                                "clip_pixelperfect": false,
+                                "keep_ratio": false,
                                 "color": [
                                     0.0,
                                     1.0,
                                     1.0
                                 ],
                                 "texture": "textures/ui/white_background",
-                                "tiled": true,
+                                "tiled": false,
+                                "property_bag": {
+                                    "#EnderNetFactoric.order_progress": 0.0
+                                },
                                 "bindings": [
                                     {
-                                        "binding_name_override": "#clip_ratio",
                                         "binding_collection_name": "orders",
                                         "binding_condition": "always",
                                         "binding_type": "collection",
                                         "binding_name": "#EnderNetFactoric.order_progress"
+                                    },
+                                    {
+                                        "binding_type": "view",
+                                        "source_property_name": "(1.0 - #EnderNetFactoric.order_progress)",
+                                        "target_property_name": "#clip_ratio"
                                     }
                                 ]
                             }
@@ -947,26 +956,42 @@
                         -1.0
                     ],
                     "size": [
-                        "50%+-2px",
+                        "100%+-2px",
                         2.0
                     ],
                     "layer": 1,
                     "clip_direction": "left",
-                    "clip_ratio": 0.0,
+                    "clip_ratio": 1.0,
+                    "clip_pixelperfect": false,
+                    "keep_ratio": false,
                     "color": [
                         1.0,
-                        1.0,
-                        0.4980392156862745
+                        0.5,
+                        0.5
                     ],
                     "texture": "textures/ui/white_background",
-                    "tiled": true,
+                    "tiled": false,
+                    "property_bag": {
+                        "#EnderNetFactoric.source_progress": 0.0
+                    },
                     "bindings": [
                         {
-                            "binding_name_override": "#clip_ratio",
                             "binding_collection_name": "order_sources",
                             "binding_condition": "always",
                             "binding_type": "collection",
                             "binding_name": "#EnderNetFactoric.source_progress"
+                        },
+                        {
+                            "binding_type": "view",
+                            "source_property_name": "(1.0 - #EnderNetFactoric.source_progress)",
+                            "target_property_name": "#clip_ratio"
+                        },
+                        {
+                            "binding_name_override": "#color",
+                            "binding_collection_name": "order_sources",
+                            "binding_condition": "always",
+                            "binding_type": "collection",
+                            "binding_name": "#EnderNetFactoric.source_progress_color"
                         }
                     ]
                 }

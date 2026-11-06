@@ -397,6 +397,96 @@ class TestDetailWindow(FactoricFixture):
 
 class TestRuntimeBindings(FactoricFixture):
 
+    def test_progress_colours_follow_quantity_thresholds_and_not_stage(self):
+        cases = (
+            (0, 100, 0.0, (1.0, 0.5, 0.5)),
+            (24, 100, 0.24, (1.0, 0.5, 0.5)),
+            (25, 100, 0.25, (1.0, 165 / 255.0, 0.0)),
+            (74, 100, 0.74, (1.0, 165 / 255.0, 0.0)),
+            (75, 100, 0.75, (0.5, 1.0, 0.5)),
+            (100, 100, 1.0, (0.5, 1.0, 0.5)),
+            (0, 0, 0.0, (1.0, 0.5, 0.5)),
+        )
+        self.apply(
+            orders=[order_row(completed=done, total=total)
+                    for done, total, _ratio, _rgb in cases],
+            sources=[source_row(done=done, total=total,
+                                stage=ORDER_SOURCE_STAGE_RUNNING)
+                     for done, total, _ratio, _rgb in cases])
+        self.panel.OnOrderClick({"#collection_index": 0})
+        for index, (done, total, ratio, rgb) in enumerate(cases):
+            with self.subTest(done=done, total=total):
+                self.assertAlmostEqual(ratio, self.panel.order_progress(index))
+                self.assertAlmostEqual(ratio, self.panel.source_progress(index))
+                self.assertEqual(rgb, self.view.source_progress_color(index))
+                self.assertEqual(rgb + (1.0,),
+                                 self.panel.source_progress_color(index))
+                self.assertEqual(COLOR_RUNNING + (1.0,),
+                                 self.panel.source_color(index))
+
+    def test_progress_bindings_clamp_invalid_counts_before_colouring(self):
+        # 协议拒绝超量；直接交给视图验证最终显示层的钳制。
+        for done, total, ratio, rgb in (
+                (101, 100, 1.0, (0.5, 1.0, 0.5)),
+                (-1, 100, 0.0, (1.0, 0.5, 0.5)),
+                (1, 0, 0.0, (1.0, 0.5, 0.5))):
+            with self.subTest(done=done, total=total):
+                self.view.apply(_loose({
+                    "memory": {},
+                    "orders": [order_row(completed=done, total=total)],
+                    "sources": [source_row(done=done, total=total)],
+                }))
+                self.panel.OnOrderClick({"#collection_index": 0})
+                self.assertEqual(ratio, self.panel.order_progress(0))
+                self.assertEqual(ratio, self.panel.source_progress(0))
+                self.assertEqual(rgb + (1.0,),
+                                 self.panel.source_progress_color(0))
+
+    def test_progress_bindings_refresh_and_follow_the_selected_order(self):
+        self.apply(
+            orders=[order_row(completed=1, total=10),
+                    order_row(OTHER_ID, completed=8, total=10)],
+            sources=[source_row(done=1, total=10),
+                     source_row(OTHER_ID, done=8, total=10)])
+        self.panel.OnOrderClick({"#collection_index": 0})
+        self.assertAlmostEqual(0.1, self.panel.order_progress(0))
+        self.assertAlmostEqual(0.1, self.panel.source_progress(0))
+        self.assertEqual((1.0, 0.5, 0.5, 1.0),
+                         self.panel.source_progress_color(0))
+        self.panel.OnOrderClick({"#collection_index": 1})
+        self.assertAlmostEqual(0.8, self.panel.source_progress(0))
+        self.assertEqual((0.5, 1.0, 0.5, 1.0),
+                         self.panel.source_progress_color(0))
+
+        # 新快照重排订单并推进第一单；详情仍跟随选中的稳定 ID。
+        self.apply(
+            orders=[order_row(OTHER_ID, completed=9, total=10),
+                    order_row(completed=5, total=10)],
+            sources=[source_row(done=5, total=10),
+                     source_row(OTHER_ID, done=9, total=10)])
+        self.assertAlmostEqual(0.9, self.panel.order_progress(0))
+        self.assertAlmostEqual(0.9, self.panel.source_progress(0))
+        self.panel.OnOrderClick({"#collection_index": 1})
+        self.assertAlmostEqual(0.5, self.panel.order_progress(1))
+        self.assertAlmostEqual(0.5, self.panel.source_progress(0))
+        self.assertEqual((1.0, 165 / 255.0, 0.0, 1.0),
+                         self.panel.source_progress_color(0))
+
+    def test_progress_binding_defaults_are_empty_and_opaque_red(self):
+        self.apply()
+        self.assertEqual(0.0, self.panel.source_progress(0))
+        self.assertEqual((1.0, 0.5, 0.5, 1.0),
+                         self.panel.source_progress_color(0))
+        self.panel.OnOrderClick({"#collection_index": 0})
+        self.assertEqual(0.0, self.panel.source_progress(99))
+        self.assertEqual((1.0, 0.5, 0.5, 1.0),
+                         self.panel.source_progress_color(99))
+        self.panel.factoric = None
+        self.assertEqual(0.0, self.panel.order_progress(0))
+        self.assertEqual(0.0, self.panel.source_progress(0))
+        self.assertEqual((1.0, 0.5, 0.5, 1.0),
+                         self.panel.source_progress_color(0))
+
     def test_color_binding_returns_an_opaque_rgba_tuple(self):
         self.apply(sources=[source_row(stage=stage) for stage in (
             ORDER_SOURCE_STAGE_WAITING, ORDER_SOURCE_STAGE_RUNNING,
@@ -681,8 +771,50 @@ class TestJsonContract(unittest.TestCase):
                 self.assertEqual(factoric_panel.FLOAT_BINDING_FLAG,
                                  declared.get(name), name)
         if factoric_panel.COLOR_BINDING_FLAG is not None:
-            self.assertEqual(factoric_panel.COLOR_BINDING_FLAG,
-                             declared.get(BINDING_PREFIX + "source_color"))
+            for name in ("source_color", "source_progress_color"):
+                self.assertEqual(factoric_panel.COLOR_BINDING_FLAG,
+                                 declared.get(BINDING_PREFIX + name))
+
+    def test_progress_fills_use_full_width_and_invert_the_completed_ratio(self):
+        order_bar = self.controls(self.panel["order"])["progress_bar"]
+        order_fill = self.controls(order_bar)["mask"]
+        source_fill = self.controls(
+            self.panel["order_source_status"])["progress_bar"]
+        for fill, collection, name, width in (
+                (order_fill, ORDER_COLLECTION, "order_progress", "100%+0px"),
+                (source_fill, SOURCE_COLLECTION, "source_progress", "100%+-2px")):
+            with self.subTest(name=name):
+                binding_name = BINDING_PREFIX + name
+                self.assertEqual(width, fill["size"][0])
+                self.assertEqual("left", fill["clip_direction"])
+                self.assertEqual(1.0, fill["clip_ratio"])
+                self.assertFalse(fill["tiled"])
+                self.assertFalse(fill["keep_ratio"])
+                self.assertFalse(fill["clip_pixelperfect"])
+                self.assertEqual(0.0, fill["property_bag"][binding_name])
+                raw_binding = next(binding for binding in fill["bindings"]
+                                   if binding.get("binding_name") == binding_name)
+                self.assertEqual("collection", raw_binding["binding_type"])
+                self.assertEqual(collection,
+                                 raw_binding["binding_collection_name"])
+                self.assertEqual("always", raw_binding["binding_condition"])
+                self.assertNotIn("binding_name_override", raw_binding)
+                clip_binding = next(binding for binding in fill["bindings"]
+                                    if binding.get("target_property_name") == "#clip_ratio")
+                self.assertEqual("view", clip_binding["binding_type"])
+                self.assertEqual("(1.0 - %s)" % binding_name,
+                                 clip_binding["source_property_name"])
+
+    def test_source_progress_colour_is_bound_to_the_bottom_bar(self):
+        source = self.panel["order_source_status"]
+        fill = self.controls(source)["progress_bar"]
+        binding = next(binding for binding in fill["bindings"]
+                       if binding.get("binding_name_override") == "#color")
+        self.assertEqual("collection", binding["binding_type"])
+        self.assertEqual(SOURCE_COLLECTION, binding["binding_collection_name"])
+        self.assertEqual(BINDING_PREFIX + "source_progress_color",
+                         binding["binding_name"])
+        self.assertEqual("always", binding["binding_condition"])
 
     def test_the_two_collection_names_agree_everywhere(self):
         """三处必须一致：grid 的 `collection_name`、绑定条目的

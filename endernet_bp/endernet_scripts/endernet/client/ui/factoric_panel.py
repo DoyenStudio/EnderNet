@@ -84,6 +84,11 @@ STAGE_COLORS = {
     ORDER_SOURCE_STAGE_DONE: COLOR_DONE,
 }
 
+#: 底部制作进度条按数量比例分档，独立于整项背景的制作阶段色。
+PROGRESS_COLOR_LOW = (1.0, 0.5, 0.5)
+PROGRESS_COLOR_MIDDLE = (1.0, 165 / 255.0, 0.0)
+PROGRESS_COLOR_HIGH = (0.5, 1.0, 0.5)
+
 #: 阶段与投料状态的**中文文案**。三态词汇由 `common/protocol.py` 定
 #: （走线上的是整数），中文只在这里落一次——服务端不往线上搬文案。
 STAGE_TEXTS = {
@@ -465,6 +470,15 @@ class FactoricView(object):
         if row is None:
             return 0.0
         return _ratio(row.get("done"), row.get("total"))
+
+    def source_progress_color(self, index):
+        # type: (object) -> tuple
+        progress = self.source_progress(index)
+        if progress < 0.25:
+            return PROGRESS_COLOR_LOW
+        if progress < 0.75:
+            return PROGRESS_COLOR_MIDDLE
+        return PROGRESS_COLOR_HIGH
 
     def source_color(self, index):
         # type: (object) -> list
@@ -927,6 +941,14 @@ class FactoricPanel(TerminalPanelBase):
     def source_progress(self, index):
         # type: (object) -> float
         return 0.0 if self.factoric is None else self.factoric.source_progress(index)
+
+    @_bind(COLOR_BINDING_FLAG, Binder.binding_collection,
+           SOURCE_COLLECTION, BINDING_PREFIX + "source_progress_color")
+    def source_progress_color(self, index):
+        # type: (object) -> tuple
+        color = (PROGRESS_COLOR_LOW if self.factoric is None
+                 else self.factoric.source_progress_color(index))
+        return color + (1.0,)
 
     @_bind(COLOR_BINDING_FLAG, Binder.binding_collection,
            SOURCE_COLLECTION, BINDING_PREFIX + "source_color")
