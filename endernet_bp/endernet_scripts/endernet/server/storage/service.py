@@ -36,7 +36,7 @@ from ...common.protocol import (
     TransferStatus,
 )
 from ...common.crafting_recipe import match
-from ...common.item_codec import item_key_from_dict
+from ...common.item_codec import item_dict_from_key, item_key_from_dict
 from ...common.definitions import (
     ITEM_TEMPLATES,
     PATTERN_MODE_CRAFTING,
@@ -3392,9 +3392,12 @@ class StorageService(NetworkService):
         hand = cursor.snapshot()
         options = payload.get("config") or {}
         mode = options.get("gesture")
-        if (mode not in ("left", "right", "one_in", "one_out", "quick", "place")
+        if (mode not in ("left", "right", "one_in", "one_out", "quick", "place", "collect", "collect_to_slot")
                 or options.get("revision") != hand["revision"]):
             return self._reject(command, Reason.STALE_VERSION, "持物已变化")
+        collecting = mode in ("collect", "collect_to_slot")
+        if collecting and area != "bag":
+            return self._reject(command, Reason.BAD_PARAMETER, "双击补叠需要背包槽")
         held = ResourceKey.from_dict(hand["key"]) if hand["key"] else None
         hand_end = ContainerEndpoint(cursor, "cursor:%s" % owner)
         area = payload.get("target")
@@ -3419,6 +3422,12 @@ class StorageService(NetworkService):
                 return self._reject(command, Reason.SLOT_CHANGED, "背包槽已变化")
             key = ResourceKey.from_dict(view["key"]) if view["key"] else None
             available = view["count"]
+            if collecting:
+                wanted = self._key_from(payload)
+                to_slot = mode == "collect_to_slot"
+                if wanted is None or wanted != (held or key) or (to_slot and held):
+                    return self._reject(command, Reason.SLOT_CHANGED, "补叠物品已变化")
+                return self._collect_stack(command, bag, cursor, view, wanted, to_slot)
             other = SlotView(bag.adapter, slot, bag.endpoint_id())
         elif area in ("grid", "input", "result"):
             if area == "grid":
@@ -3481,7 +3490,6 @@ class StorageService(NetworkService):
             if mode != "quick" and area in ("bag", "grid", "input", "result"):
                 # The two physical slots have readable before/after images. Journal
                 # the cursor before changing the other owner, including ordinary pickups.
-                from ...common.item_codec import item_dict_from_key
                 capacity = target.probe_space(resource, count)
                 moved = min(count, capacity or 0)
                 if moved <= 0:
@@ -3513,6 +3521,62 @@ class StorageService(NetworkService):
             result.payload["key"] = (held if putting else key).to_dict()
             if grid is not None:
                 result.payload["device_revision"] = grid.revision
+        return result
+
+    def _collect_stack(self, command, bag, cursor, view, key, to_slot):
+        # type: (object, object, object, dict, ResourceKey, bool) -> CommandResult
+        """Collect exact matches on the journalled cursor, then land a Pocket stack in its slot."""
+        owner = command.source.player_id
+        slot = view["slot"]
+        initial = cursor.snapshot()["count"]
+        limit = bag.adapter.stack_limit_of(key) - (view["count"] if to_slot else 0)
+        count = initial
+        sources = [i for i in range(bag.adapter.slot_count()) if i != slot]
+        if not to_slot:
+            sources.insert(0, slot)
+        taken_slots = []
+        result = CommandResult.ok(command.request_id)
+        for source in sources:
+            if count >= limit:
+                break
+            data = bag.adapter.read_slot(source)
+            if not data or not data.get("count") or item_key_from_dict(data) != key:
+                continue
+            moved = min(data["count"], limit - count)
+            after = dict(data, count=data["count"] - moved) if moved < data["count"] else None
+            if not cursor.replace_pair(bag.adapter, source, "bag", owner, after,
+                                       item_dict_from_key(key, count + moved)):
+                result = self._reject(command, Reason.CONTAINER_UNCERTAIN, "背包补叠尚待核对")
+                break
+            count += moved
+            taken_slots.append(source)
+
+        network_moved = 0
+        if result.is_applied() and count < limit:
+            network = NetworkEndpoint(self, self._network_id())
+            target = ContainerEndpoint(cursor, "cursor:%s" % owner)
+            request = TransferRequest(self._slot_operation_id(command), network.endpoint_id(),
+                                      target.endpoint_id(), key, limit - count,
+                                      command.topology_version, owner_id=owner, origin=ORIGIN_INTERNAL)
+            receipt = self.transfer().commit(request, network, target)
+            network_moved = receipt.moved
+            result = self._receipt_result(command, receipt, "slot_click")
+            if taken_slots and not result.is_applied() and receipt.status != TransferStatus.UNCERTAIN:
+                result = CommandResult.partial(command.request_id, result.payload, result.reasons)
+        collected = cursor.snapshot()["count"]
+        if to_slot and result.is_applied() and collected:
+            # An interrupted landing stays with the persistent cursor until reconciliation.
+            current = bag.adapter.read_slot(slot)
+            landing = view["count"] + collected
+            if (not current or current.get("count") != view["count"]
+                    or item_key_from_dict(current) != key
+                    or not cursor.replace_pair(bag.adapter, slot, "bag", owner,
+                                               item_dict_from_key(key, landing), None)):
+                result = self._reject(command, Reason.CONTAINER_UNCERTAIN, "背包补叠落点尚待核对")
+        if to_slot and not result.is_applied() and collected:
+            cursor.return_to_player(bag.adapter)
+        result.payload.update(cursor=cursor.snapshot(), key=key.to_dict(), bag_after=bag.slot_view(slot),
+                              bag_slots=taken_slots, network_moved=network_moved)
         return result
 
     @staticmethod

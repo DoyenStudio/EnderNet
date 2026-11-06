@@ -8,11 +8,13 @@
         "$item_select_button": "#EnderNetTerminal.backpack_click",
         "$slot_mappings": [
             {
+                "button_up_right_of_first_refusal": true,
                 "from_button_id": "button.menu_select",
                 "to_button_id": "$item_select_button",
                 "mapping_type": "pressed"
             },
             {
+                "button_up_right_of_first_refusal": true,
                 "from_button_id": "button.menu_secondary_select",
                 "to_button_id": "#EnderNetTerminal.secondary",
                 "mapping_type": "pressed"
@@ -33,11 +35,13 @@
         "$item_select_button": "#EnderNetTerminal.hotbar_click",
         "$slot_mappings": [
             {
+                "button_up_right_of_first_refusal": true,
                 "from_button_id": "button.menu_select",
                 "to_button_id": "$item_select_button",
                 "mapping_type": "pressed"
             },
             {
+                "button_up_right_of_first_refusal": true,
                 "from_button_id": "button.menu_secondary_select",
                 "to_button_id": "#EnderNetTerminal.secondary",
                 "mapping_type": "pressed"

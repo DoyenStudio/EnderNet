@@ -511,6 +511,42 @@
             "#item_id_aux": 131072
         }
     },
+    "cursor_host": {
+        "type": "input_panel",
+        "size": [1, 1],
+        "anchor_from": "top_left",
+        "anchor_to": "top_left",
+        "follows_cursor": true,
+        "always_handle_pointer": true,
+        "consume_hover_events": false,
+        "visible": false,
+        "layer": 80,
+        "controls": [
+            {
+                "cursor_item@endernet_container_common.flying_item_renderer": {
+                    "anchor_from": "center",
+                    "anchor_to": "center",
+                    "layer": 1,
+                    "visible": false
+                }
+            },
+            {
+                "cursor_count": {
+                    "type": "label",
+                    "anchor_from": "center",
+                    "anchor_to": "top_left",
+                    "offset": [-6, 1],
+                    "size": [16, 9],
+                    "text_alignment": "right",
+                    "font_size": "small",
+                    "shadow": true,
+                    "layer": 2,
+                    "visible": false,
+                    "text": ""
+                }
+            }
+        ]
+    },
     "flying_item_renderer": {
         "type": "custom",
         "renderer": "inventory_item_renderer",

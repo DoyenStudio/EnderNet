@@ -645,6 +645,24 @@ class TestCraftState(CraftingFixture):
 class TestGridBindings(CraftingFixture):
     """九宫格与产物槽的绑定：名字、集合、取值。"""
 
+    def test_drag_rebalances_the_grid_preview_against_real_cells(self):
+        self.state(craft_slots((0, STONE, 62), (2, SAND, 3)))
+        self.list_view()
+        self.client.cursor = {"key": STONE.to_dict(), "count": 9, "revision": 7}
+        router = self.panel.slot_input
+        router.desktop = True
+        router.press("left", ("grid", 0), (10, 10))
+        for index in (1, 2, 3):
+            router.visit(("grid", index))
+        self.assertEqual([self.panel.craft_grid_item_count(i) for i in range(4)],
+                         ["64", "3", "3", "3"])
+        self.assertEqual(self.panel.craft_grid_item_id_aux(1), stack_size.id_aux(STONE.name))
+        self.assertEqual(self.panel.craft_grid_item_id_aux(2), stack_size.id_aux(SAND.name))
+        self.assertEqual(router.drag["remainder"], 1)
+        self.assertEqual(self.craft.cell(0)["count"], 62)
+        self.assertIsNone(self.craft.cell(1))
+        self.assertEqual(self.commands(), [])
+
     def test_the_grid_bindings_are_registered_under_their_own_collection(self):
         for flag, name in (
             (BinderStub.BF_BindBool, "grid_visible"),

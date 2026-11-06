@@ -437,6 +437,25 @@ class TestCellAccessors(TemplateFixture):
 class TestTwoWayModel(TemplateFixture):
     """交接第 4 节的双向模型，逐条钉住。"""
 
+    def test_drag_copies_editable_config_cells_without_sharing_the_physical_stack(self):
+        self.state(source=((0, STICK, 4),))
+        self.select_network()
+        self.engine_backpack()
+        self.client.cursor = {"key": STONE.to_dict(), "count": 9, "revision": 7}
+        router = self.panel.slot_input
+        router.desktop = True
+        router.press("left", (SURFACE_SOURCE, 0), (10, 10))
+        for target in ((SURFACE_SOURCE, 1), (SURFACE_OUTPUTS, 1), ("bag", 0), ("bag", 1)):
+            router.visit(target)
+        for index in (0, 1):
+            self.assertEqual(self.panel.source_item_count(index), "9")
+            self.assertEqual(self.panel.source_item_id_aux(index), stack_size.id_aux(STONE.name))
+            self.assertEqual(self.panel.backpack_item_count(index), "4")
+        self.assertEqual(self.panel.outputs_item_id_aux(1), 0)
+        self.assertEqual(router.drag["remainder"], 1)
+        self.assertEqual(self.view.stamps, [])
+        self.assertEqual(self.view.cell(SURFACE_SOURCE, 0)["name"], STICK.name)
+
     def select_network(self, stored=40, reserved=0, has_pattern=False):
         view = terminal_panel.TerminalListView(
             self.panel, cache=TerminalCache(client=self.client),

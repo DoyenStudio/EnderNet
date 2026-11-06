@@ -345,7 +345,7 @@ class TemplateView(object):
 
     def id_aux(self, surface, index):
         # type: (str, object) -> int
-        cell = self.cell(surface, index)
+        cell = self.screen.slot_input.preview_cell(surface, index) or self.cell(surface, index)
         if cell is None or not cell["name"]:
             return 0
         return stack_size.id_aux(cell["name"], cell.get("aux") or 0)
@@ -353,7 +353,7 @@ class TemplateView(object):
     def count_text(self, surface, index):
         # type: (str, object) -> str
         """数量标签。**1 留空**（同终端列表与背包）：满屏的「1」只是噪声。"""
-        cell = self.cell(surface, index)
+        cell = self.screen.slot_input.preview_cell(surface, index) or self.cell(surface, index)
         if cell is None or cell["count"] <= 1:
             return ""
         return str(cell["count"])
@@ -794,6 +794,7 @@ class TemplateView(object):
             self.stamp_request = None
             if result.get("status") != STATUS_OK:
                 self.stamps = []
+                self.screen.slot_input.settling_drag = None
             self.stamp_revision = (payload.get("state") or {}).get("revision", self.revision)
         if flight and result.get("status") == STATUS_OK and getattr(self.screen, "fly", None):
             slots = payload.get("bag_slots") or ()

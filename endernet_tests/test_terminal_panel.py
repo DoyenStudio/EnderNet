@@ -1510,10 +1510,13 @@ class TestBackpackExchange(PanelFixture):
 
     # -- 不该发命令的几种情形 ------------------------------------------
 
-    def test_clicking_the_same_slot_cancels_instead_of_swapping(self):
+    def test_slow_second_tap_on_the_same_slot_cancels(self):
         self.engine_backpack((9, "minecraft:stone", 5))
+        self.client.cursor = {"key": None, "count": 0, "revision": 7}
+        self.panel._clock = lambda: 1.0
         self.click(0)
         before = len(self.commands())
+        self.panel._clock = lambda: 2.0
         self.click(0)
         self.assertEqual(len(self.commands()), before)
         self.assertIsNone(self.backpack.selected)
@@ -1889,32 +1892,114 @@ class TestQuickStore(PanelFixture):
         self.assertEqual(self.in_flight(), set())
 
 
+class TestDesktopDoubleClick(PanelFixture):
+    def setUp(self):
+        super().setUp()
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        self.engine_backpack((9, STONE.name, 4), (10, STONE.name, 1))
+        self.router = self.panel.slot_input
+        self.router.desktop = True
+        self.client.cursor = {"key": None, "count": 0, "revision": 1}
+        input_patch = patch.object(terminal_input, "input_api")
+        self.addCleanup(input_patch.stop)
+        input_patch.start().return_value.GetFocusPos.return_value = (10, 10)
+        self.panel.fly = RecordingAnimator()
+        self.panel._clock = Mock(return_value=1)
+
+    def left(self, index=0):
+        self.panel.OnBackpackClick({"#collection_index": index})
+
+    def pickup_receipt(self):
+        result = self.result(self.take_command()["request_id"])
+        result["payload"] = {"cursor": {"key": STONE.to_dict(), "revision": 3, "count": 4},
+                             "key": STONE.to_dict(), "bag_after": {"canonical": "", "version": 8}}
+        self.router.settle(result)
+
+    def assert_collect(self):
+        second = self.take_command()
+        self.assertEqual(second["config"], {"gesture": "collect", "fingerprint": "", "revision": 3})
+        self.assertEqual((second["key"], second["slot"], second["slot_version"]), (STONE.to_dict(), 9, 8))
+
+    def test_second_click_queues_behind_pickup_and_uses_its_confirmed_empty_slot(self):
+        self.left()
+        self.left()
+        self.assertEqual(len(self.commands()), 1)
+        self.pickup_receipt()
+        self.router.dispatch()
+        self.assert_collect()
+
+    def test_second_click_after_receipt_can_precede_inventory_refresh(self):
+        self.left()
+        self.pickup_receipt()
+        self.clear_engine(9)
+        self.left()
+        self.assert_collect()
+
+    def test_second_click_can_collect_after_first_was_unable_to_add_to_a_full_stack(self):
+        self.client.cursor = {"key": STONE.to_dict(), "count": 3, "revision": 1}
+        self.put_engine(9, STONE.name, 64)
+        self.left()
+        self.left()
+        failure = self.rejected(self.take_command()["request_id"])
+        failure["reasons"] = [{"code": "no_capacity"}]
+        self.router.settle(failure)
+        self.router.dispatch()
+        self.assertEqual(self.take_command()["config"]["gesture"], "collect")
+
+    def test_slow_clicks_and_clicks_on_another_stack_stay_normal(self):
+        self.left()
+        self.pickup_receipt()
+        self.panel._clock.return_value += 1
+        self.left()
+        self.assertEqual(self.take_command()["config"]["gesture"], "left")
+        self.pickup_receipt()
+        self.left(1)
+        self.assertEqual(self.take_command()["config"]["gesture"], "left")
+
+
 class TestDesktopDistribution(PanelFixture):
-    def test_held_icon_center_and_flight_endpoint_follow_the_mouse(self):
+    def test_native_cursor_host_tracks_even_with_an_empty_hand(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
         router = self.panel.slot_input
-        router.desktop = True
-        self.client.cursor = {"key": STONE.to_dict(), "count": 2, "revision": 1}
-        router.cursor_icon, router.cursor_count = Mock(), Mock()
-        origin, api = Mock(), Mock()
-        origin.GetGlobalPosition.return_value = (40, 17)
+        host, icon, count, api = Mock(), Mock(), Mock(), Mock()
+        controls = {"/cursor_host": host, "/cursor_host/cursor_item": icon,
+                    "/cursor_host/cursor_count": count}
         api.GetToggleMode.return_value = 0
-        api.GetFocusPos.return_value = (100.5, 90)
         with patch.object(terminal_input, "input_api", return_value=api), patch.object(
-                slot_layout, "control", return_value=origin), patch.object(router, "update_info"):
+                slot_layout, "control", side_effect=lambda screen, path: controls[path]), patch.object(router, "update_info"):
             router.tick()
-        router.cursor_icon.SetPosition.assert_called_once_with((52.5, 65))
-        router.cursor_count.SetPosition.assert_called_once_with((54.5, 74))
-        flight_rect = terminal_input.cursor_item_rect(api.GetFocusPos())
+            self.client.cursor = {"key": STONE.to_dict(), "count": 2, "revision": 1}
+            router.tick()
+            icon.SetVisible.assert_called_with(True)
+            count.asLabel().SetText.assert_called_with("2")
+            count.SetVisible.assert_called_with(True)
+            self.client.cursor = None
+            router.tick()
+            icon.SetVisible.assert_called_with(False)
+            count.SetVisible.assert_called_with(False)
+            host.SetVisible.assert_called_once_with(True)
+            api.GetToggleMode.return_value = 1
+            router.tick()
+            host.SetVisible.assert_called_with(False)
+        api.GetFocusPos.assert_not_called()
+        for control in (host, icon, count):
+            control.SetPosition.assert_not_called()
+
+    def test_flight_endpoint_is_centered_on_mouse(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        flight_rect = terminal_input.cursor_item_rect((100.5, 90))
         self.assertEqual(flying_item.FlyingItemAnimator._corner(flight_rect, (40, 17)), (52.5, 65))
 
     def test_dragging_one_item_across_three_slots_only_submits_one_move(self):
         router = self.panel.slot_input
         router.desktop = True
         self.client.cursor = {"key": STONE.to_dict(), "count": 1, "revision": 7}
-        router.drag = {"slots": [("bag", 0), ("bag", 1)], "button": "right",
-                       "target": ("bag", 0), "shift": False, "space": False}
+        router.press("right", ("bag", 0), (10, 10))
+        router.visit(("bag", 1))
         with patch.object(router, "click") as clicked:
+            self.assertEqual(router.drag["remainder"], 0)
+            self.assertIsNone(router.preview_cell("bag", 1))
+            self.assertEqual(self.panel.backpack_item_id_aux(0), stack_size.id_aux(STONE.name))
             router.finish("bag", 2, "right")
             clicked.assert_called_once_with("bag", 0, "place", 1)
 
@@ -1922,12 +2007,135 @@ class TestDesktopDistribution(PanelFixture):
         router = self.panel.slot_input
         router.desktop = True
         self.client.cursor = {"key": STONE.to_dict(), "count": 5, "revision": 7}
-        router.drag = {"slots": [("bag", 0)], "button": "left", "target": ("bag", 0),
-                       "shift": False, "space": False}
+        router.press("left", ("bag", 0), (10, 10))
         with patch.object(router, "click") as clicked:
             router.finish("bag", 1, "left")
             self.assertEqual([call.args for call in clicked.call_args_list],
                              [("bag", 0, "place", 2), ("bag", 1, "place", 2)])
+
+    def test_right_button_bindings_place_one_per_distinct_visited_slot(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        self.engine_backpack((9, STONE.name, 4))
+        self.client.cursor = {"key": STONE.to_dict(), "count": 7, "revision": 7}
+        router, api = self.panel.slot_input, Mock()
+        router.desktop = True
+        with patch.object(terminal_input, "input_api", return_value=api), patch.object(
+                slot_layout, "slot_at", side_effect=lambda screen, point: ("bag", point[0])), patch.object(
+                router, "click") as clicked:
+            api.GetFocusPos.return_value = (0, 10)
+            self.bind(BinderStub.BF_ButtonClickDown, "secondary", {})
+            for slot in (27, 0, 1):
+                router.visit(("bag", slot))
+            self.assertEqual(self.panel.backpack_item_count(0), "5")
+            self.assertEqual(router.drag["remainder"], 4)
+            self.assertEqual(self.panel.hotbar_item_id_aux(0), stack_size.id_aux(STONE.name))
+            self.assertEqual(self.panel.hotbar_item_count(0), "")
+            clicked.assert_not_called()
+            api.GetFocusPos.return_value = (1, 10)
+            self.bind(BinderStub.BF_ButtonClickUp, "secondary", {})
+            self.bind(BinderStub.BF_ButtonClickUp, "secondary", {})
+            self.assertEqual([call.args for call in clicked.call_args_list],
+                             [("bag", 0, "place", 1), ("bag", 27, "place", 1), ("bag", 1, "place", 1)])
+
+    def test_moving_the_mouse_rebalances_previous_slots_and_cursor_before_release(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        self.engine_backpack((9, STONE.name, 63), (10, SAND.name, 4), (11, STONE.name, 64))
+        hand = {"key": STONE.to_dict(), "count": 11, "revision": 7}
+        self.client.cursor = hand
+        router, api = self.panel.slot_input, Mock()
+        router.desktop = True
+        api.GetToggleMode.return_value = 0
+        router.cursor_icon, router.cursor_count = Mock(), Mock()
+        # Map the mock X coordinate to the UI index, including the hotbar.
+        with patch.object(terminal_input, "input_api", return_value=api), patch.object(
+                slot_layout, "slot_at", side_effect=lambda screen, point: ("bag", point[0])), patch.object(
+                router, "update_info"), patch.object(router, "click") as clicked:
+            router.press("left", ("bag", 0), (0, 10))
+            for slot in (1, 2, 27):
+                api.GetFocusPos.return_value = (slot, 10)
+                router.tick()
+            self.assertEqual(self.panel.backpack_item_count(0), "64")
+            self.assertEqual(self.panel.hotbar_item_count(0), "5")
+            self.assertEqual(self.panel.backpack_item_id_aux(1), stack_size.id_aux(SAND.name))
+            router.cursor_count.asLabel().SetText.assert_called_with("5")
+            for slot in (3, 27, 3):
+                api.GetFocusPos.return_value = (slot, 10)
+                router.tick()
+            self.assertEqual(self.panel.hotbar_item_count(0), "3")
+            self.assertEqual(self.panel.backpack_item_count(3), "3")
+            router.cursor_count.asLabel().SetText.assert_called_with("4")
+            self.assertEqual(self.client.cursor, hand)
+            self.assertEqual(self.backpack.entry(0).count(), 63)
+            clicked.assert_not_called()
+            router.primary("bag", 0)
+            router.primary("bag", 3)
+            self.assertEqual([call.args for call in clicked.call_args_list],
+                             [("bag", 0, "place", 1), ("bag", 27, "place", 3), ("bag", 3, "place", 3)])
+
+    def test_releasing_off_grid_or_opening_a_modal_discards_the_preview(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        self.client.cursor = {"key": STONE.to_dict(), "count": 6, "revision": 7}
+        router = self.panel.slot_input
+        router.desktop = True
+        with patch.object(terminal_input, "input_api", return_value=Mock()), patch.object(
+                slot_layout, "slot_at", return_value=None), patch.object(router, "click") as clicked:
+            for button in ("left", "right"):
+                router.press(button, ("bag", 0), (10, 10))
+                router.visit(("bag", 1))
+                if button == "left":
+                    router.primary("bag", 0)
+                else:
+                    router.mapped_click("right", {})
+                self.assertIsNone(router.drag)
+                router.finish("bag", 0, button)
+            # The original button can receive the Up even when no second slot was visited.
+            router.press("left", ("bag", 0), (10, 10))
+            router.primary("bag", 0)
+            self.assertIsNone(router.drag)
+            router.press("left", ("bag", 0), (10, 10))
+            router.visit(("bag", 1))
+            with patch.object(self.panel, "top_modal", return_value=True):
+                router.primary("bag", 1)
+            self.assertIsNone(router.drag)
+            self.assertEqual(self.panel.backpack_item_id_aux(0), 0)
+            clicked.assert_not_called()
+
+    def test_committed_layout_stays_visible_until_the_queue_settles_or_is_rejected(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        self.engine_backpack()
+        router = self.panel.slot_input
+        router.desktop = True
+        self.panel.fly = RecordingAnimator()
+        api = Mock()
+        api.GetFocusPos.return_value = (10, 10)
+        with patch.object(terminal_input, "input_api", return_value=api):
+            for rejected in (False, True):
+                self.client.cursor = {"key": STONE.to_dict(), "count": 6, "revision": 7}
+                router.press("left", ("bag", 0), (10, 10))
+                router.visit(("bag", 1))
+                router.finish("bag", 1, "left")
+                self.assertIsNone(router.drag)
+                self.assertEqual(self.panel.backpack_item_count(1), "3")
+                request = self.take_command()["request_id"]
+                if rejected:
+                    router.settle(self.rejected(request))
+                else:
+                    for slot in (0, 1):
+                        self.put_engine(9 + slot, STONE.name, 3)
+                        result = self.result(self.take_command()["request_id"])
+                        result["payload"] = {"moved": 3, "putting": True, "key": STONE.to_dict(),
+                                             "cursor": {"key": STONE.to_dict() if not slot else None,
+                                                        "revision": 8 + slot, "count": 3 if not slot else 0}}
+                        router.settle(result)
+                        router.retire_distribution()
+                        if not slot:
+                            self.assertEqual(self.panel.backpack_item_count(1), "3")
+                            router.dispatch()
+                self.assertIsNone(router.settling_drag)
+                self.assertEqual(self.panel.backpack_item_count(1), "" if rejected else "3")
+                self.clear_engine(9)
+                self.clear_engine(10)
+                self.backpack.replace_from_engine()
 
 
 class TestTransferAnimation(PanelFixture):
@@ -2678,6 +2886,44 @@ class TestLongPressSplit(PanelFixture):
         self.press(0, hold=terminal_panel.LONG_PRESS_SECONDS - 0.01)
         self.assertEqual(self.commands(), [])
         self.assertEqual(self.backpack.selected, 0)
+
+    def test_pocket_double_tap_gathers_into_tapped_hotbar_slot(self):
+        self.engine_backpack((0, "minecraft:stone", 5))
+        self.client.cursor = {"key": None, "count": 0, "revision": 3}
+        params = {"#collection_index": 0}
+        for pause in (0.0, 0.1):
+            self.now[0] += pause
+            self.bind(BinderStub.BF_ButtonClickDown, "hotbar_click", params)
+            self.bind(BinderStub.BF_ButtonClickUp, "hotbar_click", params)
+        self.assertEqual(len(self.commands()), 1)
+        command = self.take_command()
+        self.assertEqual((command["action"], command["target"], command["slot"], command["slot_version"]),
+                         ("slot_click", "bag", 0, 7))
+        key = self.backpack.entry(27).key
+        self.assertEqual(command["key"], key.to_dict())
+        self.assertEqual(command["config"], {"gesture": "collect_to_slot", "revision": 3,
+                                             "fingerprint": key.canonical()})
+        self.assertIsNone(self.backpack.selected)
+        result = self.result(command["request_id"])
+        result["payload"]["cursor"] = {"key": None, "count": 0, "revision": 9}
+        self.feed(CommandResultMessage(command["request_id"], result))
+        self.view.tick()
+        self.assertEqual(self.client.cursor["revision"], 9)
+
+    def test_pocket_double_tap_does_not_override_a_second_long_press(self):
+        self.engine_backpack((9, "minecraft:stone", 30))
+        self.client.cursor = {"key": None, "count": 0, "revision": 3}
+        self.press(0, hold=0.02)
+        self.press(0, hold=self.HOLD)
+        self.assertEqual([command["action"] for command in self.commands()], ["inv_split"])
+
+    def test_other_slot_target_breaks_the_double_tap(self):
+        self.engine_backpack((9, "minecraft:stone", 30))
+        self.client.cursor = {"key": None, "count": 0, "revision": 3}
+        self.press(0, hold=0.02)
+        self.panel.slot_input.primary("network", 0)
+        self.press(0, hold=0.02)
+        self.assertFalse(self.commands())
 
     def test_a_press_that_ends_on_another_slot_does_not_arm_the_next_click(self):
         """**长按只该影响那一下。**

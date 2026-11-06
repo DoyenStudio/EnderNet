@@ -526,12 +526,7 @@
                 }
             },
             {
-                "cursor_item@endernet_container_common.flying_item_renderer": {
-                    "visible": false,
-                    "layer": 80,
-                    "anchor_from": "top_left",
-                    "anchor_to": "top_left"
-                }
+                "cursor_host@endernet_container_common.cursor_host": {}
             },
             {
                 "slot_info": {
@@ -545,23 +540,6 @@
                     ],
                     "shadow": true,
                     "layer": 83,
-                    "text": ""
-                }
-            },
-            {
-                "cursor_count": {
-                    "type": "label",
-                    "size": [
-                        16,
-                        9
-                    ],
-                    "text_alignment": "right",
-                    "anchor_from": "top_left",
-                    "anchor_to": "top_left",
-                    "visible": false,
-                    "shadow": true,
-                    "font_size": "small",
-                    "layer": 81,
                     "text": ""
                 }
             },

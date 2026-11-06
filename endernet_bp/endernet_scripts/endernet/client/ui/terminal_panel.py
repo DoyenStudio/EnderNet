@@ -46,7 +46,7 @@ except ImportError:
     # 是同一手法。
     OnKeyPressInGame = None
 from . import flying_item, order_preview_window, slot_layout, stack_size
-from .terminal_input import TerminalInput
+from .terminal_input import DOUBLE_CLICK_SECONDS, TerminalInput
 from .number_set_window import show_number_set_window
 from .widgets import device_status
 from .backpack_model import (
@@ -577,6 +577,9 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
 
     def _slot_item_id_aux(self, segment, index):
         # type: (tuple, object) -> int
+        preview = self.slot_input.preview_cell("bag", self._slot_index(segment, index))
+        if preview:
+            return stack_size.id_aux(preview["name"], preview["aux"])
         entry = self._slot_entry(segment, index)
         if entry is None:
             return 0
@@ -591,6 +594,9 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         # type: (tuple, object) -> str
         """堆叠数标签。**1 与 0 都留空**（同上半屏的 `get_item_count`）：
         满屏的「1」只是噪声。"""
+        preview = self.slot_input.preview_cell("bag", self._slot_index(segment, index))
+        if preview:
+            return str(preview["count"]) if preview["count"] > 1 else ""
         entry = self._slot_entry(segment, index)
         count = entry.count() if entry is not None else 0
         return str(count) if count > 1 else ""
@@ -624,6 +630,8 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         return self.backpack.snapshot()
 
     def _click(self, params, start, count):
+        previous_tap = self.slot_input.pocket_tap
+        self.slot_input.pocket_tap = None
         # Do not reinterpret an absent or out-of-range index as slot zero.
         index = params.get("#collection_index")
         if (isinstance(index, bool) or not isinstance(index, INTEGER_TYPES)
@@ -688,7 +696,17 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
             # 想的是背包内合并——两个都选中时谁优先是没有答案的，不让它发生
             # 最省事。
             self.list_view.cache.model.clear_selection()
-        self.backpack.select(ui_index)
+        revision = self.backpack.selection_revision()
+        selected = self.backpack.select(ui_index)
+        if self.list_view is None or not self.list_view.cache.client.has_session():
+            return
+        now = self._clock()
+        session_id = self.list_view.cache.client.session_id
+        if selected == ui_index:
+            self.slot_input.pocket_tap = (session_id, self.backpack.selection_revision(), now)
+        elif (previous_tap and previous_tap[:2] == (session_id, revision)
+              and 0 <= now - previous_tap[2] <= DOUBLE_CLICK_SECONDS):
+            self.list_view.collect_to_slot(ui_index)
 
     def _row_selected(self):
         # type: () -> bool
@@ -1310,6 +1328,21 @@ class TerminalListView(object):
         else:
             model.select(entry.key)
 
+    def collect_to_slot(self, ui_index):
+        # type: (int) -> None
+        client = self.cache.client
+        item = self.backpack.entry(ui_index)
+        slot = engine_slot_of(ui_index)
+        row = client.inventory_slots.get(slot)
+        if (self.closed or not client.has_session() or not client.cursor or client.cursor["key"]
+                or item is None or row is None or row["canonical"] != item.key.canonical()):
+            return
+        request_id = client.send_command(
+            "slot_click", target="bag", slot=slot, slot_version=row["slot_version"], key=item.key,
+            config={"gesture": "collect_to_slot", "fingerprint": row["canonical"],
+                    "revision": client.cursor["revision"]})
+        self._action_requests[request_id] = ("collect", self.backpack.selection_revision())
+
     def on_backpack_put(self, ui_index):
         # type: (int) -> None
         """**把选中的网络行放进这个背包槽。** 手势的另一半（对 `on_select`）。
@@ -1473,7 +1506,10 @@ class TerminalListView(object):
         client = self.cache.client
         if not client.has_session():
             return
-        self.backpack.select(ui_index)
+        if self.backpack.entry(ui_index) is None:
+            return
+        if self.backpack.selected != ui_index:
+            self.backpack.select(ui_index)
         take = self.backpack.pending_take(half=True)
         if take is None:
             return
@@ -1905,6 +1941,11 @@ class TerminalListView(object):
         if request_id not in self._action_requests:
             return
         kind, token = self._action_requests.pop(request_id)
+        if kind == "collect":
+            cursor = (result.get("payload") or {}).get("cursor")
+            client = self.cache.client
+            if cursor and (not client.cursor or cursor["revision"] >= client.cursor["revision"]):
+                client.cursor = cursor
         if kind == "row":
             # **这一条动的是网络行那一侧的选中。** 两侧的选中是互斥的
             # （见 `TerminalPanelBase._click`），所以收尾时只需要管自己这

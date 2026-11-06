@@ -6,7 +6,7 @@ from test_crafting_handlers import Fixture, PLANKS, STICK, STICK_RECIPE
 from test_containers_engine import FakePlayerPrimitives
 from endernet.common.item_codec import item_dict_from_key, item_key_from_dict
 from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers_engine import EngineInventoryProvider
+from endernet.server.adapters.containers_engine import EngineInventoryProvider, build_stack_limit
 from endernet.server.crafting.patterns import MODE_CRAFTING, PatternDefinition, PatternStack
 from endernet.server.crafting.template_terminal import encode_template_item
 
@@ -33,7 +33,7 @@ class TestTerminalCursor(Fixture):
     def setUp(self):
         super().setUp()
         self.engine = CursorPrimitives()
-        self.provider = EngineInventoryProvider(self.engine)
+        self.provider = EngineInventoryProvider(self.engine, build_stack_limit(self.engine))
         self.service.inventories = self.provider
         self.hand = self.provider.cursor_of("p1")
         self.bag = self.provider.endpoint_of("p1")
@@ -100,6 +100,54 @@ class TestTerminalCursor(Fixture):
                             "config": {"revision": self.hand.snapshot()["revision"]}}, "craft")
         self.assertTrue(result.is_applied(), result.to_dict())
         self.assertEqual(self.hand.snapshot()["key"], STICK.to_dict())
+
+    def test_collect_uses_bag_and_hotbar_before_taking_only_the_network_shortfall(self):
+        self.engine.stack_limit_value = 16
+        self.engine.slots[9] = item_dict_from_key(PLANKS, 5)
+        self.engine.slots[0] = item_dict_from_key(PLANKS, 4)
+        self.engine.slots[35] = item_dict_from_key(PLANKS, 6)
+        decorated = ResourceKey.item(PLANKS.name, custom_tips="keep separate")
+        self.engine.slots[1] = item_dict_from_key(decorated, 32)
+        before = self.service.query(PLANKS)["stored"]
+        self.ok("bag", 9, "left")
+        result = self.ok("bag", 9, "collect", PLANKS)
+        self.assertEqual((result["cursor"]["count"], result["network_moved"]), (16, 1))
+        self.assertEqual(result["bag_slots"], [0, 35])
+        self.assertEqual(self.service.query(PLANKS)["stored"], before - 1)
+        self.assertEqual(self.bag.adapter.count_of(decorated), 32)
+        self.assertEqual(self.bag.adapter.count_of(PLANKS), 0)
+
+    def test_collect_stops_at_partial_stock_and_leaves_network_reservations_intact(self):
+        before = self.service.query(PLANKS)["stored"]
+        self.service.reserve("craft-order", PLANKS, before - 2)
+        self.hand.write_slot(0, item_dict_from_key(PLANKS, 3))
+        self.engine.slots[1] = item_dict_from_key(PLANKS, 1)
+        result = self.ok("bag", 0, "collect", PLANKS)
+        self.assertEqual((result["cursor"]["count"], result["network_moved"]), (6, 2))
+        self.assertEqual(self.service.query(PLANKS)["stored"], before - 2)
+
+    def test_collect_from_full_hand_or_stale_gesture_never_changes_other_owners(self):
+        self.hand.write_slot(0, item_dict_from_key(PLANKS, 64))
+        self.engine.slots[4] = item_dict_from_key(PLANKS, 12)
+        before = self.service.query(PLANKS)["stored"]
+        self.assertFalse(self.click("bag", 3, "collect", STICK).is_applied())
+        self.assertFalse(self.click("bag", 3, "collect", PLANKS, 0).is_applied())
+        result = self.ok("bag", 3, "collect", PLANKS)
+        self.assertEqual((result["bag_slots"], result["network_moved"]), ([], 0))
+        self.assertEqual(self.hand.snapshot()["count"], 64)
+        self.assertEqual(self.bag.adapter.count_of(PLANKS), 12)
+        self.assertEqual(self.service.query(PLANKS)["stored"], before)
+
+    def test_collect_waits_for_ambiguous_slot_before_touching_the_network(self):
+        self.hand.write_slot(0, item_dict_from_key(PLANKS, 5))
+        self.engine.slots[4] = item_dict_from_key(PLANKS, 12)
+        self.engine.set_player_item = lambda owner, slot, data: True
+        before = self.service.query(PLANKS)["stored"]
+        self.assertFalse(self.click("bag", 0, "collect", PLANKS).is_applied())
+        self.assertFalse(self.click("bag", 0, "collect", PLANKS).is_applied())
+        self.assertEqual(self.engine.record["pending"]["slot"], 4)
+        self.assertEqual(self.hand.snapshot()["count"], 5)
+        self.assertEqual(self.service.query(PLANKS)["stored"], before)
 
     def test_full_bag_drops_once_even_if_closed_again(self):
         self.hand.write_slot(0, item_dict_from_key(STICK, 7))
@@ -220,6 +268,58 @@ class TestTerminalCursor(Fixture):
         payload = self.ok("network", 0, "quick", PLANKS)
         self.assertEqual(payload["bag_slots"], [0])
         self.assertGreater(self.engine.slots[0]["count"], 0)
+        self.assertEqual(self.hand.snapshot()["count"], 0)
+
+    def test_pocket_collect_uses_matching_bag_items_before_network_and_fills_original_slot(self):
+        self.engine.stack_limit_value = 16
+        self.engine.slots[9] = item_dict_from_key(PLANKS, 10)
+        self.engine.slots[0] = item_dict_from_key(PLANKS, 3)
+        different = ResourceKey.item(PLANKS.name, custom_tips="other")
+        self.engine.slots[1] = item_dict_from_key(different, 12)
+        stock = self.service.query(PLANKS)["stored"]
+        receipt = self.ok("bag", 9, "collect_to_slot", PLANKS)
+        self.assertEqual(self.engine.slots[9]["count"], 16)
+        self.assertIsNone(self.engine.slots[0])
+        self.assertEqual(self.bag.adapter.count_of(different), 12)
+        self.assertEqual(self.service.query(PLANKS)["stored"], stock - 3)
+        self.assertEqual(receipt["cursor"]["count"], 0)
+        self.ok("bag", 9, "collect_to_slot", PLANKS)
+        self.assertEqual(self.service.query(PLANKS)["stored"], stock - 3)
+
+    def test_pocket_collect_lands_partial_supply_and_preserves_existing_hand(self):
+        self.engine.slots[9] = item_dict_from_key(STICK, 3)
+        self.engine.slots[0] = item_dict_from_key(STICK, 4)
+        self.hand.write_slot(0, item_dict_from_key(PLANKS, 2))
+        self.assertFalse(self.click("bag", 9, "collect_to_slot", STICK).is_applied())
+        self.assertEqual(self.hand.snapshot()["count"], 2)
+        self.hand.write_slot(0, None)
+        self.ok("bag", 9, "collect_to_slot", STICK)
+        self.assertEqual(self.engine.slots[9]["count"], 7)
+        self.assertIsNone(self.engine.slots[0])
+        self.assertEqual(self.hand.snapshot()["count"], 0)
+
+    def test_pocket_collect_deferred_landing_cannot_be_applied_twice(self):
+        self.engine.slots[9] = item_dict_from_key(STICK, 3)
+        self.engine.slots[0] = item_dict_from_key(STICK, 4)
+        write = self.engine.set_player_item
+        delayed = []
+
+        def defer_target(owner, slot, data):
+            if slot == 9:
+                delayed.append(data)
+                return True
+            return write(owner, slot, data)
+
+        self.engine.set_player_item = defer_target
+        original_revision = self.hand.snapshot()["revision"]
+        self.assertFalse(self.click("bag", 9, "collect_to_slot", STICK).is_applied())
+        self.assertFalse(self.click("bag", 9, "collect_to_slot", STICK, original_revision).is_applied())
+        self.assertEqual(len(delayed), 1)
+        write("p1", 9, delayed[0])
+        self.assertTrue(self.hand.return_to_player(self.bag.adapter))
+        self.assertFalse(self.click("bag", 9, "collect_to_slot", STICK, original_revision).is_applied())
+        self.assertEqual(self.engine.slots[9]["count"], 7)
+        self.assertEqual(self.bag.adapter.count_of(STICK), 7)
         self.assertEqual(self.hand.snapshot()["count"], 0)
 
     def test_pocket_move_uses_grid_revision_and_original_bag_slot(self):

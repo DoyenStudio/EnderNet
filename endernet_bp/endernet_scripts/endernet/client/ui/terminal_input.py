@@ -3,9 +3,12 @@
 from collections import deque
 
 from . import slot_layout
-from .backpack_model import engine_slot_of
+from .backpack_model import INTEGER_TYPES, engine_slot_of
 from .flying_item import ICON_SIZE
 from ...common.resource_key import ResourceKey
+
+
+DOUBLE_CLICK_SECONDS = 0.25
 
 
 def input_api():
@@ -33,8 +36,12 @@ class TerminalInput(object):
         self.pending = deque()
         self.active = None
         self.drag = None
+        self.settling_drag = None
+        self.finished_drag_button = None
         self.editing = False
+        self.pocket_tap = None
         self.last_quick = None
+        self.last_left = None
         self.cursor_count = None
         self.cursor_icon = None
         self.cursor_signature = None
@@ -44,9 +51,12 @@ class TerminalInput(object):
 
     def reset(self):
         self.pending.clear()
-        self.active = self.drag = None
+        self.active = self.drag = self.settling_drag = None
+        self.finished_drag_button = None
         self.shift = self.space = self.editing = False
+        self.pocket_tap = None
         self.last_quick = None
+        self.last_left = None
         if self.cursor_icon is not None:
             self.cursor_icon.SetVisible(False)
         if self.cursor_count is not None:
@@ -98,7 +108,10 @@ class TerminalInput(object):
         name, count = None, 0
         if target is not None:
             area, index = target
-            if area == "network" and view.has_item(index):
+            preview = self.preview_cell(area, index)
+            if preview:
+                name, count = preview["name"], preview["count"]
+            elif area == "network" and view.has_item(index):
                 row = view.rows[index]
                 name, count = row.name, row.stored
             elif area == "bag":
@@ -124,9 +137,11 @@ class TerminalInput(object):
         self.show_info(u"%s × %d" % (name, count) if name else "")
 
     def tick(self):
+        # Only suppress duplicate Up callbacks for the release frame.
+        self.finished_drag_button = None
         view = self.screen.list_view
         if view is None or not view.cache.client.has_session():
-            if self.active or self.cursor_signature or self.pending or self.drag:
+            if self.active or self.cursor_signature or self.pending or self.drag or self.settling_drag:
                 self.reset()
             return
         api = input_api()
@@ -138,38 +153,40 @@ class TerminalInput(object):
             self.screen.backpack.clear_selection()
             view.cache.model.clear_selection()
             self.desktop = desktop
+            host = slot_layout.control(self.screen, "/cursor_host")
+            if host is not None:
+                host.SetVisible(desktop)
         if api is not None:
             self.update_info(api, view)
         if not desktop:
             return
         hand = getattr(view.cache.client, "cursor", None)
+        if self.drag and self.screen.top_modal():
+            self.end_drag()
         if self.drag:
             point = api.GetFocusPos()
             if point != self.drag["point"]:
                 self.drag["point"] = point
                 self.visit(slot_layout.slot_at(self.screen, point))
-        if hand and hand["key"] and not self.screen.top_modal():
-            if self.cursor_icon is None:
-                self.cursor_icon = slot_layout.control(self.screen, "/cursor_item")
-            origin = slot_layout.control(self.screen, "")
-            if self.cursor_icon is not None and origin is not None:
-                rect = cursor_item_rect(api.GetFocusPos())
-                if rect is not None:
-                    ox, oy = origin.GetGlobalPosition()
-                    left, top = rect[0] - ox, rect[1] - oy
-                    self.cursor_icon.SetPosition((left, top))
-                    if self.cursor_count is None:
-                        self.cursor_count = slot_layout.control(self.screen, "/cursor_count")
-                    if self.cursor_count is not None:
-                        self.cursor_count.SetPosition((left + 2, top + 9))
-                    if self.cursor_signature != hand["revision"]:
-                        key = ResourceKey.from_dict(hand["key"])
-                        self.cursor_icon.asItemRenderer().SetUiItem(key.name, key.aux or 0)
-                        self.cursor_icon.SetVisible(True)
-                        if self.cursor_count is not None:
-                            self.cursor_count.asLabel().SetText(str(hand["count"]))
-                            self.cursor_count.SetVisible(hand["count"] > 1)
-                        self.cursor_signature = hand["revision"]
+            if self.drag["preview"] and self.drag["revision"] != (hand or {}).get("revision"):
+                self.end_drag()
+        self.retire_distribution()
+        distribution = self.drag or self.settling_drag
+        count = distribution["remainder"] if distribution and distribution["preview"] else (hand or {}).get("count", 0)
+        if hand and hand["key"] and count and not self.screen.top_modal():
+            signature = (hand["revision"], count)
+            if self.cursor_signature != signature:
+                if self.cursor_icon is None:
+                    self.cursor_icon = slot_layout.control(self.screen, "/cursor_host/cursor_item")
+                if self.cursor_count is None:
+                    self.cursor_count = slot_layout.control(self.screen, "/cursor_host/cursor_count")
+                if self.cursor_icon is not None and self.cursor_count is not None:
+                    key = ResourceKey.from_dict(hand["key"])
+                    self.cursor_icon.asItemRenderer().SetUiItem(key.name, key.aux or 0)
+                    self.cursor_icon.SetVisible(True)
+                    self.cursor_count.asLabel().SetText(str(count))
+                    self.cursor_count.SetVisible(count > 1)
+                    self.cursor_signature = signature
         elif self.cursor_signature is not None:
             self.cursor_icon.SetVisible(False)
             if self.cursor_count is not None:
@@ -179,6 +196,7 @@ class TerminalInput(object):
 
     def mapped_click(self, button, params):
         if not self.desktop or self.screen.top_modal():
+            self.end_drag()
             return
         point = input_api().GetFocusPos()
         target = slot_layout.slot_at(self.screen, point)
@@ -187,12 +205,14 @@ class TerminalInput(object):
             if button == "quick" and area == "bag":
                 now = self.screen._clock()
                 item = self.screen.backpack.entry(index)
-                if self.last_quick and self.last_quick[0] == index and now - self.last_quick[1] <= 0.25:
+                if self.last_quick and self.last_quick[0] == index and now - self.last_quick[1] <= DOUBLE_CLICK_SECONDS:
                     self.quick_region(area, index, self.last_quick[2])
                     self.last_quick = None
                     return
                 self.last_quick = (index, now, item.key) if item else None
             self.finish(area, index, button)
+        else:
+            self.end_drag()
 
     def wheel(self, direction):
         if self.desktop and self.shift and not self.editing and not self.screen.top_modal():
@@ -204,6 +224,83 @@ class TerminalInput(object):
         if target is not None and target[0] in ("bag", "grid", "source", "outputs"):
             if target not in self.drag["slots"]:
                 self.drag["slots"].append(target)
+                self.plan_distribution()
+
+    def plan_distribution(self):
+        # type: () -> None
+        """Rebuild both the rendered totals and the ordered release commands."""
+        drag = self.drag
+        drag["placements"], drag["preview"] = [], {}
+        hand = self.screen.list_view.cache.client.cursor
+        if (len(drag["slots"]) < 2 or not hand or not hand["key"]
+                or drag["revision"] != hand["revision"] or self.active or self.pending):
+            return
+        key = ResourceKey.from_dict(hand["key"])
+        limit = self.screen.list_view._stack_limit(key.name)
+        eligible = []
+        physical = 0
+        for area, index in drag["slots"]:
+            existing = 0
+            if area == "bag":
+                entry = self.screen.backpack.entry(index)
+                if entry and entry.key != key:
+                    continue
+                existing = entry.count() if entry else 0
+            elif area == "grid":
+                cell = self.screen.craft.cell(index)
+                if cell and cell["canonical"] != key.canonical():
+                    continue
+                existing = cell["count"] if cell else 0
+            elif self.screen.template.locked(area, index):
+                continue
+            if area in ("bag", "grid"):
+                if existing >= limit:
+                    continue
+                physical += 1
+            eligible.append((area, index, existing))
+
+        remaining = hand["count"]
+        share = 1 if drag["button"] == "right" else max(1, remaining // max(1, physical))
+        for area, index, existing in eligible:
+            if area in ("bag", "grid"):
+                amount = min(share, remaining, limit - existing)
+                remaining -= amount
+            else:
+                # Template cells copy the configuration without consuming the cursor.
+                amount = 1 if drag["button"] == "right" else hand["count"]
+            if amount:
+                target = (area, index)
+                drag["placements"].append((area, index, amount))
+                drag["preview"][target] = {"name": key.name, "aux": key.aux,
+                                           "count": existing + amount}
+        drag["remainder"] = remaining
+
+    def preview_cell(self, area, index):
+        # type: (str, object) -> object
+        distribution = self.drag or self.settling_drag
+        if distribution and isinstance(index, INTEGER_TYPES) and not isinstance(index, bool):
+            return distribution["preview"].get((area, index))
+        return None
+
+    def retire_distribution(self):
+        # type: () -> None
+        # Keep the released layout visible while its sequential placements settle.
+        if not self.settling_drag or self.active or self.pending:
+            return
+        template = getattr(self.screen, "template", None)
+        if template and (template.stamps or template.stamp_request or template.revision < template.stamp_revision):
+            return
+        craft = getattr(self.screen, "craft", None)
+        if craft and craft.revision < self.settling_drag.get("grid_revision", -1):
+            return
+        self.screen.backpack.replace_from_engine()
+        self.settling_drag = None
+
+    def end_drag(self):
+        # type: () -> None
+        if self.drag:
+            self.finished_drag_button = self.drag["button"]
+            self.drag = None
 
     def pointer(self, button, down):
         if not self.desktop or self.screen.top_modal() or self.screen.list_view is None:
@@ -225,48 +322,34 @@ class TerminalInput(object):
         self.editing = False
         view = self.screen.list_view
         key = view.rows[target[1]].key if target and target[0] == "network" and view.has_item(target[1]) else None
-        self.drag = {"slots": [], "button": button, "point": point, "target": target, "row_key": key,
-                     "shift": self.shift, "space": self.space}
+        self.finished_drag_button = None
+        self.settling_drag = None
+        self.drag = {"slots": [], "button": button, "point": point, "start_point": point,
+                     "target": target, "row_key": key,
+                     "shift": self.shift, "space": self.space, "preview": {}, "placements": [],
+                     "revision": (view.cache.client.cursor or {}).get("revision"), "remainder": 0}
         self.visit(target)
         return True
 
     def finish(self, area, index, button):
-        drag, self.drag = self.drag, None
+        if self.finished_drag_button == button:
+            return
+        drag = self.drag
         if not drag or drag["button"] != button:
+            self.end_drag()
             self.click(area, index, button)
             return
-        self.drag = drag
         self.visit((area, index))
-        self.drag = None
-        targets = drag["slots"]
-        hand = self.screen.list_view.cache.client.cursor
-        if len(targets) > 1 and hand and hand["key"]:
-            key = ResourceKey.from_dict(hand["key"])
-            eligible = []
-            for region, slot in targets:
-                if region == "bag":
-                    item = self.screen.backpack.entry(slot)
-                    if item and (item.key != key or item.count() >= self.screen.list_view._stack_limit(key.name)):
-                        continue
-                elif region == "grid":
-                    item = self.screen.craft.cell(slot)
-                    if item and (item["canonical"] != key.canonical() or item["count"] >= self.screen.list_view._stack_limit(key.name)):
-                        continue
-                elif self.screen.template.locked(region, slot):
-                    continue
-                eligible.append((region, slot))
-            remaining = hand["count"]
-            physical = min(remaining, sum(region in ("grid", "bag") for region, _ in eligible))
-            each = 1 if button == "right" else hand["count"] // max(1, physical)
-            for region, slot in eligible:
-                if region in ("bag", "grid"):
-                    count = min(each, remaining)
-                    remaining -= count
-                else:
-                    count = 1 if button == "right" else hand["count"]
-                if count:
-                    self.click(region, slot, "place", count)
+        if len(drag["slots"]) > 1:
+            # Re-check the current slot snapshots in case another player edited the grid.
+            self.plan_distribution()
+            self.end_drag()
+            if drag["placements"]:
+                self.settling_drag = drag
+            for region, slot, amount in drag["placements"]:
+                self.click(region, slot, "place", amount)
             return
+        self.drag = None
         if drag["target"] == (area, index):
             if area == "network" and drag["row_key"] is not None:
                 view = self.screen.list_view
@@ -296,14 +379,26 @@ class TerminalInput(object):
                 self.click(area, index, "quick")
 
     def primary(self, area, index):
+        if area != "bag":
+            self.pocket_tap = None
         if self.screen.top_modal():
+            self.end_drag()
             return True
         if not self.desktop:
             return False
+        if self.drag and self.drag["button"] == "left":
+            point = input_api().GetFocusPos()
+            if point != self.drag["start_point"] or len(self.drag["slots"]) > 1:
+                target = slot_layout.slot_at(self.screen, point)
+                if target is None:
+                    self.end_drag()
+                    return True
+                area, index = target
         self.finish(area, index, "left")
         return True
 
     def click(self, area, index, button, count=None):
+        previous, self.last_left = self.last_left, None
         screen = self.screen
         view = screen.list_view
         client = view.cache.client
@@ -340,6 +435,17 @@ class TerminalInput(object):
             options["fingerprint"] = row["canonical"]
             entry = screen.backpack.entry(index)
             key = entry.key if entry else None
+            if gesture == "left" and not self.space:
+                now = screen._clock()
+                if (previous and previous["slot"] == slot and previous["session"] == client.session_id
+                        and now - previous["time"] <= DOUBLE_CLICK_SECONDS):
+                    fields["key"] = key = previous["key"]
+                    options["gesture"] = "collect"
+                    fields["slot_version"] = previous["version"]
+                    options["fingerprint"] = previous["fingerprint"]
+                elif key and key.canonical() == row["canonical"]:
+                    self.last_left = {"slot": slot, "time": now, "key": key, "fields": fields, "session": client.session_id,
+                                      "version": row["slot_version"], "fingerprint": row["canonical"]}
         elif area != "network":
             model = screen.craft if area == "grid" else screen.template
             fields["slot_version"] = model.revision
@@ -361,12 +467,13 @@ class TerminalInput(object):
         fields["config"]["revision"] = hand["revision"]
         request = client.send_command("slot_click", **fields)
         point = input_api().GetFocusPos()
-        self.active = (request, area, index, key, hand, point, fields["config"]["gesture"], fields.get("slot_version"))
+        self.active = (request, area, index, key, hand, point, fields)
 
     def settle(self, result):
         if self.active is None or self.active[0] != result.get("request_id"):
             return
-        _, area, index, key, before, point, gesture, version = self.active
+        _, area, index, key, before, point, sent = self.active
+        gesture, version = sent["config"]["gesture"], sent.get("slot_version")
         self.active = None
         payload = result.get("payload") or {}
         client = self.screen.list_view.cache.client
@@ -374,14 +481,30 @@ class TerminalInput(object):
         if hand and (not client.cursor or hand["revision"] >= client.cursor["revision"]):
             client.cursor = hand
         if result.get("status") not in ("ok", "partial"):
+            # The first click can try to place into a full matching stack. The second
+            # click still has a valid source and unchanged cursor/slot anchors.
+            reasons = result.get("reasons") or ()
+            if (gesture == "left" and area == "bag" and reasons and reasons[0].get("code") == "no_capacity"
+                    and ((self.last_left and self.last_left["fields"] is sent)
+                         or (self.pending and self.pending[0][0]["config"]["gesture"] == "collect"))):
+                return
             self.pending.clear()
+            self.settling_drag = None
+            self.last_left = None
             return
+        if gesture == "place" and self.settling_drag:
+            if payload.get("moved") != sent["count"]:
+                self.settling_drag = None
+            elif area == "grid" and "device_revision" in payload:
+                self.settling_drag["grid_revision"] = payload["device_revision"]
         if payload.get("key"):
             key = ResourceKey.from_dict(payload["key"])
         rect = (self.screen.list_view._network_rect(key) if area == "network" and key
                 else slot_layout.slot_rect(self.screen, area, index))
         if area == "bag" and "bag_after" in payload:
             after = payload["bag_after"]
+            if self.last_left and self.last_left["fields"] is sent:
+                self.last_left.update(version=after["version"], fingerprint=after["canonical"])
             for fields, region, slot, _ in self.pending:
                 if region == "bag" and slot == index and fields.get("slot_version") == version:
                     fields["slot_version"] = after["version"]
@@ -399,6 +522,12 @@ class TerminalInput(object):
                 if region == "grid" and fields.get("slot_version") == version:
                     fields["slot_version"] = payload["device_revision"]
         pointer = cursor_item_rect(point)
+        if gesture == "collect":
+            for slot in payload.get("bag_slots", ()):
+                self.screen.fly.fly(key, slot_layout.backpack_slot_rect(self.screen, (slot - 9) % 36), pointer)
+            if payload.get("network_moved"):
+                self.screen.fly.fly(key, self.screen.list_view._network_rect(key), pointer)
+            return
         if payload.get("putting") and before["key"]:
             self.screen.fly.fly(ResourceKey.from_dict(before["key"]), pointer, rect)
             if payload.get("reverse"):

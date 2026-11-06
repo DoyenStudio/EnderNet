@@ -286,7 +286,7 @@ class CraftingView(object):
 
     def cell_id_aux(self, index):
         # type: (object) -> int
-        cell = self.cell(index)
+        cell = self.screen.slot_input.preview_cell("grid", index) or self.cell(index)
         if cell is None or not cell.get("name"):
             return 0
         return stack_size.id_aux(cell["name"], cell.get("aux") or 0)
@@ -294,7 +294,7 @@ class CraftingView(object):
     def cell_count(self, index):
         # type: (object) -> str
         """数量标签。**1 留空**（同终端列表与背包）：满屏的「1」只是噪声。"""
-        cell = self.cell(index)
+        cell = self.screen.slot_input.preview_cell("grid", index) or self.cell(index)
         if cell is None or cell["count"] <= 1:
             return ""
         return str(cell["count"])

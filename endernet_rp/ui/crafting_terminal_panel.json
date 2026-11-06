@@ -844,12 +844,7 @@
                 }
             },
             {
-                "cursor_item@endernet_container_common.flying_item_renderer": {
-                    "visible": false,
-                    "layer": 80,
-                    "anchor_from": "top_left",
-                    "anchor_to": "top_left"
-                }
+                "cursor_host@endernet_container_common.cursor_host": {}
             },
             {
                 "slot_info": {
@@ -863,23 +858,6 @@
                     ],
                     "shadow": true,
                     "layer": 83,
-                    "text": ""
-                }
-            },
-            {
-                "cursor_count": {
-                    "type": "label",
-                    "size": [
-                        16,
-                        9
-                    ],
-                    "text_alignment": "right",
-                    "anchor_from": "top_left",
-                    "anchor_to": "top_left",
-                    "visible": false,
-                    "shadow": true,
-                    "font_size": "small",
-                    "layer": 81,
                     "text": ""
                 }
             },
@@ -924,11 +902,13 @@
         "$item_visible_binding": "#EnderNetCraft.grid_visible",
         "$slot_mappings": [
             {
+                "button_up_right_of_first_refusal": true,
                 "from_button_id": "button.menu_select",
                 "to_button_id": "$item_select_button",
                 "mapping_type": "pressed"
             },
             {
+                "button_up_right_of_first_refusal": true,
                 "from_button_id": "button.menu_secondary_select",
                 "to_button_id": "#EnderNetTerminal.secondary",
                 "mapping_type": "pressed"
