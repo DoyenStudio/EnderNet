@@ -59,6 +59,14 @@
                 }
             },
             {
+                "stat_bar@endernet_ui_common.device_stat_bar": {
+                    "offset": [
+                        84,
+                        1
+                    ]
+                }
+            },
+            {
                 "network_data": {
                     "type": "panel",
                     "anchor_from": "top_middle",

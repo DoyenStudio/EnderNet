@@ -127,6 +127,26 @@ class StorageDriverPanel(ProxyPanelBase):
     """
 
 
+@RegistToolDeltaScreen("bus_item_io_ui.main", is_proxy=True)
+class BusItemPanel(ProxyPanelBase):
+    """总线物品接口：只接入公共状态与详情。"""
+
+
+@RegistToolDeltaScreen("memory_slot_ui.main", is_proxy=True)
+class MemorySlotPanel(ProxyPanelBase):
+    """内存槽：只接入公共状态与详情。"""
+
+
+@RegistToolDeltaScreen("bus_fluid_input_io_ui.main", is_proxy=True)
+class BusFluidInputPanel(ProxyPanelBase):
+    """总线流体存货口：只接入公共状态与详情。"""
+
+
+@RegistToolDeltaScreen("bus_fluid_output_io_ui.main", is_proxy=True)
+class BusFluidOutputPanel(ProxyPanelBase):
+    """总线流体取货口：只接入公共状态与详情。"""
+
+
 #: `(方块 id, 屏类)`，顺序即注册顺序。**单一来源**：注册、反向断言、
 #: 与 `CONTAINER_SCREENS` 的对账都从这里取。
 PROXY_PANELS = (
@@ -135,4 +155,8 @@ PROXY_PANELS = (
     ("endernet:bus_template_io", BusTemplatePanel),
     ("endernet:assemble_chamber", AssembleChamberPanel),
     ("endernet:storage_driver", StorageDriverPanel),
+    ("endernet:bus_item_io", BusItemPanel),
+    ("endernet:memory_slot", MemorySlotPanel),
+    ("endernet:bus_fluid_input_io", BusFluidInputPanel),
+    ("endernet:bus_fluid_output_io", BusFluidOutputPanel),
 )

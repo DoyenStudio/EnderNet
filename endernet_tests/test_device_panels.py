@@ -242,19 +242,6 @@ def _declared_containers():
     return gen_blocks.CONTAINERS
 
 
-#: 声明了容器组件、但**今天没有脚本屏**的设备。**具名而非空集**：多一台容器
-#: 方块时要当场变红，而不是被一个「反向差异为空」的断言悄悄放过去。
-PANEL_EXEMPTIONS = {
-    "endernet:bus_item_io": "界面没做完，User 2026-09-29 判定不作样本",
-    # `endernet:storage_driver` **2026-10-03 已移出本清单**：User 裁定介质管理
-    # 暂不需要界面，于是给它挂了一张**空屏**（`StorageDriverPanel`，只有状态栏
-    # 与详情弹窗）。它的配置面仍然没有——但「有没有屏幕类」这一问已经有了答案。
-    "endernet:memory_slot": "内存槽界面未交接（plans/ui/memory_slot.md 仍是模板）",
-    "endernet:bus_fluid_input_io": "流体口，R07 占位、真实适配属 13-03，界面刻意不画集合",
-    "endernet:bus_fluid_output_io": "流体口，同上一行",
-}
-
-
 class FakeEvents(object):
     """`tooldelta.events` 的替身：只要那一个 `CustomS2CEvent` 基类。
 
@@ -562,15 +549,8 @@ class TestContainerScreenTable(unittest.TestCase):
             set(CONTAINER_SCREENS),
         )
 
-    def test_container_blocks_without_a_panel_are_named(self):
-        """反向差异必须是**具名的**那一份，不是「恰好为空」。
-
-        今天没有屏的容器方块各有各的理由（未交接 / 设备本身没做完 / 流体口
-        刻意隐藏）。写成具名集合，多一台容器方块时这里当场变红；写成空集的话，
-        同样的改动会被安静地放过去。
-        """
-        missing = set(_declared_containers()) - set(CONTAINER_SCREENS)
-        self.assertEqual(missing, set(PANEL_EXEMPTIONS))
+    def test_every_existing_container_has_a_status_panel(self):
+        self.assertEqual(set(_declared_containers()), set(CONTAINER_SCREENS))
 
 
 class TestStatusBindings(unittest.TestCase):
@@ -597,6 +577,8 @@ class TestStatusBindings(unittest.TestCase):
             (device_status.MASTER_ICON_BINDING, BinderStub.BF_BindString),
             (device_status.NET_TEXT_BINDING, BinderStub.BF_BindString),
             (device_status.NET_ICON_BINDING, BinderStub.BF_BindString),
+            (device_status.ENERGY_TEXT_BINDING, BinderStub.BF_BindString),
+            (device_status.ENERGY_ICON_BINDING, BinderStub.BF_BindString),
             (device_status.POPUP_VISIBLE_BINDING, BinderStub.BF_BindBool),
             (device_status.OPEN_BINDING, BinderStub.BF_ButtonClickUp),
             (device_status.CLOSE_BINDING, BinderStub.BF_ButtonClickUp),
@@ -970,6 +952,49 @@ class TestProxyPanelLifecycle(unittest.TestCase):
 
 
 class TestSharedStatusHandler(unittest.TestCase):
+    def test_all_device_panels_update_status_and_release_subscriptions(self):
+        ref = DeviceRef(NodeKey(0, 4, 5, 6), 2)
+        client_identity.latch().clear()
+        self.addCleanup(client_identity.latch().clear)
+        with mock.patch.object(proxy_panel, "NetworkClient", _FakeClient):
+            for device_id, panel_cls in device_panels.PROXY_PANELS:
+                with self.subTest(device_id=device_id):
+                    client_identity.latch().offer(device_identity.identity_payload(
+                        panel_cls._screen_key, ref, 0))
+                    panel = panel_cls("probe.main", FakeScreen())
+                    panel.OnCreate()
+                    client = panel.client
+                    self.assertEqual(client.opens, [(ref, 0)])
+                    client.establish()
+                    for version, online in enumerate((True, False, True)):
+                        message = protocol.DeviceStatusMessage(
+                            device_id, ref.generation, online,
+                            "在线" if online else "离线", "ok",
+                            "runnable" if online else "master_absent",
+                            "运行中" if online else "主控未接管", version,
+                            master_instance_id="master-1",
+                            bandwidth_ok=True, power_ok=online)
+                        client.deliver(client.session_id, message)
+                        self.assertTrue(panel.device_status_visible())
+                        self.assertEqual(panel.device_status_text(), message.state_text)
+                    panel.OnDeviceStatusClick()
+                    self.assertTrue(panel.device_status_popup_visible())
+                    panel.OnDeviceStatusClose()
+                    self.assertFalse(panel.device_status_popup_visible())
+                    for _ in range(proxy_panel.KEEPALIVE_FRAMES):
+                        panel.OnTicking()
+                    self.assertEqual(client.keepalives, 1)
+                    old_handlers = list(client.handlers)
+                    panel.OnDestroy()
+                    self.assertEqual(client.handlers, [])
+                    self.assertEqual(client.port.unlistens, 1)
+                    self.assertEqual(client.closes, 1)
+                    envelope = type("Envelope", (object,), {"session_id": "s-1"})()
+                    for handler in old_handlers:
+                        handler(envelope, message)
+                    self.assertFalse(panel.device_status_visible())
+                    self.assertIsNone(panel.status)
+
     def test_terminals_and_proxies_inherit_the_same_status_handler(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import (
             terminal_panel, crafting_panel,
@@ -1068,6 +1093,13 @@ class TestServerSidePush(unittest.TestCase):
         self.assertEqual(device_identity.parse_identity(payload)[1], self.ref)
         self.assertNotIn("block_use_opened", binder.counts)
         self.assertEqual(binder.counts["block_use_container"], 1)
+
+    def test_all_container_panels_receive_their_identity(self):
+        pushed = self._capture_push()
+        for device_id, screen_key in CONTAINER_SCREENS.items():
+            self._click(self._binder(), device_id)
+            self.assertEqual(pushed[-1][1]["key"], screen_key)
+            self.assertEqual(device_identity.parse_identity(pushed[-1][1])[1], self.ref)
 
     def test_container_push_is_not_rate_limited(self):
         """**不限速**：它幂等（客户端后写覆盖先写），不像 `PushUIRequest`
@@ -1320,6 +1352,31 @@ class TestJsonContract(unittest.TestCase):
             text = json.dumps(document)
             self.assertIn("stat_bar@endernet_ui_common.device_stat_bar", text,
                           device_id)
+
+    def test_all_device_ui_content_contains_a_stat_bar(self):
+        """包含尚未注册代理的设备 UI，避免只检查 CONTAINER_SCREENS。"""
+        def count_stat_bars(node):
+            count = 0
+            for entry in node.get("controls", []):
+                for name, child in entry.items():
+                    if name == "stat_bar@endernet_ui_common.device_stat_bar":
+                        count += 1
+                    count += count_stat_bars(child)
+            return count
+
+        block_dir = os.path.join(ROOT, "endernet_bp", "blocks")
+        checked = []
+        for filename in sorted(os.listdir(block_dir)):
+            if not filename.startswith("endernet_") or not filename.endswith(".json"):
+                continue
+            ui_file = filename[len("endernet_"):]
+            if not os.path.isfile(os.path.join(RP_UI, ui_file)):
+                continue
+            document = _load_ui(ui_file)
+            self.assertEqual(count_stat_bars(document["content"]), 1, ui_file)
+            checked.append(ui_file)
+        self.assertIn("tiny_network_endpoint.json", checked)
+        self.assertIn("dos_network_endpoint.json", checked)
 
 
 if __name__ == "__main__":

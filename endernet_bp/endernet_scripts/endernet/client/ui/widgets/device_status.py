@@ -45,9 +45,12 @@ ICON_BINDING = BINDING_PREFIX + "icon"
 #: 详情弹窗第一行：控制器连接/冲突/支持情况。
 MASTER_TEXT_BINDING = BINDING_PREFIX + "master_text"
 MASTER_ICON_BINDING = BINDING_PREFIX + "master_icon"
-#: 详情弹窗第二行：带宽、能源与重建等网络侧原因。
+#: 详情弹窗第二行：带宽与重建等网络侧原因。
 NET_TEXT_BINDING = BINDING_PREFIX + "net_text"
 NET_ICON_BINDING = BINDING_PREFIX + "net_icon"
+#: 详情弹窗第三行：能源状态。
+ENERGY_TEXT_BINDING = BINDING_PREFIX + "energy_text"
+ENERGY_ICON_BINDING = BINDING_PREFIX + "energy_icon"
 #: 详情弹窗整体显隐。
 POPUP_VISIBLE_BINDING = BINDING_PREFIX + "popup_visible"
 #: 点 `stat_bar/interact_btn` 打开详情。
@@ -66,13 +69,14 @@ ICON_OFFLINE = "textures/ui/endernet/network_error_icon"
 MASK_ONLINE = "textures/ui/endernet/corner_ok_icon"
 MASK_OFFLINE = "textures/ui/endernet/corner_error_icon"
 
-#: 详情弹窗两行的兜底文案。**只在那一行确实没有原因时使用**；有原因时
+#: 详情弹窗三行的兜底文案。**只在那一行确实没有原因时使用**；有原因时
 #: 显示的是服务端给的具体说明，不是这里这几句。
 MASTER_ROW_OK = "已连接控制器"
 MASTER_ROW_MISSING = "未连接到控制器"
 NET_ROW_UNKNOWN = "网络状态未知"
+ENERGY_ROW_UNKNOWN = "未知故障"
 
-#: 归到**第一行**（控制器侧）的原因码。其余一律进第二行（网络侧）。
+#: 第一行显示控制器原因，第三行显示能源原因，其余进入网络行。
 #: 分组的判据是「该找谁」：控制器不在/冲突/不支持，与网络能不能工作，
 #: 是两件要查不同东西的事。
 MASTER_REASONS = frozenset(
@@ -86,6 +90,10 @@ MASTER_REASONS = frozenset(
         Reason.NOT_A_CANDIDATE,
     )
 )
+
+ENERGY_REASONS = frozenset((
+    Reason.BROWNOUT, Reason.ENERGY_UNAVAILABLE, Reason.ENERGY_UNCONFIGURED,
+))
 
 
 def _reason_pair(reason):
@@ -208,15 +216,16 @@ class DeviceStatusModel(object):
 
     def popup_rows(self):
         # type: () -> tuple
-        """`(master_text, master_mask, net_text, net_mask)`。
+        """`(master_text, master_mask, net_text, net_mask, energy_text, energy_mask)`。
 
         有原因就把**具体说明**逐条列出来（用「；」连），而不是塌成一句
         静态的「网络故障中」——11.md 点名了这一点。那一行没有原因时，用
         状态自己带的字段兜底：控制器行看 `master_instance_id`，网络行看
-        `bandwidth_ok` / `power_ok` 的三态。
+        `bandwidth_ok`，能源行看 `power_ok` 的三态。
         """
         master = []
         network = []
+        energy = []
         reasons = () if self.status is None else self.status.reasons
         for reason in reasons:
             code, detail = _reason_pair(reason)
@@ -224,13 +233,21 @@ class DeviceStatusModel(object):
                 continue
             if code in MASTER_REASONS:
                 master.append(detail)
+            elif code in ENERGY_REASONS:
+                # 能源判定未知统一使用界面约定文案，已知故障保留具体原因。
+                energy.append(ENERGY_ROW_UNKNOWN
+                              if code == Reason.ENERGY_UNAVAILABLE else detail)
             else:
                 network.append(detail)
         return (
             "；".join(master) if master else self._master_default(),
             MASK_OFFLINE if master else MASK_ONLINE,
             "；".join(network) if network else self._net_default(),
-            MASK_OFFLINE if network else MASK_ONLINE,
+            MASK_ONLINE if (not network and self.status is not None
+                            and self.status.bandwidth_ok is True) else MASK_OFFLINE,
+            "；".join(energy) if energy else self._energy_default(),
+            MASK_ONLINE if (not energy and self.status is not None
+                            and self.status.power_ok is True) else MASK_OFFLINE,
         )
 
     def master_text(self):
@@ -249,6 +266,14 @@ class DeviceStatusModel(object):
         # type: () -> str
         return self.popup_rows()[3]
 
+    def energy_text(self):
+        # type: () -> str
+        return self.popup_rows()[4]
+
+    def energy_mask(self):
+        # type: () -> str
+        return self.popup_rows()[5]
+
     def _master_default(self):
         # type: () -> str
         if self.status is None:
@@ -261,10 +286,13 @@ class DeviceStatusModel(object):
         # type: () -> str
         if self.status is None:
             return NET_ROW_UNKNOWN
-        return "%s，%s" % (
-            _tri_text(self.status.bandwidth_ok, "带宽"),
-            _tri_text(self.status.power_ok, "能源"),
-        )
+        return _tri_text(self.status.bandwidth_ok, "带宽")
+
+    def _energy_default(self):
+        # type: () -> str
+        if self.status is None or self.status.power_ok is None:
+            return ENERGY_ROW_UNKNOWN
+        return "能源充足" if self.status.power_ok else "能源不足"
 
     def diagnostics(self):
         # type: () -> dict

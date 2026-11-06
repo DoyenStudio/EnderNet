@@ -53,6 +53,14 @@
                                             "type": "panel",
                                             "controls": [
                                                 {
+                                                    "stat_bar@endernet_ui_common.device_stat_bar": {
+                                                        "offset": [
+                                                            90,
+                                                            1
+                                                        ]
+                                                    }
+                                                },
+                                                {
                                                     "title": {
                                                         "type": "image",
                                                         "anchor_from": "top_left",

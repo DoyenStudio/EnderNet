@@ -130,9 +130,11 @@ class TestPopupRows(unittest.TestCase):
             reason(Reason.BROWNOUT, "能源不可用"),
             reason(Reason.BANDWIDTH_DENIED, "负载域已满"),
         ]))
-        master, master_mask, net, net_mask = self.model.popup_rows()
+        master, master_mask, net, net_mask, energy, energy_mask = self.model.popup_rows()
         self.assertEqual(master, "该网络没有主控接管")
-        self.assertIn("能源不可用", net)
+        self.assertNotIn("能源不可用", net)
+        self.assertEqual(self.model.energy_text(), "能源不可用")
+        self.assertEqual(self.model.energy_mask(), device_status.MASK_OFFLINE)
         self.assertIn("负载域已满", net)
         self.assertEqual(master_mask, device_status.MASK_OFFLINE)
         self.assertEqual(net_mask, device_status.MASK_OFFLINE)
@@ -144,16 +146,20 @@ class TestPopupRows(unittest.TestCase):
             reason(Reason.REBUILDING, "网络重建中"),
         ]))
         net = self.model.net_text()
-        self.assertIn("能源不可用", net)
+        self.assertNotIn("能源不可用", net)
+        self.assertEqual(self.model.energy_text(), "能源不可用")
+        self.assertEqual(self.model.energy_mask(), device_status.MASK_OFFLINE)
         self.assertIn("网络重建中", net)
         self.assertNotEqual(net, "网络故障中")
 
     def test_an_online_device_explains_itself_from_the_tri_state(self):
         self.model.apply(message(online=True))
-        master, master_mask, net, net_mask = self.model.popup_rows()
+        master, master_mask, net, net_mask, energy, energy_mask = self.model.popup_rows()
         self.assertEqual(master, device_status.MASTER_ROW_OK)
         self.assertEqual(master_mask, device_status.MASK_ONLINE)
-        self.assertEqual(net, "带宽满足，能源满足")
+        self.assertEqual(net, "带宽满足")
+        self.assertEqual(energy, "能源充足")
+        self.assertEqual(energy_mask, device_status.MASK_ONLINE)
         self.assertEqual(net_mask, device_status.MASK_ONLINE)
 
     def test_an_unconfirmed_figure_says_pending_not_short(self):
@@ -162,12 +168,35 @@ class TestPopupRows(unittest.TestCase):
                                  bandwidth_ok=None, power_ok=None,
                                  master_instance_id=None))
         net = self.model.net_text()
-        self.assertEqual(net, "带宽待确认，能源待确认")
+        self.assertEqual(net, "带宽待确认")
+        self.assertEqual(self.model.energy_text(), "未知故障")
+        self.assertEqual(self.model.energy_mask(), device_status.MASK_OFFLINE)
         self.assertEqual(self.model.master_text(), device_status.MASTER_ROW_MISSING)
 
     def test_rows_read_before_any_verdict_are_still_text(self):
         self.assertEqual(self.model.master_text(), device_status.MASTER_ROW_MISSING)
         self.assertEqual(self.model.net_text(), device_status.NET_ROW_UNKNOWN)
+        self.assertEqual(self.model.energy_text(), device_status.ENERGY_ROW_UNKNOWN)
+        self.assertEqual(self.model.energy_mask(), device_status.MASK_OFFLINE)
+
+    def test_energy_changes_do_not_change_the_bandwidth_row(self):
+        for power, text in ((True, "能源充足"), (False, "能源不足"),
+                            (None, "未知故障"), (True, "能源充足")):
+            self.model.apply(message(power_ok=power, bandwidth_ok=True))
+            self.assertEqual(self.model.net_text(), "带宽满足")
+            self.assertEqual(self.model.net_mask(), device_status.MASK_ONLINE)
+            self.assertEqual(self.model.energy_text(), text)
+            self.assertEqual(self.model.energy_mask(), device_status.MASK_ONLINE
+                             if power is True else device_status.MASK_OFFLINE)
+
+    def test_all_energy_reasons_are_kept_in_the_energy_row(self):
+        self.model.apply(message(online=False, power_ok=None, reasons=[
+            reason(Reason.ENERGY_UNAVAILABLE, "能源判定尚未确认"),
+            reason(Reason.ENERGY_UNCONFIGURED, "能耗未配置"),
+        ]))
+        self.assertEqual(self.model.net_text(), "带宽满足")
+        self.assertEqual(self.model.energy_text(), "未知故障；能耗未配置")
+        self.assertEqual(self.model.energy_mask(), device_status.MASK_OFFLINE)
 
 
 class TestPopupSingleInstance(unittest.TestCase):

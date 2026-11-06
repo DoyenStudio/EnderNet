@@ -842,10 +842,12 @@ TERMINAL_SCREENS = {
 #: 3. 必须与 `scripts/gen_blocks.py` 的 `CONTAINERS` 对得上（方块确实声明了
 #:    容器组件）。三条都由 `endernet_tests/test_device_panels.py` 钉住。
 #:
-#: **只登记已经写好的屏。** 没登记的容器设备（驱动器、内存槽、`bus_item_io`、
-#: 两个流体口）右键**不推身份**，屏上不会有脚本逻辑——那是有意的，不是遗漏；
-#: 缺的是各自的 UI 交接或（`bus_item_io`）本就未完成的设备。
+#: 所有已有容器界面的设备都接入状态订阅；配置交互按各自交付范围接入。
 CONTAINER_SCREENS = {
+    "endernet:bus_item_io": "bus_item_io_ui.main",
+    "endernet:memory_slot": "memory_slot_ui.main",
+    "endernet:bus_fluid_input_io": "bus_fluid_input_io_ui.main",
+    "endernet:bus_fluid_output_io": "bus_fluid_output_io_ui.main",
     "endernet:bus_item_output_io": "bus_item_output_io_ui.main",
     "endernet:bus_item_input_io": "bus_item_input_io_ui.main",
     "endernet:bus_template_io": "bus_template_io_ui.main",

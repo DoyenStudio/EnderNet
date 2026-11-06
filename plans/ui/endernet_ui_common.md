@@ -59,6 +59,8 @@ UI 交接：待填写；脚本接入：待填写；游戏验证：待填写。
 
 ## 6. 数据与绑定
 
+2026-11-06：公共状态详情 `endernet_windows.device_status_window_basic` 拆为控制器、网络、能源三行。能源行 `energy_stat` 使用 `textures/ui/endernet/energy_simple_icon`，通过 `#EnderNetDeviceStatus.energy_text` / `.energy_icon` 绑定公共 mixin 的 `device_status_energy_text` / `device_status_energy_icon`。`power_ok` 为真、假、未知时分别显示“能源充足”“能源不足”“未知故障”；服务端 `ENERGY_UNAVAILABLE` 同样显示“未知故障”，其余已知能源故障优先展示具体原因，仅确认充足且无故障原因时显示绿勾。网络行只显示带宽及其余网络原因，不再合并能源文案。离线验证通过，游戏内布局待验。
+
 User 先填写字段含义及已有 JSON 配置，脚本接入方核对后补充实际绑定。不得把建议名记为已实现接口。
 
 | 控件路径 | 字段含义、类型、单位与范围 | 来源与刷新时机 | JSON 绑定名／事件名 | Python 方法 | 接入状态 |

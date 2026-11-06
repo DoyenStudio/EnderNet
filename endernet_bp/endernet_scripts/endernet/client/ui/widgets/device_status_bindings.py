@@ -133,6 +133,20 @@ class DeviceStatusBindingsMixin(object):
             return device_status.MASK_OFFLINE
         return self.status.net_mask()
 
+    @Binder.binding(Binder.BF_BindString, device_status.ENERGY_TEXT_BINDING)
+    def device_status_energy_text(self):
+        # type: () -> str
+        if self.status is None:
+            return device_status.ENERGY_ROW_UNKNOWN
+        return self.status.energy_text()
+
+    @Binder.binding(Binder.BF_BindString, device_status.ENERGY_ICON_BINDING)
+    def device_status_energy_icon(self):
+        # type: () -> str
+        if self.status is None:
+            return device_status.MASK_OFFLINE
+        return self.status.energy_mask()
+
     @Binder.binding(Binder.BF_BindBool, device_status.POPUP_VISIBLE_BINDING)
     def device_status_popup_visible(self):
         # type: () -> bool

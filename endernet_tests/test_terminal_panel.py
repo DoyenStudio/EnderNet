@@ -3289,8 +3289,8 @@ class TestEngineBindingResolution(unittest.TestCase):
             self.assertIsNotNone(getattr(type(panel._engine), func.__name__, None))
         # 十条列表 + 八条格子 + 四条点击（背包、快捷栏、关闭、列表空白处整槽存）
         # + 两条按下（背包、快捷栏；`inv_split` 的长按判定要按下那一刻的时刻）
-        # = 24；再加设备状态十一条（文字、颜色、可见、图标、详情两行文字、
-        # 两个行图标、弹窗显隐、打开、关闭）。
+        # = 24；再加设备状态十三条（文字、颜色、可见、图标、详情三行文字、
+        # 三个行图标、弹窗显隐、打开、关闭）。
         #
         # **颜色那一条只在引擎提供 `BF_BindColor` 时才注册**（`terminal_panel.
         # _bind_color`）：11-06 起离线桩也带上了这个旗标（工厂终端的三色背景
@@ -3310,7 +3310,7 @@ class TestEngineBindingResolution(unittest.TestCase):
         # 运行时注册声明——正是本条钉住的那条不通的路——因此搬到类体上
         # （`widgets/list_window_bindings.py`）。数在终端这一侧是因为
         # `TerminalPanelBase` 是它们的宿主。
-        expected = 24 + 11 + 1 + 12 + 3 + 3
+        expected = 24 + 13 + 1 + 12 + 3 + 3
         if terminal_panel._COLOR_BINDING_FLAG is None:
             expected -= 1
         if order_preview_bindings.COLOR_BINDING_FLAG is None:
@@ -3670,7 +3670,9 @@ class TestJsonContract(unittest.TestCase):
                 ("controller_conn_stat", device_status.MASTER_TEXT_BINDING,
                  device_status.MASTER_ICON_BINDING),
                 ("network_conn_stat", device_status.NET_TEXT_BINDING,
-                 device_status.NET_ICON_BINDING)):
+                 device_status.NET_ICON_BINDING),
+                ("energy_stat", device_status.ENERGY_TEXT_BINDING,
+                 device_status.ENERGY_ICON_BINDING)):
             row = rows[name]
             label = row["controls"][1]["text"]
             self.assertEqual(label["text"], "#text")
@@ -3689,6 +3691,19 @@ class TestJsonContract(unittest.TestCase):
         self.assertEqual(close["$pressed_button_name"], device_status.CLOSE_BINDING)
         self.assertEqual(close["button_mappings"][0]["to_button_id"],
                          "$pressed_button_name")
+
+    def test_energy_row_uses_the_energy_icon_and_fits_below_network(self):
+        window = self.windows["device_status_window_basic"]
+        rows = {key: value for entry in window["controls"]
+                for key, value in entry.items()}
+        energy = rows["energy_stat"]
+        icon = energy["controls"][0]["icon"]["texture"]
+        self.assertEqual(icon, "textures/ui/endernet/energy_simple_icon")
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, "endernet_rp", icon + ".png")))
+        network = rows["network_conn_stat"]
+        self.assertGreaterEqual(energy["offset"][1],
+                                network["offset"][1] + network["size"][1])
+        self.assertLessEqual(energy["offset"][1] + energy["size"][1], window["size"][1])
 
 
 class TestPressedNamesAreActuallyClickable(unittest.TestCase):

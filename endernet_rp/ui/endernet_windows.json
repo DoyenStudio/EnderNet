@@ -3,7 +3,7 @@
         "type": "input_panel",
         "size": [
             128.0,
-            80.0
+            84.0
         ],
         "layer": 1,
         "visible": false,
@@ -221,6 +221,90 @@
                                         "binding_name_override": "#text",
                                         "binding_condition": "always",
                                         "binding_name": "#EnderNetDeviceStatus.net_text"
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "energy_stat": {
+                    "type": "panel",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0.0,
+                        60.0
+                    ],
+                    "size": [
+                        108.0,
+                        16.0
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "icon": {
+                                "type": "image",
+                                "anchor_from": "left_middle",
+                                "anchor_to": "left_middle",
+                                "size": [
+                                    16.0,
+                                    16.0
+                                ],
+                                "layer": 1,
+                                "texture": "textures/ui/endernet/energy_simple_icon",
+                                "controls": [
+                                    {
+                                        "stat_mask": {
+                                            "type": "image",
+                                            "anchor_from": "bottom_right",
+                                            "anchor_to": "bottom_right",
+                                            "size": [
+                                                "64%+0px",
+                                                "64%+0px"
+                                            ],
+                                            "layer": 1,
+                                            "texture": "#texture",
+                                            "property_bag": {
+                                                "#texture": "textures/ui/endernet/corner_error_icon"
+                                            },
+                                            "bindings": [
+                                                {
+                                                    "binding_type": "global",
+                                                    "binding_name_override": "#texture",
+                                                    "binding_condition": "always",
+                                                    "binding_name": "#EnderNetDeviceStatus.energy_icon"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "text": {
+                                "type": "label",
+                                "anchor_from": "left_middle",
+                                "anchor_to": "left_middle",
+                                "offset": [
+                                    20.0,
+                                    0.0
+                                ],
+                                "color": [
+                                    0.2588235294117647,
+                                    0.2588235294117647,
+                                    0.2588235294117647
+                                ],
+                                "font_type": "default",
+                                "text": "#text",
+                                "text_alignment": "center",
+                                "bindings": [
+                                    {
+                                        "binding_type": "global",
+                                        "binding_name_override": "#text",
+                                        "binding_condition": "always",
+                                        "binding_name": "#EnderNetDeviceStatus.energy_text"
                                     }
                                 ]
                             }

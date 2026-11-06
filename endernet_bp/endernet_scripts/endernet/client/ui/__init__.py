@@ -18,9 +18,13 @@ def register_screens():
     from .crafting_panel import CraftingPanel
     from .device_panels import (
         AssembleChamberPanel,
+        BusFluidInputPanel,
+        BusFluidOutputPanel,
+        BusItemPanel,
         BusItemInputPanel,
         BusItemOutputPanel,
         BusTemplatePanel,
+        MemorySlotPanel,
         StorageDriverPanel,
     )
     from .factoric_panel import FactoricPanel
@@ -39,4 +43,8 @@ def register_screens():
         AssembleChamberPanel,
         StorageDriverPanel,
         UniversalImporterScreen,
+        BusItemPanel,
+        MemorySlotPanel,
+        BusFluidInputPanel,
+        BusFluidOutputPanel,
     )
