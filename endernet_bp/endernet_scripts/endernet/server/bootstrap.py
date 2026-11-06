@@ -62,6 +62,7 @@ from .adapters.containers_engine import (
     build_stack_limit,
 )
 from .adapters.events import ServerEventBinder
+from .adapters.fluids import RadiumFluidProvider
 from .adapters.messages import AdapterSyncPort
 from .adapters.order_notifications import notify_order_completed
 from .adapters.slot_display import publish_slot_display
@@ -127,7 +128,7 @@ from .network.services import (
 )
 from .network.ticking import SchedulerService
 from .network.topology import TopologyService
-from .runtime.events import EventQueue
+from .runtime.events import EventKind, EventQueue
 from .runtime.lifecycle import ChangeKind, DeviceLifecycle
 from .runtime.scheduler import LogicalClock, SchedulerPolicy
 from .storage.medium import MediumPolicy
@@ -602,8 +603,9 @@ class ServerBootstrap(object):
         persistence_batch=32,
         on_order_completed=None,
         on_slot_display=None,
+        fluid_provider=None,
     ):
-        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object, object, int, object, object) -> None
+        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, int, object, object, object) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
         #: 逻辑时钟（04-01）。**它是业务时间的唯一依据**，由 `drive_once()`
         #: 每帧推进一步，经 `context["tick"]` 下传给各服务。注入自有实例即可
@@ -760,6 +762,7 @@ class ServerBootstrap(object):
             if container_provider is not None
             else EngineContainerProvider(primitives, stack_limit)
         )
+        self.fluids = fluid_provider if fluid_provider is not None else RadiumFluidProvider()
         self.inventories = (
             inventory_provider
             if inventory_provider is not None
@@ -841,6 +844,7 @@ class ServerBootstrap(object):
             self.registry,
             policy=self.port_policy,
             containers=self.containers,
+            fluids=self.fluids,
         )
         #: 样板提供者状态与产物索引（07）。与 `drivers` / `ports` 同一地位：
         #: 样板装在方块容器里，它不能因为网络断开、主控被移除或运行时重建
@@ -1200,6 +1204,7 @@ class ServerBootstrap(object):
         # 放在最后会丢掉停机前最后一帧的改动。
         self.flush_persistence()
         self.event_binder.unbind()
+        self._invalidate_fluid_ports()
         # 会话与订阅缓存一并丢掉。**监听器已经注销了，但订阅表还活着**——
         # 留着它的症状不是报错，而是下一次 `start()` 时发布窗口以为还有人在看，
         # 于是对着一批早已离线的玩家组包。
@@ -1636,9 +1641,26 @@ class ServerBootstrap(object):
         batch = self.queue.drain(limit=self.drain_limit)
         changes = []
         for event in batch:
+            self._invalidate_fluid_ports(event)
             # `handle()` 内部已经经统一出口发布，这里不能再发一次。
             changes.extend(self.lifecycle.handle(event))
         return len(batch), changes
+
+    def _invalidate_fluid_ports(self, event=None):
+        # type: (object) -> None
+        """边界变化撤销旧地址包装器；下一业务轮重新查询公共端口。"""
+        if event is None or event.kind in (
+                EventKind.CHUNK_LOADED, EventKind.CHUNK_UNLOADED, EventKind.SHUTDOWN):
+            invalidate_all = getattr(self.fluids, "invalidate_all", None)
+            if invalidate_all is not None:
+                invalidate_all()
+        elif event.kind in (EventKind.PLACE, EventKind.REMOVE, EventKind.NEIGHBOR_CHANGED):
+            invalidate = getattr(self.fluids, "invalidate", None)
+            if invalidate is not None:
+                for field in ("node_key", "neighbor_key"):
+                    node_key = event.data.get(field)
+                    if node_key is not None:
+                        invalidate(node_key)
 
     def _advance_backfill(self):
         # type: () -> int
@@ -1674,6 +1696,7 @@ class ServerBootstrap(object):
         看起来像成功了其实什么都没做。
         重复扫描是安全的：注册表幂等，不会重复建实例。
         """
+        self._invalidate_fluid_ports()
         self._backfill_generator = None
         self._backfill_finished = False
         self.lifecycle.forget_backfill()
@@ -2525,6 +2548,7 @@ class ServerBootstrap(object):
         """
         report = self.ports.diagnostics()
         report["containers"] = self.containers.diagnostics()
+        report["fluids"] = self.fluids.diagnostics()
         report["inventories"] = self.inventories.diagnostics()
         report["transfer_policy"] = self.transfer_policy.describe()
         report["transfer_unresolved"] = self.transfer_policy.unresolved_report()
@@ -2547,9 +2571,10 @@ class ServerBootstrap(object):
         report["runners"] = runners
         report["scope_note"] = (
             "端点的预检与受控提交、有界中转缓冲、四类接口设备与待核对语义"
-            "已实现并通过离线断言；**接触真实引擎的那一段（箱子读写、玩家背包、"
-            "外部模组物流）没有游戏内实测**，因此它目前只有领域层的证据。"
-            "流体接口整条未接入（13-03），会明确回 no_adapter。"
+            "已实现并通过离线断言；真实引擎的完整流程仍需逐项游戏验收。"
+            "主动流体口与样板流体投料已接入 radium 公共流体接口；"
+            "已验证 SkyBlueTech 创造储罐抽取，有限机器持续调度与存档尚未验收。"
+            "被动流体接口的本地储罐尚未接入，会明确回 no_adapter。"
             "样板口的成批投料入口（`port_stage`）由工厂（09）的备料调用，"
             "这条路已通；而**回流那一侧**（`TransferCoordinator.sink`）"
             "要装配层显式注入 `returns_sink` 才发得出去，默认装配下它还是"

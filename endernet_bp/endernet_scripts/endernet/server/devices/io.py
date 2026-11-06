@@ -825,20 +825,10 @@ class PortItemPort(object):
         return "PortItemPort(%s @ %r)" % (self.state.role, self.state.node_key)
 
 
-class PortFluidPort(object):
-    """流体接口的**实际能力对象**。**它一律拒绝，而且说得出为什么。**
-
-    13-03（真实流体适配）未做，因此这里不给一个「看起来能传 mB」的实现。
-    返回 `no_adapter` 而不是「搬了 0」，理由是后者会让调用方以为
-    「这台容器是空的」而不是「这条通路还没做」——那正是架构 §7 说的
-    「尚不支持的命令明确拒绝，不能返回假成功」。
-    """
+class PortFluidPort(PortItemPort):
+    """主动流体口通过注入的公共流体适配器访问朝向机器。"""
 
     adapter_id = "endernet_fluid_port"
-
-    def __init__(self, state):
-        # type: (PortState) -> None
-        self.state = state
 
     def _refuse(self, op_id, count, resource_key):
         # type: (str, int, ResourceKey) -> TransferReceipt
@@ -849,18 +839,22 @@ class PortFluidPort(object):
 
     def insert(self, op_id, resource_key, count):
         # type: (str, ResourceKey, int) -> TransferReceipt
-        return self._refuse(op_id, count, resource_key)
+        if self.state.role == PASSIVE or not resource_key.is_fluid():
+            return self._refuse(op_id, count, resource_key)
+        return PortItemPort.insert(self, op_id, resource_key, count)
 
     def extract(self, op_id, resource_key, count):
         # type: (str, ResourceKey, int) -> TransferReceipt
-        return self._refuse(op_id, count, resource_key)
+        if self.state.role == PASSIVE or not resource_key.is_fluid():
+            return self._refuse(op_id, count, resource_key)
+        return PortItemPort.extract(self, op_id, resource_key, count)
 
     def describe(self):
         # type: () -> dict
         return {
             "adapter_id": self.adapter_id,
-            "available": False,
-            "pending_task": "13-03",
+            "available": self.state.role != PASSIVE and self.ports.fluids is not None,
+            "pending_task": "13-03" if self.state.role == PASSIVE else "",
         }
 
 
@@ -1033,8 +1027,8 @@ class PortStore(object):
     """
 
     def __init__(self, definitions, registry, policy=None, containers=None,
-                 disposition=None):
-        # type: (object, object, PortPolicy, object, object) -> None
+                 disposition=None, fluids=None):
+        # type: (object, object, PortPolicy, object, object, object) -> None
         #: 定义表。**它被读**：`_register_capabilities` 按定义表声明的能力
         #: 决定注册哪些能力对象——注册多了会造出「声称能传物品、实际没有
         #: 对应实现」的端口（架构 §4 点名的形态）。
@@ -1045,6 +1039,8 @@ class PortStore(object):
         #: `adapters/containers_engine.py`，测试传替身。**可为 None**，
         #: 此时所有需要容器的动作明确报 `no_adapter`。
         self.containers = containers
+        #: 公共流体提供者：container_at(node_key, 目标原生绝对面)。
+        self.fluids = fluids
         #: R05 未定：缓冲里剩下的东西怎么处置。默认只保留并留痕。
         self.disposition = disposition if disposition is not None else BufferDisposition()
         self._states = {}
@@ -1217,7 +1213,7 @@ class PortStore(object):
             state.item_port = PortItemPort(state, self)
             state.capabilities.register(ITEM_PORT, state.item_port)
         if FLUID_PORT in declared:
-            state.fluid_port = PortFluidPort(state)
+            state.fluid_port = PortFluidPort(state, self)
             state.capabilities.register(FLUID_PORT, state.fluid_port)
 
     def get(self, node_key):
@@ -1430,6 +1426,15 @@ class PortStore(object):
             return None
         return self.containers.container_at(node_key)
 
+    def fluid_at(self, node_key, facing):
+        # type: (object, str) -> object
+        """从接口朝向换算目标机器被接触的绝对面。"""
+        target_faces = {"up": 0, "down": 1, "north": 3,
+                        "south": 2, "west": 5, "east": 4}
+        if self.fluids is None or facing not in target_faces:
+            return None
+        return self.fluids.container_at(node_key, target_faces[facing])
+
     def facing_endpoint(self, state):
         # type: (PortState) -> tuple
         """朝向容器的端点。返回 `(endpoint, reason, detail)`。
@@ -1451,12 +1456,13 @@ class PortStore(object):
             # 样板接口有真实容器，但不能把它当作外部加工机器。
             # 通用容器写入会绕过样板准入校验，污染隔壁接口的样板槽。
             return (None, Reason.NO_CONTAINER, "朝向位置是样板接口，不能作为投料容器")
-        adapter = self.container_at(target)
+        fluid = is_fluid_port(state.device_id)
+        adapter = self.fluid_at(target, state.facing) if fluid else self.container_at(target)
         if adapter is None:
             return (
                 None,
-                Reason.NO_CONTAINER,
-                "朝向位置 %r 没有可用的容器（不是容器，或该类型尚未登记适配器）"
+                Reason.NO_ADAPTER if fluid else Reason.NO_CONTAINER,
+                "朝向位置 %r 没有可用的端口（检查前置、目标机器能力与侧面权限）"
                 % (target,),
             )
         return (
@@ -1465,8 +1471,8 @@ class PortStore(object):
             "",
         )
 
-    def adjacent_endpoints(self, state):
-        # type: (PortState) -> list
+    def adjacent_endpoints(self, state, resource_key=None):
+        # type: (PortState, object) -> list
         """样板投料查询六面外部容器，跳过样板接口和订单管理的装配仓。"""
         endpoints = []
         for facing in FACING_NAMES:
@@ -1477,7 +1483,9 @@ class PortStore(object):
                 or record.device_id == "endernet:assemble_chamber"
             ):
                 continue
-            adapter = self.container_at(target)
+            adapter = (self.fluid_at(target, facing)
+                       if resource_key is not None and resource_key.is_fluid()
+                       else self.container_at(target))
             if adapter is not None:
                 endpoints.append((facing, ContainerEndpoint(
                     adapter, "container:%s" % (target.as_key(),))))
@@ -2077,7 +2085,7 @@ class PortRunner(object):
                 "接口的轮询、退避、待核对与配置已实现；真正的搬运由存储服务"
                 "经主控准入后执行。接触真实容器的引擎适配在 "
                 "adapters/containers_engine.py，**未经游戏内实测**；"
-                "流体路径依赖 13-03，尚未接入。"
+                "主动流体口与样板流体投料使用公共流体接口；被动流体缓冲尚未接入。"
             ),
         }
 
@@ -2108,10 +2116,8 @@ def port_blocker(state, policy=None):
         return BlockReason(
             state.hold, state.hold_detail or "接口处于待核对状态，不发起搬运"
         )
-    if is_fluid_port(state.device_id):
-        # **这是「功能没做」，不是「配置不对」**：放在 `is_ready_for` 之前，
-        # 否则一台没配置的流体接口会先报「尚未配置过滤」。
-        return BlockReason(Reason.NO_ADAPTER, "流体路径尚未接入（13-03）")
+    if is_fluid_port(state.device_id) and state.role == PASSIVE:
+        return BlockReason(Reason.NO_ADAPTER, "被动流体接口的本地储罐尚未接入")
     if not state.config.is_ready_for(state.role, policy):
         return BlockReason(
             Reason.PORT_UNCONFIGURED,
@@ -2218,12 +2224,10 @@ class PortDispatcher(object):
         # type: (PortState, str, object) -> CommandResult
         """执行一次该角色该做的事。**不越权**：角色决定走哪条分支。"""
         role = state.role
-        if is_fluid_port(state.device_id):
-            # 流体真实适配属 13-03。**明确拒绝而不是假装能搬**：
-            # 返回「搬了 0 个」会让它安静地什么都不做，玩家看不出区别。
+        if is_fluid_port(state.device_id) and role == PASSIVE:
             return CommandResult.blocked(
                 request_id,
-                [BlockReason(Reason.NO_ADAPTER, "流体路径尚未接入（13-03）")],
+                [BlockReason(Reason.NO_ADAPTER, "被动流体接口的本地储罐尚未接入")],
             )
         handlers = {
             PASSIVE: self.dispatch_passive,
@@ -2519,7 +2523,7 @@ class PortDispatcher(object):
         batch = state.batch
         if batch is None or batch.is_complete():
             return self._idle(request_id, TEMPLATE, "没有待投的样板批次")
-        endpoints = self.ports.adjacent_endpoints(state)
+        endpoints = self.ports.adjacent_endpoints(state, batch.resource_key)
         if not endpoints:
             return CommandResult.blocked(request_id, [BlockReason(
                 Reason.NO_CONTAINER, "六个相邻面都没有可用的投料容器")])
