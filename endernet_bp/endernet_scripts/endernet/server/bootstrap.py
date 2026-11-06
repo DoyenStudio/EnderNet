@@ -64,6 +64,7 @@ from .adapters.containers_engine import (
 from .adapters.events import ServerEventBinder
 from .adapters.messages import AdapterSyncPort
 from .adapters.order_notifications import notify_order_completed
+from .adapters.slot_display import publish_slot_display
 from .adapters.template_tips import resource_display_name as template_resource_name
 from .adapters.persistence_engine import EngineExtraDataBackend
 from .adapters.recipes import EngineRecipeSource
@@ -102,6 +103,7 @@ from .devices.io import (
 )
 from .devices.registry import DeviceRegistry
 from .devices.memory_slot import MemorySlotStore
+from .devices.slot_display import SlotDisplayTracker
 from .devices.storage_driver import (
     DriverPolicy,
     StorageDriverStore,
@@ -599,8 +601,9 @@ class ServerBootstrap(object):
         persistence_backend=None,
         persistence_batch=32,
         on_order_completed=None,
+        on_slot_display=None,
     ):
-        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object, object, int) -> None
+        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object, object, int, object, object) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
         #: 逻辑时钟（04-01）。**它是业务时间的唯一依据**，由 `drive_once()`
         #: 每帧推进一步，经 `context["tick"]` 下传给各服务。注入自有实例即可
@@ -864,6 +867,17 @@ class ServerBootstrap(object):
             self.registry,
             containers=self.containers,
             on_load_changed=self._note_memory_load_changed,
+        )
+        #: 槽位模块显示（2026-11-05）：驱动器里的硬盘、内存槽里的内存条按槽
+        #: 显示成模型。只读两份读数、不写任何状态；`on_slot_display` 是发送口
+        #: （生产实现全服广播，见 `start_server`），不给就只记账不发。
+        self.slot_displays = SlotDisplayTracker(
+            self.definitions,
+            self.drivers,
+            self.memory_slots,
+            # 测试替身的世界不一定会答朝向；答不出就按 north 画。
+            facing_of=getattr(self.world, "facing_at", None),
+            publish=on_slot_display,
         )
         #: 合成规划（08）。**它不是一个网络服务槽位**：规划是只读计算，
         #: 没有节点、没有生命周期、也不需要主控签发的许可。真正的调用方是
@@ -1268,6 +1282,9 @@ class ServerBootstrap(object):
         # 的唯一权威，重读即恢复。**放在内存槽之后**：两者都读方块容器、
         # 都不依赖本帧的网络账；槽位变更在读数完成后同步到所属网络。
         driver_reads = self.drivers.advance(self.clock.current_tick())
+        # 槽位模块显示紧跟两份读数：本帧读出的变化本帧就发出去。
+        # 它只比各台设备的 `revision`，空闲帧的代价是遍历一遍两张状态表。
+        slot_displays = self.slot_displays.advance()
         # 展示行（容量 Lore）写回排在读数之后：先知道槽里有什么、内容是什么，
         # 再决定要写什么。它自己有去抖与预算，空闲帧的代价是遍历一遍待办表。
         display_writes = self.drivers.advance_display()
@@ -1306,6 +1323,8 @@ class ServerBootstrap(object):
             #: 口径同上；`display_writes` 恒为 0 是正常的（显示不变就跳过）。
             "driver_reads": driver_reads,
             "display_writes": display_writes,
+            #: 本帧广播了几台设备的槽位模块读数。恒为 0 是正常的——只在插拔时发。
+            "slot_displays": slot_displays,
             #: 本帧写进存档的记录数与提交次数（12-03）。恒为 0 是正常的——
             #: 没有脏记录时一次 `SaveExtraData()` 都不发。
             "persisted_records": persisted["records"],
@@ -2404,6 +2423,7 @@ class ServerBootstrap(object):
             #: 这里能看到谁读不到、谁从没读到过、槽里哪些东西挂不上、
             #: 以及旧存档留下的驱动器记录（只报不物化）。
             "drivers": self.drivers.diagnostics(),
+            "slot_displays": self.slot_displays.diagnostics(),
             "plan": self.plan_diagnostics(),
             "order": self.order_diagnostics(),
             "energy": self.energy_diagnostics(),
@@ -2864,6 +2884,8 @@ def start_server():
         # 因此这个 import 在离线环境里也不会炸。
         persistence_backend=EngineExtraDataBackend(),
         on_order_completed=notify_order_completed,
+        # 第 5 件（2026-11-05）：槽位模块显示的发送口。不传时读数照算、只是不发。
+        on_slot_display=publish_slot_display,
     )
     _SERVER.start()
     return _SERVER

@@ -1,0 +1,889 @@
+{
+    "format_version": "1.12.0",
+    "minecraft:geometry": [
+        {
+            "description": {
+                "identifier": "geometry.endernet.storage_driver.modules",
+                "texture_width": 16,
+                "texture_height": 32,
+                "visible_bounds_width": 3,
+                "visible_bounds_height": 2.5,
+                "visible_bounds_offset": [
+                    0,
+                    0.75,
+                    0
+                ]
+            },
+            "bones": [
+                {
+                    "name": "root",
+                    "pivot": [
+                        -8,
+                        8,
+                        8
+                    ]
+                },
+                {
+                    "name": "s0_default",
+                    "parent": "root",
+                    "pivot": [
+                        -12,
+                        13,
+                        4
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -15,
+                                13,
+                                1
+                            ],
+                            "size": [
+                                6,
+                                2,
+                                6
+                            ],
+                            "inflate": -0.05,
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        6,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "s1_default",
+                    "parent": "root",
+                    "pivot": [
+                        -12,
+                        10,
+                        4
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -15,
+                                10,
+                                1
+                            ],
+                            "size": [
+                                6,
+                                2,
+                                6
+                            ],
+                            "inflate": -0.05,
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        6,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "s2_default",
+                    "parent": "root",
+                    "pivot": [
+                        -12,
+                        7,
+                        4
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -15,
+                                7,
+                                1
+                            ],
+                            "size": [
+                                6,
+                                2,
+                                6
+                            ],
+                            "inflate": -0.05,
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        6,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "s3_default",
+                    "parent": "root",
+                    "pivot": [
+                        -12,
+                        4,
+                        4
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -15,
+                                4,
+                                1
+                            ],
+                            "size": [
+                                6,
+                                2,
+                                6
+                            ],
+                            "inflate": -0.05,
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        6,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "s4_default",
+                    "parent": "root",
+                    "pivot": [
+                        -12,
+                        1,
+                        4
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -15,
+                                1,
+                                1
+                            ],
+                            "size": [
+                                6,
+                                2,
+                                6
+                            ],
+                            "inflate": -0.05,
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        6,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "s5_default",
+                    "parent": "root",
+                    "pivot": [
+                        -4,
+                        13,
+                        4
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -7,
+                                13,
+                                1
+                            ],
+                            "size": [
+                                6,
+                                2,
+                                6
+                            ],
+                            "inflate": -0.05,
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        6,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "s6_default",
+                    "parent": "root",
+                    "pivot": [
+                        -4,
+                        10,
+                        4
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -7,
+                                10,
+                                1
+                            ],
+                            "size": [
+                                6,
+                                2,
+                                6
+                            ],
+                            "inflate": -0.05,
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        6,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "s7_default",
+                    "parent": "root",
+                    "pivot": [
+                        -4,
+                        7,
+                        4
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -7,
+                                7,
+                                1
+                            ],
+                            "size": [
+                                6,
+                                2,
+                                6
+                            ],
+                            "inflate": -0.05,
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        6,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "s8_default",
+                    "parent": "root",
+                    "pivot": [
+                        -4,
+                        4,
+                        4
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -7,
+                                4,
+                                1
+                            ],
+                            "size": [
+                                6,
+                                2,
+                                6
+                            ],
+                            "inflate": -0.05,
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        6,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "s9_default",
+                    "parent": "root",
+                    "pivot": [
+                        -4,
+                        1,
+                        4
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -7,
+                                1,
+                                1
+                            ],
+                            "size": [
+                                6,
+                                2,
+                                6
+                            ],
+                            "inflate": -0.05,
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        6,
+                                        6
+                                    ],
+                                    "uv_size": [
+                                        -6,
+                                        -6
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        6,
+                                        8
+                                    ],
+                                    "uv_size": [
+                                        6,
+                                        2
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

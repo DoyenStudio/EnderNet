@@ -1,0 +1,41 @@
+{
+    "format_version": "1.10.0",
+    "minecraft:client_entity": {
+        "description": {
+            "identifier": "endernet:storage_driver_modules",
+            "materials": {
+                "default": "entity_alphatest"
+            },
+            "textures": {
+                "default": "textures/endernet/entity/slot_modules"
+            },
+            "geometry": {
+                "default": "geometry.endernet.storage_driver.modules"
+            },
+            "scripts": {
+                "initialize": [
+                    "variable.facing_yaw = 0;",
+                    "variable.s0 = 0;",
+                    "variable.s1 = 0;",
+                    "variable.s2 = 0;",
+                    "variable.s3 = 0;",
+                    "variable.s4 = 0;",
+                    "variable.s5 = 0;",
+                    "variable.s6 = 0;",
+                    "variable.s7 = 0;",
+                    "variable.s8 = 0;",
+                    "variable.s9 = 0;"
+                ],
+                "animate": [
+                    "facing"
+                ]
+            },
+            "animations": {
+                "facing": "animation.endernet.slot_modules.facing"
+            },
+            "render_controllers": [
+                "controller.render.endernet.storage_driver.modules"
+            ]
+        }
+    }
+}

@@ -43,8 +43,10 @@ class ClientBootstrap(object):
     def diagnostics(self):
         # type: () -> dict
         from .device_identity import get_device_identity
+        from .slot_display import get_slot_display
 
         service = get_device_identity()
+        slots = get_slot_display()
         return {
             "started": self.started,
             "subscriptions": len(self.subscriptions),
@@ -55,6 +57,10 @@ class ClientBootstrap(object):
             "device_identity": (
                 service.diagnostics() if service is not None else None
             ),
+            # 槽位模块显示（2026-11-05）。`requested` 涨而 `applied` 不涨 =
+            # 服务端没回（看服务端 `slot_displays.unknown_requests`）；
+            # `set_failures` 涨 = 外观还没就绪就写了变量。
+            "slot_display": slots.diagnostics() if slots is not None else None,
             "scope_note": "客户端不持有权威状态；界面与订阅属于任务 11。",
         }
 
@@ -69,6 +75,7 @@ def start_client():
     """由 `modMain.OnClientInited` 调用。"""
     global _CLIENT
     from .device_identity import start_device_identity
+    from .slot_display import start_slot_display
     from .ui import register_screens
 
     register_screens()
@@ -76,6 +83,10 @@ def start_client():
     # 这条监听必须在屏可能被打开之前就挂上——因此它在启动时起，而不是在
     # 某个屏的 `OnCreate` 里起（那时推送可能已经发过了）。
     start_device_identity()
+    # 槽位模块显示（2026-11-05）：同理要在区块里的方块实体外观加载之前挂上，
+    # 否则进世界头一批 `ModBlockEntityLoadedClientEvent` 没人接，那些设备
+    # 要等下一次插拔才显示出来。
+    start_slot_display()
     if _CLIENT is not None:
         _CLIENT.stop()
     _CLIENT = ClientBootstrap()
@@ -87,9 +98,11 @@ def stop_client():
     # type: () -> None
     global _CLIENT
     from .device_identity import stop_device_identity
+    from .slot_display import stop_slot_display
     from .ui.universal_importer import close_universal_importer
 
     close_universal_importer()
+    stop_slot_display()
     stop_device_identity()
     if _CLIENT is not None:
         _CLIENT.stop()

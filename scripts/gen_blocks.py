@@ -53,6 +53,7 @@ from endernet.common.definitions import (  # noqa: E402
     TEMPLATE_CONTAINER_SLOT_COUNT,
     DefinitionSet,
 )
+from endernet.common.slot_display import DISPLAY_DEVICES  # noqa: E402
 
 #: 方块 JSON 的 format_version。与同环境可正常运行的 SkyblueTech 保持一致：
 #: `netease:tier` 与 traits 需要较新的格式。
@@ -70,8 +71,11 @@ CREATIVE_CATEGORY = "endernet"
 #:   按 `cardinal_direction` 用 `minecraft:transformation` 旋转，正面朝向放置者
 #:   （照 `skybluetech_alloy_furnace.json`）。
 #: - `model`：自定义几何体（`endernet_rp/models/blocks/*.geo.json`）+ 一张模型贴图，
-#:   同样按朝向旋转（照 `skybluetech_charger.json`）。物品栏里直接渲染同一个几何体，
-#:   不需要 `minecraft:item_visual`——那只在方块本体几何为空时才用（`skybluetech_digger`）。
+#:   同样按朝向旋转（照 `skybluetech_charger.json`）。物品栏里直接渲染同一个几何体。
+#:   **不写 `minecraft:item_visual`**，挂了方块实体外观（`client_entity`）的也不写：
+#:   它不吃 `permutations` 里的朝向旋转，2026-11-05 加过一版，物品栏图标背面朝外；
+#:   改成转 180° 的物品几何体后正常，但 User 2026-11-06 判定那份是多余的模型，删掉。
+#:   （若哪天图标又不对：先看 `client_entity.hand_model_use_client_entity`。）
 LAYOUT_UNIFORM = "uniform"
 LAYOUT_FRONT = "front"
 LAYOUT_MODEL = "model"
@@ -100,9 +104,9 @@ BLOCK_LAYOUTS = {
     "endernet:crafting_terminal_panel": LAYOUT_FRONT,
     "endernet:template_terminal_panel": LAYOUT_FRONT,
     "endernet:factoric_terminal_panel": LAYOUT_FRONT,
-    "endernet:memory_slot": LAYOUT_FRONT,
     # 自定义模型
     "endernet:storage_driver": LAYOUT_MODEL,
+    "endernet:memory_slot": LAYOUT_MODEL,
 }
 
 #: 自定义模型：设备 -> (几何体标识, 模型文件与贴图的基名)。
@@ -110,6 +114,21 @@ BLOCK_LAYOUTS = {
 #: 贴图在 `textures/endernet/models/<基名>.png`，图集键 `endernet:<基名>_model`。
 MODELS = {
     "endernet:storage_driver": ("geometry.endernet.storage_driver", "storage_driver"),
+    "endernet:memory_slot": ("geometry.endernet.memory_slot", "memory_slot"),
+}
+
+#: 模型贴图的渲染方式。贴图里**被取样的地方**有透明像素就必须 `alpha_test`
+#: （驱动器从正面开口能看到的内部底板就有），否则 `opaque` 会把它们画成黑点。
+#: 内存槽贴图里留空的角落不会被任何面取样，用 `opaque`。
+MODEL_RENDER_METHODS = {
+    "endernet:storage_driver": "alpha_test",
+    "endernet:memory_slot": "opaque",
+}
+
+#: 不满一整格的模型：碰撞箱与选择框 `(origin, size)`。不在表里的是整格。
+#: 内存槽是半砖高（框体顶面 y=8；插着的内存条再露出 3 格，不算进碰撞）。
+MODEL_BOXES = {
+    "endernet:memory_slot": ([-8, 0, -8], [16, 8, 16]),
 }
 
 #: 通用机壳贴图：`front` 布局的方块共用。面 -> 贴图基名。
@@ -417,9 +436,15 @@ def build_block_json(device_id, definition):
         # 非整块模型：不挡光，否则凹进去的部分落在自己的阴影里发黑
         # （照 skybluetech_charger.json）。
         components["minecraft:light_dampening"] = 0
-    # 模型贴图里有透明像素（从正面开口能看到的内部底板就有），`opaque` 会把它们
-    # 画成黑点；`alpha_test` 让它们镂空，与 Blockbench 里看到的一致。整块方块不透明。
-    render_method = "alpha_test" if layout == LAYOUT_MODEL else "opaque"
+        if device_id in MODEL_BOXES:
+            origin, size = MODEL_BOXES[device_id]
+            box = {"origin": list(origin), "size": list(size)}
+            components["minecraft:collision_box"] = box
+            components["minecraft:selection_box"] = dict(box)
+    # 模型的渲染方式逐个声明（MODEL_RENDER_METHODS）；整块方块不透明。
+    render_method = (
+        MODEL_RENDER_METHODS[device_id] if layout == LAYOUT_MODEL else "opaque"
+    )
     components["minecraft:material_instances"] = dict(
         (face, {"render_method": render_method, "texture": key})
         for face, key in sorted(face_textures(device_id).items())
@@ -493,6 +518,13 @@ def build_blocks_json(definitions):
             # 模型方块不写 textures（照 SkyblueTech 充电器）：外观与物品栏图标都由
             # 行为包的几何体 + material_instances 决定；写了反而可能让引擎退回
             # 「把 32x32 的 UV 图贴满一整块」的平面方块。
+            if device_id in DISPLAY_DEVICES:
+                # 槽位模块由方块实体外观画（实体在 endernet_rp/entity/，由
+                # scripts/gen_slot_models.py 生成）。手持 / 掉落仍用方块几何。
+                entry["client_entity"] = {
+                    "hand_model_use_client_entity": False,
+                    "identifier": DISPLAY_DEVICES[device_id][1],
+                }
             payload[device_id] = entry
             continue
         faces = face_textures(device_id)

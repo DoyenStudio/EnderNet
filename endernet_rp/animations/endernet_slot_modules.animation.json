@@ -1,0 +1,17 @@
+{
+    "format_version": "1.8.0",
+    "animations": {
+        "animation.endernet.slot_modules.facing": {
+            "loop": true,
+            "bones": {
+                "root": {
+                    "rotation": [
+                        0,
+                        "variable.facing_yaw",
+                        0
+                    ]
+                }
+            }
+        }
+    }
+}
