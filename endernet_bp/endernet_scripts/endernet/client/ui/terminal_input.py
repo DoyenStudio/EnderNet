@@ -5,6 +5,7 @@ from collections import deque
 from . import slot_layout
 from .backpack_model import INTEGER_TYPES, engine_slot_of
 from .flying_item import ICON_SIZE
+from .terminal_hover import TerminalHover
 from ...common.resource_key import ResourceKey
 
 
@@ -48,8 +49,10 @@ class TerminalInput(object):
         self.info_target = self.info_point = self.info_label = self.info_text = None
         self.info_time = self.notice_until = 0
         self.desktop = False
+        self.hover = TerminalHover(screen)
 
     def reset(self):
+        self.hover.hide()
         self.pending.clear()
         self.active = self.drag = self.settling_drag = None
         self.finished_drag_button = None
@@ -86,25 +89,32 @@ class TerminalInput(object):
 
     def update_info(self, api, view):
         now = self.screen._clock()
-        if now < self.notice_until or now < self.info_time:
-            return
-        self.info_time = now + 0.12
         if self.screen.top_modal():
+            self.hover.hide()
             self.show_info("")
             return
+        if self.drag or self.settling_drag:
+            self.hover.hide()
+        if now < self.info_time:
+            return
+        self.info_time = now + 0.12
         target = None
         if self.desktop:
             point = api.GetFocusPos()
-            if point != self.info_point:
-                self.info_target = slot_layout.slot_at(self.screen, point) if point else None
-                self.info_point = point
+            # Scrolling and refreshed grids can change the item under a still mouse.
+            self.info_target = slot_layout.slot_at(self.screen, point) if point else None
+            self.info_point = point
             target = self.info_target
+            if not self.drag and not self.settling_drag:
+                self.hover.update(target)
         elif self.screen.backpack.selected is not None:
             target = ("bag", self.screen.backpack.selected)
         else:
             key = view.cache.model.selected_key()
             if key is not None:
                 target = ("network", view.cache.model.index_of(key))
+        if now < self.notice_until:
+            return
         name, count = None, 0
         if target is not None:
             area, index = target
@@ -141,6 +151,7 @@ class TerminalInput(object):
         self.finished_drag_button = None
         view = self.screen.list_view
         if view is None or not view.cache.client.has_session():
+            self.hover.hide()
             if self.active or self.cursor_signature or self.pending or self.drag or self.settling_drag:
                 self.reset()
             return

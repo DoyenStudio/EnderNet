@@ -523,6 +523,13 @@
         "layer": 80,
         "controls": [
             {
+                "hover_text@common.hover_text": {
+                    "layer": 99,
+                    "visible": false,
+                    "property_bag": {"#hover_text": ""}
+                }
+            },
+            {
                 "cursor_item@endernet_container_common.flying_item_renderer": {
                     "anchor_from": "center",
                     "anchor_to": "center",
