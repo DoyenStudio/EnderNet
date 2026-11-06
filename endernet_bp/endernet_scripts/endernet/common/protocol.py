@@ -13,6 +13,8 @@
 并按实际数量提交（架构规划 6.3）。
 """
 
+import json
+
 from .definitions import PATTERN_MODES
 from .resource_key import ResourceKey, _TEXT_TYPES, _require_count
 from . import settings
@@ -474,6 +476,17 @@ class DeviceCommand(object):
         self.device_ref = device_ref if device_ref is not None else (
             source.device_ref if source is not None else None
         )
+
+    def scoped_request_id(self):
+        # type: () -> str
+        """玩家的请求号只在自己的会话内唯一；网络内部的操作号沿用发起方给的值。"""
+        source = self.source
+        if source is None or not source.player_id:
+            return self.request_id
+        ref = source.device_ref or self.device_ref
+        scope = (source.player_id, source.session_id, ref.as_key() if ref else None,
+                 self.request_id)
+        return "player:" + json.dumps(scope, ensure_ascii=True, separators=(",", ":"))
 
     def to_dict(self):
         # type: () -> dict
@@ -2595,9 +2608,8 @@ class TerminalCommand(SyncMessage):
       `payload.get("cursor")` 为真时才拦。不发它 = **没有这只手**，
       这是「缺席」，**不等于**客户端声称「手里没拿东西」——R12 尚未定案
       （见 `plans/tasks/11. 终端与客户端同步.md` 的待定段）。
-    - **没有 `op_id`。** 服务端取 `payload.get("op_id") or request_id`；
-      不发就自动落到 `request_id`，而去重账本用的正是 `request_id`。
-      多发一个 `op_id` 只会造出「账本按 A 去重、动作按 B 记账」的缝隙。
+    - 操作号由服务端根据玩家、会话、设备实例与请求号生成，供主控和资源账本去重。
+      客户端使用自己的请求号关联回执。
 
     ## `expected_index_version` 目前**携带但不校验**
 

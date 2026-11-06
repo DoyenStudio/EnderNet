@@ -1383,6 +1383,22 @@ class PortStore(object):
         self.note_changed(state)
         return True
 
+    def hold_if_uncertain(self, state, receipt):
+        # type: (PortState, dict) -> bool
+        """轮询和工厂触发的派发共用同一处停机和落盘逻辑。"""
+        if receipt.get("status") != "uncertain":
+            return False
+        if not state.is_held():
+            state.hold = Reason.CONTAINER_UNCERTAIN
+            state.hold_detail = (
+                "结果不确定，已停止这条通路：余量位置 %s。核对之前不会重试"
+                % (receipt.get("holder") or "无法确认",)
+            )
+            state.stats["uncertain"] += 1
+            state.stats["holds"] += 1
+            self.note_changed(state)
+        return True
+
     def note_changed(self, state):
         # type: (PortState) -> None
         """标脏一台接口。**谁改状态谁调**，不由扫描兜底。
@@ -2000,26 +2016,10 @@ class PortRunner(object):
         payload = result.payload or {}
         receipt = payload.get("receipt") or {}
         moved = int(receipt.get("moved", 0) or 0)
-        status = receipt.get("status", "")
         if moved > 0:
             state.stats["moved"] += moved
 
-        if status == "uncertain":
-            # 06-02：不确定不能当作成功，也不能盲目重试。**把这条通路停住**，
-            # 等人工或恢复流程销账——自动重试正是这里要防的东西。
-            state.hold = Reason.CONTAINER_UNCERTAIN
-            # **写一句人能读的话，不是原因码。** `hold_detail` 会进诊断与
-            # 界面弹窗（11-13），把 `container_uncertain` 原样贴上去等于
-            # 让玩家看一个内部标识。
-            state.hold_detail = (
-                "结果不确定，已停止这条通路：余量位置 %s。核对之前不会重试"
-                % (receipt.get("holder") or "无法确认",)
-            )
-            state.stats["uncertain"] += 1
-            state.stats["holds"] += 1
-            # **待核对标记落盘**（12-07）：重进世界后这条通路仍要停着，
-            # 不得因为「重开了一次」就开始自动重试。
-            self.ports.note_changed(state)
+        if self.ports.hold_if_uncertain(state, receipt):
             return PollOutcome(False, 0)
 
         if moved > 0:
@@ -2242,7 +2242,9 @@ class PortDispatcher(object):
         # **改动才标脏**（12-04）：模拟、被拒、去重命中都不该产生写盘工作。
         # 判据是「真搬动了」或「这次派发涉及投料批次」——后者即使没搬动
         # 也会改 `batch.reason`，那也是要落盘的状态。
-        moved = int(((result.payload or {}).get("receipt") or {}).get("moved", 0) or 0)
+        receipt = (result.payload or {}).get("receipt") or {}
+        self.ports.hold_if_uncertain(state, receipt)
+        moved = int(receipt.get("moved", 0) or 0)
         if moved > 0 or state.batch is not None:
             self.ports.note_changed(state)
         return result
@@ -2588,6 +2590,8 @@ class PortDispatcher(object):
         调用方给出 `op_id`，因此**同一次备料重发不会备第二遍**——
         主控账本与协调器账本各挡一次。
         """
+        if state.is_held():
+            return CommandResult.blocked(request_id, [BlockReason(state.hold, state.hold_detail)])
         batch = BatchState(op_id, key, count)
         state.batch = batch
         buffer_endpoint = self.ports.buffer_endpoint(state, op_id, ORIGIN_INTERNAL)
@@ -2600,6 +2604,7 @@ class PortDispatcher(object):
             ORIGIN_INTERNAL, topology_version,
         )
         moved = int((result.payload or {}).get("receipt", {}).get("moved", 0) or 0)
+        self.ports.hold_if_uncertain(state, result.payload.get("receipt") or {})
         batch.staged = moved
         if not batch.is_complete():
             batch.reason = "备料未完成，批次已保留"

@@ -573,8 +573,9 @@ class DriverState(object):
         """
         if slot < 0 or slot >= len(self.slots) or self.slots[slot] is None:
             return False
+        medium_id = self.slots[slot].medium_id
         self.slots[slot] = None
-        self.invalid[slot] = {"code": code, "detail": detail}
+        self.invalid[slot] = {"code": code, "detail": detail, "medium_id": medium_id}
         self.stats["invalid_slots"] = len(self.invalid)
         self.config_version += 1
         return True
@@ -797,8 +798,9 @@ class StorageDriverStore(object):
         on_load_changed=None,
         id_source=None,
         containers=None,
+        on_slots_changed=None,
     ):
-        # type: (object, object, DriverPolicy, MediumPolicy, object, object, object) -> None
+        # type: (object, object, DriverPolicy, MediumPolicy, object, object, object, object) -> None
         self.definitions = definitions
         self.registry = registry
         self.policy = policy if policy is not None else DriverPolicy()
@@ -807,6 +809,7 @@ class StorageDriverStore(object):
         )
         #: 槽位读数变化后通知带宽重算的钩子（`AdmissionService.note_device_load_changed`）。
         self.on_load_changed = on_load_changed
+        self.on_slots_changed = on_slots_changed
         #: 介质 ID 的分配器。**默认实现只保证进程内单调**——它不是持久身份，
         #: 任务 12 接真实后端时必须换成从存档推导的来源（架构 §4）。
         self.id_source = id_source if id_source is not None else self._next_medium_id
@@ -940,6 +943,7 @@ class StorageDriverStore(object):
             return None
         key = node_key_text(state.node_key)
         self._states.pop(ref.node_key.as_key(), None)
+        self._wake_duplicate_candidates(state.medium_ids())
         # 这个位置上还没写回成功的载体请求作废：槽已经不在了。
         for pending_key in [item for item in self._pending_carriers if item[0] == key]:
             self._pending_carriers.pop(pending_key, None)
@@ -1311,8 +1315,10 @@ class StorageDriverStore(object):
             # 那次的现场是 MCDK 探针（见 05-04 交付说明 §5.5），模组自身路径
             # 没有发作过，但契约是契约。
             before = state.content_fingerprint()
+            previous_mediums = set(state.medium_ids())
             ok = self._read_slots(state)
             if ok:
+                self._wake_duplicate_candidates(previous_mediums.difference(state.medium_ids()))
                 state.readings += 1
                 if state.content_fingerprint() != before:
                     state.revision += 1
@@ -1322,6 +1328,8 @@ class StorageDriverStore(object):
                 # 旧读数原样保留，不能拿半份结果去动别人的槽位。
                 self._resolve_cross_driver_duplicates()
                 self.project(state)
+                if self.on_slots_changed is not None and state.content_fingerprint() != before:
+                    self.on_slots_changed(state.ref)
                 self._note_first_seen(state)
         except Exception as error:
             state.unreadable = u"重读时出错：%s: %s" % (
@@ -1394,7 +1402,19 @@ class StorageDriverStore(object):
                     touched.append(state)
         for state in touched:
             self.project(state)
+            if self.on_slots_changed is not None:
+                self.on_slots_changed(state.ref)
         return evicted
+
+    def _wake_duplicate_candidates(self, released):
+        # type: (object) -> None
+        """原占用者拔盘或拆除后，让曾为这块盘让位的设备重新读取实物。"""
+        if not released:
+            return
+        for state in self._states.values():
+            if any(issue.get("medium_id") in released for issue in state.invalid.values()
+                   if issue["code"] == "duplicate_across_drivers"):
+                self.mark_dirty(state.node_key)
 
     def _read_slots(self, state):
         # type: (DriverState) -> bool

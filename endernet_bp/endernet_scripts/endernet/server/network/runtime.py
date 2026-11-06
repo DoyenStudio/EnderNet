@@ -235,6 +235,10 @@ class NetworkRuntime(object):
         # type: (object) -> bool
         return node_key in self._nodes
 
+    def member(self, node_key):
+        # type: (object) -> object
+        return self._nodes.get(node_key)
+
     def sync_component(self, snapshot):
         # type: (object) -> int
         """把一个分量的当前成员同步进来，并重绑主控。
@@ -390,8 +394,7 @@ class NetworkRuntime(object):
             # **恢复闸门未开放时不开启业务**（12-05）。这不是故障，是
             # 「存档还没读完、设备还没对上」——主控停在恢复中，准入链
             # 会把每一条存取都拒掉并给出 `master_recovering`。
-            if not self.recovery_gate.is_open():
-                reason = self.recovery_gate.blocker() or "恢复尚未完成"
+            reason = self.recovery_gate.blocker(self.master.ref.node_key)
         if reason:
             self.close(reason)
             return False

@@ -606,12 +606,25 @@ class TestRevalidationCache(OneLevel):
 
 
 class TestSubmit(OneLevel):
+    def test_two_players_rejected_c2_requests_keep_their_own_results(self):
+        for player, amount in (("p1", 2), ("p2", 3)):
+            command = self.order_command("submit", "c2", target=GOLD.to_dict(), amount=amount)
+            command.source.player_id = player
+            result = self.server.submit_command(command)
+            self.assertEqual(result.status, STATUS_OK)
+        self.drive(12)
+        rows = self.service.rejected.recent()
+        self.assertEqual(sorted((row.player_id, row.request_id, row.amount) for row in rows),
+                         [("p1", "c2", 2), ("p2", "c2", 3)])
+
     def test_production_order_is_created_even_when_target_is_already_stored(self):
         from endernet.server.crafting.planner import TargetSemantics
 
         self.server.plan_policy.target_semantics = TargetSemantics.PRODUCE
-        self.seed(BLOCK, 1)
-        self.seed(IRON, 2)
+        self.seed(BLOCK, 1, request_id="seed-stored-product")
+        self.seed(IRON, 2, request_id="seed-material")
+        self.assertEqual(self.stored(BLOCK), 1)
+        self.assertEqual(self.stored(IRON), 2)
         result = self.submit_order(request_id='produce-another-one')
         self.assertEqual(result.status, STATUS_OK, result.to_dict())
         view = self.settle()

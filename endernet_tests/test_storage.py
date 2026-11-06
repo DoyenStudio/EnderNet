@@ -767,6 +767,24 @@ class TestTransfers(Fixture):
         self.assertEqual(self.service.query(STONE)["available"], 0)
         self.assertEqual(first.mediums(), second.mediums())
 
+    def test_normal_extract_skips_reserved_units_on_the_first_disk(self):
+        first = self.new_medium(TAPE, slot=0)
+        self.seed(STONE, 4, tick=200)
+        reservation = self.service.reserve("order", STONE, 4)
+        self.assertEqual(reservation.parts, ((first.medium_id, 4),))
+        second, _, _ = self.store.create_medium(FLOPPY)
+        self.assertTrue(self.plug(second.medium_id, 1)[0])
+        self.service.add_node(self.node)
+        # 同 tick 内第一盘已用尽写额度，后一批进入第二盘。
+        self.service.commit_insert("fill-both", STONE, 6, now_tick=200)
+        self.assertEqual(first.count_of(STONE), 4)
+        self.assertEqual(second.count_of(STONE), 6)
+        self.assertEqual(self.service.simulate_extract(STONE, 6, now_tick=300)["accepted"], 6)
+        self.assertEqual(self.service.commit_extract("take", STONE, 6, now_tick=300).moved, 6)
+        self.assertEqual(first.count_of(STONE), 4)
+        self.assertEqual(second.count_of(STONE), 0)
+        self.assertTrue(self.service.audit()["ok"])
+
     def test_audit_stays_consistent_across_a_scripted_run(self):
         """独立求和守恒：一段脚本化的存取/拒绝/挂卸之后逐项核对。"""
         first = self.new_medium(TAPE, slot=0)
@@ -1273,6 +1291,117 @@ class TestMediumCapacityDisplay(unittest.TestCase):
         before = self.medium.remaining_capacity_units()
         self.store(STONE, 10)
         self.assertEqual(self.medium.remaining_capacity_units(), before - 10)
+
+
+class TestDriverNetworkAccess(unittest.TestCase):
+    def setUp(self):
+        from endernet.server.bootstrap import ServerBootstrap
+        from endernet.server.network.energy import EnergyPolicy
+
+        self.containers = testsupport.FakeSlotContainerProvider()
+        self.server = ServerBootstrap(
+            container_provider=self.containers, energy_policy=EnergyPolicy.dev_stand_in())
+        self.server.start(bind_engine=False)
+        self.place(key(0), "endernet:network_baseband_8")
+        self.place(key(1), "endernet:tiny_network_endpoint")
+        self.terminal = self.place(key(-1), "endernet:common_terminal_panel")
+        self.place(key(0, 65), "endernet:creative_energy_source")
+        self.runtime = self.server.runtimes.runtime_for(self.terminal)
+        self.storage = self.runtime.services.get("storage")
+
+    def place(self, position, device):
+        self.server.push(NormalizedEvent.place(position, device))
+        self.server.tick()
+        return self.server.registry.get(position).ref
+
+    def fill_slots(self, driver, count):
+        box = self.containers.container_at(driver.node_key)
+        for slot in range(count):
+            box.write_slot(slot, testsupport.item_dict_without_carrier(FLOPPY))
+        self.server.drivers.refresh(driver)
+        self.server.clock.advance(self.server.medium_policy.frames_per_second)
+        self.server.tick()
+
+    def from_terminal(self, request_id, action, resource, count):
+        return self.server.submit_command(DeviceCommand(
+            request_id, CommandKind.STORAGE, CommandSource(None, self.terminal, 0),
+            payload={"action": action, "key": resource.to_dict(), "count": count},
+            device_ref=self.terminal))
+
+    def test_driver_with_unknown_admission_cannot_trade_through_admitted_terminal(self):
+        driver = self.place(key(0, 64, 1), DRIVER_DEVICE_ID)
+        self.fill_slots(driver, 1)
+        medium_id = self.server.drivers.get_by_ref(driver).assignment(0).medium_id
+        medium = self.server.drivers.medium(medium_id)
+        self.assertEqual(self.from_terminal("in", "insert", STONE, 7).status, STATUS_OK)
+        self.assertIsNotNone(self.storage.reserve("order", STONE, 2))
+
+        # 第二段独立基带同时连接主控和驱动器，使驱动器处于多接入待确认。
+        extra = self.place(key(1, 64, 1), "endernet:network_baseband_8")
+        self.assertIsNone(self.server.admission.status_of(driver).ok)
+        self.assertTrue(self.server.admission.status_of(self.terminal).ok)
+        self.assertEqual(self.runtime.state(), RunState.RUNNABLE)
+        self.assertEqual(self.from_terminal("denied-in", "insert", DIRT, 1).status, STATUS_BLOCKED)
+        self.assertEqual(self.from_terminal("denied-out", "extract", STONE, 1).status, STATUS_BLOCKED)
+        self.assertEqual(self.storage.query(STONE)["available"], 0)
+        self.assertIsNone(self.storage.reserve("order2", STONE, 1))
+        self.assertEqual(self.storage.reservations_of("order"), ())
+        self.assertEqual(medium.count_of(STONE), 7)
+        self.assertEqual(medium.count_of(DIRT), 0)
+
+        self.server.push(NormalizedEvent.remove(extra.node_key, "endernet:network_baseband_8"))
+        self.server.tick()
+        self.assertTrue(self.server.admission.status_of(driver).ok)
+        self.assertEqual(self.storage.query(STONE)["available"], 7)
+        self.assertEqual(self.from_terminal("restored", "extract", STONE, 1).status, STATUS_OK)
+        self.assertEqual(medium.count_of(STONE), 6)
+
+    def test_other_driver_load_changes_access_without_a_topology_event(self):
+        first = self.place(key(0, 64, -1), DRIVER_DEVICE_ID)
+        second = self.place(key(0, 63), DRIVER_DEVICE_ID)
+        last = self.place(key(0, 64, 1), DRIVER_DEVICE_ID)
+        self.fill_slots(last, 10)
+        self.assertEqual(self.from_terminal("seed-last", "insert", STONE, 2).status, STATUS_OK)
+        self.fill_slots(first, 9)
+        self.fill_slots(second, 9)
+        self.assertTrue(self.server.admission.status_of(last).ok)
+        # 终端 4/4u，28 块盘 28/4u；再加一盘只挤掉最后到的那台。
+        box = self.containers.container_at(first.node_key)
+        box.write_slot(9, testsupport.item_dict_without_carrier(FLOPPY))
+        self.server.drivers.refresh(first)
+        self.assertIs(self.server.admission.status_of(last).ok, False)
+        self.assertEqual(self.storage.query(STONE)["available"], 0)
+        self.assertEqual(self.from_terminal("other-driver", "insert", DIRT, 1).status, STATUS_OK)
+        self.assertEqual(self.storage.query(DIRT)["available"], 1)
+        box.write_slot(9, None)
+        self.server.drivers.refresh(first)
+        self.assertTrue(self.server.admission.status_of(last).ok)
+        self.assertEqual(self.storage.query(STONE)["available"], 2)
+        self.assertEqual(self.storage.query(DIRT)["available"], 1)
+        self.assertTrue(self.storage.audit()["ok"])
+
+    def test_moved_disk_reappears_in_the_terminal_index_exactly_once(self):
+        source = self.place(key(0, 64, -1), DRIVER_DEVICE_ID)
+        destination = self.place(key(0, 64, 1), DRIVER_DEVICE_ID)
+        self.fill_slots(source, 1)
+        self.assertEqual(self.from_terminal("seed", "insert", STONE, 3).status, STATUS_OK)
+        self.assertIsNotNone(self.storage.reserve("old-order", STONE, 2))
+        old = self.containers.container_at(source.node_key)
+        new = self.containers.container_at(destination.node_key)
+        disk = self.server.drivers.get_by_ref(source).assignment(0).medium_id
+        new.write_slot(1, old.read_slot(0))
+        old.write_slot(0, None)
+        self.server.drivers.refresh(destination)
+        self.server.drivers.refresh(source)
+        self.server.clock.advance(self.server.medium_policy.frames_per_second)
+        self.server.tick()
+        self.assertEqual(self.storage.medium_ids(), (disk,))
+        self.assertEqual(self.storage.mounted[disk].node_key, destination.node_key)
+        self.assertEqual(self.storage.reservations_of("old-order"), ())
+        self.assertEqual(self.storage.query(STONE)["available"], 3)
+        self.assertEqual(self.from_terminal("withdraw", "extract", STONE, 3).status, STATUS_OK)
+        self.assertEqual(self.server.drivers.medium(disk).count_of(STONE), 0)
+        self.assertTrue(self.storage.audit()["ok"])
 
 
 class TestAssembly(unittest.TestCase):

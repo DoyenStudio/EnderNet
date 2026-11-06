@@ -315,16 +315,15 @@ class TestRoleTables(unittest.TestCase):
 
 
 class TestPortConfig(unittest.TestCase):
-    def test_an_empty_filter_is_not_ready_under_the_stand_in(self):
-        """**空名单的含义尚未定案**（规格把它列为待确认）。
-
-        替身取「什么都不搬」——那是唯一不会让一台刚放下的接口立刻动手的
-        解释。旧代码把存货口的空过滤当成「接收任意物品」，那是一次推断。
-        """
+    def test_empty_filters_for_passive_intake_and_output_under_default_policy(self):
         config = PortConfig()
-        for role in (PASSIVE, INTAKE, OUTPUT, TEMPLATE):
+        for role in (PASSIVE, INTAKE, OUTPUT):
             self.assertFalse(config.is_ready_for(role))
             self.assertFalse(config.is_ready_for(role, PortPolicy()))
+
+    def test_enabled_template_port_uses_the_order_batch_without_a_filter(self):
+        self.assertTrue(PortConfig().is_ready_for(TEMPLATE, PortPolicy()))
+        self.assertFalse(PortConfig(enabled=False).is_ready_for(TEMPLATE, PortPolicy()))
 
     def test_the_empty_filter_knob_changes_it(self):
         """口径可注入：把空名单解释成「全部」时，存货口就开工了。"""
@@ -1326,6 +1325,31 @@ class TestIntakePort(PortFixture):
     """存货口：读朝向容器的内容存进网络。"""
 
     device_id = INPUT
+
+    def test_poll_stops_after_compensation_cannot_return_items_to_source(self):
+        from endernet.server.adapters.containers import ReadOnlyContainer
+
+        source = ReadOnlyContainer(slots=1)
+        source.set_slot(0, ContainerEntry(STONE, 10))
+        self.containers.boxes[self.target_ref.node_key.as_key()] = source
+        target = _RefusingNetwork()
+        target.simulate_insert = lambda key, count: {"accepted": count}
+        dispatcher = PortDispatcher(self.ports, self.coordinator, NetworkEndpoint(target, "c1"))
+        self.policy.max_batch = 5
+        self.configure()
+        master = _Master()
+        master.submit = lambda command: dispatcher.dispatch(self.state, command.request_id)
+        runner = PortRunner(self.ports, PortGateway(_FakeRuntime(master=master)))
+
+        # 工厂和手动派发也能直达命令处理器；停机不能只依赖轮询取回回执。
+        first = dispatcher.dispatch(self.state, "factory-feed")
+        self.assertEqual(first.payload["receipt"]["status"], TransferStatus.UNCERTAIN)
+        runner._poll(_Task(self.ref))
+        self.assertEqual(self.state.hold, Reason.CONTAINER_UNCERTAIN)
+        self.assertEqual(self.state.archive_payload()["hold"], Reason.CONTAINER_UNCERTAIN)
+        self.assertEqual(self.state.stats["dispatches"], 0)
+        self.assertEqual(source.count_of(STONE), 5)
+        self.assertEqual(self.coordinator.pending_reconcile()[0]["unresolved"], 5)
 
     def test_an_empty_whitelist_moves_nothing_under_the_stand_in(self):
         """**空名单的含义尚未定案**，替身口径取「什么都不搬」。
@@ -2518,6 +2542,38 @@ class TestInventoryCommands(BootstrapFixture):
         self.assertEqual(runtime.state(), "runnable")
         self.accrue_quota()
         self.ref = self.ref_at(key(3))
+
+    def test_each_players_own_c2_moves_stock_once_at_the_same_terminal(self):
+        from endernet.common.protocol import SessionOpen, SyncEnvelope
+
+        self.submit("seed", self.ref, "insert", key=STONE.to_dict(), count=8)
+        # 玩家各有自己的背包，且都在同一台设备旁打开会话。
+        self.inventories._cache["p2"] = self.inventories.adapter_class(
+            _PlayerPrimitives(), "p2", self.inventories.limit)
+        commands = []
+        for player, amount in (("p1", 2), ("p2", 3)):
+            context = self.server._sync_context_of(player, self.ref)
+            context.player_dimension = 0
+            context.player_position = self.ref.node_key.as_tuple()
+            session, check = self.server.sync.registry.open(
+                SyncEnvelope(SessionOpen("c1", self.ref, 0)), context, 0)
+            self.assertTrue(check.ok, check.detail)
+            command = self.command("c2", self.ref, "inv_put", key=STONE.to_dict(), count=amount)
+            command.source = CommandSource(player, self.ref, 0, session_id=session.session_id)
+            commands.append(command)
+
+        for command in commands:
+            result = self.server.submit_command(command)
+            self.assertEqual(result.request_id, "c2")
+            self.assertEqual(result.status, STATUS_OK, result.to_dict())
+            self.assertEqual(result.payload["receipt"]["moved"], command.payload["count"])
+        for command in commands:
+            replayed = self.server.submit_command(command)
+            self.assertTrue(replayed.payload["replayed"])
+        self.assertEqual(self.inventories.endpoint_of("p1").slot_view(0)["count"], 2)
+        self.assertEqual(self.inventories.endpoint_of("p2").slot_view(0)["count"], 3)
+        storage = self.server.runtimes.runtime_for(self.ref).services.get("storage")
+        self.assertEqual(storage.query(STONE)["stored"], 3)
 
     def test_a_cursor_payload_is_refused_because_r12_is_unresolved(self):
         """R12 未定案：**不猜**，遇到就明确拒绝（替身口径是「不接管」）。"""

@@ -28,6 +28,9 @@
 约束（它们本来也不需要在启动那一刻就在）。
 """
 
+from ...common.identity import node_key_text
+
+
 #: 恢复阶段。顺序即执行顺序，`READY` 是唯一开放业务的那一档。
 PHASE_LOADING = "loading"
 PHASE_RECONCILING = "reconciling"
@@ -57,7 +60,7 @@ class RecoveryGate(object):
     `is_open()` 恒假，业务一律被拒。
     """
 
-    __slots__ = ("phase", "steps", "detail", "restore_ok", "ready_tick")
+    __slots__ = ("phase", "steps", "detail", "restore_ok", "ready_tick", "network_blockers")
 
     def __init__(self):
         #: 当前阶段。
@@ -68,6 +71,8 @@ class RecoveryGate(object):
         #: 存档读取是否成功。`None` = 还没试过。
         self.restore_ok = None
         self.ready_tick = None
+        # 以主控位置为键，网络恢复、拓扑重建和业务开放共用此判据。
+        self.network_blockers = {}
 
     # -- 推进 ----------------------------------------------------------
 
@@ -79,6 +84,7 @@ class RecoveryGate(object):
         self.detail = ""
         self.restore_ok = None
         self.ready_tick = None
+        self.network_blockers.clear()
         self._note(PHASE_LOADING, "开始读持久数据")
 
     def note_restored(self, ok, detail=""):
@@ -113,10 +119,12 @@ class RecoveryGate(object):
         """业务能不能动。**只有 `ready` 才是真。**"""
         return self.phase == PHASE_READY
 
-    def blocker(self):
-        # type: () -> str
+    def blocker(self, master_key=None):
+        # type: (object) -> str
         """没开放时的一句话原因。开放时为空串。"""
         if self.phase == PHASE_READY:
+            if master_key is not None and self.network_blockers:
+                return self.network_blockers.get(node_key_text(master_key), "")
             return ""
         if self.restore_ok is False:
             return "存档读取失败，已拒绝新存取（不把读不出的存档当成空存档）：%s" % (
@@ -134,6 +142,7 @@ class RecoveryGate(object):
             "detail": self.detail,
             "steps": [dict(item) for item in self.steps],
             "blocker": self.blocker(),
+            "network_blockers": dict(self.network_blockers),
         }
 
 

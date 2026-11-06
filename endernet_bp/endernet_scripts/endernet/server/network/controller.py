@@ -554,7 +554,7 @@ def result_from_dict(data):
 
 def ledger_key(command):
     # type: (DeviceCommand) -> tuple
-    """账本键 = `(request_id, 来源设备实例)`。
+    """账本键包含服务端确定的玩家/会话请求身份与来源设备实例。
 
     来源取 `source.device_ref`（玩家操作的终端）；设备自身的到期任务没有
     玩家来源时退回命令的目标设备，这样同一个设备发出的两条同号请求
@@ -565,7 +565,7 @@ def ledger_key(command):
         ref = command.source.device_ref
     elif command.device_ref is not None:
         ref = command.device_ref
-    return (command.request_id, ref.as_key() if ref is not None else "")
+    return (command.scoped_request_id(), ref.as_key() if ref is not None else "")
 
 
 # -- 许可 ------------------------------------------------------------------

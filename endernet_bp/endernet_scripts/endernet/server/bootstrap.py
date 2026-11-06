@@ -86,11 +86,12 @@ from .crafting.template_terminal import (
     OUTPUT_CELL_COUNT,
     RESULT_SLOT,
     SOURCE_CELL_COUNT,
+    TEMPLATE_SCHEMA_VERSION,
     TemplatePolicy,
     TemplateStore,
     detect_crafting_output,
 )
-from .crafting.workbench import CraftingPolicy, WorkbenchStore, preview_of
+from .crafting.workbench import WORKBENCH_SCHEMA_VERSION, CraftingPolicy, WorkbenchStore, preview_of
 from .devices.io import (
     TEMPLATE as PORT_TEMPLATE_ROLE,
     PortGateway,
@@ -107,6 +108,7 @@ from .devices.storage_driver import (
     is_storage_driver,
 )
 from .persistence.repository import ExtraDataRepository, Record
+from .persistence.terminals import TerminalInventoryArchive
 from .persistence.recovery import (
     RecoveryGate,
     assert_consistent,
@@ -124,7 +126,7 @@ from .network.services import (
 from .network.ticking import SchedulerService
 from .network.topology import TopologyService
 from .runtime.events import EventQueue
-from .runtime.lifecycle import DeviceLifecycle
+from .runtime.lifecycle import ChangeKind, DeviceLifecycle
 from .runtime.scheduler import LogicalClock, SchedulerPolicy
 from .storage.medium import MediumPolicy
 from .storage.projection import NetworkItemProjection
@@ -763,7 +765,9 @@ class ServerBootstrap(object):
         #: 合成终端的工作台集合（11-04）。**只对合成终端开口**：
         #: `accepts` 按方块型号判，别的方块拿不到工作台，于是命令侧
         #: 「这台方块没有九宫格」是一条明确拒绝，而不是凭空造一台空的。
-        self.workbench = WorkbenchStore(accepts=self._is_crafting_terminal)
+        self.terminal_archive = TerminalInventoryArchive(self.world, self.registry)
+        terminal_key = self.terminal_archive.key_for if self.persistence_enabled else None
+        self.workbench = WorkbenchStore(accepts=self._is_crafting_terminal, key_of=terminal_key)
         #: 样板终端的真实槽与虚拟配置（11-05）。与 `workbench` 同一地位，
         #: 三个回调各有各的必要性：
         #:
@@ -777,7 +781,12 @@ class ServerBootstrap(object):
             drop=self._drop_template_items,
             limit_of=self._template_stack_limit,
             name_of=template_resource_name,
+            key_of=terminal_key,
         )
+        self.terminal_archive.add_store(
+            CRAFTING_TERMINAL_DEVICE_ID, self.workbench, "grids", "grid", WORKBENCH_SCHEMA_VERSION)
+        self.terminal_archive.add_store(
+            TEMPLATE_TERMINAL_DEVICE_ID, self.templates, "states", "state", TEMPLATE_SCHEMA_VERSION)
         #: 样板终端的未定口径（`template_terminal.TemplatePolicy`）。
         #: **全进程一份**，理由与 `crafting_policy` 相同。
         self.template_policy = TemplatePolicy()
@@ -813,6 +822,7 @@ class ServerBootstrap(object):
             policy=self.driver_policy,
             medium_policy=self.medium_policy,
             on_load_changed=self._note_driver_load_changed,
+            on_slots_changed=self._sync_driver_mounts,
             # 驱动器那 10 格方块容器是「哪个介质在哪个槽」的**唯一权威**
             # （2026-10-04）。没有这个提供方，驱动器读不到任何槽位——
             # 与内存槽同一条纪律：读不到就报「读不到」，不当成空槽。
@@ -1046,6 +1056,7 @@ class ServerBootstrap(object):
         # `_emit` 的订阅者顺序按注册先后走，而这一步在**装配期**完成，
         # 与 04/05 那些消费者一样是固定的、可复现的顺序。
         self.runtimes.add_listener(self._on_runtime_change)
+        self.admission.add_listener(self._on_driver_admission_changed)
         # 生命周期把变化发布到这里，这是**唯一**出口：
         # 事件处理与启动补查/手动重扫都走它，不会有一条路径绕过去。
         self.lifecycle.set_change_sink(self._emit)
@@ -1209,8 +1220,13 @@ class ServerBootstrap(object):
             raise RuntimeError("bootstrap 未启动")
 
         self.tick_count += 1
-        backfilled = self._advance_backfill()
-        drained, changes = self._drain_events()
+        # 恢复未读完时不得发现新设备：驱动器一经发现就会给空白盘发号并写回实体槽。
+        # 保留事件，让读取故障排除后仍能按原顺序补查。
+        if self.persistence_restore_error:
+            backfilled, drained, changes = 0, 0, ()
+        else:
+            backfilled = self._advance_backfill()
+            drained, changes = self._drain_events()
         # 12-05 的阶段二..七：设备已由上面的补查/事件消费对过账（区块发现
         # 带来的设备注册就在这一步），此后才可以开放业务。
         # **必须在 `topology.advance` 之前**：拓扑发布会立刻触发运行时同步
@@ -1250,8 +1266,7 @@ class ServerBootstrap(object):
         memory_reads = self.memory_slots.advance(self.clock.current_tick())
         # 驱动器槽位同为零存读数（2026-10-04）：方块容器是「哪个介质在哪个槽」
         # 的唯一权威，重读即恢复。**放在内存槽之后**：两者都读方块容器、
-        # 都不依赖本帧的网络账；本帧读到的挂载由下一帧的 `add_node` 收敛
-        # （与容量晚一帧同一形状）。
+        # 都不依赖本帧的网络账；槽位变更在读数完成后同步到所属网络。
         driver_reads = self.drivers.advance(self.clock.current_tick())
         # 展示行（容量 Lore）写回排在读数之后：先知道槽里有什么、内容是什么，
         # 再决定要写什么。它自己有去抖与预算，空闲帧的代价是遍历一遍待办表。
@@ -1324,6 +1339,7 @@ class ServerBootstrap(object):
                 "drivers": self.drivers.restore_from_repository(self.repository),
                 "ports": self.ports.restore_from_repository(self.repository),
                 "networks": self._restore_network_records(),
+                "terminal_inventories": self.terminal_archive.restore(self.repository),
             }
         except Exception as error:
             self.persistence_restore_error = "%s: %s" % (type(error).__name__, error)
@@ -1353,11 +1369,17 @@ class ServerBootstrap(object):
         count = 0
         for record_id in self.repository.list_ids(NETWORK_RECORD_KIND):
             record = self.repository.load(NETWORK_RECORD_KIND, record_id)
-            if record is None or not isinstance(record.payload, dict):
-                continue
+            if record is None:
+                raise ValueError("missing network record: %s" % record_id)
             archive = dict(record.payload)
-            archive["_read_only"] = bool(record.read_only)
+            reason = ""
+            if record.read_only:
+                reason = "unsupported network record version: %s" % record.schema_version
+            elif archive.get("schema_version") != NETWORK_STATE_SCHEMA_VERSION:
+                reason = "unsupported network state version: %r" % archive.get("schema_version")
+            archive["_read_only"] = bool(reason)
             self.archived_networks[record_id] = archive
+            self.recovery.network_blockers[record_id] = reason or "等待恢复网络台账"
             count += 1
         return count
 
@@ -1368,6 +1390,8 @@ class ServerBootstrap(object):
         **每张网络只应用一次**（按主控位置文本去重）。应用的内容按
         先恢复订单，再恢复有主的预留；无主预留归档，待核对转移不重放。
         """
+        if self.persistence_restore_error:
+            return 0
         applied = 0
         for runtime in self.runtimes.runtimes():
             master = runtime.master
@@ -1381,6 +1405,8 @@ class ServerBootstrap(object):
             # 重复检查只是白跑，有存档时更不能应用第二次。
             if archive is None:
                 self._network_state_applied.add(record_id)
+                continue
+            if archive["_read_only"]:
                 continue
             storage = runtime.services.get(ServiceId.STORAGE)
             if not isinstance(storage, StorageService):
@@ -1407,18 +1433,18 @@ class ServerBootstrap(object):
                         for part in row.get("parts", ())
                     )
                     if missing:
-                        runtime.close("订单恢复等待原预留介质加载")
+                        reason = "订单恢复等待原预留介质加载"
+                        self.recovery.network_blockers[record_id] = reason
+                        runtime.close(reason)
                         continue
                     storage.import_network_state(storage_payload, restored_owners=owners)
             except (KeyError, TypeError, ValueError, AttributeError, AssertionError) as error:
                 archive["_read_only"] = True
-                self.persistence_restore_error = "%s: %s" % (type(error).__name__, error)
-                self.recovery.begin()
-                self.recovery.note_restored(False, self.persistence_restore_error)
-                for item in self.runtimes.runtimes():
-                    item.close(self.persistence_restore_error)
-                self._network_state_applied.add(record_id)
-                return applied
+                reason = "%s: %s" % (type(error).__name__, error)
+                self.recovery.network_blockers[record_id] = reason
+                runtime.close(reason)
+                continue
+            self.recovery.network_blockers.pop(record_id, None)
             self._network_state_applied.add(record_id)
             runtime.open_if_ready()
             runtime.stats["network_state_restored"] = 1
@@ -1433,7 +1459,7 @@ class ServerBootstrap(object):
         39.8 KB，与载荷几乎无关（`persistence_backend.md` §3.2），
         空转帧不该付这笔钱。
         """
-        if not self.persistence_enabled:
+        if not self.persistence_enabled or self.persistence_restore_error:
             return {"records": 0, "commits": 0}
         # 预算是**两家分**（驱动器与接口各一半），不是先到先得：轮流让一家
         # 吃满的话，另一家在「那一类一直有脏记录」的网络里会永远排不上队，
@@ -1453,11 +1479,12 @@ class ServerBootstrap(object):
         不承诺非正常退出时最后一帧持久化。
         不逐帧构造整份订单簿，避免订单数量变成每帧开销。
         """
-        if not self.persistence_enabled:
+        if not self.persistence_enabled or self.persistence_restore_error:
             return 0
         records = self.drivers.save_to_repository(self.repository, budget=None)
         records += self.ports.save_to_repository(self.repository, budget=None)
         records += self.write_network_states()
+        records += self.terminal_archive.save(self.repository)
         self.repository.commit()
         return records
 
@@ -1468,6 +1495,8 @@ class ServerBootstrap(object):
         **一张网络一条记录**，主键是主控位置文本。冻结（信封读不懂）的那些
         不写回——与驱动器/介质同一条纪律。
         """
+        if not self.persistence_enabled or self.persistence_restore_error:
+            return 0
         written = 0
         for runtime in self.runtimes.runtimes():
             master = runtime.master
@@ -1553,6 +1582,11 @@ class ServerBootstrap(object):
         }
         #: 分阶段恢复的当前阶段（12-05）。**`ready` 之前业务一律被拒。**
         report["recovery"] = self.recovery.diagnostics()
+        report["terminal_inventories"] = {
+            "bound": len(self.terminal_archive.bindings),
+            "awaiting_discovery": len(self.terminal_archive.pending),
+            "last_identity_error": self.terminal_archive.identity_error,
+        }
         report["networks"] = {
             "archived": sorted(self.archived_networks),
             "applied": sorted(self._network_state_applied),
@@ -1624,6 +1658,29 @@ class ServerBootstrap(object):
         self._backfill_generator = None
         self._backfill_finished = False
         self.lifecycle.forget_backfill()
+
+    def _sync_driver_mounts(self, ref):
+        # type: (object) -> None
+        """容器插拔不会触发拓扑重建，槽位变化时单独同步这台驱动器。"""
+        runtime = self.runtimes.runtime_for(ref)
+        if runtime is None:
+            return
+        node = runtime.member(ref.node_key)
+        storage = runtime.services.get(ServiceId.STORAGE)
+        if node is not None and node.ref.matches(ref) and isinstance(storage, StorageService):
+            storage.add_node(node)
+
+    def _on_driver_admission_changed(self, changes):
+        # type: (list) -> None
+        """同域其他设备的负载也会改变本驱动器的准入。"""
+        for change in changes:
+            before, after = change.before, change.after
+            if bool(before and before.ok) == bool(after and after.ok):
+                continue
+            result = after or before
+            # 准入发布早于运行时成员同步。已拆除的旧节点不能再经 add_node 建一台驱动器。
+            if self.drivers.get_by_ref(result.ref) is not None:
+                self._sync_driver_mounts(result.ref)
 
     def _note_driver_load_changed(self, node_key):
         # type: (object) -> int
@@ -2275,7 +2332,18 @@ class ServerBootstrap(object):
             # 实物掉在原地，掉不掉的进孤儿索引。放在这里而不是自己的观察者
             # 通道，理由与上面三条相同——两条路径分叉就会出「拓扑知道设备
             # 没了、样板槽还以为在」。
-            self.templates.observe(change)
+            if self.persistence_enabled:
+                if change.kind in (ChangeKind.ADDED, ChangeKind.LOADED):
+                    self.terminal_archive.discovered(change.device_id, change.ref)
+                elif change.kind == ChangeKind.UNLOADED:
+                    self.terminal_archive.unloaded(change.device_id, change.ref)
+                elif change.kind == ChangeKind.REMOVED:
+                    self.terminal_archive.removed(change.device_id, change.ref)
+            elif change.kind == ChangeKind.REMOVED:
+                if change.device_id == CRAFTING_TERMINAL_DEVICE_ID:
+                    self.workbench.forget(change.ref)
+                elif change.device_id == TEMPLATE_TERMINAL_DEVICE_ID:
+                    self.templates.forget(change.ref)
         if self.change_sink is not None:
             for change in changes:
                 self.change_sink(change)

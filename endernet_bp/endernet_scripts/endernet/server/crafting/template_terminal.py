@@ -39,7 +39,7 @@ from ...common.definitions import (
     TEMPLATE_PANEL_ITEM_ID,
 )
 from ...common.item_codec import item_dict_from_key
-from ...common.resource_key import ResourceKey
+from ...common.resource_key import ResourceKey, _require_count
 from ..runtime.lifecycle import ChangeKind
 from . import patterns
 from .patterns import PatternStack, PatternValidationError
@@ -270,6 +270,7 @@ def _entry_from(row):
     # type: (object) -> object
     if row is None:
         return None
+    _require_count(row["count"], "template cell count")
     return (ResourceKey.from_dict(row["key"]), row["count"])
 
 
@@ -371,7 +372,9 @@ class TemplateSlots(object):
     @classmethod
     def from_dict(cls, payload, revision=None):
         # type: (dict, object) -> TemplateSlots
-        rows = _cells_from(payload.get("slots"), REAL_SLOT_COUNT, "样板槽")
+        if payload["schema_version"] != TEMPLATE_SCHEMA_VERSION or payload["slots"] is None:
+            raise ValueError("unsupported template slots")
+        rows = _cells_from(payload["slots"], REAL_SLOT_COUNT, "样板槽")
         return cls([_entry_from(row) for row in rows], revision=revision)
 
     def __repr__(self):
@@ -551,9 +554,12 @@ class TemplateConfig(object):
     @classmethod
     def from_dict(cls, payload, revision=None):
         # type: (dict, object) -> TemplateConfig
-        source = _cells_from(payload.get("source"), SOURCE_CELL_COUNT, "输入九宫格")
-        outputs = _cells_from(payload.get("outputs"), OUTPUT_CELL_COUNT, "输出格")
-        return cls(payload.get("mode", PATTERN_MODE_CRAFTING),
+        if (payload["schema_version"] != TEMPLATE_SCHEMA_VERSION or
+                payload["source"] is None or payload["outputs"] is None):
+            raise ValueError("unsupported template configuration")
+        source = _cells_from(payload["source"], SOURCE_CELL_COUNT, "输入九宫格")
+        outputs = _cells_from(payload["outputs"], OUTPUT_CELL_COUNT, "输出格")
+        return cls(payload["mode"],
                    [_entry_from(row) for row in source],
                    [_entry_from(row) for row in outputs],
                    revision=revision)
@@ -594,8 +600,8 @@ class TemplateDeviceState(object):
     def from_dict(cls, payload):
         # type: (dict) -> TemplateDeviceState
         revision = Revision(payload.get("revision", 0))
-        slots = TemplateSlots.from_dict(payload.get("slots") or {}, revision)
-        config = TemplateConfig.from_dict(payload.get("config") or {}, revision)
+        slots = TemplateSlots.from_dict(payload["slots"], revision)
+        config = TemplateConfig.from_dict(payload["config"], revision)
         return cls(slots, config)
 
     def __repr__(self):
@@ -624,11 +630,13 @@ class TemplateStore(object):
     """
 
     def __init__(self, accepts=None, drop=None, limit_of=None, policy=None,
-                 name_of=None):
+                 name_of=None, key_of=None):
         #: `accepts(device_ref) -> bool`。**只对样板终端开口**：没有它就等于
         #: 给每条命令都变出一台空设备，而「这台方块根本没有样板槽」与
         #: 「它的样板槽是空的」在界面上是两回事。为 `None` 时不设限。
         self._accepts = accepts
+        if key_of is not None:
+            self._key_of = key_of
         #: `drop(node_key, item_dicts) -> int`（返回真的掉出来几件）。
         #: 引擎面，因此是回调而不是服务引用。为 `None` 时**不掉**，
         #: 内容原样进孤儿索引——离线夹具与测试走这一支。
@@ -661,6 +669,8 @@ class TemplateStore(object):
         # type: (object) -> TemplateDeviceState
         """取这台设备的状态，没有就建一个空的。"""
         key = self._key_of(ref)
+        if key is None:
+            return None
         state = self._states.get(key)
         if state is None:
             state = TemplateDeviceState(generation=getattr(ref, "generation", 0))
@@ -732,11 +742,19 @@ class TemplateStore(object):
         if ref is None:
             return False
         key = self._key_of(ref)
-        state = self._states.pop(key, None)
+        state = self._states.get(key)
         if state is None:
             return False
         if self.policy.break_disposition == BREAK_DROP:
             self._drop_real_slots(key, state)
+        return self.detach_saved(key)
+
+    def detach_saved(self, key):
+        # type: (tuple) -> bool
+        """实体替换只能证明归属失效；缺少拆除事件时，保管旧实物供核对。"""
+        state = self._states.pop(key, None)
+        if state is None:
+            return False
         self._orphans[key] = state
         self.stats["forgotten"] += 1
         self.stats["orphaned"] = len(self._orphans)
@@ -812,7 +830,7 @@ class TemplateStore(object):
 
     def save_all(self):
         # type: () -> dict
-        """整份存盘载荷。**真机上还没有人调它**（存档接线属任务 12）。"""
+        """正常保存使用的快照，包含真实槽、配置以及未掉落的实物。"""
         rows = [
             {"node": list(key[:4]), "generation": key[4],
              "detached": detached, "state": state.to_dict()}

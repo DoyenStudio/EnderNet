@@ -409,6 +409,51 @@ class TestInvalidContent(BayCase):
         )
         self.assertEqual(len(self.store.diagnostics()["orphan_slots"]), 0)
 
+    def test_destination_rereads_after_source_releases_a_moved_disk(self):
+        destination = self.store.ensure(
+            self.registry.register(node_key(2), DRIVER_DEVICE_ID).record.ref)
+        source = self.store.ensure(
+            self.registry.register(node_key(10), DRIVER_DEVICE_ID).record.ref)
+        box = self.box(source.ref)
+        box.write_slot(1, self.blank())
+        self.store.refresh(source.ref)
+        disk = source.assignment(1).medium_id
+        self.box(destination.ref).write_slot(3, box.read_slot(1))
+        box.write_slot(1, None)
+        # 同帧通知：坐标数值排序先读 x=2，冲突裁决按位置文本优先 x=10。
+        for state in (source, destination):
+            self.store.mark_dirty(state.node_key)
+        self.store.advance(DRIVER_SETTLE_FRAMES + 1)
+        self.store.advance(2 * DRIVER_SETTLE_FRAMES + 2)
+        self.assertEqual(source.medium_ids(), ())
+        self.assertEqual(destination.slot_of(disk), 3)
+        self.assertIs(self.store.medium_slot_owner(disk)[0], destination)
+
+        # 反向搬盘时先读源，再读目的；同一份内容仍只有一个挂载。
+        box.write_slot(2, self.box(destination.ref).read_slot(3))
+        self.box(destination.ref).write_slot(3, None)
+        self.store.mark_dirty(source.node_key)
+        self.store.mark_dirty(destination.node_key)
+        self.store.advance(3 * DRIVER_SETTLE_FRAMES + 3)
+        self.assertEqual(destination.medium_ids(), ())
+        self.assertEqual(source.slot_of(disk), 2)
+
+    def test_dropping_the_winner_rechecks_the_physical_loser_slots(self):
+        self.put(0, self.blank())
+        disk = self.state.assignment(0).medium_id
+        candidates = []
+        for x in (1, 2):
+            state = self.store.ensure(self.registry.register(node_key(x), DRIVER_DEVICE_ID).record.ref)
+            self.box(state.ref).write_slot(0, self.box().read_slot(0))
+            self.store.refresh(state.ref)
+            self.assertEqual(state.medium_ids(), ())
+            candidates.append(state)
+        self.box(candidates[0].ref).write_slot(0, None)
+        self.store.drop(self.ref)
+        self.store.advance(DRIVER_SETTLE_FRAMES + 1)
+        self.assertEqual(candidates[0].medium_ids(), ())
+        self.assertEqual(candidates[1].medium_ids(), (disk,))
+
 
 # -- 三态与变化 --------------------------------------------------------------
 

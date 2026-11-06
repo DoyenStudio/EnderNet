@@ -54,7 +54,7 @@
 
 from ...common.protocol import ORIGIN_EXTERNAL, ORIGIN_INTERNAL
 from ..network.services import ServiceId
-from .jobs import _canonical_of
+from .jobs import OutputDemand, _canonical_of
 
 #: 策略字段到**待定依据**的映射。第二项是决策台账编号——
 #: 与 `PlanPolicy.UNRESOLVED_FIELDS` 同格式。
@@ -234,8 +234,7 @@ def _component_of(runtime):
 class _Waiting(object):
     """「某个执行实例在等某个键」的一条记录。
 
-    **剩余需求不在这里**（见模块 docstring）：`item` 是 09 的 `StepOutput`
-    本体，`remaining()` / `allocated()` 都从它读。10 只负责把它排进索引。
+    `item` 汇总实例中所有同键的 `StepOutput`。剩余量和已分配量随实例原账更新。
     """
 
     __slots__ = (
@@ -387,15 +386,13 @@ class ReturnsService(object):
 
         `expectations` 是 `StepOutput` 序列，**产物与返还物都在里面**
         （契约 §6.2：10 不需要区分两者，按同一个剩余需求记账）。
-        折叠规则与 09 的 `WaitingLedger.register` **逐字一致**（`{canonical: item}`，
-        同键后者胜）：两边对同一条 `expectations` 得出不同的键集合，就会出现
-        「10 认为在等、09 认为不在等」的等待者。
+        每个资源键只排一个等待者。它汇总全部同键条目，读取与 09 相同的实收账。
         """
         if not execution_id:
             return False
         if self._drop(execution_id):
             self.stats["replaced"] += 1
-        row = dict((item.canonical, item) for item in (expectations or ()))
+        row = OutputDemand.by_key(expectations)
         for canonical, item in row.items():
             self._seq += 1
             entry = _Waiting(

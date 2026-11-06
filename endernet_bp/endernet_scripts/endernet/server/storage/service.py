@@ -465,7 +465,7 @@ class StorageService(NetworkService):
 
     def add_node(self, node, saved_data=None):
         # type: (object, object) -> bool
-        """登记一个成员。**对每个成员每帧都会被调用**，必须幂等。
+        """拓扑发布时登记成员；驱动器的槽位读数变化时也用此入口更新挂载。
 
         两种成员：存储驱动器（挂载介质）与接口设备（登记轮询）。
         驱动器的挂载集合来自它自己的权威槽位，因此这里不解析 `saved_data`
@@ -484,19 +484,21 @@ class StorageService(NetworkService):
         state = self.drivers.ensure(node.ref)
         if state is None:
             return False
-
         before = self._mount_signature()
         # **先卸掉权威槽位里已经没有的**：这就是「对最终挂载集合求差」。
         # 没有这一步的话，任何一处直接调 `provider.unmount()` 而不经过本服务
         # 的路径都会让索引与设备悄悄不一致——而那种不一致只会表现为
         # 「库存比设备上多」，查起来毫无线索。
-        authoritative = set(item.medium_id for item in state.occupied())
+        admitted = self._driver_admitted(node.ref)
+        assignments = state.occupied() if admitted else ()
+        authoritative = set(item.medium_id for item in assignments)
         for medium_id in sorted(self.mounted):
             record = self.mounted[medium_id]
             if record.node_key == node.node_key and medium_id not in authoritative:
-                self.unmount_medium(medium_id, reason="权威槽位里已没有它")
+                reason = "权威槽位里已没有它" if admitted else "驱动器失去带宽准入"
+                self.unmount_medium(medium_id, reason=reason)
 
-        for assignment in state.occupied():
+        for assignment in assignments:
             existing = self.mounted.get(assignment.medium_id)
             if (
                 existing is not None
@@ -518,8 +520,7 @@ class StorageService(NetworkService):
                 slot_version=assignment.slot_version,
                 tick=self._clock_tick,
             )
-        # 幂等重挂**不算变化**：`sync_members` 每帧对每个成员调本方法，
-        # 若把「本来就挂着」报成变化，运行时每帧都会发一次成员变更通知。
+        # 幂等重挂不计为成员变更。
         return self._mount_signature() != before
 
     def _mount_signature(self):
@@ -798,6 +799,10 @@ class StorageService(NetworkService):
             return False, Reason.SERVICE_NOT_READY, "存储服务未接入驱动器"
         if device_ref is None:
             raise ValueError("mount_medium 需要设备实例引用（挂载代次由它决定）")
+        if not self._driver_admitted(device_ref):
+            status = self.runtime.admission.status_of(device_ref)
+            reason = Reason.BANDWIDTH_UNKNOWN if status.ok is None else Reason.BANDWIDTH_DENIED
+            return False, reason, "驱动器尚未获得带宽准入"
 
         existing = self.mounted.get(medium_id)
         if existing is not None:
@@ -887,7 +892,7 @@ class StorageService(NetworkService):
             return 0
         wanted = {}
         for node in self.runtime.members():
-            if node.device_id != DRIVER_DEVICE_ID:
+            if node.device_id != DRIVER_DEVICE_ID or not self._driver_admitted(node.ref):
                 continue
             state = self.drivers.get_by_ref(node.ref)
             if state is None:
@@ -1237,17 +1242,20 @@ class StorageService(NetworkService):
         for medium_id in sorted(self.item_sources.get(key, ())):
             if remaining <= 0:
                 break
-            medium = self.drivers.medium(medium_id)
-            if medium is None or not medium.is_tradeable():
+            if self._provider_for(medium_id) is None:
                 continue
-            already = self._medium_reserved.get(medium_id, {}).get(key, 0)
-            free_on_medium = medium.count_of(key) - already
+            free_on_medium = self._available_on_medium(medium_id, key)
             if free_on_medium <= 0:
                 continue
             take = min(remaining, free_on_medium)
             parts.append((medium_id, take))
             remaining -= take
         return tuple(parts)
+
+    def _available_on_medium(self, medium_id, key):
+        # type: (str, ResourceKey) -> int
+        reserved = self._medium_reserved.get(medium_id, {}).get(key, 0)
+        return max(0, self.drivers.medium(medium_id).count_of(key) - reserved)
 
     def _rebalance_parts(self, reservation):
         # type: (Reservation) -> None
@@ -1333,8 +1341,8 @@ class StorageService(NetworkService):
             reason = Reason.INSUFFICIENT_STOCK
         # 额度是按盘算的，因此这里按盘累加，而不是拿汇总去估。
         quota = self._extract_quota(key, accepted, now) if accepted else 0
-        if accepted and quota <= 0:
-            accepted = 0
+        if quota < accepted:
+            accepted = quota
             reason = Reason.RATE_LIMITED
         return {
             "direction": DIRECTION_READ,
@@ -1436,7 +1444,10 @@ class StorageService(NetworkService):
             provider = self._provider_for(medium_id)
             if provider is None:
                 continue
-            receipt = provider.read(medium_id, key, target - moved, budget)
+            wanted = min(target - moved, self._available_on_medium(medium_id, key))
+            if not wanted:
+                continue
+            receipt = provider.read(medium_id, key, wanted, budget)
             if receipt.moved > 0:
                 moved += receipt.moved
             elif receipt.reason:
@@ -1460,7 +1471,10 @@ class StorageService(NetworkService):
             provider = self._provider_for(medium_id)
             if provider is None:
                 continue
-            plan = provider.plan_transfer(medium_id, key, count - total, DIRECTION_READ, now)
+            wanted = min(count - total, self._available_on_medium(medium_id, key))
+            if not wanted:
+                continue
+            plan = provider.plan_transfer(medium_id, key, wanted, DIRECTION_READ, now)
             if plan is not None and plan.ok:
                 total += plan.accepted
         return total
@@ -1478,19 +1492,22 @@ class StorageService(NetworkService):
             reason = reason or Reason.INSUFFICIENT_STOCK
         return TransferReceipt(op_id, count, moved, status, reason, key)
 
+    def _driver_admitted(self, ref):
+        # type: (object) -> bool
+        return self.runtime is None or self.runtime.admission.status_of(ref).ok is True
+
     def _provider_for(self, medium_id):
         # type: (str) -> object
         """取该介质的**提供者**。不能交易时返回 None。
 
-        三个条件缺一不可：介质挂在本网络、驱动器实例仍在（代次对得上）、
-        介质本身可交易。缓存还在不等于能交易（架构 §5.2：断电/失去准入时
-        「保留权威内容」与「允许访问」是两件事）。
+        介质必须挂在本网络，所属驱动器必须仍是已加载并获准的实例，
+        介质自身也须允许交易。
         """
         record = self.mounted.get(medium_id)
         if record is None or self.drivers is None:
             return None
         state = self.drivers.get_by_ref(record.device_ref)
-        if state is None:
+        if state is None or not state.loaded or not self._driver_admitted(record.device_ref):
             return None
         medium = self.drivers.medium(medium_id)
         if medium is None or not medium.is_tradeable():
@@ -1743,7 +1760,7 @@ class StorageService(NetworkService):
         )
         if not ok:
             return self._refuse_mount(command, reason, taken)
-        receipt = endpoint.commit_insert(command.request_id or "", key, count)
+        receipt = endpoint.commit_insert(command.scoped_request_id(), key, count)
         if receipt.moved < count:
             # 探过之后仍然没全收下：**如实报不确定**，不当作成功，
             # 也不能把那件物品再塞回容器（读数已经变了，塞回去是第二次写）。
@@ -1842,7 +1859,7 @@ class StorageService(NetworkService):
         if count <= 0:
             return self._reject(command, Reason.OUT_OF_RANGE, "count 必须为正")
         key = ResourceKey.from_dict(raw)
-        op_id = payload.get("op_id") or command.request_id
+        op_id = payload.get("op_id") or command.scoped_request_id()
         source = command.source
         owner_id = source.player_id if source is not None else None
         if direction == DIRECTION_WRITE:
@@ -2122,7 +2139,7 @@ class StorageService(NetworkService):
             )
         raw = payload.get("key")
         count = payload.get("count")
-        op_id = payload.get("op_id") or command.request_id
+        op_id = payload.get("op_id") or command.scoped_request_id()
         if not isinstance(raw, dict) or isinstance(count, bool) or not isinstance(count, int):
             return self._reject(command, Reason.BAD_PARAMETER, "需要 key 与整数 count")
         if count <= 0:
@@ -2253,7 +2270,7 @@ class StorageService(NetworkService):
         except (TypeError, ValueError) as error:
             return self._reject(command, Reason.BAD_PARAMETER, "槽锚不合法：%s" % (error,))
 
-        op_id = payload.get("op_id") or command.request_id
+        op_id = payload.get("op_id") or command.scoped_request_id()
         network = NetworkEndpoint(self, self._network_id())
         if direction == DIRECTION_WRITE:
             source, target = network, endpoint
@@ -2475,7 +2492,7 @@ class StorageService(NetworkService):
         if refusal is not None:
             # 背包读不了**不是**导入失败的理由：网络那一半还能用。
             endpoint = None
-        op_id = payload.get("op_id") or command.request_id
+        op_id = payload.get("op_id") or command.scoped_request_id()
         moved = 0
         missing = []
         for slot, alternatives, count in plan_import(
@@ -2589,7 +2606,7 @@ class StorageService(NetworkService):
         endpoint, refusal = self._inventory_endpoint_for(command, payload)
         if refusal is not None:
             return refusal
-        op_id = payload.get("op_id") or command.request_id
+        op_id = payload.get("op_id") or command.scoped_request_id()
 
         destination = payload.get("target")
         cursor = None
@@ -2660,7 +2677,7 @@ class StorageService(NetworkService):
         grid, refusal = self._workbench_for(command)
         if refusal is not None:
             return refusal
-        op_id = payload.get("op_id") or command.request_id
+        op_id = payload.get("op_id") or command.scoped_request_id()
         returned = 0
         movements = []
         kept = []
@@ -3212,7 +3229,7 @@ class StorageService(NetworkService):
         if self.template_policy.device_slot_put_count == PUT_COUNT_ONE:
             want = 1
 
-        op_id = payload.get("op_id") or command.request_id
+        op_id = payload.get("op_id") or command.scoped_request_id()
         # **拿回执说话**：客户端说的是「那一格里有几块」，实不实由端点核对。
         receipt = endpoint.anchored_extract(op_id, anchor, want)
         if receipt.moved <= 0:
@@ -3265,7 +3282,7 @@ class StorageService(NetworkService):
         endpoint, refusal = self._inventory_endpoint_for(command, payload)
         if refusal is not None:
             return refusal
-        op_id = payload.get("op_id") or command.request_id
+        op_id = payload.get("op_id") or command.scoped_request_id()
         anchor = self._anchor_of(payload)
         before = endpoint.inventory_view()["slots"] if anchor is None else ()
         if anchor is not None and anchor.slot is not None:
@@ -3311,10 +3328,6 @@ class StorageService(NetworkService):
             return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持物等待归还")
         return CommandResult.ok(command.request_id, {"cursor": cursor.snapshot()})
 
-    @staticmethod
-    def _slot_operation_id(command):
-        return "%s/%s/%s" % (command.source.player_id, command.source.session_id, command.request_id)
-
     def _cmd_grid_move(self, command, payload):
         """Two-tap Pocket transfer between a crafting slot and a named endpoint."""
         grid, error = self._workbench_for(command)
@@ -3353,7 +3366,7 @@ class StorageService(NetworkService):
         else:
             return self._reject(command, Reason.BAD_PARAMETER, "目标区域无效")
         src, dst = (other, device) if placing else (device, other)
-        request = TransferRequest(self._slot_operation_id(command), src.endpoint_id(), dst.endpoint_id(),
+        request = TransferRequest(command.scoped_request_id(), src.endpoint_id(), dst.endpoint_id(),
                                   key, inventory.adapter.stack_limit_of(key), command.topology_version,
                                   owner_id=command.source.player_id,
                                   origin=ORIGIN_INTERNAL)
@@ -3504,7 +3517,7 @@ class StorageService(NetworkService):
                 result = CommandResult.ok(command.request_id, {"moved": moved})
             else:
                 bag_before = bag.inventory_view()["slots"] if target is bag else ()
-                request = TransferRequest(self._slot_operation_id(command), source.endpoint_id(), target.endpoint_id(),
+                request = TransferRequest(command.scoped_request_id(), source.endpoint_id(), target.endpoint_id(),
                                           resource, count, command.topology_version, owner_id=owner,
                                           origin=ORIGIN_EXTERNAL if target is network else ORIGIN_INTERNAL)
                 receipt = self.transfer().commit(request, source, target)
@@ -3555,7 +3568,7 @@ class StorageService(NetworkService):
         if result.is_applied() and count < limit:
             network = NetworkEndpoint(self, self._network_id())
             target = ContainerEndpoint(cursor, "cursor:%s" % owner)
-            request = TransferRequest(self._slot_operation_id(command), network.endpoint_id(),
+            request = TransferRequest(command.scoped_request_id(), network.endpoint_id(),
                                       target.endpoint_id(), key, limit - count,
                                       command.topology_version, owner_id=owner, origin=ORIGIN_INTERNAL)
             receipt = self.transfer().commit(request, network, target)
@@ -3671,7 +3684,7 @@ class StorageService(NetworkService):
         except (TypeError, ValueError, KeyError) as error:
             return self._reject(command, Reason.BAD_PARAMETER, "槽锚不合法：%s" % (error,))
 
-        op_id = payload.get("op_id") or command.request_id
+        op_id = payload.get("op_id") or command.scoped_request_id()
         view = endpoint.slot_view(source_anchor.slot)
         count = min(view["count"], int(payload.get("count") or view["count"]))
         if count <= 0:
@@ -3764,7 +3777,7 @@ class StorageService(NetworkService):
         except (TypeError, ValueError, KeyError) as error:
             return self._reject(command, Reason.BAD_PARAMETER, "槽锚不合法：%s" % (error,))
 
-        op_id = payload.get("op_id") or command.request_id
+        op_id = payload.get("op_id") or command.scoped_request_id()
         receipt = endpoint.anchored_swap(op_id, source_anchor, target_anchor)
         return self._receipt_result(command, receipt)
 

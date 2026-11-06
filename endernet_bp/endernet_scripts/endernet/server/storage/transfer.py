@@ -1899,6 +1899,14 @@ class TransferCoordinator(object):
         target_id = target.endpoint_id() if target is not None else request.target_id
         holder = source.holder_id() if source is not None else ""
         now = self._now() if tick is None else int(tick)
+        pending = self._pending.get(request.op_id)
+        if pending is not None:
+            # 普通请求账本会过期且不随重启恢复。待核对操作在人工销账前仍不可执行。
+            self.stats["in_flight"] += 1
+            return TransferReceipt(
+                request.op_id, request.count, 0, TransferStatus.UNCERTAIN,
+                Reason.CONTAINER_UNCERTAIN, request.resource_key, pending.get("holder") or "",
+            )
 
         # **去重排在预检之前**，与主控准入链第 2 条同序。理由：去重问的是
         # 「这条请求做过没有」，与「此刻还做不做得成」无关。反过来的话，
@@ -2011,18 +2019,25 @@ class TransferCoordinator(object):
 
         holder = target.holder_of(key)
         leftover = moved1 - placed
+        unresolved = 0
         if leftover > 0:
-            holder = self._return_leftover(
+            holder, unresolved, detail = self._return_leftover(
                 request, return_to if return_to is not None else source,
-                key, leftover, owner, now, source.last_extract_origins(),
+                key, leftover, owner, source.last_extract_origins(),
             )
+            if unresolved:
+                self.stats["stranded"] += unresolved
+                self._note_pending(request, placed_receipt, holder, detail, unresolved)
 
         self.stats["commits"] += 1
         self.stats["moved"] += placed
         if placed < request.count:
             self.stats["partial"] += 1
         reason = ""
-        if placed >= request.count:
+        if unresolved:
+            status = TransferStatus.UNCERTAIN
+            reason = Reason.CONTAINER_UNCERTAIN
+        elif placed >= request.count:
             status = TransferStatus.COMPLETE
         elif placed > 0:
             status = TransferStatus.PARTIAL
@@ -2035,9 +2050,9 @@ class TransferCoordinator(object):
         self._deliver_external_input(request, source, placed, now)
         return receipt
 
-    def _return_leftover(self, request, back, key, leftover, owner, now, origins=()):
-        # type: (TransferRequest, TransferEndpoint, ResourceKey, int, str, int, tuple) -> str
-        """把没搬成的那一份放回一个可追踪的位置。返回它现在归谁（说不清时是空串）。
+    def _return_leftover(self, request, back, key, leftover, owner, origins):
+        # type: (TransferRequest, TransferEndpoint, ResourceKey, int, str, tuple) -> tuple
+        """返回余量的持有者、未核实归属的数量及原因。
 
         `stats["stranded"]` 记的是**件数**而不是次数：诊断要回答的是
         「有多少件东西说不清在哪」，而不是「发生过几次回滚失败」。
@@ -2047,35 +2062,25 @@ class TransferCoordinator(object):
         那批外部东西以后再进网络就**再也不会**被算成回流。因此这里按原样
         拆成几笔退回——多写一两行，换的是归属不丢。
         """
-        if back is None or not back.can_write():
-            self.stats["stranded"] += leftover
-            self._note_pending(
-                request, None, "",
-                "有 %d 个 %s 既未进入目标、也无处放回" % (leftover, key.name),
-            )
-            return ""
-        self.stats["compensations"] += 1
-        moved = 0
-        for origin, amount in self._split_by_origin(origins, leftover):
-            undo = back.commit_insert(
-                request.op_id + _SUB_UNDO, key, amount, owner, origin
-            )
-            moved += undo.moved
-            if undo.moved < amount:
-                break
-        if moved >= leftover:
-            return back.holder_of(key)
-        stranded = leftover - moved
-        # 放回**也没成功**。这是三方都不确定的状态，必须留痕：
-        # 报成功会让这批东西变成账外资产，静默丢弃更是直接违反守恒。
-        # **`holder` 报空串**：东西到底在哪已经没人知道了，
-        # 报一个位置等于让恢复流程去一个错的地方找。
-        self.stats["stranded"] += stranded
-        self._note_pending(
-            request, None, "",
-            "回滚也未完成，仍有 %d 个 %s 归属待核对" % (stranded, key.name),
-        )
-        return ""
+        remaining = leftover
+        try:
+            if back is None or not back.can_write():
+                return "", remaining, "有 %d 个 %s 无处放回" % (remaining, key.name)
+            self.stats["compensations"] += 1
+            for index, (origin, amount) in enumerate(self._split_by_origin(origins, leftover)):
+                undo = back.commit_insert(
+                    "%s%s:%d" % (request.op_id, _SUB_UNDO, index), key, amount, owner, origin
+                )
+                if undo.status == TransferStatus.UNCERTAIN:
+                    break
+                remaining -= undo.moved
+                if undo.moved < amount:
+                    break
+        except Exception as error:
+            return "", remaining, "回滚异常，%d 个待核对：%s" % (remaining, error)
+        if remaining:
+            return "", remaining, "回滚也未完成，仍有 %d 个 %s 归属待核对" % (remaining, key.name)
+        return back.holder_of(key), 0, ""
 
     @staticmethod
     def _split_by_origin(origins, amount):
@@ -2161,8 +2166,8 @@ class TransferCoordinator(object):
 
     # -- 待核对台账（12-07 的入口）-------------------------------------
 
-    def _note_pending(self, request, receipt, holder, detail):
-        # type: (TransferRequest, object, str, str) -> None
+    def _note_pending(self, request, receipt, holder, detail, unresolved=None):
+        # type: (TransferRequest, object, str, str, int) -> None
         """记一条「动过但说不清」的记录。
 
         **不重放**是这里的全部意义：这张表是给恢复流程看的，
@@ -2180,6 +2185,9 @@ class TransferCoordinator(object):
             "detail": detail,
             "tick": self._now(),
         }
+        if unresolved is not None:
+            # 回退失败时 moved 是已核实交付目标的量；unresolved 另存待核对余量。
+            entry["unresolved"] = unresolved
         if request.op_id not in self._pending:
             self._pending_order.append(request.op_id)
         self._pending[request.op_id] = entry

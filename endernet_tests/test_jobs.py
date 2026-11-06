@@ -512,9 +512,11 @@ class TestAbsentReturns(unittest.TestCase):
         但收下内容，诊断才能回答「如果 10 在，它会看到哪些等待者」。"""
         sink = AbsentReturns()
         item = jobs.StepOutput(BLOCK, BLOCK.canonical(), 3, True)
-        self.assertFalse(sink.register("e1", [item], "order@1"))
+        returned = jobs.StepOutput(BLOCK, BLOCK.canonical(), 1, True)
+        self.assertFalse(sink.register("e1", [item, returned], "order@1"))
         self.assertEqual(sink.describe()["registered"], 1)
         self.assertEqual(sink.registered["e1"]["order_id"], "order@1")
+        self.assertEqual(sink.registered["e1"]["expected"], {BLOCK.canonical(): 4})
 
     def test_the_blocker_names_the_pending_task(self):
         blocker = AbsentReturns().blocker()

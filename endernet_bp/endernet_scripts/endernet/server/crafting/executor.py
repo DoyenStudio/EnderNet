@@ -64,6 +64,7 @@ from .jobs import (
     OrderStatus,
     OrderStep,
     OrderStore,
+    OutputDemand,
     RejectedRequestStore,
     StepStatus,
     WaitingLedger,
@@ -187,9 +188,8 @@ class AbsentReturns(ReturnsSink):
         # type: (str, list, str) -> bool
         self.registered[execution_id] = {
             "order_id": order_id,
-            "expected": dict(
-                (item.canonical, item.expected) for item in (expectations or ())
-            ),
+            "expected": dict((key, demand.expected) for key, demand
+                             in OutputDemand.by_key(expectations).items()),
         }
         self.stats["registered"] += 1
         self.stats["refused"] += 1
@@ -822,6 +822,8 @@ class OrderExecutor(object):
             order.amount,
             reasons,
             tick,
+            player_id=order.player_id,
+            order_id=order.order_id,
         )
         self.orders.discard(order.order_id)
         self.orders.stats["refused"] += 1
@@ -2947,7 +2949,7 @@ class FactoryService(NetworkService):
         from .order_archive import VERSION, import_order, unpack
         rows = book.get("resume_orders")
         # 旧测试存档仅有审计摘要，按用户要求不迁移、不猜测执行进度。
-        if rows is None:
+        if rows is None and "resume_version" not in book:
             return 0
         if book.get("resume_version") != VERSION:
             raise ValueError("unsupported order resume version")

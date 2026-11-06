@@ -343,6 +343,12 @@ class RevalidationTests(Fixture):
 
 
 class SessionLifecycleTests(Fixture):
+    def test_restarting_the_registry_does_not_reuse_a_session_identity(self):
+        first = self.open()
+        self.registry = SessionRegistry(self.registry.policy)
+        second = self.open()
+        self.assertNotEqual(first.session_id, second.session_id)
+
     def test_session_ids_are_not_reused_after_close(self):
         first = self.open()
         self.registry.close(first.session_id, "test")
@@ -471,11 +477,11 @@ class SessionLifecycleTests(Fixture):
         opened = [self.open() for _ in range(10)]
         for session in opened[:8]:
             self.registry.close(session.session_id, "test")
-        self.open()  # s11，此时只有 s9/s10 在世，还没到上限
+        eleventh = self.open()
         self.open()  # s12，满了，该关的是 s9（字典序会误判成 s10）
-        self.assertIsNone(self.registry.get("s9"))
-        self.assertIsNotNone(self.registry.get("s10"))
-        self.assertIsNotNone(self.registry.get("s11"))
+        self.assertIsNone(self.registry.get(opened[8].session_id))
+        self.assertIsNotNone(self.registry.get(opened[9].session_id))
+        self.assertIsNotNone(self.registry.get(eleventh.session_id))
 
     def test_eviction_never_blocks_the_player_who_is_opening(self):
         self.policy.max_sessions_per_player = 1

@@ -112,6 +112,27 @@ class ToolDeltaWorldAdapter(object):
 
         SetBlockEntityData(node_key.dimension, node_key.as_tuple(), data)
 
+    def terminal_inventory_id(self, node_key):
+        # type: (NodeKey) -> object
+        """旧方块重载仍携带同一标记；同位置新放的方块获得自己的库存。"""
+        import random
+        from ...common.resource_key import _TEXT_TYPES
+        from ....tooldelta.api.server.block import GetBlockEntityData
+
+        entity = GetBlockEntityData(node_key.dimension, node_key.as_tuple())
+        if entity is None:
+            return None
+        field = "endernet_terminal_inventory_id"
+        token = entity[field]
+        if token is None:
+            token = "%032x" % random.getrandbits(128)
+            entity[field] = token
+            if entity[field] != token:
+                return None
+        if not isinstance(token, _TEXT_TYPES) or len(token) != 32:
+            raise ValueError("invalid terminal inventory identity")
+        return token
+
     def check_chunk_state(self, node_key):
         # type: (NodeKey) -> bool
         from ....tooldelta.api.server.world import CheckChunkState

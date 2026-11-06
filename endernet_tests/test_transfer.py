@@ -416,12 +416,13 @@ class TestLeftoverAlwaysHasALocation(EndpointFixture):
         source.adapter._slots[0] = ContainerEntry(STONE, 5)
         target = ContainerEndpoint(GhostContainer(accept_into_store=0, slots=1), "g")
         receipt = self.coordinator.commit(self.request(5), source, target)
-        self.assertEqual(receipt.status, TransferStatus.REFUSED)
+        self.assertEqual(receipt.status, TransferStatus.UNCERTAIN)
         self.assertEqual(receipt.holder, "", "无处可放时 holder 是「说不清」")
         self.assertEqual(self.coordinator.stats["stranded"], 5)
         pending = self.coordinator.pending_reconcile()
         self.assertEqual(len(pending), 1)
         self.assertIn("无处放回", pending[0]["detail"])
+        self.assertEqual(pending[0]["unresolved"], 5)
 
     def test_a_failed_rollback_is_recorded_in_the_reconcile_ledger(self):
         """回滚目标能写、但**在写的那一刻**被拒：同样必须留痕。
@@ -434,13 +435,42 @@ class TestLeftoverAlwaysHasALocation(EndpointFixture):
         receipt = self.coordinator.commit(
             self.request(5), self.source, target, return_to=back
         )
-        self.assertEqual(receipt.status, TransferStatus.REFUSED)
+        self.assertEqual(receipt.status, TransferStatus.UNCERTAIN)
         self.assertEqual(self.source_box.count_of(STONE), 0, "取出来了")
         self.assertEqual(self.coordinator.stats["stranded"], 5)
         pending = self.coordinator.pending_reconcile()
         self.assertEqual(len(pending), 1)
         self.assertIn("回滚也未完成", pending[0]["detail"])
         self.assertEqual(pending[0]["count"], 5)
+
+    def test_partial_delivery_and_rollback_keep_separate_counts_after_restart(self):
+        fill(self.source_box, STONE, 12)
+        back = ContainerEndpoint(GhostContainer(accept_into_store=1, slots=1), "back")
+        target = ContainerEndpoint(GhostContainer(accept_into_store=2, slots=1), "dst")
+        request = self.request(7)
+        receipt = self.coordinator.commit(request, self.source, target, return_to=back)
+        self.assertEqual((receipt.status, receipt.moved), (TransferStatus.UNCERTAIN, 2))
+        pending = self.coordinator.export_pending()
+        self.assertEqual((pending[0]["moved"], pending[0]["unresolved"]), (2, 4))
+        restored = TransferCoordinator()
+        restored.import_pending(pending)
+        self.assertEqual(restored.commit(request, self.source, target).status,
+                         TransferStatus.UNCERTAIN)
+        self.assertEqual(self.source_box.count_of(STONE), 5)
+        self.assertEqual(target.adapter.count_of(STONE), 2)
+        self.assertEqual(back.adapter.count_of(STONE), 1)
+
+    def test_a_rollback_exception_leaves_the_operation_on_hold(self):
+        def fail_return(*args):
+            raise IOError("container unavailable")
+
+        fill(self.source_box, STONE, 8)
+        back = ContainerEndpoint(FakeContainer(slots=1), "back")
+        back.commit_insert = fail_return
+        target = ContainerEndpoint(GhostContainer(accept_into_store=2, slots=1), "dst")
+        receipt = self.coordinator.commit(self.request(5), self.source, target, return_to=back)
+        self.assertEqual((receipt.status, receipt.moved), (TransferStatus.UNCERTAIN, 2))
+        self.assertEqual(self.coordinator.pending_reconcile()[0]["unresolved"], 3)
 
 
 # -- 06-03：中转缓冲 -------------------------------------------------------

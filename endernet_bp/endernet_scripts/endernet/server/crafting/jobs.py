@@ -726,6 +726,70 @@ class ExecutionInstance(object):
 # -- 等待台账（与任务 10 的接缝，见 technical_notes/order_returns_contract.md）--
 
 
+class OutputDemand(object):
+    """同一执行实例、同一资源的等待项。数量始终取自实例的原始产物与返还物账。"""
+
+    __slots__ = ("items", "key", "canonical")
+
+    def __init__(self, items):
+        # type: (list) -> None
+        self.items = sorted(items, key=lambda item: not item.counts_for_completion)
+        self.key = self.items[0].key
+        self.canonical = self.items[0].canonical
+
+    @property
+    def expected(self):
+        # type: () -> int
+        return sum(item.expected for item in self.items)
+
+    @property
+    def received(self):
+        # type: () -> int
+        return sum(item.received for item in self.items)
+
+    @property
+    def counts_for_completion(self):
+        # type: () -> bool
+        return any(item.counts_for_completion for item in self.items)
+
+    def remaining(self):
+        # type: () -> int
+        return sum(item.remaining() for item in self.items)
+
+    def is_satisfied(self):
+        # type: () -> bool
+        return all(item.is_satisfied() for item in self.items if item.counts_for_completion)
+
+    def receive(self, count):
+        # type: (int) -> int
+        left = count
+        for item in self.items:
+            take = min(left, item.remaining())
+            item.received += take
+            left -= take
+            if not left:
+                break
+        return count - left
+
+    def to_dict(self):
+        # type: () -> dict
+        return {
+            "key": self.canonical,
+            "expected": self.expected,
+            "received": self.received,
+            "remaining": self.remaining(),
+            "counts_for_completion": self.counts_for_completion,
+        }
+
+    @classmethod
+    def by_key(cls, expectations):
+        # type: (object) -> dict
+        groups = {}
+        for item in expectations or ():
+            groups.setdefault(item.canonical, []).append(item)
+        return dict((canonical, cls(items)) for canonical, items in groups.items())
+
+
 class WaitingLedger(object):
     """**每执行实例每产物的剩余需求**与回执按 `op_id` 去重。
 
@@ -743,7 +807,7 @@ class WaitingLedger(object):
 
     def __init__(self, op_limit=4096):
         # type: (int) -> None
-        #: `execution_id -> {canonical: StepOutput}`
+        #: `execution_id -> {canonical: OutputDemand}`
         self._steps = {}
         #: `(execution_id, op_id, canonical) -> 接受量`。**去重的键含执行实例**：
         #: 同一个 op_id 不可能属于两笔订单，但把执行实例放进键里能让
@@ -788,9 +852,7 @@ class WaitingLedger(object):
         """
         if not execution_id:
             return False
-        self._steps[execution_id] = {
-            item.canonical: item for item in (expectations or ())
-        }
+        self._steps[execution_id] = OutputDemand.by_key(expectations)
         self.stats["registered"] += 1
         return True
 
@@ -857,12 +919,11 @@ class WaitingLedger(object):
             # 产物与别人的原料，而 10 的索引按键找等待者时会找到多个。
             self.stats["unknown"] += 1
             return 0
-        accepted = min(count, item.remaining())
+        accepted = item.receive(count)
         if op_id:
             self._remember(dedup_key, accepted)
         if accepted <= 0:
             return 0
-        item.received += accepted
         self.stats["observed"] += 1
         return accepted
 
@@ -1353,11 +1414,12 @@ class RejectedRequest(object):
     因此这里存的是**可回看**的近期记录，不是计数器。
     """
 
-    __slots__ = ("request_id", "target", "canonical", "amount", "reasons", "tick")
+    __slots__ = ("request_id", "player_id", "target", "canonical", "amount", "reasons", "tick")
 
-    def __init__(self, request_id, target, canonical, amount, reasons, tick=0):
-        # type: (str, str, str, int, tuple, int) -> None
+    def __init__(self, request_id, target, canonical, amount, reasons, tick=0, player_id=""):
+        # type: (str, str, str, int, tuple, int, str) -> None
         self.request_id = request_id
+        self.player_id = player_id
         #: 可读名（给界面）。
         self.target = target
         #: 规范文本（给对齐与诊断）。
@@ -1377,6 +1439,7 @@ class RejectedRequest(object):
         # type: () -> dict
         return {
             "request_id": self.request_id,
+            "player_id": self.player_id,
             "target": self.target,
             "canonical": self.canonical,
             "amount": self.amount,
@@ -1411,13 +1474,15 @@ class RejectedRequestStore(object):
         self._order = []
         self.stats = {"rejected": 0, "evicted": 0}
 
-    def add(self, request_id, target, canonical, amount, reasons, tick=0):
-        # type: (str, str, str, int, tuple, int) -> object
-        row = RejectedRequest(request_id, target, canonical, amount, reasons, tick)
-        self._rows[request_id] = row
-        if request_id in self._order:
-            self._order.remove(request_id)
-        self._order.append(request_id)
+    def add(self, request_id, target, canonical, amount, reasons, tick=0,
+            player_id="", order_id=""):
+        # type: (str, str, str, int, tuple, int, str, str) -> object
+        row = RejectedRequest(request_id, target, canonical, amount, reasons, tick, player_id)
+        key = (player_id, order_id, request_id)
+        self._rows[key] = row
+        if key in self._order:
+            self._order.remove(key)
+        self._order.append(key)
         self.stats["rejected"] += 1
         while len(self._order) > self.limit:
             oldest = self._order.pop(0)
@@ -1425,9 +1490,13 @@ class RejectedRequestStore(object):
             self.stats["evicted"] += 1
         return row
 
-    def get(self, request_id):
-        # type: (str) -> object
-        return self._rows.get(request_id)
+    def get(self, request_id, player_id=None):
+        # type: (str, str) -> object
+        for key in reversed(self._order):
+            row = self._rows[key]
+            if row.request_id == request_id and (player_id is None or player_id == row.player_id):
+                return row
+        return None
 
     def recent(self, limit=None):
         # type: (int) -> tuple

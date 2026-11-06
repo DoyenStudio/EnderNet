@@ -17,6 +17,8 @@
 调用方不带会话，把它们一并拒掉等于凭空加了一道门禁。
 """
 
+import random
+
 from ...common.identity import DeviceRef  # noqa: F401 (仅用于 # type: 注释)
 from ...common.protocol import (
     BlockReason,
@@ -360,6 +362,8 @@ class SessionRegistry(object):
     def __init__(self, policy=None):
         self.policy = policy if policy is not None else SessionPolicy()
         self._sessions = {}
+        # 回流去重表会保存玩家操作号。服务端重开后不能复用上一进程的会话身份。
+        self._id_prefix = "s%032x-" % random.getrandbits(128)
         #: 会话 ID 只增不减：同一个 epoch 内不会复用（复用的 ID 会让
         #: 「迟到的旧包」被当成新会话的消息）。
         self._next_serial = 1
@@ -396,7 +400,7 @@ class SessionRegistry(object):
         # 而不是拒绝新请求——玩家重开界面本就该成功，卡住的是旧的那个。
         self._enforce_limits(context, frame)
 
-        session_id = "s%d" % (self._next_serial,)
+        session_id = self._id_prefix + str(self._next_serial)
         self._next_serial += 1
         session = Session(
             session_id,

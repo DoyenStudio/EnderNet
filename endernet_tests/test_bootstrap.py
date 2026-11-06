@@ -1705,6 +1705,39 @@ class TestPatternContainerEvents(unittest.TestCase):
         self.assertFalse(event.cancelled)
         self.assertGreater(self.server.drivers.get_by_ref(ref).dirty_tick, -1)
 
+    def test_driver_container_changes_update_network_mounts(self):
+        self.place(BB8, 0)
+        self.place(BB8, 1)
+        self.place("endernet:tiny_network_endpoint", 1, 65)
+        ref = self.place(DRIVER, 0, 65)
+        runtime = self.server.runtimes.runtime_for(ref)
+        storage = runtime.services.get("storage")
+        box = self.container_for(0, 65)
+        grass = ResourceKey.item("minecraft:grass_block", 0)
+        blank = testsupport.item_dict_without_carrier("endernet:softdisk_1k")
+
+        def change_disk(item):
+            box.write_slot(0, item)
+            self.api.dispatch(
+                self.api.event("ContainerItemChangedServerEvent"),
+                SimplePayload(dimensionId=0, pos=(0, 65, 0), slot=0),
+            )
+            self.settle()
+
+        change_disk(blank)
+        first_disk = box.read_slot(0)
+        # 给新盘的读写额度留出一秒。
+        now = self.server.clock.current_tick() + self.server.medium_policy.frames_per_second
+        self.assertEqual(storage.commit_insert("grass", grass, 1, now_tick=now).moved, 1)
+        # 直接换盘：盘数相同，挂载和库存仍须切换。
+        change_disk(blank)
+        self.assertEqual(storage.simulate_extract(grass, 1, now_tick=now)["accepted"], 0)
+        self.assertEqual(len(storage.mounted), 1)
+        change_disk(first_disk)
+        self.assertEqual(storage.simulate_extract(grass, 1, now_tick=now)["accepted"], 1)
+        change_disk(None)
+        self.assertEqual(storage.mounted, {})
+
     def test_a_hopper_cannot_bypass_the_driver_rejection(self):
         """漏斗是第二条放入路径，规则必须同样生效。"""
         self.place(DRIVER, 8)

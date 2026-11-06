@@ -279,6 +279,19 @@ class TestAssembly(ReturnsFixture):
         self.assertEqual(self.stored(BLOCK), 130)
         self.assertEqual(slot_read(self.port_box, 9)["count"], 0)
 
+    def test_required_product_and_return_of_the_same_item_both_leave_the_chamber(self):
+        self.install([PatternStack(IRON, 2)], [PatternStack(BLOCK, 2)], [PatternStack(BLOCK, 1)])
+        self.seed(IRON, 2)
+        self.submit_order(amount=2)
+        self.drive_until(lambda: self.stored(BLOCK) == 2)
+        instance = self.instance()
+        self.assertEqual(self.current().steps[0].completed, 0)
+        self.assertEqual((instance.outputs[0].received, instance.returns[0].received), (2, 0))
+        self.drive_until(lambda: self.current().status == "completed")
+        self.assertEqual((instance.outputs[0].received, instance.returns[0].received), (2, 1))
+        self.assertEqual(self.stored(BLOCK), 3)
+        self.assertEqual(slot_read(self.port_box, 9)["count"], 0)
+
     def test_cancel_after_feed_preserves_real_material(self):
         self.seed(IRON, 2)
         self.submit_order()

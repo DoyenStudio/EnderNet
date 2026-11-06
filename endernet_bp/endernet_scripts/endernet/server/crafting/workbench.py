@@ -42,7 +42,7 @@ from ...common.protocol import (
     TransferReceipt,
     TransferStatus,
 )
-from ...common.resource_key import ResourceKey
+from ...common.resource_key import ResourceKey, _require_count
 from ..adapters.containers import ContainerAdapter
 
 #: 网格自身的存档版本。形状变了就加一，恢复时按它决定读还是跳过。
@@ -303,10 +303,13 @@ class WorkbenchGrid(object):
     @classmethod
     def from_dict(cls, payload):
         # type: (dict) -> WorkbenchGrid
+        if payload["schema_version"] != WORKBENCH_SCHEMA_VERSION or len(payload["slots"]) != SLOT_COUNT:
+            raise ValueError("unsupported workbench inventory")
         slots = [None] * SLOT_COUNT
-        for index, row in enumerate(payload.get("slots") or ()):
-            if index >= SLOT_COUNT or row is None:
+        for index, row in enumerate(payload["slots"]):
+            if row is None:
                 continue
+            _require_count(row["count"], "workbench item count")
             slots[index] = (ResourceKey.from_dict(row["key"]), row["count"])
         return cls(slots, payload.get("recipe"), payload.get("recipe_output"),
                    payload.get("revision", 0))
@@ -330,12 +333,14 @@ class WorkbenchStore(object):
     并把处置方式记进 `CraftingPolicy.UNRESOLVED`（文档第 8 节最后一条）。
     """
 
-    def __init__(self, accepts=None):
+    def __init__(self, accepts=None, key_of=None):
         #: `accepts(device_ref) -> bool`。**只对合成终端开口**：
         #: 没有它就等于给每条命令都变出一台空工作台，而「这台方块
         #: 根本没有九宫格」和「它的九宫格是空的」在界面上是两回事。
         #: 为 `None` 时不设限（离线夹具与测试直接用它）。
         self._accepts = accepts
+        if key_of is not None:
+            self._key_of = key_of
         #: 活着的设备。
         self._grids = {}
         #: **被拆掉／注销的设备，格子连同里面的东西一起留着。**
@@ -358,6 +363,8 @@ class WorkbenchStore(object):
         # type: (object) -> WorkbenchGrid
         """取这台设备的工作台，没有就建一个空的。"""
         key = self._key_of(ref)
+        if key is None:
+            return None
         grid = self._grids.get(key)
         if grid is None:
             grid = WorkbenchGrid(generation=getattr(ref, "generation", 0))
@@ -407,7 +414,10 @@ class WorkbenchStore(object):
         再决定是还、是烧、还是随方块一起消失。代价是孤儿会攒着——所以
         `diagnostics()` 把它们报出来，别让它悄悄长。
         """
-        key = self._key_of(ref)
+        return self.detach_saved(self._key_of(ref))
+
+    def detach_saved(self, key):
+        # type: (tuple) -> bool
         grid = self._grids.pop(key, None)
         if grid is None:
             return False
@@ -445,13 +455,7 @@ class WorkbenchStore(object):
 
     def save_all(self):
         # type: () -> dict
-        """整份存盘载荷。形状与 `StorageDriverStore.save_all` 一致。
-
-        **真机上还没有人调它。** 存档接线是任务 12 的事
-        （`persistence/repository.py` 只留了契约），因此这份数据目前在内存里
-        活着——「关掉界面再打开还在」成立，「重启服务器还在」不成立。
-        交付说明里按这个区分写，不写成已经持久化。
-        """
+        """正常保存使用的快照，包含已拆设备中尚待处置的原料。"""
         rows = [
             {"node": list(key[:4]), "generation": key[4],
              "detached": detached, "grid": grid.to_dict()}

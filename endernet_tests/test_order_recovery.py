@@ -9,9 +9,10 @@ from endernet.server.bootstrap import ServerBootstrap
 from endernet.server.crafting.jobs import OrderStatus, StepStatus
 from endernet.server.network.energy import EnergyPolicy
 from endernet.server.network.services import ServiceId
-from endernet.server.persistence.repository import MemoryRepository
+from endernet.server.persistence.repository import MemoryRepository, Record
 from endernet.server.runtime.events import NormalizedEvent
-from test_executor import OneLevel, IRON, BLOCK, PORT_KEY, DRIVER_KEY, DRIVER
+from endernet.server.storage.service import NETWORK_RECORD_KIND
+from test_executor import OneLevel, IRON, BLOCK, PORT_KEY, DRIVER_KEY, DRIVER, BASEBAND, CONTROLLER, key
 
 
 class RestartMixin(object):
@@ -148,23 +149,77 @@ class TestOrderRecovery(RestartMixin, OneLevel):
         self.assertTrue(self.runtime.is_open())
         self.assertEqual(sum(row.count for row in self.reservations(order_id)), remaining)
 
-    def test_unknown_archive_version_stops_business_and_preserves_record(self):
-        from endernet.server.storage.service import NETWORK_RECORD_KIND
+    def assert_unknown_version_isolated(self, level):
         self.seed(IRON, 4)
-        self.submit_order()
+        order_id = self.submit_order().payload["order_id"]
+        original = []
 
         def mutate(repo):
             record = repo.load(NETWORK_RECORD_KIND, repo.list_ids(NETWORK_RECORD_KIND)[0])
-            record.payload["orders"]["resume_version"] = 999
-            repo.write(record)
+            if level == "envelope":
+                record.schema_version = 999
+            elif level == "network":
+                record.payload["schema_version"] = 999
+            else:
+                record.payload["orders"]["resume_version"] = 999
+            original.append(json.dumps(record.to_dict(), sort_keys=True))
         self.restart(mutate)
-        self.assertFalse(self.server.recovery.is_open())
+        self.assertTrue(self.server.recovery.is_open())
         self.assertFalse(self.runtime.is_open())
-        self.assertIn("unsupported", self.server.persistence_restore_error)
+        self.assertIn("unsupported", self.runtime.close_reason())
+        self.assertIsNone(self.service.orders.get(order_id))
+        # 另一张网及后续两次拓扑发布不应放开冻结的旧网，也不能连坐正常主控。
+        self.place(key(30), BASEBAND)
+        self.place(key(31), CONTROLLER)
+        self.drive(4)
+        healthy = self.server.runtimes.runtime_for(self.server.registry.get(key(31)).ref)
+        self.assertTrue(healthy.is_open())
+        self.assertFalse(self.runtime.open_if_ready())
         self.server.stop()
         repo = self.server.repository
         record = repo.load(NETWORK_RECORD_KIND, repo.list_ids(NETWORK_RECORD_KIND)[0])
-        self.assertEqual(record.payload["orders"]["resume_version"], 999)
+        self.assertEqual(json.dumps(record.to_dict(), sort_keys=True), original[0])
+
+    def test_unknown_order_version_isolated(self):
+        self.assert_unknown_version_isolated("order")
+
+    def test_unknown_network_version_isolated(self):
+        self.assert_unknown_version_isolated("network")
+
+    def test_unknown_envelope_version_isolated(self):
+        self.assert_unknown_version_isolated("envelope")
+
+    def test_partial_read_failure_blocks_writes_until_a_clean_restart(self):
+        self.seed(IRON, 12)
+        order_id = self.submit_order().payload["order_id"]
+        self.restart()
+        self.server.stop()
+        repo = self.server.repository
+        self.assertEqual(len(repo.list_ids(NETWORK_RECORD_KIND)), 1)
+        record_id = repo.list_ids(NETWORK_RECORD_KIND)[0]
+        # 先读入另一条记录，随后恰好在含真实订单的主控处读取失败。
+        earlier_id = "0,-1,64,0"
+        repo.write(Record(NETWORK_RECORD_KIND, earlier_id, {"schema_version": 1}))
+        before = json.dumps(repo.snapshot_payloads(), sort_keys=True)
+        repo.inject_fault("load", kind=NETWORK_RECORD_KIND, record_id=record_id)
+        failed = ServerBootstrap(world=self.world, repository=repo)
+        failed.start(bind_engine=False)
+        for node_key, device_id in self.layout:
+            failed.push(NormalizedEvent.place(node_key, device_id))
+        self.assertIn(earlier_id, failed.archived_networks)
+        self.assertNotIn(record_id, failed.archived_networks)
+        self.assertFalse(failed.recovery.is_open())
+        self.assertTrue(failed.persistence_restore_error)
+        for _ in range(3):
+            self.assertEqual(failed.tick()["persisted_records"], 0)
+        self.assertEqual(failed.write_network_states(), 0)
+        self.assertEqual(failed.flush_persistence(), 0)
+        failed.stop()
+        self.assertEqual(json.dumps(repo.snapshot_payloads(), sort_keys=True), before)
+
+        self.restart()
+        self.assertTrue(self.runtime.is_open())
+        self.assertIsNotNone(self.service.orders.get(order_id))
 
     def test_repeated_restart_keeps_original_ids_and_sequence(self):
         self.seed(IRON, 20)
@@ -230,6 +285,64 @@ class TestRealReturnsRecovery(RestartMixin, test_returns.OneLevel):
         self.assertEqual(order.status, OrderStatus.COMPLETED)
         self.assertEqual(self.storage_service.query(BLOCK)["stored"], 3)
         self.assertFalse(self.reservations(order_id))
+
+
+class TestSharedOutputKey(RestartMixin, test_returns.ReturnsFixture):
+    patterns = {0: test_returns.factory([test_returns.stack(IRON, 2)],
+                                        [test_returns.stack(BLOCK, 2)],
+                                        [test_returns.stack(BLOCK, 1)])}
+
+    def start_waiting(self, required_returns=True):
+        self.layout = [(record.ref.node_key, record.device_id)
+                       for record in self.server.registry.all_records()]
+        self.service.policy.returns_block_completion = required_returns
+        self.configure_port()
+        self.seed(IRON, 2)
+        order_id = self.submit_order(amount=2).payload["order_id"]
+        self.settle(order_id)
+        self.drive(20)
+        instance = self.service.orders.get(order_id).executions()[0]
+        self.assertEqual(instance.status, StepStatus.WAITING_OUTPUTS)
+        return order_id
+
+    def test_same_product_and_required_return_across_restart(self):
+        order_id = self.start_waiting()
+        self.assertEqual(self.deposit(BLOCK, 1, "first").moved, 1)
+        self.drive(3)
+        self.assertEqual(self.service.orders.get(order_id).steps[0].completed, 0)
+        self.restart()
+        order = self.service.orders.get(order_id)
+        instance = order.executions()[0]
+        self.assertEqual((instance.outputs[0].received, instance.returns[0].received), (1, 0))
+        repeat = test_returns.TransferRequest("first", "outside", "net", BLOCK, 1,
+                                              origin=test_returns.ORIGIN_EXTERNAL)
+        self.assertEqual(self.port(repeat, 1, 0), 0)
+        self.assertEqual(self.deposit(BLOCK, 1, "second").moved, 1)
+        self.drive(3)
+        self.assertEqual((instance.outputs[0].received, instance.returns[0].received), (2, 0))
+        self.assertEqual(order.steps[0].completed, 0)
+        self.assertEqual(self.service.slots.used(), 1)
+        self.assertEqual(self.deposit(BLOCK, 1, "third").moved, 1)
+        self.drive(3)
+        self.assertEqual((instance.outputs[0].received, instance.returns[0].received), (2, 1))
+        self.assertEqual(order.status, OrderStatus.COMPLETED)
+        self.assertEqual(order.steps[0].completed, 1)
+        self.assertEqual(self.service.slots.used(), 0)
+        self.assertEqual(self.stored(BLOCK), 3)
+
+    def test_same_optional_return_does_not_displace_required_product(self):
+        order_id = self.start_waiting(required_returns=False)
+        order = self.service.orders.get(order_id)
+        instance = order.executions()[0]
+        self.assertEqual(self.deposit(BLOCK, 1, "first").moved, 1)
+        self.drive(3)
+        self.assertEqual((instance.outputs[0].received, instance.returns[0].received), (1, 0))
+        self.assertEqual(order.steps[0].completed, 0)
+        self.assertEqual(self.deposit(BLOCK, 1, "second").moved, 1)
+        self.drive(3)
+        self.assertEqual(order.status, OrderStatus.COMPLETED)
+        self.assertEqual((instance.outputs[0].received, instance.returns[0].received), (2, 0))
+        self.assertEqual(self.stored(BLOCK), 2)
 
 
 class TestAssemblyRecovery(RestartMixin, test_returns.ReturnsFixture):
