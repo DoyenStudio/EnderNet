@@ -53,6 +53,7 @@ HOTBAR_GRID_PATH = INVENTORY_PATH + "/hotbar"
 
 #: 飞行动画面板作为图标的坐标系原点。
 FLYING_ITEMS_PATH = "/flying_items"
+# 改层级后须重载本模块并重建已打开的 FlightPool；仅重载 JSON 会留下旧路径。
 FLYING_ITEM_PATH = FLYING_ITEMS_PATH + "/flying_item"
 
 try:

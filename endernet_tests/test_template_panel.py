@@ -1466,7 +1466,7 @@ class TestJsonContract(unittest.TestCase):
             self.assertEqual(binding, frame["bindings"][0]["binding_name"], name)
 
     def test_the_flying_item_is_anchored_where_the_script_measures_it(self):
-        item = self.content()["flying_item"]
+        item = self.controls(self.content()["flying_items"])["flying_item"]
         self.assertEqual("top_left", item["anchor_from"])
         self.assertEqual("top_left", item["anchor_to"])
 

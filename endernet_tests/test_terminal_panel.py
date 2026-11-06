@@ -3449,6 +3449,24 @@ class TestJsonContract(unittest.TestCase):
         # 初始不可见：没有搬运时它应当在画面上不存在。
         self.assertFalse(flying["visible"])
 
+    def test_flight_pool_paths_resolve_in_all_terminal_json_trees(self):
+        # 按真实 JSON 树查路径，避免替身与脚本共用错误常量仍然通过。
+        for filename in ("common_terminal_panel.json", "crafting_terminal_panel.json",
+                         "template_terminal_panel.json"):
+            from ui_terminal_templates import inline_terminal_controls
+            with open(os.path.join(ROOT, "endernet_rp", "ui", filename),
+                      encoding="utf-8") as handle:
+                panel = inline_terminal_controls(json.load(handle))
+            pool = flying_item.FlightPool(
+                None, slot_layout.FLYING_ITEM_PATH, slot_layout.FLYING_ITEMS_PATH)
+            for icon in pool.icons:
+                node = panel["content"]
+                for name in icon.control_path.strip("/").split("/"):
+                    node = self.controls(node)[name]
+                self.assertEqual(icon.control_path.rsplit("/", 1)[0], icon.origin_path)
+                self.assertEqual(node["anchor_from"], "top_left")
+                self.assertFalse(node["visible"])
+
     def test_the_flying_icon_is_the_same_size_as_the_icons_in_the_slots(self):
         """飞行图标要与**槽里那张图标**同尺寸——**不是与槽位面板同尺寸**。
 
