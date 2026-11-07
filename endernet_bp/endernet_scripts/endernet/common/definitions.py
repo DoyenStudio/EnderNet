@@ -88,6 +88,11 @@ CATEGORY_PROCESSOR_CONNECTOR = "processor_connector"
 CATEGORY_PROCESSOR = "processor"
 CATEGORY_MEMORY = "memory"
 CATEGORY_ASSEMBLY = "assembly"
+ENERGY_INPUT_ID = "endernet:energy_input_interface"
+FE_PER_EN = 2
+# Native signed-int block entity field bounds the committed FE balance.
+ENERGY_INPUT_CAPACITY_FE = 2147483647
+
 CATEGORY_ENERGY_INPUT = "energy_input"
 
 # -- 能力名（与 devices/capabilities.py 的协议一一对应）--------------------
@@ -323,12 +328,12 @@ class DeviceDefinition(object):
     - `None`：该设备**不供能**。这是结构性事实，不是缺项——绝大多数设备都是这样。
     - `Value(n)`：已定案的供能速率（EN/t）。目前只有创造能量源。
     - `Value(UNCONFIGURED, unresolved=..., is_test_value=True)`：它供能，但速率未定。
-      能源接入口就是这一种（RF → EN 的折算比例属 R08，接入本身属 13-02）。
+      能源接入口就是这一种（2 FE = 1 EN，实际供能随余额变化）。
       **不能省略成 `None`**：那会被读成「它不供能」，于是只接了能源接入口的网络
       会报「确认没电」，而正确的答案是「供能速率未定」。
 
     供能设备由「`supply is not None`」这一个事实认定，**不再额外挂一个能力名**：
-    能力 `energy_port` 的协议是 `accept_rf`（**拉**式，向外部机器要 RF 再折算），
+    能力 `energy_port` 对应可由线缆写入的 radium FE 端口，
     而创造能量源是**推**式静态电源，两者不是同一个能力；`supply` 已经足以分类，
     再存一份只会分叉。能源服务因此像 `admission` 读带宽那样直接读定义表。
     """
@@ -1096,13 +1101,13 @@ DEVICES = (
         CATEGORY_ENERGY_INPUT,
         bandwidth=BandwidthSpec(0),  # blocks.md：不占用带宽
         energy=EnergySpec(),
-        # 它**供能**，但 RF → EN 的折算比例属 R08、真实接入属 13-02，因此速率未定。
+        # 它**供能**，每 2 FE 可用 1 EN，定义表不预设固定速率。
         # 写成 None 会被读成「它不供能」，于是只接它的网络误报「确认没电」。
         supply=Value(
             UNCONFIGURED,
             unresolved="R08",
             is_test_value=True,
-            note="RF→EN 折算比例待定（R08），真实接入见 13-02",
+            note="2 FE = 1 EN，实际供能由接入口余量和本次结算决定",
         ),
         capabilities=(CAP_ENERGY_PORT,),
         notes="不占带宽不代表耗能为零；耗能未列，归入 R10。",

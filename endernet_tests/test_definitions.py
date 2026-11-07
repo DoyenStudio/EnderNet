@@ -332,7 +332,7 @@ class TestSupplyNumbers(unittest.TestCase):
         self.assertTrue(definition.supply.is_settled())
 
     def test_energy_input_interface_supplies_but_rate_is_undecided(self):
-        """它供能，但 RF→EN 的折算比例属 R08——**不能省略成「不供能」**。
+        """它供能，但 FE→EN 的折算比例属 R08——**不能省略成「不供能」**。
 
         写成 `None` 会被读成「它不供能」，于是只接了能源接入口的网络会报
         「确认没电」，而正确答案是「供能速率未定」。两者对用户是两句完全不同

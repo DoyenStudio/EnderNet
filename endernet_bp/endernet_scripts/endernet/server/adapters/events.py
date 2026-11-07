@@ -18,6 +18,7 @@
 
 from ...common.definitions import (
     CONTAINER_SCREENS,
+    ENERGY_INPUT_ID,
     TERMINAL_OPEN_LIMIT_SECONDS,
     TERMINAL_SCREENS,
 )
@@ -217,6 +218,7 @@ class ServerEventBinder(object):
         memory_slots=None,
         drivers=None,
         player_dimension=None,
+        energy_inputs=None,
     ):
         self.queue = queue
         self.world = world
@@ -245,6 +247,7 @@ class ServerEventBinder(object):
         #: 驱动器那 10 格是介质物品的**唯一权威**，给它标脏就是「这个位置的
         #: 槽位读数过期了」；`accepts_put` 则保证非介质物品进不去。
         self.drivers = drivers
+        self.energy_inputs = energy_inputs
         #: 玩家维度解析。默认是引擎实现；注入替身即可在离线测试里走通
         #: 「自定义容器事件没有维度」那条路径——而插槽拒收正挂在它上面。
         self.player_dimension = (
@@ -492,6 +495,8 @@ class ServerEventBinder(object):
 
     def _on_remove(self, dimension, x, y, z, block_name):
         self._count("remove")
+        if block_name == ENERGY_INPUT_ID and self.energy_inputs is not None:
+            self.energy_inputs.unload(NodeKey(dimension, x, y, z))
         if not self._is_ours(block_name):
             return
         self.queue.push(
@@ -539,6 +544,8 @@ class ServerEventBinder(object):
     def _on_chunk_unloaded(self, dimension, chunk_x, chunk_z):
         self._count("chunk_unloaded")
         chunk_key = ChunkKey(dimension, chunk_x, chunk_z)
+        if self.energy_inputs is not None:
+            self.energy_inputs.unload_chunk(chunk_key)
         self.world.note_chunk_unloaded(chunk_key)
         self.queue.push(NormalizedEvent.chunk_unloaded(chunk_key, tick=self._tick()))
 

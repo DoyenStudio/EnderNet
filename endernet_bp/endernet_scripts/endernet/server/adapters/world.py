@@ -112,6 +112,13 @@ class ToolDeltaWorldAdapter(object):
 
         SetBlockEntityData(node_key.dimension, node_key.as_tuple(), data)
 
+    def energy_block_entity(self, node_key):
+        from ....tooldelta.api.server.block import GetBlockEntityData
+        from ...common.definitions import ENERGY_INPUT_ID
+        if self.block_name_at(node_key) != ENERGY_INPUT_ID:
+            return None
+        return GetBlockEntityData(node_key.dimension, node_key.as_tuple())
+
     def terminal_inventory_id(self, node_key):
         # type: (NodeKey) -> object
         """旧方块重载仍携带同一标记；同位置新放的方块获得自己的库存。"""

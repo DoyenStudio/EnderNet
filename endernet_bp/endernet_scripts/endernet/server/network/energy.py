@@ -6,13 +6,12 @@
 
 ## 这一层只做三件事
 
-登记成员、把定义表里的供需数值加起来、给出一个三态判定。它**不做** RF 计量
-（04-05/13-02）、**不管**断电暂停与逐步恢复（04-06）、**不发布**设备级能源
-状态与变化通知（04-08）。
+登记成员与供需。每个模拟 tick 先抵扣静态供能，再向能源接入口结算差额。
+断电暂停与逐步恢复（04-06）、设备级能源状态通知（04-08）另行处理。
 
 ## 供能设备由 `supply` 认定，不新开能力名
 
-能力 `energy_port` 的协议是 `accept_rf`（**拉**式：向外部机器要 RF 再折算），
+能力 `energy_port` 对应线缆写入的 FE 缓冲，
 而创造能量源是**推**式静态电源，两者不是同一个能力。`definition.supply` 已经
 足以分类（`supply is not None` 就是供能设备），再挂一个能力名等于把同一件事
 存两处，迟早分叉——本仓库为这种分叉付过代价（见 04 交付说明第七节第 3 条）。
@@ -23,7 +22,7 @@
 1. 网络里**一台供能设备都没有** → 由 `EnergyPolicy.no_source` 决定说「待确认」
    还是「确认没电」。这是 04 文档记着的待决问题，库默认取保守的 `PENDING`，
    DEV 档显式改成 `BROWNOUT`。
-2. **有供能设备的速率算不出**（只接了能源接入口，RF→EN 折算属 R08）→ `None`。
+2. **有供能设备的速率算不出**（只接了能源接入口，2 FE = 1 EN，尚无余额结算）→ `None`。
    这一条必须排在「够不够」之前：供能总量这时只是**下界**，拿它去比大小会得出
    一个不成立的「没电」。
 3. **已知供能 < 已知需求** → `False`。到这里供能总量是**精确的**（上一条已经
@@ -362,6 +361,28 @@ class EnergyService(NetworkService):
         """
         return 0
 
+    def settle_inputs(self, keys, spend):
+        """One simulation pulse. Static sources cover demand before buffered EN."""
+        keys = sorted((key for key in keys if key in self._members),
+                      key=lambda key: key.as_key())
+        if not keys:
+            return
+        totals = self._totals
+        previous = sum(self._members[key].supply for key in keys
+                       if self._members[key].supply is not UNCONFIGURED)
+        deficit = max(0, totals["demand_total"] - (totals["supply_total"] - previous))
+        paid = {}
+        if not self._has_unsettled_demand(totals["missing_spec"], totals["unwired_inputs"]):
+            paid = spend(keys, deficit)
+        changed = False
+        for key in keys:
+            supplied = paid.get(key, 0)
+            if self._members[key].supply != supplied:
+                self._members[key].supply = supplied
+                changed = True
+        if changed:
+            self._settle()
+
     def save_node_data(self, node):
         # type: (object) -> object
         """**本服务在该节点上没有持久数据**，因此返回 None。
@@ -483,7 +504,7 @@ class EnergyService(NetworkService):
                 "ignored_demand": self._ignored_demand(),
                 "stats": dict(self.stats),
                 "scope_note": (
-                    "固定耗能结算与供能判定已实现；RF 计量（04-05/13-02）、"
+                    "固定需求按模拟 tick 从接入口结算。"
                     "断电暂停与逐步恢复（04-06）、设备级能源状态与变化通知（04-08）"
                     "未实现。驱动器数量、内存条根数、处理器与装配仓工作态已接入；"
                     "负载跟随的耗能折算口径未定（R08）。"
@@ -532,7 +553,8 @@ class EnergyService(NetworkService):
             node.node_key,
             node.ref,
             node.device_id,
-            definition.supply_rate(),
+            (previous.supply if previous is not None and previous.ref.matches(node.ref)
+             and definition.supply_rate() is UNCONFIGURED else definition.supply_rate()),
             demand,
             gap,
             state,

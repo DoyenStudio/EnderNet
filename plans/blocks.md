@@ -232,7 +232,7 @@ UI 物品槽网格共 18 格：前 9 格专用于存放工厂样板，后 9 格�
 ## 其他
 
 **能源接入口** (endernet:energy_input_interface)
-将蔚蓝科技 (skybluetech) 的 RF 能源单位转换为本模组 EN 能源单位。
+通过 transferlib（radium）的公共能源接口接入 FE，并转换为本模组 EN 能源单位。适用于注册该能源能力的模组，不绑定 skybluetech。六面共用只进端口。每 2 FE 转为 1 EN，余下的 1 FE 留在本方块并随存档恢复。
 
 - 不占用带宽
 

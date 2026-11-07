@@ -71,7 +71,7 @@ TINY = "endernet:tiny_network_endpoint"
 TERMINAL = "endernet:common_terminal_panel"
 DRIVER = "endernet:storage_driver"
 MEMORY_SLOT = "endernet:memory_slot"
-RF_INTERFACE = "endernet:energy_input_interface"
+FE_INTERFACE = "endernet:energy_input_interface"
 CREATIVE = "endernet:creative_energy_source"
 
 #: 只出现在本文件里的测试设备。真实定义表里没有「供能小于需求」的组合
@@ -80,7 +80,7 @@ CREATIVE = "endernet:creative_energy_source"
 SMALL_SOURCE = "endernet:test_small_source"
 GREEDY = "endernet:test_greedy_device"
 CHEAP = "endernet:test_cheap_device"
-#: 一台**供能速率未定**的电源（真实定义表里是能源接入口：RF→EN 折算属 R08）。
+#: 一台**供能速率未定**的电源（真实定义表里是能源接入口：FE→EN 折算属 R08）。
 OPEN_SOURCE = "endernet:test_open_source"
 
 
@@ -370,19 +370,45 @@ class TestVerdicts(unittest.TestCase):
         self.assertEqual(net.service.totals()["demand_total"], 4)
         self.assertEqual(net.service.totals()["unwired_inputs"], [])
 
+    def test_buffered_power_is_paid_again_each_pulse(self):
+        net = self.network(EnergyPolicy.dev_stand_in(), FE_INTERFACE, TERMINAL)
+        key = net.refs[0].node_key
+        demand = net.service.totals()["demand_total"]
+        self.assertGreater(demand, 0)
+        offers = []
+
+        def pay(keys, deficit):
+            offers.append((keys, deficit))
+            return {key: deficit} if len(offers) == 1 else {}
+
+        net.service.settle_inputs([key], pay)
+        self.assertTrue(net.power())
+        self.assertTrue(net.power())
+        net.service.settle_inputs([key], pay)
+        self.assertFalse(net.power())
+        self.assertEqual(offers, [([key], demand), ([key], demand)])
+
+    def test_static_supply_preserves_buffered_energy(self):
+        net = self.network(EnergyPolicy.dev_stand_in(), CREATIVE, FE_INTERFACE, TERMINAL)
+        key = net.refs[1].node_key
+        deficits = []
+        net.service.settle_inputs([key], lambda keys, n: deficits.append(n) or {})
+        self.assertTrue(net.power())
+        self.assertEqual(deficits, [0])
+
     def test_an_unknown_supply_rate_never_decides(self):
         """只接了能源接入口：它供能，但速率未定，因此什么都不能断言。
 
         把它当成「不供能」会让这张网络报「确认没电」，而正确答案是「说不准」。
         """
-        net = self.network(EnergyPolicy.dev_stand_in(), RF_INTERFACE, TERMINAL)
+        net = self.network(EnergyPolicy.dev_stand_in(), FE_INTERFACE, TERMINAL)
         self.assertIsNone(net.power())
-        self.assertIn(RF_INTERFACE, net.service.totals()["unknown_supply"])
+        self.assertIn(FE_INTERFACE, net.service.totals()["unknown_supply"])
 
     def test_an_unknown_supply_does_not_upgrade_a_pending_verdict(self):
         """已知电源 + 速率未知的电源，仍然不能断言——依据不足就是不足。"""
         net = self.network(
-            EnergyPolicy.dev_stand_in(), CREATIVE, RF_INTERFACE, TERMINAL
+            EnergyPolicy.dev_stand_in(), CREATIVE, FE_INTERFACE, TERMINAL
         )
         self.assertIsNone(net.power())
 

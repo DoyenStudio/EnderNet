@@ -107,15 +107,10 @@ class FluidPort(object):
 
 
 class EnergyPort(object):
-    """能源端口（任务 04/13-02 实现）。
+    """Committed EN available to the network and unconverted FE at one input."""
 
-    RF 换算待定（R08），因此接口按「实际接收多少 RF、换出多少 EN、
-    余下多少」三分量返回，保留整数余数，避免反复转换获利。
-
-    必须提供：`accept_rf(rf) -> (accepted_rf, converted_en, remainder)`
-    """
-
-    def accept_rf(self, rf):
+    def balance(self):
+        # type: () -> tuple
         raise NotImplementedError
 
 

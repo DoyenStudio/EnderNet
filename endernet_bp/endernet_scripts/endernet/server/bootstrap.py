@@ -62,6 +62,8 @@ from .adapters.containers_engine import (
     build_stack_limit,
 )
 from .adapters.events import ServerEventBinder
+from ..common.definitions import ENERGY_INPUT_ID
+from .adapters.energy import EnergyInputs
 from .adapters.fluids import RadiumFluidProvider
 from .adapters.messages import AdapterSyncPort
 from .adapters.order_notifications import notify_order_completed
@@ -613,6 +615,9 @@ class ServerBootstrap(object):
         #: 这就是「假时钟可精确重现低速累积、卡顿和恢复」的入口。
         self.clock = clock if clock is not None else LogicalClock()
         self.world = world if world is not None else ToolDeltaWorldAdapter()
+        self.energy_inputs = EnergyInputs(self.world) if hasattr(self.world, "energy_block_entity") else None
+        self._energy_sim_tick = -1
+        self._energy_nodes = set()
         self.drain_limit = int(drain_limit)
         self.backfill_chunks_per_tick = int(backfill_chunks_per_tick)
         #: 每帧允许展开多少个图节点。跨帧重建的预算（02-02）。
@@ -1044,6 +1049,7 @@ class ServerBootstrap(object):
             self.definitions,
             clock=self.clock,
             event_api=event_api,
+            energy_inputs=self.energy_inputs,
             patterns=self.patterns,
             memory_slots=self.memory_slots,
             # 驱动器槽位的容器事件（2026-10-04）：玩家往驱动器里放/取介质物品时
@@ -1203,6 +1209,9 @@ class ServerBootstrap(object):
         # 加载着、脏集合还没被清，正要落盘的就是刚刚算完的那一版。
         # 放在最后会丢掉停机前最后一帧的改动。
         self.flush_persistence()
+        if self.energy_inputs is not None:
+            self.energy_inputs.close()
+        self._energy_nodes.clear()
         self.event_binder.unbind()
         self._invalidate_fluid_ports()
         # 会话与订阅缓存一并丢掉。**监听器已经注销了，但订阅表还活着**——
@@ -1265,6 +1274,7 @@ class ServerBootstrap(object):
         # 不成立的归属动手。
         # 恢复等待者必须早于接口回流和订单推进，避免首帧产物无人认领。
         network_states_applied = self._apply_archived_network_states()
+        self._settle_input_power()
         service_steps = self.runtimes.tick(self.runtime_budget, self._tick_context())
         # 发布窗口**紧跟运行时推进**（任务 11-02）：提交发生在 `runtimes.tick`
         # 内，取脏键放其后，窗口才看得见本帧提交。放前面会让本帧的提交等到
@@ -1619,6 +1629,30 @@ class ServerBootstrap(object):
         if self.persistence_restore_error:
             report["restore_error"] = self.persistence_restore_error
         return report
+
+    def _settle_input_power(self):
+        if self.energy_inputs is None:
+            return
+        pulse = self.event_binder.counts.get(EventKind.SIM_TICK, 0)
+        if pulse == self._energy_sim_tick:
+            return
+        previous = self._energy_sim_tick
+        self._energy_sim_tick = pulse
+        if previous < 0 or pulse // 20 != previous // 20:
+            self.energy_inputs.discover()
+        if not self.recovery.is_open():
+            return
+        networks = {}
+        for key in self._energy_nodes:
+            if self.energy_inputs.api is not None:
+                self.energy_inputs.load(key)
+            runtime = self.runtimes.runtime_of(key)
+            if runtime is not None and runtime.is_open():
+                networks.setdefault(runtime, []).append(key)
+        for runtime, keys in networks.items():
+            energy = runtime.services.get(ServiceId.ENERGY)
+            if isinstance(energy, EnergyService):
+                energy.settle_inputs(keys, self.energy_inputs.spend)
 
     def _tick_context(self):
         # type: () -> dict
@@ -2364,6 +2398,13 @@ class ServerBootstrap(object):
             # 两条路径分叉就会出「拓扑知道设备没了、驱动器/接口还以为在」。
             self.drivers.observe(change)
             self.ports.observe(change)
+            if self.energy_inputs is not None and change.device_id == ENERGY_INPUT_ID:
+                key = change.ref.node_key
+                if change.kind in (ChangeKind.ADDED, ChangeKind.LOADED):
+                    self._energy_nodes.add(key)
+                elif change.kind in (ChangeKind.REMOVED, ChangeKind.UNLOADED):
+                    self._energy_nodes.discard(key)
+                    self.energy_inputs.unload(key)
             # 样板提供者状态也从**同一批变化**推导（07）。它按能力判定
             # 谁是提供者，因此非提供者的变化在这里是空操作。
             self.patterns.observe(change)
@@ -2661,10 +2702,14 @@ class ServerBootstrap(object):
         一份——抄一份的代价是两处迟早对不上。
         """
         view = self.runtimes.energy_view()
+        if self.energy_inputs is not None:
+            view["transferlib"] = {"ready": self.energy_inputs.api is not None,
+                                   "loaded_inputs": len(self.energy_inputs.buffers),
+                                   "last_error": self.energy_inputs.error}
         view["policy"] = self.energy_policy.describe()
         view["unresolved"] = self.energy_policy.unresolved_report()
         view["scope_note"] = (
-            "固定耗能结算与供能判定已实现；RF 计量（04-05/13-02）、断电暂停"
+            "已接入 FE 缓冲、2:1 换算与模拟 tick 耗能结算。断电暂停"
             "（04-06）与设备级能源状态通知（04-08）未实现。装置数量与工作态"
             "还没有来源、基带等设备的耗能在 blocks.md 里未列（R10），因此库默认"
             "口径下真实网络一律报「待确认」；DEV 档用替身口径把算不出的需求"
