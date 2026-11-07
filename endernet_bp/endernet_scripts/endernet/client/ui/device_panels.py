@@ -24,7 +24,7 @@
 推送即权威，本地只做乐观显示。
 """
 
-from ....tooldelta.ui import RegistToolDeltaScreen
+from ....tooldelta.ui import Binder, RegistToolDeltaScreen
 
 from .port_panel import (
     SETTINGS_CACHE_SWITCH,
@@ -36,6 +36,9 @@ from .port_panel import (
     ItemPortPanelBase,
 )
 from .proxy_panel import ProxyPanelBase
+from .select_item_window import WINDOW_ATTRIBUTE, show_select_item_window
+from .stack_size import id_aux
+from .terminal_cache import TerminalCache
 
 
 @RegistToolDeltaScreen("bus_item_output_io_ui.main", is_proxy=True)
@@ -128,8 +131,74 @@ class StorageDriverPanel(ProxyPanelBase):
 
 
 @RegistToolDeltaScreen("bus_item_io_ui.main", is_proxy=True)
-class BusItemPanel(ProxyPanelBase):
-    """总线物品接口：只接入公共状态与详情。"""
+class BusItemPanel(ItemPortPanelBase):
+    """上排逐列设置取货物品，下排由原生容器持有实物。"""
+
+    DEVICE_ID = "endernet:bus_item_io"
+
+    def _attach_models(self, device_ref, client):
+        ItemPortPanelBase._attach_models(self, device_ref, client)
+        self.stock = TerminalCache(client=client)
+        self.rendered_slots = None
+
+    def _detach_models(self):
+        picker = getattr(self, "_vars", {}).get(WINDOW_ATTRIBUTE)
+        if picker is not None:
+            picker.close()
+        self.stock = None
+        ItemPortPanelBase._detach_models(self)
+
+    def _tick_extra(self):
+        self.stock.tick()
+        self._drain_receipts()
+
+    def _refresh_controls(self):
+        # Native container grids re-evaluate collection bindings on UpdateScreen.
+        items = tuple(self._slot_items())
+        if items != self.rendered_slots:
+            self._screen_node.UpdateScreen(True)
+            self.rendered_slots = items
+
+    def _slot_items(self):
+        model = self.port_config
+        return (model.applied.get("slot_items") or ()) if model is not None else ()
+
+    @Binder.binding_collection(Binder.BF_BindBool, "endernet_interface_slots", "#EnderNetInterface.arrow")
+    def interface_arrow(self, index):
+        items = self._slot_items()
+        return not (0 <= index < len(items) and items[index])
+
+    @Binder.binding_collection(Binder.BF_BindBool, "endernet_interface_slots", "#EnderNetInterface.has_item")
+    def interface_has_item(self, index):
+        return not self.interface_arrow(index)
+
+    @Binder.binding_collection(Binder.BF_BindInt, "endernet_interface_slots", "#EnderNetInterface.icon")
+    def interface_icon(self, index):
+        items = self._slot_items()
+        if 0 <= index < len(items) and items[index]:
+            return id_aux(items[index]) or 131072
+        return 131072
+
+    @Binder.binding(Binder.BF_ButtonClickUp, "#EnderNetInterface.select")
+    def interface_select(self, params):
+        index = params.get("#collection_index")
+        items = self._slot_items()
+        if (not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(items)
+                or WINDOW_ATTRIBUTE in self._vars or self.port_config.busy("slot_item")):
+            return
+        model = self.port_config
+
+        def select(item_id):
+            if self.port_config is model:
+                self._submit({"slot_item": {"slot": index, "item_id": item_id}})
+
+        if items[index]:
+            select(None)
+        else:
+            stock = self.stock.model
+            rows = stock.query_page(stock.query_generation(), 0, stock.count())
+            names = [row.key.name for row in rows if row.key.kind == "item" and row.stored > 0]
+            show_select_item_window(self, names, select)
 
 
 @RegistToolDeltaScreen("memory_slot_ui.main", is_proxy=True)

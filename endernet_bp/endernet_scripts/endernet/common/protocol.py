@@ -3169,6 +3169,7 @@ PORT_CONFIG_FIELDS = (
     "filter_mode",
     "filter",
     "supply_slots",
+    "slot_items",
     "limit",
     "cache_enabled",
 )
@@ -3238,6 +3239,7 @@ class PortConfigMessage(SyncMessage):
         self.generation = generation
         self.role = role
         self.config = dict(config)
+        self.config.setdefault("slot_items", None)
         self.filter_limit = filter_limit
         self.filter_modes = tuple(filter_modes)
         self.blocker = dict(blocker) if blocker is not None else None

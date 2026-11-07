@@ -1550,6 +1550,20 @@ class TestPatternContainerEvents(unittest.TestCase):
             )
             self.assertFalse(event.cancelled, name)
 
+    def test_player_and_hopper_cannot_put_into_configured_output_columns(self):
+        from endernet.server.devices.io import PortConfig
+
+        ref = self.place(PASSIVE_IO, 8)
+        self.server.ports.configure(ref, PortConfig(slot_items=[None] * 8 + ["minecraft:stone"]))
+        for path in ("PlayerTryPutCustomContainerItemServerEvent", "ItemPushInCustomContainerServerEvent"):
+            for slot in (0, 8):
+                for name in ("minecraft:dirt", "minecraft:stone"):
+                    event = _PutEvent(name, 8, 64, 0)
+                    event.dimension = 0
+                    event.collectionIndex = slot
+                    self.api.dispatch(self.api.event(path), event)
+                    self.assertEqual(event.cancelled, slot == 8)
+
     def test_a_hopper_cannot_bypass_the_rejection(self):
         """**漏斗是第二条放入路径，拒收规则必须同样生效。**
 

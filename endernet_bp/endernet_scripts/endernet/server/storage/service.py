@@ -1990,6 +1990,22 @@ class StorageService(NetworkService):
         # 方向怎么回去了」。合并的语义是「改我说的那几项」，与命令载荷
         # 「只表达意图」的定位一致。
         merged = state.config.to_dict()
+        if "slot_items" in raw and (state.config.slot_items is not None or raw["slot_items"] is not None):
+            return self._reject(command, Reason.BAD_PARAMETER, "请按槽提交配置")
+        if "slot_item" in raw:
+            edit = raw["slot_item"]
+            if (state.config.slot_items is None or len(raw) != 1 or not isinstance(edit, dict)
+                    or set(edit) != set(("slot", "item_id"))):
+                return self._reject(command, Reason.BAD_PARAMETER, "逐槽配置格式错误")
+            slot = edit["slot"]
+            items = merged["slot_items"]
+            if isinstance(slot, bool) or not isinstance(slot, INTEGER_TYPES) or not 0 <= slot < len(items):
+                return self._reject(command, Reason.SUPPLY_SLOTS_INVALID, "供货位越界")
+            items[slot] = edit["item_id"]
+            raw = {}
+        elif "supply_slots" in raw or "filter" in raw:
+            # Older clients submit a shared filter and supply-slot indices.
+            merged["slot_items"] = None
         for field, value in raw.items():
             if field in merged:
                 merged[field] = value
@@ -2009,7 +2025,10 @@ class StorageService(NetworkService):
         )
         if refusal is not None:
             return refusal
-        self.ports.configure(state.ref, config)
+        try:
+            self.ports.configure(state.ref, config)
+        except ValueError as error:
+            return self._reject(command, Reason.BAD_PARAMETER, str(error))
         # **配置变更是「立即尝试」的触发点**：`SchedulerService.wake` 把该设备的
         # 轮询提前到本帧。槽位变化没有通知通道（容器 API 不提供），那条路只能
         # 靠方块实体 tick 打回退避——04 明确警告过不能拿心跳当变化信号。

@@ -548,9 +548,9 @@ class TestDebugQuery(RoutedFixture):
         self.drive(NormalizedEvent.place(bus, BUS))
         payload = self.application.debug_query("port", node_key=bus).payload
         self.assertEqual(payload["port"]["role"], "passive")
-        # 被动总线的过滤为空 → 未配置；这条结论是一台离线设备最需要看到的。
-        self.assertIsNotNone(payload["blocker"])
-        self.assertEqual(payload["blocker"]["code"], Reason.PORT_UNCONFIGURED)
+        # 新放下的物品接口九格均可存货，无需先设置过滤名单。
+        self.assertIsNone(payload["blocker"])
+        self.assertEqual(payload["port"]["config"]["slot_items"], [None] * 9)
 
     def test_port_query_on_an_empty_position_is_an_error_payload(self):
         payload = self.application.debug_query("port", node_key=key(99, 99, 99)).payload

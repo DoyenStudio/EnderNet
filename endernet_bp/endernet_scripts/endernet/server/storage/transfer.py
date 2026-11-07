@@ -908,8 +908,8 @@ def slot_limit_of(adapter, resource_key):
     return limit if limit > 0 else 1
 
 
-def slot_insert(adapter, op_id, slot, resource_key, count):
-    # type: (object, str, int, ResourceKey, int) -> TransferReceipt
+def slot_insert(adapter, op_id, slot, resource_key, count, writer=None):
+    # type: (object, str, int, ResourceKey, int, object) -> TransferReceipt
     """**只动这一格**地放入，上限是该物品的堆叠上限，写完读回核对。"""
     view = slot_read(adapter, slot)
     if view["key"] is not None and view["key"] != resource_key:
@@ -926,7 +926,7 @@ def slot_insert(adapter, op_id, slot, resource_key, count):
         )
     data = item_dict_from_key(resource_key, view["count"] + take)
     # 引擎可能写入成功却返回 False；必须读回，否则协调器会补偿出第二份。
-    adapter.write_slot(slot, data)
+    (writer or adapter.write_slot)(slot, data)
     after = slot_read(adapter, slot)
     if after["key"] != resource_key:
         # **写下去的东西可能已经在那里了**：这时报 `moved=0` 就是「写了却报
@@ -1016,8 +1016,9 @@ class SlotView(TransferEndpoint):
 
     kind = "slot"
 
-    def __init__(self, adapter, slot, endpoint_id=""):
-        # type: (object, int, str) -> None
+    def __init__(self, adapter, slot, endpoint_id="", writer=None):
+        # type: (object, int, str, object) -> None
+        self.writer = writer
         self.adapter = adapter
         self.slot = int(slot)
         self._endpoint_id = endpoint_id
@@ -1106,7 +1107,7 @@ class SlotView(TransferEndpoint):
                 op_id, count, 0, TransferStatus.UNSUPPORTED,
                 Reason.UNSUPPORTED, resource_key, self.holder_id(),
             )
-        return slot_insert(self.adapter, op_id, self.slot, resource_key, count)
+        return slot_insert(self.adapter, op_id, self.slot, resource_key, count, self.writer)
 
     def describe(self):
         # type: () -> dict

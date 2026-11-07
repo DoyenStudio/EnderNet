@@ -143,7 +143,7 @@
                                                                         -18.0
                                                                     ],
                                                                     "layer": 1,
-                                                                    "collection_name": "test_grid",
+                                                                    "collection_name": "endernet_interface_slots",
                                                                     "grid_dimensions": [
                                                                         9,
                                                                         1
@@ -215,6 +215,12 @@
                 }
             },
             {
+                "endernet_select_item_window@endernet_windows.select_item_window": {
+                    "visible": false,
+                    "layer": 65
+                }
+            },
+            {
                 "endernet_importer_overlay@endernet_universal_importer_ui.overlay_panel": {
                     "visible": false
                 }
@@ -254,6 +260,14 @@
                                 "layer": 1,
                                 "clip_direction": "left",
                                 "clip_ratio": 0.0,
+                                "bindings": [
+                                    {
+                                        "binding_type": "collection",
+                                        "binding_collection_name": "endernet_interface_slots",
+                                        "binding_name": "#EnderNetInterface.arrow",
+                                        "binding_name_override": "#visible"
+                                    }
+                                ],
                                 "texture": "textures/ui/endernet/arrow_down"
                             }
                         },
@@ -266,7 +280,20 @@
                                     16.0
                                 ],
                                 "layer": 1,
-                                "visible": false,
+                                "bindings": [
+                                    {
+                                        "binding_type": "collection",
+                                        "binding_collection_name": "endernet_interface_slots",
+                                        "binding_name": "#EnderNetInterface.has_item",
+                                        "binding_name_override": "#visible"
+                                    },
+                                    {
+                                        "binding_type": "collection",
+                                        "binding_collection_name": "endernet_interface_slots",
+                                        "binding_name": "#EnderNetInterface.icon",
+                                        "binding_name_override": "#item_id_aux"
+                                    }
+                                ],
                                 "property_bag": {
                                     "#item_id_aux": 131072
                                 }
@@ -302,11 +329,17 @@
                                     0,
                                     0
                                 ],
-                                "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                "$pressed_button_name": "#EnderNetInterface.select",
                                 "$pressed_texture": "",
                                 "$texture_layer": 2,
                                 "layer": 2,
-                                "button_mappings": [],
+                                "button_mappings": [
+                                    {
+                                        "from_button_id": "button.menu_select",
+                                        "to_button_id": "$pressed_button_name",
+                                        "mapping_type": "pressed"
+                                    }
+                                ],
                                 "default_control": "default",
                                 "hover_control": "hover",
                                 "is_handle_button_move_event": true,
@@ -314,7 +347,7 @@
                                 "bindings": [
                                     {
                                         "binding_type": "collection_details",
-                                        "binding_collection_name": "",
+                                        "binding_collection_name": "endernet_interface_slots",
                                         "binding_condition": "always_when_visible"
                                     }
                                 ],

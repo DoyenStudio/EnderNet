@@ -196,11 +196,14 @@ class SlotBackedContainer(ContainerAdapter):
 
     # -- 模拟 ----------------------------------------------------------
 
+    def insertable_slots(self):
+        return range(self.slot_count())
+
     def _do_simulate_insert(self, resource_key, count):
         # type: (ResourceKey, int) -> int
         limit = self.stack_limit_of(resource_key)
         room = 0
-        for slot in range(self.slot_count()):
+        for slot in self.insertable_slots():
             data = self.read_slot(slot)
             if _is_empty(data):
                 room += limit
@@ -222,7 +225,7 @@ class SlotBackedContainer(ContainerAdapter):
         limit = self.stack_limit_of(resource_key)
         remaining = count
         placed = 0
-        for slot in range(self.slot_count()):
+        for slot in self.insertable_slots():
             if remaining <= 0:
                 break
             data = self.read_slot(slot)
@@ -356,8 +359,8 @@ class EngineItemPrimitives(object):
             tuple(position), slot, dimension, True
         )
 
-    def set_container_item(self, dimension, position, slot, data):
-        # type: (int, tuple, int, dict) -> bool
+    def set_container_item(self, dimension, position, slot, data, own_supply=False):
+        # type: (int, tuple, int, dict, bool) -> bool
         # 所有外部容器写入（含指定槽位、清空和补偿）共用这一道检查。
         # 事件只承载本次增减的物品，不能把合并后的整堆数量当成投递量。
         before = normalize_engine_item(self.container_item(dimension, position, slot))
@@ -369,7 +372,7 @@ class EngineItemPrimitives(object):
         removed = before_count - (after_count if before_key == after_key else 0)
         added = after_count - (before_count if before_key == after_key else 0)
         for inserting, source, count in ((False, before, removed), (True, after, added)):
-            if count <= 0:
+            if count <= 0 or (own_supply and inserting):
                 continue
             piece = deepcopy(source)
             piece["count"] = count
@@ -528,6 +531,13 @@ class EngineItemContainer(SlotBackedContainer):
         self.dimension = int(dimension)
         self.position = tuple(position)
         self._size = None
+        self.accepts_put = None
+
+    def insertable_slots(self):
+        slots = range(self.slot_count())
+        if self.accepts_put is None:
+            return slots
+        return (slot for slot in slots if self.accepts_put(slot))
 
     def slot_count(self):
         # type: () -> int
@@ -552,6 +562,16 @@ class EngineItemContainer(SlotBackedContainer):
         return self.primitives.set_container_item(
             self.dimension, self.position, slot, data
         )
+
+    def write_supply_slot(self, slot, data):
+        # type: (int, dict) -> bool
+        """本设备的网络补货；外部投递仍经可取消的漏斗事件。"""
+        if not self.valid:
+            return False
+        if isinstance(self.primitives, EngineItemPrimitives):
+            return self.primitives.set_container_item(
+                self.dimension, self.position, slot, data, own_supply=True)
+        return self.write_slot(slot, data)
 
 
 class EnginePlayerInventory(SlotBackedContainer):
@@ -753,6 +773,7 @@ class EngineContainerProvider(object):
         self.primitives = primitives
         self._stack_limit = stack_limit
         self._cache = {}
+        self.accepts_put = None
         self.stats = {"probes": 0, "misses": 0, "invalidations": 0}
 
     def container_at(self, node_key):
@@ -779,6 +800,8 @@ class EngineContainerProvider(object):
         adapter = EngineItemContainer(
             self.primitives, node_key.dimension, node_key.as_tuple(), self._stack_limit
         )
+        if self.accepts_put is not None:
+            adapter.accepts_put = lambda slot: self.accepts_put(node_key, slot)
         self._cache[key] = adapter
         return adapter
 

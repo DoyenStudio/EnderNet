@@ -218,6 +218,7 @@ class ServerEventBinder(object):
         memory_slots=None,
         drivers=None,
         player_dimension=None,
+        ports=None,
         energy_inputs=None,
     ):
         self.queue = queue
@@ -247,6 +248,7 @@ class ServerEventBinder(object):
         #: 驱动器那 10 格是介质物品的**唯一权威**，给它标脏就是「这个位置的
         #: 槽位读数过期了」；`accepts_put` 则保证非介质物品进不去。
         self.drivers = drivers
+        self.ports = ports
         self.energy_inputs = energy_inputs
         #: 玩家维度解析。默认是引擎实现；注入替身即可在离线测试里走通
         #: 「自定义容器事件没有维度」那条路径——而插槽拒收正挂在它上面。
@@ -421,7 +423,7 @@ class ServerEventBinder(object):
             # 被动接口不受影响：`accepts_put` 对非提供者一律放行，
             # 而那正是 06「外部物流往本地缓冲里塞东西」的通道。
             self._count("custom_container_push_in")
-            if self.patterns is None and self.memory_slots is None:
+            if not self._container_stores() and self.ports is None:
                 return
             # `getattr` 而不是直接取：引擎回调里抛异常会一路回到引擎，
             # 而这里离 bootstrap 的兜底很远。字段缺失时按「读不出物品名」
@@ -629,7 +631,7 @@ class ServerEventBinder(object):
         自定义容器的两条玩家事件**都不带维度**，只能从交互的玩家推出来；
         推不出来就放弃这一次（不猜一个维度，见 `_player_dimension`）。
         """
-        if not self._container_stores():
+        if not self._container_stores() and self.ports is None:
             return
         dimension = self._player_dimension(event.playerId)
         if dimension is None:
@@ -658,6 +660,11 @@ class ServerEventBinder(object):
         record = self.registry.get(node_key)
         if record is None:
             return False
+        if self.ports is not None and not self.ports.accepts_container_put(
+                node_key, getattr(event, "collectionIndex", None)):
+            event.cancel()
+            self._count("port_slot_rejected")
+            return True
         item_name = _item_name(item)
         # **读不出物品名时仍然标脏。** 事件本身已经说明「这个容器变了」，
         # 而那与能否读出物品名无关；判不了该不该拦只是不拦而已。

@@ -52,6 +52,7 @@ from ...common.protocol import (
     TransferStatus,
 )
 from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
+from ...common.resource_key import _TEXT_TYPES
 from ..persistence.repository import Record
 from .capabilities import (
     FLUID_PORT,
@@ -80,8 +81,9 @@ OUTPUT = "output"
 TEMPLATE = "template"
 
 #: 设备标识 -> 角色。**这是本模块认识这些方块的唯一依据**，不按名字猜。
+PASSIVE_ITEM_PORT = "endernet:bus_item_io"
 ROLE_OF = {
-    "endernet:bus_item_io": PASSIVE,
+    PASSIVE_ITEM_PORT: PASSIVE,
     "endernet:bus_fluid_io": PASSIVE,
     "endernet:bus_item_input_io": INTAKE,
     "endernet:bus_fluid_input_io": INTAKE,
@@ -514,6 +516,7 @@ class PortConfig(object):
         "filter_mode",
         "filter",
         "supply_slots",
+        "slot_items",
         "limit",
         "cache_enabled",
     )
@@ -527,8 +530,9 @@ class PortConfig(object):
         filter_mode=MODE_WHITELIST,
         supply_slots=(),
         cache_enabled=True,
+        slot_items=None,
     ):
-        # type: (bool, str, tuple, int, str, tuple, bool) -> None
+        # type: (bool, str, tuple, int, str, tuple, bool, object) -> None
         if direction not in DIRECTIONS:
             raise ValueError("未知方向: %r" % (direction,))
         if filter_mode not in FILTER_MODES:
@@ -562,6 +566,7 @@ class PortConfig(object):
         #: **它与「有没有缓冲」是两件事**：关掉开关不撤缓冲，
         #: 见 `PortPolicy.cached_items_on_disable`。
         self.cache_enabled = bool(cache_enabled)
+        self.slot_items = slot_items
 
     # -- 判定 ----------------------------------------------------------
 
@@ -570,8 +575,8 @@ class PortConfig(object):
         """能不能开工。**「空名单」在这里是唯一依赖未定案口径的分支。**"""
         if not self.enabled:
             return False
-        if role == TEMPLATE:
-            # Template inputs are selected by the order batch.
+        if role == TEMPLATE or (role == PASSIVE and self.slot_items is not None):
+            # 样板按订单投料，逐槽物品接口默认九格均可存货。
             return True
         if self.filter:
             return True
@@ -625,6 +630,7 @@ class PortConfig(object):
             "filter_mode": self.filter_mode,
             "filter": [key.to_dict() for key in self.filter],
             "supply_slots": list(self.supply_slots),
+            "slot_items": list(self.slot_items) if self.slot_items is not None else None,
             "limit": self.limit,
             "cache_enabled": self.cache_enabled,
         }
@@ -650,6 +656,7 @@ class PortConfig(object):
             tuple(data.get("supply_slots", ())),
             # 缓存开关：缺失即默认启用，存在则原样读出（`False` 不被顶掉）。
             data.get("cache_enabled", True),
+            data.get("slot_items"),
         )
 
     def __repr__(self):
@@ -660,6 +667,41 @@ class PortConfig(object):
             len(self.filter),
             len(self.supply_slots),
         )
+
+
+def _normalize_passive_slots(config):
+    # type: (PortConfig) -> None
+    """恢复旧共享名单，保留空列、重复目标和原槽号。"""
+    size = PASSIVE_PORT_SLOT_COUNT.value
+    items = config.slot_items
+    if items is None:
+        items = [None] * size
+        names = [key.name for key in config.filter if key.kind == "item"]
+        for index, slot in enumerate(config.supply_slots):
+            if not 0 <= slot < size:
+                raise ValueError("供货位越界")
+            if names:
+                items[slot] = names[index % len(names)]
+    if not isinstance(items, (tuple, list)) or len(items) != size:
+        raise ValueError("接口需要九个逐槽配置")
+    for name in items:
+        if name is not None and (
+            not isinstance(name, _TEXT_TYPES) or name.count(":") != 1
+            or not all(name.split(":")) or name.strip() != name or name == "minecraft:air"
+        ):
+            raise ValueError("供货物品 ID 无效")
+    config.slot_items = tuple(items)
+    config.supply_slots = tuple(i for i, name in enumerate(items) if name is not None)
+
+
+def normalize_item_config(config, device_id, validate=True):
+    # type: (PortConfig, str, bool) -> None
+    """按设备型号归一化逐槽配置。"""
+    if device_id == PASSIVE_ITEM_PORT:
+        _normalize_passive_slots(config)
+        return
+    if config.slot_items is not None:
+        raise ValueError("只有总线物品接口支持逐槽配置")
 
 
 class BatchState(object):
@@ -886,6 +928,7 @@ class PortState(object):
         "item_port",
         "fluid_port",
         "stats",
+        "cursor",
     )
 
     def __init__(self, ref, device_id, role, config=None, buffer=None, facing=None):
@@ -912,6 +955,7 @@ class PortState(object):
         #: 本次尝试的序号。每发起一次搬运就加一，用来生成 request_id。
         #: **重试同一次搬运不换 op_id**——换了就等于允许再搬一遍。
         self.attempt_seq = 0
+        self.cursor = {}
         #: 待核对标记。非空时**一律不再发起搬运**（06-02：不确定不重放）。
         #: 由 `port_clear` 命令人工解除，或由恢复流程（12-07）销账。
         self.hold = ""
@@ -1008,6 +1052,7 @@ class PortState(object):
             "role": self.role,
             "facing": self.facing,
             "config": self.config.to_dict(),
+            "cursor": dict(self.cursor),
             "hold": self.hold,
             "hold_detail": self.hold_detail,
             "batch": self.batch.to_dict() if self.batch is not None else None,
@@ -1102,6 +1147,7 @@ class PortStore(object):
         if facing is None and record is not None:
             facing = record.facing
         state = PortState(ref, device_id, role, PortConfig(), None, facing)
+        normalize_item_config(state.config, device_id)
         if role == PASSIVE:
             # 被动接口：9 格是存取共用的**真实库存**，实际存放处是它自己的
             # 方块容器（`buffer_endpoint` 惰性挂上）。容量上界由容器与每件
@@ -1374,9 +1420,18 @@ class PortStore(object):
         state = self.get_by_ref(ref)
         if state is None:
             return False
+        normalize_item_config(config, state.device_id)
         state.config = config
+        state.cursor = {}
         self.project(state)
         self.note_changed(state)
+        return True
+
+    def accepts_container_put(self, node_key, slot=None):
+        # type: (object, object) -> bool
+        state = self.get(node_key)
+        if state is not None and state.device_id == PASSIVE_ITEM_PORT:
+            return slot not in state.config.supply_slots
         return True
 
     def hold_if_uncertain(self, state, receipt):
@@ -1522,9 +1577,10 @@ class PortStore(object):
         adapter = self.container_at(state.node_key)
         if adapter is None:
             return None
-        return SlotView(
-            adapter, slot, "port:%s" % (state.node_key.as_key(),)
-        )
+        writer = None
+        if state.device_id == PASSIVE_ITEM_PORT and state.config.is_supply_slot(slot):
+            writer = getattr(adapter, "write_supply_slot", None)
+        return SlotView(adapter, slot, "port:%s" % (state.node_key.as_key(),), writer)
 
     def supply_slot_count(self, state):
         # type: (PortState) -> int
@@ -1586,9 +1642,19 @@ class PortStore(object):
         if raw.get("config"):
             try:
                 state.config = PortConfig.from_dict(raw["config"])
+                normalize_item_config(state.config, state.device_id)
             except (KeyError, TypeError, ValueError) as error:
                 self._note_bad_record(state, "config", error)
                 return False
+        cursor = raw.get("cursor", {})
+        if not isinstance(cursor, dict) or any(
+                not isinstance(name, _TEXT_TYPES) or not isinstance(value, (list, tuple))
+                or len(value) != 2 or any(not isinstance(part, _TEXT_TYPES) for part in value)
+                for name, value in cursor.items()):
+            self._note_bad_record(state, "cursor", "invalid cursor")
+            state.hold = Reason.BAD_PARAMETER
+            return False
+        state.cursor = dict(cursor)
         # **待核对标记必须存**（12-07）：不确定的外部投料重进世界后
         # 仍然要停在那条通路上，不得因为「重开了一次」而开始自动重试。
         hold = raw.get("hold") or ""
@@ -2270,85 +2336,51 @@ class PortDispatcher(object):
         早先的实现两个方向共用一份过滤与一份缓冲，导出刚放进去的东西
         下一轮就被导入看见并搬回网络，在真机上表现为无休止的来回搬。
         """
-        attempts = []
-        if state.config.allows(DIRECTION_IMPORT):
-            attempts.append(self._passive_import)
-        if state.config.allows(DIRECTION_EXPORT):
-            attempts.append(self._passive_export)
-        for attempt in attempts:
-            result = attempt(state, request_id, topology_version)
-            if result is not None:
+        config = state.config
+        size = min(self.ports.supply_slot_count(state), PASSIVE_PORT_SLOT_COUNT.value)
+        slots = []
+        if config.allows(DIRECTION_IMPORT):
+            slots.extend(config.intake_slots(size))
+        if config.allows(DIRECTION_EXPORT):
+            slots.extend(slot for slot in config.supply_slots if slot < size)
+        last = state.cursor.get("passive_slot")
+        if last and last[0].isdigit() and int(last[0]) in slots:
+            offset = slots.index(int(last[0])) + 1
+            slots = slots[offset:] + slots[:offset]
+
+        limit = config.effective_limit(self.ports.policy)
+        stock = None
+        for slot in slots:
+            endpoint = self.ports.supply_view(state, slot)
+            if endpoint is None:
+                return CommandResult.blocked(request_id, [
+                    BlockReason(Reason.NO_ADAPTER, "被动接口所在的方块不是容器")])
+            view = endpoint.slot_view()
+            key = view["key"]
+            name = config.slot_items[slot]
+            if name is None:
+                if key is None:
+                    continue
+                count = self._output_space(self.network, key, min(limit, view["count"]))
+                source, target, origin = endpoint, self.network, ORIGIN_EXTERNAL
+            else:
+                if key is not None and key.name != name:
+                    continue
+                if key is None:
+                    if stock is None:
+                        stock = sorted(self.network.storage.keys(), key=lambda k: k.canonical())
+                    key = next((k for k in stock if k.kind == "item" and k.name == name
+                                and self._available_of(k) > 0), None)
+                if key is None:
+                    continue
+                count = self._output_space(endpoint, key, min(limit, self._available_of(key)))
+                source, target, origin = self.network, endpoint, ORIGIN_INTERNAL
+            if count > 0:
+                result = self._pump(request_id, key, count, source, target, origin, topology_version)
+                state.cursor["passive_slot"] = [str(slot), ""]
+                self.ports.note_changed(state)
                 return result
-        return self._idle(request_id, PASSIVE, "配置的过滤里没有可搬运的资源")
-
-    def _passive_import(self, state, request_id, topology_version):
-        # type: (PortState, str, object) -> object
-        """存货位 → 网络。**只扫存货位**（`supply_slots` 的补集）。"""
-        slot_count = self.ports.supply_slot_count(state)
-        limit = state.config.effective_limit(self.ports.policy)
-        for slot in state.config.intake_slots(slot_count):
-            endpoint = self.ports.supply_view(state, slot)
-            if endpoint is None:
-                return CommandResult.blocked(
-                    request_id,
-                    [BlockReason(Reason.NO_ADAPTER, "被动接口所在的方块不是容器")],
-                )
-            view = endpoint.slot_view()
-            if view["key"] is None or not state.config.matches(
-                view["key"], self.ports.policy
-            ):
-                continue
-            take = min(view["count"], limit)
-            if take <= 0:
-                continue
-            # **外部放进来的**，因此来源是 EXTERNAL：它进网络时要发一次回流。
-            return self._pump(
-                request_id, view["key"], take, endpoint, self.network,
-                ORIGIN_EXTERNAL, topology_version,
-            )
-        self.stats["no_source"] += 1
-        return None
-
-    def _passive_export(self, state, request_id, topology_version):
-        # type: (PortState, str, object) -> object
-        """网络 → 供货位。**只写供货位**（`supply_slots`）。
-
-        一格一格试：空槽或同种且还有余量才写。某一格放不下就换下一格，
-        没有可用的供货位就退避——**不硬塞、不超额**。
-        """
-        limit = state.config.effective_limit(self.ports.policy)
-        for slot in state.config.supply_slots:
-            endpoint = self.ports.supply_view(state, slot)
-            if endpoint is None:
-                return CommandResult.blocked(
-                    request_id,
-                    [BlockReason(Reason.NO_ADAPTER, "被动接口所在的方块不是容器")],
-                )
-            view = endpoint.slot_view()
-            # 这一格里如果是**外部放的东西**，不要覆盖它：那一格此刻是存货位。
-            if view["key"] is not None and not state.config.matches(
-                view["key"], self.ports.policy
-            ):
-                continue
-            for key in state.config.filter:
-                if view["key"] is not None and view["key"] != key:
-                    continue
-                available = self._available_of(key)
-                if available <= 0:
-                    continue
-                take = min(available, limit)
-                space = endpoint.probe_space(key, take)
-                if space is not None:
-                    take = min(take, int(space))
-                if take <= 0:
-                    continue
-                # **网络供给的**，因此来源是 INTERNAL：不进网络，也就不发回流。
-                return self._pump(
-                    request_id, key, take, self.network, endpoint,
-                    ORIGIN_INTERNAL, topology_version,
-                )
-        self.stats["no_space" if state.config.supply_slots else "no_source"] += 1
-        return None
+        return self._idle(request_id, PASSIVE, "当前没有可存入或补货的物品")
 
     # -- 存货口（06-05）------------------------------------------------
 

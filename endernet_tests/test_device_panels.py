@@ -461,6 +461,42 @@ class TestPortConfigPanelLifecycle(unittest.TestCase):
         # FakeScreen 没有控件树，因此取不到主面板那几个。
         self.assertTrue(panel.diagnostics()["port_missing"])
 
+    def test_passive_picker_submits_only_selected_column_and_draws_authoritative_config(self):
+        cls = device_panels.BusItemPanel
+        self.offer(cls)
+        panel = self.panel(cls)
+        panel.OnCreate()
+        self.addCleanup(panel.OnDestroy)
+        panel._vars = {}
+        panel._screen_node = mock.Mock()
+        panel.client.establish()
+        config = {"slot_items": [None] * 9, "enabled": True, "direction": "both",
+                  "filter_mode": "whitelist", "filter": [], "supply_slots": [],
+                  "limit": 0, "cache_enabled": True}
+
+        def push():
+            panel.client.deliver(panel.client.session_id, protocol.PortConfigMessage(
+                cls.DEVICE_ID, self.ref.generation, "passive", config, 9))
+
+        push()
+        with mock.patch.object(device_panels, "show_select_item_window") as picker:
+            panel.interface_select({"#collection_index": 0})
+            self.assertFalse(panel.client.commands)  # 关闭而未选择
+            panel.interface_select({"#collection_index": 8})
+            picker.call_args.args[2]("minecraft:stone")
+        self.assertTrue(panel.interface_arrow(8))
+        self.assertEqual(panel.client.commands[-1][1]["config"],
+                         {"slot_item": {"slot": 8, "item_id": "minecraft:stone"}})
+        config["slot_items"] = [None] * 8 + ["minecraft:stone"]
+        push()
+        self.assertTrue(panel.interface_has_item(8))
+        self.assertTrue(panel.interface_arrow(0))
+        self.assertEqual(panel._screen_node.UpdateScreen.call_count, 2)
+        panel.port_config.settle(panel.client.commands[-1][2], config)
+        panel.interface_select({"#collection_index": 8})
+        self.assertEqual(panel.client.commands[-1][1]["config"],
+                         {"slot_item": {"slot": 8, "item_id": None}})
+
     def test_a_config_push_reaches_the_model_and_a_stale_one_does_not(self):
         self.offer(device_panels.BusItemOutputPanel)
         panel = self.panel()
@@ -800,6 +836,9 @@ class _FakeClient(object):
         request_id = "c%d" % (self.requests,)
         self.commands.append((action, kwargs, request_id))
         return request_id
+
+    def take_events(self):
+        return []
 
     def take_command_results(self, limit=None):
         taken = self.results

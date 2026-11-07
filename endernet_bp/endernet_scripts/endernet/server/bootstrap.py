@@ -851,6 +851,8 @@ class ServerBootstrap(object):
             containers=self.containers,
             fluids=self.fluids,
         )
+        if isinstance(self.containers, EngineContainerProvider):
+            self.containers.accepts_put = self.ports.accepts_container_put
         #: 样板提供者状态与产物索引（07）。与 `drivers` / `ports` 同一地位：
         #: 样板装在方块容器里，它不能因为网络断开、主控被移除或运行时重建
         #: 而消失。**索引是派生的**——它每次从容器重读，因此不存档、
@@ -1055,6 +1057,7 @@ class ServerBootstrap(object):
             # 驱动器槽位的容器事件（2026-10-04）：玩家往驱动器里放/取介质物品时
             # 标脏，并拒收非介质物品。三条链路共用同一份鸭子契约。
             drivers=self.drivers,
+            ports=self.ports,
             # 玩家维度解析同样可注入：自定义容器的玩家事件不带维度，
             # 而插槽拒收挂在那条路径上——不注入的话它只能进游戏试。
             # 同一个解析器也交给同步端口（见下面 `AdapterSyncPort` 那一段）。

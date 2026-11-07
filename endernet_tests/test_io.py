@@ -147,6 +147,9 @@ class _NetworkStub(object):
     def is_ready(self):
         return True
 
+    def keys(self):
+        return tuple(self.stored)
+
     def query(self, key):
         count = self.stored.get(key, 0)
         return {"stored": count, "reserved": 0, "available": count, "version": 1}
@@ -1548,12 +1551,68 @@ class TestPassiveBus(PortFixture):
         self.assertEqual(self.result().payload["moved"], 0)
         self.assertEqual(self.own_box.count_of(STONE), 0)
 
-    def test_a_blacklisted_resource_is_not_imported(self):
-        """存货位里的东西也受过滤约束（这里是白名单：只搬 STONE）。"""
+    def test_inputs_accept_items_outside_the_output_filter(self):
         self.own_box.set_slot(3, ContainerEntry(DIRT, 4))
         self.configure(direction=DIRECTION_IMPORT)
-        self.assertEqual(self.result().payload["moved"], 0)
-        self.assertEqual(self.own_box.count_of(DIRT), 4, "不在名单里的不动")
+        self.assertEqual(self.result().payload["receipt"]["moved"], 4)
+        self.assertIsNone(self.own_box._slots[3])
+
+    def test_legacy_config_maps_sorted_slots_and_preserves_duplicate_targets(self):
+        self.configure(filter=(DIRT, STONE), supply_slots=(8, 0, 5))
+        expected = [DIRT.name, None, None, None, None, STONE.name, None, None, DIRT.name]
+        saved = self.state.config.to_dict()
+        self.assertEqual(saved["slot_items"], expected)
+        self.ports.configure(self.ref, PortConfig.from_dict(saved))
+        self.assertEqual(self.state.config.to_dict(), saved)
+        for slot in range(9):
+            self.assertEqual(self.ports.accepts_container_put(self.ref.node_key, slot),
+                             expected[slot] is None)
+
+    def test_foreign_stack_waits_for_removal_and_other_columns_keep_working(self):
+        self.own_box.set_slot(0, ContainerEntry(DIRT, 5))
+        self.configure(supply_slots=(0, 8))
+        self.result("other-column")
+        self.assertEqual(self.own_box._slots[0].count, 5)
+        self.assertEqual(self.own_box._slots[8].count, 32)
+        self.own_box.write_slot(0, None)
+        self.result("now-empty")
+        self.assertEqual(self.own_box._slots[0].count, 8)
+        self.assertEqual(self.network_stub.stored[STONE], 0)
+        self.configure(slot_items=[None] * 9)
+        self.result("return-stock")
+        self.assertEqual(self.network_stub.stored[STONE], 8)
+
+    def test_matching_variant_refills_only_to_stack_limit(self):
+        variant = ResourceKey.item(STONE.name, aux=1)
+        self.own_box.max_stack = 16
+        self.own_box.set_slot(8, ContainerEntry(variant, 10))
+        self.configure(supply_slots=(8,))
+        self.result("no-variant")
+        self.assertEqual(self.own_box._slots[8].count, 10)
+        self.network_stub.stored[variant] = 20
+        self.result("variant-arrives")
+        self.assertEqual(self.own_box._slots[8].count, 16)
+        self.assertEqual(self.network_stub.stored[variant], 14)
+        self.assertEqual(self.network_stub.stored[STONE], 40)
+
+    def test_full_network_keeps_input_until_space_returns(self):
+        self.put_outside(7)
+        self.network_stub.simulate_insert = lambda key, count: {"accepted": 0}
+        self.result("full")
+        self.assertEqual(self.own_box._slots[3].count, 7)
+        del self.network_stub.simulate_insert
+        self.result("ready")
+        self.assertIsNone(self.own_box._slots[3])
+        self.assertEqual(self.network_stub.stored[STONE], 47)
+
+    def test_continuous_input_does_not_starve_outputs(self):
+        self.configure(supply_slots=(8,))
+        self.put_outside(4)
+        self.result("input")
+        self.put_outside(4)
+        self.result("supply")
+        self.assertEqual(self.own_box._slots[8].count, 32)
+        self.assertEqual(self.own_box._slots[3].count, 4)
 
     def test_no_container_is_blocked_not_silently_idle(self):
         """那个位置不是容器时要**明确报出来**，不是安静地什么都不做。"""
@@ -2231,6 +2290,18 @@ class TestPortCommandsThroughTheMaster(BootstrapFixture):
         )
         self.assertEqual(result.status, "rejected")
         self.assertIn(Reason.SUPPLY_SLOTS_INVALID, result.reason_codes())
+
+    def test_slot_edits_merge_on_the_current_device_config(self):
+        self.build_network(port_device=BUS)
+        ref = self.ref_at(key(3))
+        for request, slot, name in (("p1", 0, STONE.name), ("p2", 8, STONE.name), ("p3", 0, None)):
+            result = self.submit(request, ref, "port_configure",
+                                 config={"slot_item": {"slot": slot, "item_id": name}})
+            self.assertEqual(result.status, "ok")
+        self.assertEqual(result.payload["config"]["slot_items"], [None] * 8 + [STONE.name])
+        bad = self.submit("invalid", ref, "port_configure",
+                          config={"slot_item": {"slot": 8, "item_id": []}})
+        self.assertEqual(bad.status, "rejected")
 
     def test_port_configure_rejects_an_unknown_field(self):
         self.build_network()
