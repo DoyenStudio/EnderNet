@@ -132,6 +132,7 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
         client.on_message(self._make_config_handler(client))
 
     def _detach_models(self):
+        self._close_settings()
         self.port_config = None
         self.settings = None
         self.controls = {}

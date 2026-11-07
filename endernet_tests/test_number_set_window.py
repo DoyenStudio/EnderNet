@@ -184,16 +184,35 @@ class NumberSetWindowTests(unittest.TestCase):
         self.assertIs(self.screen._vars[self.module.WINDOW_ATTRIBUTE], self.window)
         self.assertEqual(self.editor.GetText(), "5")
 
-    def test_inactive_host_cleanup_does_not_touch_removed_control(self):
+    def test_inactive_host_hides_prefab_and_reopen_replaces_close_callback(self):
         self.open()
+        root = self.root
+        old_close = root.GetElement("close").callback
         self.screen._activated = False
         self.click("confirm_btn")
         self.click("add_1x_btn")
         self.window.close()
+        self.assertFalse(root.visible)
         self.assertFalse(self.root.removed)
         self.assertFalse(self.confirmed)
         self.assert_closed_window_ignores_edits(self.window)
         self.assertNotIn(self.module.WINDOW_ATTRIBUTE, self.screen._vars)
+        self.screen._activated = True
+        self.open(5)
+        self.assertIs(self.root, root)
+        old_close()
+        self.assertTrue(root.visible)
+        self.click("close")
+        self.assertFalse(root.visible)
+
+    def test_destroyed_native_control_does_not_interrupt_cleanup(self):
+        self.open()
+        self.screen._activated = False
+        with patch.object(self.root, "SetVisible", side_effect=RuntimeError("destroyed")):
+            self.window.close()
+        self.assertNotIn(self.module.WINDOW_ATTRIBUTE, self.screen._vars)
+        self.assertIsNone(self.window.confirm_callback)
+        self.assertIsNone(self.window.root)
 
     def test_creation_failure_cleans_marker(self):
         with patch.object(NumberControl, "SetText", side_effect=RuntimeError("engine failure")):

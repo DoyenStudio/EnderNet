@@ -48,6 +48,7 @@ except ImportError:
 from . import flying_item, order_preview_window, slot_layout, stack_size
 from .terminal_input import DOUBLE_CLICK_SECONDS, TerminalInput
 from .number_set_window import show_number_set_window
+from .widgets.window_lifecycle import close_windows
 from .widgets import device_status
 from .backpack_model import (
     BACKPACK_COUNT, HOTBAR_COUNT, HOTBAR_START, INTEGER_TYPES, BackpackModel,
@@ -874,6 +875,7 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         self.RemoveUI()
 
     def OnDeactive(self):
+        close_windows(self)
         # 界面隐藏后 `OnTicking` 不再跑，选中态留着只会在下次打开时冒出来
         # 指向一个早就过期的东西。控件不用管：绑定每渲染帧重取一次。
         # 动画同理——它也是「没人推进就永远停在那一帧」的东西。
@@ -886,6 +888,7 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
             self.status.close_popup()
 
     def OnDestroy(self):
+        close_windows(self)
         self.slot_input.reset()
         self.backpack.clear_selection()
         self.fly.clear()

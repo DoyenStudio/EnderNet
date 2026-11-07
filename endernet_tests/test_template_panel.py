@@ -1224,6 +1224,7 @@ class TestPanelEntry(unittest.TestCase):
         class Window(object):
             def close(self):
                 closed.append(True)
+                panel._vars.pop("_endernet_number_set_window", None)
 
         panel._vars["_endernet_number_set_window"] = Window()
         panel.OnDestroy()

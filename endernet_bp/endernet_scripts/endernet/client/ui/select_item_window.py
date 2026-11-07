@@ -6,6 +6,7 @@
 """
 
 from .slot_layout import window_control
+from .widgets.window_lifecycle import hide_window
 from functools import partial
 
 from ....tooldelta.api.client.player import GetLocalPlayerHotbarAndInvItems
@@ -208,8 +209,7 @@ class SelectItemWindow(object):
             else:
                 self.screen.DynaUnbindingCollection(flag, collection)
         self.dynamic_bindings = []
-        if self.screen._activated and self.root is not None:
-            self.root.SetVisible(False)
+        hide_window(self.screen, self.root)
         if self.screen._vars.get(self.WINDOW_ATTRIBUTE) is self:
             del self.screen._vars[self.WINDOW_ATTRIBUTE]
         self.select_callback = None

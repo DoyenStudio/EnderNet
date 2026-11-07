@@ -3795,6 +3795,14 @@ class TestDeviceStatusBindingsTolerateNoSession(unittest.TestCase):
         self.panel.OnDeactive()
         self.assertIsNone(self.panel.status)
 
+    def test_exit_hooks_close_registered_windows_after_deactivation(self):
+        for hook in (self.panel.OnDeactive, self.panel.OnDestroy):
+            window = Mock()
+            self.panel._vars = {"_endernet_number_set_window": window}
+            self.panel._activated = False
+            hook()
+            window.close.assert_called_once_with()
+
 
 class TestTemplateConfigHook(PanelFixture):
     """11-05 留下的那个协作口子（`TerminalPanelBase.config`）。

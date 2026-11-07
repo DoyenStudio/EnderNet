@@ -23,6 +23,7 @@
 """
 
 from .slot_layout import window_control
+from .widgets.window_lifecycle import hide_window
 from ....tooldelta.define.item import Item
 from .select_item_window import (
     WINDOW_ATTRIBUTE as SELECT_WINDOW_ATTRIBUTE,
@@ -170,8 +171,7 @@ class ItemListWindow(object):
         if self.picker is not None:
             self.picker.close()
             self.picker = None
-        if self.root is not None and self.screen._activated:
-            self.root.SetVisible(False)
+        hide_window(self.screen, self.root)
         if self.screen._vars.get(self.WINDOW_ATTRIBUTE) is self:
             del self.screen._vars[self.WINDOW_ATTRIBUTE]
         self.root = None

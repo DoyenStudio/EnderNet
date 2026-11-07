@@ -50,6 +50,7 @@ from .select_item_window import (
 )
 from .terminal_cache import TerminalCache
 from .slot_layout import window_control
+from .widgets.window_lifecycle import hide_window
 from .terminal_panel import RecipeChoiceBindings, TerminalListView, TerminalPanelBase
 from .widgets import device_status
 from ..network_client import NetworkClient
@@ -799,8 +800,7 @@ class RecipeChoiceWindow(object):
         if self.closed:
             return
         self.closed = True
-        if self.screen._activated and self.root is not None:
-            self.root.SetVisible(False)
+        hide_window(self.screen, self.root)
         if self.screen._vars.get(self.WINDOW_ATTRIBUTE) is self:
             del self.screen._vars[self.WINDOW_ATTRIBUTE]
         cancel = self.cancel

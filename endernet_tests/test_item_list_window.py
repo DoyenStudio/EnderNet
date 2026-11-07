@@ -160,6 +160,24 @@ class ItemListWindowTests(unittest.TestCase):
         self.assertEqual(self.bind(BinderStub.BF_BindInt, "count"), 3)
         self.assertTrue(self.cell_bind(BinderStub.BF_BindBool, "selected", 2))
 
+    def test_screen_exit_hides_list_and_nested_picker_and_clears_bindings(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui.widgets.window_lifecycle import (
+            close_windows,
+        )
+        window = self.open()
+        window.add()
+        picker = window.picker
+        roots = (window.root, picker.root)
+        self.screen._activated = False
+        close_windows(self.screen)
+        close_windows(self.screen)
+        self.assertTrue(window.closed)
+        self.assertTrue(picker.closed)
+        self.assertTrue(all(not root.visible for root in roots))
+        self.assertFalse(self.screen._vars)
+        self.assertFalse(self.screen._dyna_bindings)
+        self.assertNotIn(picker, self.catalog.windows)
+
     def test_duplicate_selects_existing_without_append_and_cancel_keeps_list(self):
         window = self.open()
         window.add()

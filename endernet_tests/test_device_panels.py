@@ -461,6 +461,18 @@ class TestPortConfigPanelLifecycle(unittest.TestCase):
         # FakeScreen 没有控件树，因此取不到主面板那几个。
         self.assertTrue(panel.diagnostics()["port_missing"])
 
+    def test_destroy_hides_settings_and_closes_registered_windows(self):
+        panel = self.panel()
+        settings = mock.Mock()
+        window = mock.Mock()
+        panel.settings = settings
+        panel._vars = {"_endernet_item_list_window": window}
+        panel._activated = False
+        panel.OnDestroy()
+        settings.SetVisible.assert_called_once_with(False)
+        window.close.assert_called_once_with()
+        self.assertIsNone(panel.settings)
+
     def test_passive_picker_submits_only_selected_column_and_draws_authoritative_config(self):
         cls = device_panels.BusItemPanel
         self.offer(cls)

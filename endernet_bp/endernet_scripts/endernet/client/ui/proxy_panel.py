@@ -34,6 +34,7 @@ from ..device_identity import latch as identity_latch
 from ..network_client import NetworkClient
 from .widgets import device_status
 from .widgets.device_status_bindings import DeviceStatusBindingsMixin
+from .widgets.window_lifecycle import close_windows
 
 #: 保活间隔：每这么多帧发一条 `keepalive`。
 #:
@@ -215,6 +216,7 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
 
         **幂等**：`OnDestroy` 与 `_session_lost` 都可能走到这里。
         """
+        close_windows(self)
         client = self.client
         self.client = None
         self.status = None
