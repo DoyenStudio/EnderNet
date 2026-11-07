@@ -494,22 +494,24 @@ class TestEncode(Fixture):
         self.assertEqual("minecraft:stick", definition.outputs[0].key.name)
         self.assertEqual(4, definition.outputs[0].count)
 
-    def test_the_crafting_layout_uses_the_cells_the_player_placed(self):
-        """User 2026-10-02：所见即所编，不换成配方的规范原料。"""
-        self.fill_source((1, PLANKS, 3), (4, PLANKS, 1))
+    def test_crafting_encodes_one_ingredient_per_occupied_cell(self):
+        self.fill_source((1, PLANKS, 3), (4, PLANKS, 64))
         self.put_factory(1)
         self.send({"action": "template_encode"})
         definition = self.encoded().definition
-        self.assertEqual((1, 4), tuple(s.slot for s in definition.inputs))
-        self.assertEqual(3, definition.inputs[0].count)
+        self.assertEqual([(1, PLANKS, 1), (4, PLANKS, 1)],
+                         [(s.slot, s.key, s.count) for s in definition.inputs])
+        self.assertEqual(4, definition.outputs[0].count)
 
     def test_a_factory_pattern_is_unordered_and_keeps_the_display_order(self):
         self.craftable("factory")
+        self.fill_source((0, PLANKS, 3))
         self.fill_outputs((2, LOG, 1))
         self.send({"action": "template_encode"})
         definition = self.encoded().definition
         self.assertEqual("factory", definition.mode)
         self.assertFalse(definition.is_ordered())
+        self.assertEqual([3, 1], [s.count for s in definition.inputs])
         self.assertEqual(["minecraft:stick", "minecraft:oak_log"],
                          [s.key.name for s in definition.outputs])
 
@@ -536,23 +538,17 @@ class TestEncode(Fixture):
         result = self.send({"action": "template_encode"})
         self.assertEqual([Reason.PATTERN_KIND_MISMATCH], self.reasons(result))
 
-    def test_an_identical_result_merges_into_the_same_stack(self):
+    def test_crafting_results_merge_when_only_source_counts_differ(self):
         self.craftable(input_count=2)
         self.send({"action": "template_encode"})
+        self.fill_source((0, PLANKS, 2))
         self.send({"action": "template_encode"})
         self.assertEqual(2, self.slots.count_at(RESULT_SLOT))
         self.assertEqual(0, self.slots.count_at(INPUT_SLOT))
 
     def test_a_different_result_in_the_output_slot_blocks_the_make(self):
-        self.craftable(input_count=2)
+        self.craftable("factory", input_count=2)
         self.send({"action": "template_encode"})
-        # 改一格的数量：这条配方只要一块木板，格里有 2 块照样匹配，
-        # 但「所见即所编」记的是格里的数——编出来就是另一份配置，
-        # 于是产物槽里那块不同配置的样板挡路。
-        #
-        # **这里不能用「多摆一格」来改配置**：九宫格里多出来的东西会让
-        # 配方整个不成立（原版如此，见 `crafting_recipe.match_ordered`），
-        # 那样先撞上的是配置无效，验不到产物槽这一条。
         self.fill_source((0, PLANKS, 2))
         result = self.send({"action": "template_encode"})
         self.assertEqual([Reason.SLOT_OCCUPIED], self.reasons(result))

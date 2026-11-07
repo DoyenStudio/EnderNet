@@ -950,7 +950,7 @@ def _crafting_pattern(config, preview):
         entry = config.cell(GROUP_SOURCE, index)
         if entry is None:
             continue
-        inputs.append(PatternStack(entry[0], entry[1], slot=index))
+        inputs.append(PatternStack(entry[0], 1, slot=index))
     outputs = []
     if preview is not None and preview.get("name"):
         outputs.append(PatternStack(
