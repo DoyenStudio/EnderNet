@@ -2156,6 +2156,73 @@ class TestTouchOutsideDrop(PanelFixture):
         self.assertEqual(self.commands(), [])
 
 
+class TestDesktopQDrop(PanelFixture):
+    """键鼠按 Q 丢出鼠标下那一格的一个，Ctrl+Q 丢整组；与点窗外丢出走同一条 `cursor_drop`。"""
+
+    def setUp(self):
+        super().setUp()
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        self.engine_backpack((9, STONE.name, 30))
+        self.router = self.panel.slot_input
+        self.router.desktop = True
+        self.client.cursor = {"key": None, "count": 0, "revision": 4}
+        input_patch = patch.object(terminal_input, "input_api")
+        self.addCleanup(input_patch.stop)
+        api = input_patch.start().return_value
+        api.GetFocusPos.return_value = (10, 10)
+        api.GetToggleMode.return_value = 0
+        hit_patch = patch.object(slot_layout, "slot_at", return_value=("bag", 0))
+        self.addCleanup(hit_patch.stop)
+        hit_patch.start()
+        board = types.SimpleNamespace(KEY_LSHIFT=16, KEY_CONTROL=17, KEY_SPACE=32, KEY_Q=81)
+        key_patch = patch.object(terminal_panel, "OnKeyPressInGame", types.SimpleNamespace(KeyBoardType=board))
+        self.addCleanup(key_patch.stop)
+        key_patch.start()
+        self.panel._activated = True
+        self.panel.fly = RecordingAnimator()
+        self.router.cursor_icon, self.router.cursor_count = Mock(), Mock()
+
+    def key(self, code, down=True):
+        self.panel.OnEscapeKey(types.SimpleNamespace(key=code, isDown=1 if down else 0))
+
+    def take_then_throw(self, count):
+        command = self.take_command()
+        self.assertEqual((command["config"]["gesture"], command["count"], command["slot"]), ("take", count, 9))
+        revision = self.client.cursor["revision"] + 1
+        result = self.result(command["request_id"])
+        result["payload"] = {"cursor": {"key": STONE.to_dict(), "count": count, "revision": revision}}
+        self.router.settle(result)
+        self.router.tick()
+        command = self.take_command()
+        self.assertEqual((command["action"], command["config"]),
+                         ("cursor_drop", {"count": "all", "revision": revision}))
+        return command
+
+    def test_q_drops_one_and_ctrl_q_drops_the_stack(self):
+        self.key(81)
+        drop = self.take_then_throw(1)
+        thrown = self.result(drop["request_id"])
+        thrown["payload"] = {"cursor": {"key": None, "count": 0, "revision": 7}}
+        self.router.settle(thrown)
+        self.key(17)
+        self.key(81)
+        self.take_then_throw(30)
+
+    def test_a_failed_throw_puts_the_stack_back(self):
+        self.key(81)
+        drop = self.take_then_throw(1)
+        self.router.settle(self.rejected(drop["request_id"]))
+        self.assertEqual(self.take_command()["action"], "cursor_return")
+
+    def test_nothing_with_something_in_hand_or_while_typing(self):
+        self.client.cursor = {"key": STONE.to_dict(), "count": 3, "revision": 4}
+        self.key(81)
+        self.client.cursor = {"key": None, "count": 0, "revision": 4}
+        self.router.editing = True
+        self.key(81)
+        self.assertEqual(self.commands(), [])
+
+
 class TestDesktopDistribution(PanelFixture):
     def test_native_cursor_host_tracks_even_with_an_empty_hand(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input

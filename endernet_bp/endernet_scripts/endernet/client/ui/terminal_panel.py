@@ -837,6 +837,11 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
                         self.list_view.refresh()
             elif key == getattr(board, "KEY_SPACE", None) and not (down and editing):
                 self.slot_input.space = down
+            elif key == getattr(board, "KEY_CONTROL", None) and not (down and editing):
+                self.slot_input.ctrl = down
+            elif key == getattr(board, "KEY_Q", None) and down:
+                # 原版：Q 丢出鼠标下那一格的一个，Ctrl+Q 丢整组（编辑搜索框时由路由忽略）。
+                self.slot_input.drop_hovered(self.slot_input.ctrl)
         if not down:
             return
         if ESCAPE_KEY is None or getattr(event, "key", None) != ESCAPE_KEY:

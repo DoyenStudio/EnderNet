@@ -63,6 +63,7 @@ class TerminalInput(object):
         self.screen = screen
         self.shift = False
         self.space = False
+        self.ctrl = False
         self.pending = deque()
         self.active = None
         self.drag = None
@@ -92,7 +93,7 @@ class TerminalInput(object):
         self.pending.clear()
         self.active = self.drag = self.settling_drag = None
         self.finished_drag_button = None
-        self.shift = self.space = self.editing = False
+        self.shift = self.space = self.ctrl = self.editing = False
         self.pocket_tap = None
         self.last_quick = None
         self.last_left = None
@@ -574,11 +575,7 @@ class TerminalInput(object):
 
     def drop_selection(self, params):
         # type: (object) -> None
-        """触屏点窗外：丢出选中的背包格，长按拆出的就只丢那些（原版 Pocket）。
-
-        触屏没有持物，所以分两步，都是已有的带日志事务：先 `take` 拿到光标上，
-        再 `cursor_drop` 抛出去。拿到了却没丢成时把光标还回背包（见 `settle`）。
-        """
+        """触屏点窗外：丢出选中的背包格，长按拆出的就只丢那些（原版 Pocket）。"""
         backpack = self.screen.backpack
         if self.screen.top_modal() or backpack.selected is None or self.touch.source is not None:
             return
@@ -593,10 +590,36 @@ class TerminalInput(object):
         if not hand or hand["key"] or take is None:
             return
         backpack.clear_selection()
+        self.take_and_drop(ui_index, take[2])
+
+    def drop_hovered(self, whole):
+        # type: (bool) -> None
+        """键鼠按 Q：丢出鼠标下那一格背包物品的一个，Ctrl+Q 丢整组（原版）。"""
+        api = input_api()
+        view = self.screen.list_view
+        if (api is None or not self.desktop or view is None or self.editing or self.drag
+                or self.settling_drag or self.screen.top_modal()):
+            return
+        target = slot_layout.slot_at(self.screen, api.GetFocusPos())
+        hand = view.cache.client.cursor
+        if target is None or target[0] != "bag" or not hand or hand["key"]:
+            return
+        entry = self.screen.backpack.entry(target[1])
+        if entry is not None:
+            self.take_and_drop(target[1], entry.count() if whole else 1)
+
+    def take_and_drop(self, ui_index, count):
+        # type: (int, int) -> None
+        """把背包这一格的 `count` 个丢出去：先 `take` 拿到空的光标上，再 `cursor_drop` 抛出。
+
+        两步都是已有的带日志事务，与键鼠持物点窗外丢出走同一条丢出命令。
+        拿到了却没丢成时把光标还回背包（见 `settle`）。
+        """
         queued = len(self.pending) + (self.active is not None)
-        self.click("bag", ui_index, "take", take[2])
+        self.click("bag", ui_index, "take", count)
         if len(self.pending) + (self.active is not None) > queued:
-            self.pending.append(({"config": {"count": "all"}}, "drop", -1, None))
+            # 队列项的序号记下这一叠原本在哪一格（键鼠持物丢出时是 -1）。
+            self.pending.append(({"config": {"count": "all"}}, "drop", ui_index, None))
             self.dispatch()
 
     def dispatch(self):
@@ -631,8 +654,8 @@ class TerminalInput(object):
         if area == "drop":
             if result.get("status") != "ok":
                 self.pending.clear()
-                if not self.desktop:
-                    # 触屏的丢出是先拿到光标上再丢；没丢成就还回去，触屏看不见光标。
+                if index >= 0:
+                    # 从格子丢出是先拿到光标上再丢；没丢成就还回去，那一叠本来不在手上。
                     client.send_command("cursor_return")
             return
         if area == "batch":
