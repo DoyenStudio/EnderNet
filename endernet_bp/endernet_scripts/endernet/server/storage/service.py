@@ -1585,6 +1585,7 @@ class StorageService(NetworkService):
             "slot_batch": self._cmd_slot_batch,
             "grid_move": self._cmd_grid_move,
             "cursor_return": self._cmd_cursor_return,
+            "cursor_drop": self._cmd_cursor_drop,
             "inv_split": self._cmd_inv_split,
             "inv_merge": self._cmd_inv_merge,
             "inv_swap": self._cmd_inv_swap,
@@ -3349,6 +3350,24 @@ class StorageService(NetworkService):
             return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持物等待归还")
         return CommandResult.ok(command.request_id, {"cursor": cursor.snapshot()})
 
+    def _cmd_cursor_drop(self, command, payload):
+        """Drop the held stack (or one item) outside the window, as vanilla does."""
+        bag, error = self._inventory_endpoint_for(command, payload)
+        if error is not None:
+            return error
+        cursor = self.inventories.cursor_of(command.source.player_id)
+        if cursor is None:
+            return self._reject(command, Reason.NO_ADAPTER, "此玩家没有持物适配器")
+        hand = cursor.snapshot(bag.adapter)
+        options = payload.get("config") or {}
+        if options.get("revision") != hand["revision"]:
+            return self._reject(command, Reason.STALE_VERSION, "持物已变化")
+        if not hand["count"]:
+            return self._reject(command, Reason.BAD_PARAMETER, "手上没有物品")
+        if not cursor.drop(1 if options.get("count") == "one" else None):
+            return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持物等待核对")
+        return CommandResult.ok(command.request_id, {"cursor": cursor.snapshot()})
+
     def _cmd_grid_move(self, command, payload):
         """Two-tap Pocket transfer between a crafting slot and a named endpoint."""
         grid, error = self._workbench_for(command)
@@ -3494,7 +3513,8 @@ class StorageService(NetworkService):
         hand = cursor.snapshot()
         options = payload.get("config") or {}
         mode = options.get("gesture")
-        if (mode not in ("left", "right", "one_in", "one_out", "quick", "place", "collect", "collect_to_slot")
+        if (mode not in ("left", "right", "one_in", "one_out", "quick", "place", "take", "collect",
+                         "collect_to_slot")
                 or options.get("revision") != hand["revision"]):
             return self._reject(command, Reason.STALE_VERSION, "持物已变化")
         collecting = mode in ("collect", "collect_to_slot")
@@ -3559,6 +3579,9 @@ class StorageService(NetworkService):
             target = network if area == "bag" else bag
         if mode in ("one_in", "place") and not putting:
             return self._reject(command, Reason.INSUFFICIENT_STOCK, "手中没有物品")
+        if mode == "take" and putting:
+            # 键鼠长按拿取：空手按住一格，松手时拿走按住时长算出的数量。
+            return self._reject(command, Reason.BAD_PARAMETER, "长按拿取要空手")
         if putting and area == "result":
             return self._reject(command, Reason.UNSUPPORTED, "成品槽只能取出")
         if putting and area == "input":
@@ -3581,7 +3604,7 @@ class StorageService(NetworkService):
                 count = 1 if putting else (count + 1) // 2
             elif mode in ("one_in", "one_out"):
                 count = 1
-            elif mode == "place":
+            elif mode in ("place", "take"):
                 if not isinstance(payload.get("count"), INTEGER_TYPES):
                     return self._reject(command, Reason.BAD_PARAMETER, "无效分配数量")
                 count = min(count, payload["count"])
