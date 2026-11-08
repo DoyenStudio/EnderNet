@@ -302,7 +302,7 @@ class TestDetailWindow(FactoricFixture):
     """详情窗**按需创建**（User 2026-10-03 定），建好留着、靠显隐开关。"""
 
     def window(self):
-        return self.screen.controls.get("/terminal/" + factoric_panel.DETAIL_NAME)
+        return self.screen.controls.get("/window/" + factoric_panel.DETAIL_NAME)
 
     def test_the_window_is_not_built_until_the_first_open(self):
         """不点开就不该有任何控件树——主面板上那个 180×200 的常驻实例已经去掉。"""

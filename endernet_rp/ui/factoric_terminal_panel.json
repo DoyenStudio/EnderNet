@@ -340,7 +340,10 @@
         ]
     },
     "main@common.base_screen": {
-        "$screen_content": "factoric_terminal_panel_ui.content"
+        "$screen_background_alpha": 0.4,
+        "$screen_bg_content": "common.screen_background",
+        "$screen_content": "endernet_ui_common.screen_root",
+        "$window_content": "factoric_terminal_panel_ui.content"
     },
     "namespace": "factoric_terminal_panel_ui",
     "order": {

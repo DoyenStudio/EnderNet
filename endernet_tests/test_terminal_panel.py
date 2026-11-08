@@ -45,6 +45,7 @@ class BinderStub(object):
     BF_ButtonClickUp = 4
     BF_EditChanged = 5
     BF_ButtonClickDown = 6
+    BF_ButtonClickCancel = 99
     #: 11-06 起本仓库也用到这两个旗标（工厂终端的进度条与三色背景）。
     #: 取值与真引擎无关，只要求**各测试文件彼此一致**。
     BF_BindColor = 7
@@ -173,6 +174,12 @@ class Scroll(object):
     def asScrollView(self):
         return self
 
+    def SetVisible(self, visible):
+        self.visible = visible
+
+    def GetGlobalPosition(self):
+        return (0.0, 0.0)
+
 
 class Screen(object):
     """引擎那个 UI 屏幕对象的替身：控件树、滚动条、绑定登记表。
@@ -198,10 +205,8 @@ class Screen(object):
         顺序问到哪一条，测试就得跟着改读哪一条——而测试要钉的是「代码写进去
         的那一格，用本模块的常量名读得出来」。
         """
-        prefix = slot_layout.CONTENT_ROOT + "/"
-        if path.startswith(prefix):
-            return path[len(slot_layout.CONTENT_ROOT):]
-        return path
+        root = slot_layout.full_path("")
+        return path[len(root):] if path.startswith(root + "/") else path
 
     def GetElement(self, path):
         return self.elements.setdefault(self._key(path), Control())
@@ -956,7 +961,8 @@ class TestBackpackCellBindings(PanelFixture):
         cell_keys = [key for key in self.panel_screen.collection_bindings
                      if key[1] in (terminal_panel.BACKPACK_COLLECTION,
                                    terminal_panel.HOTBAR_COLLECTION)]
-        self.assertEqual(len(cell_keys), len(terminal_panel.SLOT_FIELDS) * 2)
+        # 另外两段各有悬停提示与三条耐久条（`SLOT_REGIONS` 统一生成）。
+        self.assertEqual(len(cell_keys), len(terminal_panel.SLOT_FIELDS) * 2 + 2 * 4)
 
     def test_the_hotbar_cells_read_the_hotbar_not_the_backpack(self):
         """两段各自加上自己的首槽，而且**不能一起指向最后一段**。
@@ -1957,16 +1963,212 @@ class TestDesktopDoubleClick(PanelFixture):
         self.assertEqual(self.take_command()["config"]["gesture"], "left")
 
 
+class TestBagWatch(PanelFixture):
+    """回执到了以后背包按帧重读一小段时间，格子不必等下一次分频轮询。"""
+
+    def test_the_backpack_is_reread_every_frame_right_after_a_receipt(self):
+        self.panel._clock = Mock(return_value=10)
+        reads = self.panel.backpack.replace_from_engine = Mock(return_value=[])
+        self.panel._poll_frames = 0
+        self.panel._poll_backpack()
+        reads.assert_not_called()
+        self.panel.slot_input.watch_bag()
+        self.panel._poll_backpack()
+        self.panel._poll_backpack()
+        self.assertEqual(reads.call_count, 2)
+        self.panel._clock.return_value = 11
+        self.panel._poll_backpack()
+        self.assertEqual(reads.call_count, 2)
+
+    def test_every_receipt_opens_the_window(self):
+        self.panel._clock = Mock(return_value=10)
+        self.assertFalse(self.panel.slot_input.watching_bag())
+        outcome = types.SimpleNamespace(result=self.rejected("unknown"))
+        with patch.object(self.client, "take_command_results", return_value=[outcome]):
+            self.view._drain_receipts()
+        self.assertTrue(self.panel.slot_input.watching_bag())
+
+
+class TestDesktopHoldTake(PanelFixture):
+    """键鼠空手按住一格：按下即拿起，按够久物品回到格子、光标上方出现原版旧式进度条，松手拿那么多。"""
+
+    def setUp(self):
+        super().setUp()
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        self.terminal_input = terminal_input
+        self.engine_backpack((9, STONE.name, 40))
+        self.router = self.panel.slot_input
+        self.router.desktop = True
+        self.client.cursor = {"key": None, "count": 0, "revision": 1}
+        input_patch = patch.object(terminal_input, "input_api")
+        self.addCleanup(input_patch.stop)
+        api = input_patch.start().return_value
+        api.GetFocusPos.return_value = (10, 10)
+        api.GetToggleMode.return_value = 0
+        self.panel._clock = Mock(return_value=100.0)
+        self.panel.fly = RecordingAnimator()
+        self.router.cursor_icon, self.router.cursor_count = Mock(), Mock()
+        self.router.cursor_durability, self.router.cursor_take = Mock(), Mock()
+
+    def hold(self, seconds):
+        self.router.press("left", ("bag", 0), (10, 10))
+        self.router.tick()
+        self.panel._clock.return_value += seconds
+        self.router.tick()
+
+    def test_holding_long_enough_takes_a_growing_part(self):
+        fill = self.terminal_input.TAKE_FILL_SECONDS
+        self.hold(self.terminal_input.LONG_PRESS_SECONDS + fill * 0.42)
+        self.router.cursor_icon.SetVisible.assert_called_with(False)
+        self.assertEqual(self.router.take_bar(), (17, 40))
+        self.assertTrue(self.bind(BinderStub.BF_BindBool, "take_bar_visible"))
+        self.assertEqual((self.bind(BinderStub.BF_BindInt, "take_bar_current"),
+                          self.bind(BinderStub.BF_BindInt, "take_bar_total")), (17, 40))
+        self.router.finish("bag", 0, "left")
+        command = self.take_command()
+        self.assertEqual((command["config"]["gesture"], command["count"], command["slot"]), ("take", 17, 9))
+
+    def test_a_short_press_lifts_the_whole_stack_until_the_receipt(self):
+        self.hold(0.1)
+        self.router.cursor_icon.SetVisible.assert_called_with(True)
+        self.router.cursor_count.asLabel().SetText.assert_called_with("40")
+        self.router.finish("bag", 0, "left")
+        command = self.take_command()
+        self.assertEqual(command["config"]["gesture"], "left")
+        self.router.tick()
+        self.router.cursor_icon.SetVisible.assert_called_with(True)
+        self.router.settle(self.rejected(command["request_id"]))
+        self.router.tick()
+        self.router.cursor_icon.SetVisible.assert_called_with(False)
+
+    def test_holding_with_something_in_hand_is_not_a_take(self):
+        self.client.cursor = {"key": STONE.to_dict(), "count": 3, "revision": 1}
+        self.hold(self.terminal_input.LONG_PRESS_SECONDS + 1)
+        self.assertIsNone(self.router.take_bar())
+        self.assertFalse(self.bind(BinderStub.BF_BindBool, "take_bar_visible"))
+
+
+class TestOutsideDrop(PanelFixture):
+    """点窗外：左键丢整叠、右键丢一个（原版 `cursor_drop_all` / `cursor_drop_one`）。"""
+
+    def setUp(self):
+        super().setUp()
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        self.router = self.panel.slot_input
+        self.router.desktop = True
+        self.client.cursor = {"key": STONE.to_dict(), "count": 5, "revision": 4}
+        input_patch = patch.object(terminal_input, "input_api")
+        self.addCleanup(input_patch.stop)
+        self.api = input_patch.start().return_value
+        self.api.GetFocusPos.return_value = (300, 10)
+        window_patch = patch.object(slot_layout, "window_rect", return_value=(100, 0, 180, 220))
+        self.addCleanup(window_patch.stop)
+        window_patch.start()
+
+    def drops(self):
+        return [command for command in self.commands() if command["action"] == "cursor_drop"]
+
+    def test_left_drops_the_stack_and_right_drops_one(self):
+        self.bind(BinderStub.BF_ButtonClickDown, "drop_cursor_all")
+        sent = self.take_command()
+        self.assertEqual((sent["action"], sent["config"]), ("cursor_drop", {"count": "all", "revision": 4}))
+        result = self.result(sent["request_id"])
+        result["payload"] = {"cursor": {"key": None, "count": 0, "revision": 5}}
+        self.router.settle(result)
+        self.assertEqual(self.client.cursor["revision"], 5)
+        self.client.cursor = {"key": STONE.to_dict(), "count": 5, "revision": 5}
+        self.bind(BinderStub.BF_ButtonClickDown, "drop_cursor_one")
+        self.assertEqual(self.take_command()["config"], {"count": "one", "revision": 5})
+
+    def test_clicks_inside_the_window_touch_mode_and_empty_hands_do_nothing(self):
+        self.api.GetFocusPos.return_value = (150, 10)
+        self.bind(BinderStub.BF_ButtonClickDown, "drop_cursor_all")
+        self.api.GetFocusPos.return_value = (300, 10)
+        self.router.desktop = False
+        self.bind(BinderStub.BF_ButtonClickDown, "drop_cursor_all")
+        self.router.desktop = True
+        self.client.cursor = {"key": None, "count": 0, "revision": 4}
+        self.bind(BinderStub.BF_ButtonClickDown, "drop_cursor_one")
+        self.assertEqual(self.drops(), [])
+
+    def test_a_drop_queued_behind_the_last_item_is_skipped(self):
+        self.bind(BinderStub.BF_ButtonClickDown, "drop_cursor_one")
+        self.bind(BinderStub.BF_ButtonClickDown, "drop_cursor_one")
+        self.assertEqual(len(self.drops()), 1)
+        result = self.result(self.take_command()["request_id"])
+        result["payload"] = {"cursor": {"key": None, "count": 0, "revision": 5}}
+        self.router.settle(result)
+        self.router.dispatch()
+        self.assertEqual(len(self.drops()), 1)
+        self.assertFalse(self.router.pending)
+
+
+class TestTouchOutsideDrop(PanelFixture):
+    """触屏点窗外：选中的背包格（拆出的就只是那些）先拿到光标上，再丢出去。"""
+
+    def setUp(self):
+        super().setUp()
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        self.engine_backpack((9, STONE.name, 30))
+        self.router = self.panel.slot_input
+        self.client.cursor = {"key": None, "count": 0, "revision": 4}
+        input_patch = patch.object(terminal_input, "input_api")
+        self.addCleanup(input_patch.stop)
+        input_patch.start()
+        window_patch = patch.object(slot_layout, "window_rect", return_value=(100, 0, 180, 220))
+        self.addCleanup(window_patch.stop)
+        window_patch.start()
+        self.panel.fly = RecordingAnimator()
+
+    def tap(self, x):
+        self.bind(BinderStub.BF_ButtonClickDown, "drop_cursor_all", {"TouchPosX": float(x), "TouchPosY": 10.0})
+
+    def take_receipt(self):
+        command = self.take_command()
+        self.assertEqual((command["action"], command["config"]["gesture"], command["count"], command["slot"]),
+                         ("slot_click", "take", 10, 9))
+        result = self.result(command["request_id"])
+        result["payload"] = {"cursor": {"key": STONE.to_dict(), "count": 10, "revision": 5}}
+        self.router.settle(result)
+        # 走真实的帧推进，而不是手动 dispatch：触屏那一帧曾经提前返回，丢出永远发不出去。
+        self.router.tick()
+
+    def test_the_split_part_is_taken_then_thrown(self):
+        self.backpack.select_partial(0, 10)
+        self.tap(300)
+        self.assertIsNone(self.backpack.selected)
+        self.take_receipt()
+        command = self.take_command()
+        self.assertEqual((command["action"], command["config"]), ("cursor_drop", {"count": "all", "revision": 5}))
+
+    def test_a_failed_throw_returns_the_cursor(self):
+        self.backpack.select_partial(0, 10)
+        self.tap(300)
+        self.take_receipt()
+        self.router.settle(self.rejected(self.take_command()["request_id"]))
+        self.assertEqual(self.take_command()["action"], "cursor_return")
+
+    def test_taps_inside_the_window_or_without_a_selection_do_nothing(self):
+        self.backpack.select_partial(0, 10)
+        self.tap(150)
+        self.backpack.clear_selection()
+        self.tap(300)
+        self.assertEqual(self.commands(), [])
+
+
 class TestDesktopDistribution(PanelFixture):
     def test_native_cursor_host_tracks_even_with_an_empty_hand(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
         router = self.panel.slot_input
         host, icon, count, api = Mock(), Mock(), Mock(), Mock()
         controls = {"/cursor_host": host, "/cursor_host/cursor_item": icon,
-                    "/cursor_host/cursor_count": count}
+                    "/cursor_host/cursor_count": count, "/cursor_host/cursor_durability": Mock(),
+                    "/cursor_host/cursor_take_bar": Mock()}
         api.GetToggleMode.return_value = 0
+        self.panel._clock = Mock(return_value=10)
         with patch.object(terminal_input, "input_api", return_value=api), patch.object(
-                slot_layout, "control", side_effect=lambda screen, path: controls[path]), patch.object(router, "update_info"):
+                slot_layout, "control", side_effect=lambda screen, path: controls[path]), patch.object(
+                router.details, "tick"):
             router.tick()
             self.client.cursor = {"key": STONE.to_dict(), "count": 2, "revision": 1}
             router.tick()
@@ -1980,15 +2182,20 @@ class TestDesktopDistribution(PanelFixture):
             host.SetVisible.assert_called_once_with(True)
             api.GetToggleMode.return_value = 1
             router.tick()
-            host.SetVisible.assert_called_with(False)
+            host.SetVisible.assert_called_once_with(True)
+            self.panel._clock.return_value += terminal_input.MODE_CHECK_SECONDS
+            router.tick()
+            # 触屏也开着：隐藏时不跟手，第一次长按的图标会停在左上角。
+            host.SetVisible.assert_called_once_with(True)
         api.GetFocusPos.assert_not_called()
         for control in (host, icon, count):
             control.SetPosition.assert_not_called()
 
-    def test_flight_endpoint_is_centered_on_mouse(self):
+    def test_flight_endpoint_is_centered_on_the_held_icon(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
         flight_rect = terminal_input.cursor_item_rect((100.5, 90))
-        self.assertEqual(flying_item.FlyingItemAnimator._corner(flight_rect, (40, 17)), (52.5, 65))
+        # 持物图标中心在鼠标左上 (1, 2)（原版 `inventory_selected_icon` 的偏移）。
+        self.assertEqual(flying_item.FlyingItemAnimator._corner(flight_rect, (40, 17)), (51.5, 63))
 
     def test_dragging_one_item_across_three_slots_only_submits_one_move(self):
         router = self.panel.slot_input
@@ -2023,7 +2230,7 @@ class TestDesktopDistribution(PanelFixture):
                 slot_layout, "slot_at", side_effect=lambda screen, point: ("bag", point[0])), patch.object(
                 router, "submit_distribution") as clicked:
             api.GetFocusPos.return_value = (0, 10)
-            self.bind(BinderStub.BF_ButtonClickDown, "secondary", {})
+            self.bind(BinderStub.BF_ButtonClickDown, "backpack_secondary", {"#collection_index": 0})
             for slot in (27, 0, 1):
                 router.visit(("bag", slot))
             self.assertEqual(self.panel.backpack_item_count(0), "5")
@@ -2032,10 +2239,26 @@ class TestDesktopDistribution(PanelFixture):
             self.assertEqual(self.panel.hotbar_item_count(0), "")
             clicked.assert_not_called()
             api.GetFocusPos.return_value = (1, 10)
-            self.bind(BinderStub.BF_ButtonClickUp, "secondary", {})
-            self.bind(BinderStub.BF_ButtonClickUp, "secondary", {})
+            # 抬起回到按下的那一格（0），但拖动过，松手处要按鼠标位置命中（1）。
+            self.bind(BinderStub.BF_ButtonClickUp, "backpack_secondary", {"#collection_index": 0})
+            self.bind(BinderStub.BF_ButtonClickUp, "backpack_secondary", {"#collection_index": 0})
             self.assertEqual(clicked.call_args.args[0]["placements"],
                              [("bag", 0, 1), ("bag", 27, 1), ("bag", 1, 1)])
+
+    def test_mapped_clicks_take_the_cell_from_the_binding(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        router, api = self.panel.slot_input, Mock()
+        router.desktop = True
+        api.GetFocusPos.return_value = (5, 5)
+        with patch.object(terminal_input, "input_api", return_value=api), patch.object(
+                slot_layout, "slot_at") as hit, patch.object(router, "click") as clicked, patch.object(
+                router, "quick_region"):
+            self.bind(BinderStub.BF_ButtonClickDown, "hotbar_secondary", {"#collection_index": 2})
+            self.bind(BinderStub.BF_ButtonClickUp, "hotbar_secondary", {"#collection_index": 2})
+            clicked.assert_called_with("bag", terminal_panel.HOTBAR_START + 2, "right")
+            self.bind(BinderStub.BF_ButtonClickUp, "network_quick", {"#collection_index": 40})
+            clicked.assert_called_with("network", -1, "quick")
+            hit.assert_not_called()
 
     def test_moving_the_mouse_rebalances_previous_slots_and_cursor_before_release(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
@@ -2045,11 +2268,12 @@ class TestDesktopDistribution(PanelFixture):
         router, api = self.panel.slot_input, Mock()
         router.desktop = True
         api.GetToggleMode.return_value = 0
-        router.cursor_icon, router.cursor_count = Mock(), Mock()
+        router.cursor_icon, router.cursor_count, router.cursor_durability = Mock(), Mock(), Mock()
+        router.cursor_take = Mock()
         # Map the mock X coordinate to the UI index, including the hotbar.
         with patch.object(terminal_input, "input_api", return_value=api), patch.object(
                 slot_layout, "slot_at", side_effect=lambda screen, point: ("bag", point[0])), patch.object(
-                router, "update_info"), patch.object(router, "submit_distribution") as clicked:
+                router.details, "tick"), patch.object(router, "submit_distribution") as clicked:
             router.press("left", ("bag", 0), (0, 10))
             for slot in (1, 2, 27):
                 api.GetFocusPos.return_value = (slot, 10)
@@ -2357,9 +2581,9 @@ class FlyScreen(object):
         self.origin = origin
 
     def GetBaseUIControl(self, path):
-        if path == slot_layout.FLYING_ITEM_PATH:
+        if path == slot_layout.full_path(slot_layout.FLYING_ITEM_PATH):
             return self.control
-        if path == slot_layout.FLYING_ITEMS_PATH:
+        if path == slot_layout.full_path(slot_layout.FLYING_ITEMS_PATH):
             return self.origin
         return None
 
@@ -2614,21 +2838,16 @@ class LayoutScreen(object):
             self.tree[scroll_path] = ScrollStub(content)
 
     def GetBaseUIControl(self, path):
-        return self.tree.get(path)
+        # 树里记的是内容区相对路径；只认窗口前缀（`slot_layout.full_path`）。
+        root = slot_layout.full_path("")
+        return self.tree.get(path[len(root):]) if path.startswith(root + "/") else None
 
 
 class TestSlotLayoutCandidates(unittest.TestCase):
-    """控件路径的**两种屏幕挂法**（2026-10-02 真机实测，两边各开着直接问过）。
+    """控件路径只有一种挂法：`SCREEN_BASE_PATH + /window + 内容区相对路径`（2026-11-08 起）。
 
-    四个终端面板不都用同一种挂法，同一个控件因此在两个命名空间里：
-
-    - 通用终端：`main` 里显式挂了 `terminal@…content` → `/terminal/…` 命中；
-    - 合成／工厂／样板：`$screen_content` 把内容直接铺在屏幕基底上 →
-      只有 `SCREEN_BASE_PATH + /…` 命中。
-
-    离线拿不到 `SCREEN_BASE_PATH`（`screen_base()` 返回空串），因此这几个
-    用例把它换成一个假基底——**钉住的正是「两种挂法都要试」这条**：改回
-    只发一种，这里的红就是游戏里「动画整个不见」的那个症状。
+    离线拿不到 `SCREEN_BASE_PATH`（`screen_base()` 返回空串），因此这里换一个假基底，
+    钉住「前缀拼对了」：拼错的症状是游戏里动画整个不见、格子一个都点不中。
     """
 
     def setUp(self):
@@ -2636,34 +2855,31 @@ class TestSlotLayoutCandidates(unittest.TestCase):
         slot_layout.screen_base = lambda: "/FAKE_BASE"
         self.addCleanup(setattr, slot_layout, "screen_base", self.base)
 
-    def test_a_panel_that_only_has_the_absolute_path_still_resolves(self):
-        screen = LayoutScreen()
-        screen.tree["/FAKE_BASE" + slot_layout.BACKPACK_GRID_PATH] = GridStub((1.0, 2.0))
-        self.assertEqual(slot_layout.backpack_slot_rect(screen, 0),
-                         (1.0, 2.0, 18.0, 18.0))
-
-    def test_a_panel_that_only_has_the_relative_path_still_resolves(self):
-        """通用终端那一支：绝对路径取不到，`/terminal/…` 取得到。"""
-        screen = LayoutScreen()
-        screen.tree[slot_layout.CONTENT_ROOT + slot_layout.BACKPACK_GRID_PATH] = (
-            GridStub((3.0, 4.0)))
-        self.assertEqual(slot_layout.backpack_slot_rect(screen, 0),
-                         (3.0, 4.0, 18.0, 18.0))
-
-    def test_neither_convention_resolving_is_still_none(self):
-        """两条都取不到就是「本界面上没有这个控件」，不发明第三种说法。"""
-        self.assertIsNone(slot_layout.backpack_slot_rect(LayoutScreen(), 0))
+    def test_only_the_window_path_resolves(self):
+        screen = FakeTree({"/FAKE_BASE/window" + slot_layout.BACKPACK_GRID_PATH: GridStub((5.0, 6.0))})
+        self.assertEqual(slot_layout.backpack_slot_rect(screen, 0), (5.0, 6.0, 18.0, 18.0))
+        old = FakeTree({"/FAKE_BASE" + slot_layout.BACKPACK_GRID_PATH: GridStub((1.0, 2.0)),
+                        "/terminal" + slot_layout.BACKPACK_GRID_PATH: GridStub((3.0, 4.0))})
+        self.assertIsNone(slot_layout.backpack_slot_rect(old, 0), "旧的两种挂法不再认")
 
     def test_the_flying_item_and_the_origin_resolve_through_the_same_rule(self):
-        """图标与原点**必须走同一条候选**：各解各的会让图标整块偏移，而
-        那个错的症状看起来像缓动写错了。"""
-        screen = LayoutScreen()
-        screen.tree["/FAKE_BASE" + slot_layout.FLYING_ITEM_PATH] = "fly"
-        screen.tree["/FAKE_BASE" + slot_layout.FLYING_ITEMS_PATH] = "origin"
-        self.assertEqual("fly", slot_layout.control(
-            screen, slot_layout.FLYING_ITEM_PATH))
-        self.assertEqual("origin", slot_layout.control(
-            screen, slot_layout.FLYING_ITEMS_PATH))
+        """图标与原点**必须走同一条路径**：各拼各的会让图标整块偏移。"""
+        screen = FakeTree({"/FAKE_BASE/window" + slot_layout.FLYING_ITEM_PATH: "fly",
+                           "/FAKE_BASE/window" + slot_layout.FLYING_ITEMS_PATH: "origin"})
+        self.assertEqual("fly", slot_layout.control(screen, slot_layout.FLYING_ITEM_PATH))
+        self.assertEqual("origin", slot_layout.control(screen, slot_layout.FLYING_ITEMS_PATH))
+        self.assertEqual(slot_layout.path_of(screen, slot_layout.FLYING_ITEM_PATH),
+                         "/FAKE_BASE/window" + slot_layout.FLYING_ITEM_PATH)
+
+
+class FakeTree(object):
+    """按完整路径应答的控件树。"""
+
+    def __init__(self, tree):
+        self.tree = tree
+
+    def GetBaseUIControl(self, path):
+        return self.tree.get(path)
 
 
 class TestSlotLayout(unittest.TestCase):
@@ -2874,52 +3090,100 @@ class TestInteractionsNeedASession(PanelFixture):
 
 
 class TestLongPressSplit(PanelFixture):
-    """长按背包格 = 把这一槽的**一半**存进网络（`inv_split`）。
+    """触屏长按背包格 = 渐进拆堆，按下别处松手 = 拖动（User 2026-11-08 定，见 `touch_input`）。
 
-    手势由 User 2026-10-01 定（长按，PC 与触控同一颗按钮）。**引擎没有
-    「长按」这一档绑定**——只有按下与抬起两个相位，时长只能在脚本侧算
-    （`LONG_PRESS_SECONDS`）。所以这里驱动的是**两个相位**，而不是一个
-    「长按事件」：真机上到底收不收得到按下相位仍是未验证项，离线能验的
-    只是「收到了的话，算得对不对」。
+    **引擎没有「长按」这一档绑定**——只有按下与抬起两个相位，时长在脚本侧算
+    （`LONG_PRESS_SECONDS`），拆出的数量按过门槛后的时长涨（`SPLIT_FILL_SECONDS`）。
     """
 
     def setUp(self):
         PanelFixture.setUp(self)
-        # 时钟注入：用例不必真的 sleep（同 `flying_item` 的理由与做法）。
         self.now = [1000.0]
         self.panel._clock = lambda: self.now[0]
 
-    #: 「长按」在用例里的推进量。**比门槛多留一截是有意的**：`1000.0 + 0.4`
-    #: 再减 `1000.0` 得到的是 `0.39999999999986`，正好卡在 `>=` 下面——拿
-    #: 门槛当推进量会让这条用例测的是浮点舍入，而不是长按判定。
     HOLD = terminal_panel.LONG_PRESS_SECONDS + 0.1
 
-    def press(self, ui_index, hold=None):
-        # type: (int, object) -> None
-        """按下再抬起同一格；`hold` 是两次之间流逝的秒数。"""
-        params = {"#collection_index": ui_index}
+    def press(self, ui_index, hold=None, release=None, phase=None):
+        """按下再松手；`hold` 是两相之间的秒数，`release` 是松手处的 UI 坐标。"""
+        params = {"#collection_index": ui_index, "TouchPosX": 10.0, "TouchPosY": 10.0}
         self.bind(BinderStub.BF_ButtonClickDown, "backpack_click", params)
         if hold is not None:
             self.now[0] += hold
-        self.bind(BinderStub.BF_ButtonClickUp, "backpack_click", params)
+        self.panel.slot_input.touch.tick()
+        up = dict(params)
+        if release is not None:
+            up.update(TouchPosX=release[0], TouchPosY=release[1])
+        self.bind(phase or BinderStub.BF_ButtonClickUp, "backpack_click", up)
 
-    def test_a_long_press_splits_the_stack_in_half(self):
+    def test_a_long_press_selects_half_rounded_up(self):
+        self.engine_backpack((9, "minecraft:stone", 31))
+        self.press(0, hold=self.HOLD)
+        self.assertEqual(self.commands(), [])
+        self.assertEqual((self.backpack.selected, self.backpack.selected_count), (0, 16))
+        self.backpack.clear_selection()
+        self.press(0, hold=self.HOLD + 5)
+        self.assertEqual(self.backpack.selected_count, 16, "按得再久也不涨：数量靠左右滑")
+
+    def test_a_long_press_on_a_single_item_selects_it_whole(self):
+        self.engine_backpack((9, "minecraft:stone", 1))
+        self.press(0, hold=self.HOLD)
+        self.assertEqual((self.backpack.selected, self.backpack.selected_count), (0, None))
+
+    def test_the_split_part_is_what_gets_stored(self):
         self.engine_backpack((9, "minecraft:stone", 30))
         self.press(0, hold=self.HOLD)
+        self.view.on_quick_store()
         command = self.take_command()
-        self.assertEqual(command["action"], "inv_split")
-        # 界面 0 → 引擎 9（下半屏那两段的顺序与引擎相反）。
-        self.assertEqual(command["slot"], 9)
-        self.assertEqual(command["count"], 15)
-        self.assertEqual(command["slot_version"], 7)
-        # **不发 `cursor`**：与其余几条一样，这条手势不产生持有物。
-        self.assertNotIn("cursor", command)
+        self.assertEqual((command["action"], command["slot"], command["count"]), ("inv_take", 9, 15))
+
+    def test_the_split_part_moves_into_an_empty_slot_but_never_swaps(self):
+        self.engine_backpack((9, "minecraft:stone", 30), (11, "minecraft:dirt", 5))
+        self.press(0, hold=self.HOLD)
+        self.view.on_backpack_exchange(1)
+        command = self.take_command()
+        self.assertEqual((command["action"], command["slot"], command["into_slot"], command["count"]),
+                         ("inv_merge", 9, 10, 15))
+        self.assertEqual(self.backpack.entry(1).count(), 15, "本地先按移过去的样子画")
+        before = len(self.commands())
+        self.backpack.clear_selection()
+        self.press(0, hold=self.HOLD)
+        self.view.on_backpack_exchange(2)
+        self.assertEqual(len(self.commands()), before, "拆出的一部分不和异种格交换")
 
     def test_a_short_press_is_still_just_a_click(self):
         self.engine_backpack((9, "minecraft:stone", 30))
         self.press(0, hold=terminal_panel.LONG_PRESS_SECONDS - 0.01)
         self.assertEqual(self.commands(), [])
-        self.assertEqual(self.backpack.selected, 0)
+        self.assertEqual((self.backpack.selected, self.backpack.selected_count), (0, None))
+
+    def test_dragging_a_slot_onto_the_network_stores_it(self):
+        self.engine_backpack((9, "minecraft:stone", 30))
+        with patch.object(slot_layout, "slot_at", return_value=("network", -1)):
+            self.press(0, hold=0.1, release=(10.0, 80.0), phase=BinderStub.BF_ButtonClickCancel)
+        command = self.take_command()
+        self.assertEqual((command["action"], command["count"]), ("inv_quick_move", 30))
+
+    def test_dragging_onto_another_slot_swaps_and_out_of_the_window_cancels(self):
+        self.engine_backpack((9, "minecraft:stone", 30), (11, "minecraft:dirt", 5))
+        with patch.object(slot_layout, "slot_at", return_value=("bag", 2)):
+            self.press(0, hold=0.1, release=(60.0, 10.0))
+        self.assertEqual(self.take_command()["action"], "inv_swap")
+        before = len(self.commands())
+        self.backpack.clear_selection()
+        with patch.object(slot_layout, "slot_at", return_value=None):
+            self.press(0, hold=0.1, release=(500.0, 10.0), phase=BinderStub.BF_ButtonClickCancel)
+        self.assertEqual(len(self.commands()), before)
+        self.assertIsNone(self.backpack.selected, "拖出窗口是取消，不是点按")
+
+    def test_dragging_a_network_row_onto_a_slot_takes_one_stack(self):
+        self.engine_backpack()
+        params = {"#collection_index": 0, "TouchPosX": 10.0, "TouchPosY": 10.0}
+        self.bind(BinderStub.BF_ButtonClickDown, "select", params)
+        with patch.object(slot_layout, "slot_at", return_value=("bag", 3)):
+            self.bind(BinderStub.BF_ButtonClickCancel, "select",
+                      dict(params, TouchPosX=10.0, TouchPosY=120.0))
+        command = self.take_command()
+        self.assertEqual((command["action"], command["slot"]), ("inv_put", 12))
 
     def test_pocket_double_tap_gathers_into_tapped_hotbar_slot(self):
         self.engine_backpack((0, "minecraft:stone", 5))
@@ -2949,7 +3213,8 @@ class TestLongPressSplit(PanelFixture):
         self.client.cursor = {"key": None, "count": 0, "revision": 3}
         self.press(0, hold=0.02)
         self.press(0, hold=self.HOLD)
-        self.assertEqual([command["action"] for command in self.commands()], ["inv_split"])
+        self.assertEqual(self.commands(), [])
+        self.assertEqual(self.backpack.selected_count, 15)
 
     def test_other_slot_target_breaks_the_double_tap(self):
         self.engine_backpack((9, "minecraft:stone", 30))
@@ -2959,37 +3224,17 @@ class TestLongPressSplit(PanelFixture):
         self.press(0, hold=0.02)
         self.assertFalse(self.commands())
 
-    def test_a_press_that_ends_on_another_slot_does_not_arm_the_next_click(self):
-        """**长按只该影响那一下。**
-
-        按下落在 A、抬起落在 B 时，A 那一条记录必须**当场作废**。不作废的话，
-        之后任何一次**只有抬起、没有按下**的 A（引擎没给 down 相位、或丢了一
-        次）都会拿那条旧时间戳去比，凭空变成一次拆分。
-
-        （写成「连续两次长按/短按」是测不到的：第二下的 down 会把记录覆盖
-        掉，于是不管清不清都通过——那是**用例不咬**，不是行为正确。）
-        """
+    def test_a_press_only_affects_its_own_release(self):
+        """按下的记录在松手时作废：之后一次只有抬起、没有按下的点击就是普通点按。"""
         self.engine_backpack((9, "minecraft:stone", 30), (10, "minecraft:dirt", 30))
-        self.bind(BinderStub.BF_ButtonClickDown, "backpack_click",
-                  {"#collection_index": 0})
+        self.bind(BinderStub.BF_ButtonClickDown, "backpack_click", {"#collection_index": 0})
         self.now[0] += self.HOLD
-        # 抬起落在**另一格**：这一下不是长按，A 的记录就此作废。
-        self.bind(BinderStub.BF_ButtonClickUp, "backpack_click",
-                  {"#collection_index": 1})
+        self.bind(BinderStub.BF_ButtonClickUp, "backpack_click", {"#collection_index": 1})
         self.backpack.clear_selection()
         before = len(self.commands())
-        # 模拟「引擎没给 down 相位」：只有抬起，而且离那次按下已经很久。
-        self.bind(BinderStub.BF_ButtonClickUp, "backpack_click",
-                  {"#collection_index": 0})
-        self.assertEqual(len(self.commands()), before, "A 的记录早该作废，不该拆分")
-        self.assertEqual(self.backpack.selected, 0)
-
-    def test_a_single_item_has_no_half_to_split(self):
-        """`1 // 2 == 0`：一件东西拆不出两半，那一下什么都不发——
-        而不是发一条 `count=0` 去换一张越界回执。"""
-        self.engine_backpack((9, "minecraft:stone", 1))
-        self.press(0, hold=self.HOLD)
-        self.assertEqual(self.commands(), [])
+        self.bind(BinderStub.BF_ButtonClickUp, "backpack_click", {"#collection_index": 0})
+        self.assertEqual(len(self.commands()), before)
+        self.assertEqual((self.backpack.selected, self.backpack.selected_count), (0, None))
 
     def test_a_long_press_without_a_session_sends_nothing(self):
         self.engine_backpack((9, "minecraft:stone", 30))
@@ -3007,7 +3252,7 @@ class TestLongPressSplit(PanelFixture):
         self.bind(BinderStub.BF_ButtonClickUp, "backpack_click",
                   {"#collection_index": 0})
         self.assertEqual(self.commands(), [])
-        self.assertEqual(self.backpack.selected, 0)
+        self.assertEqual((self.backpack.selected, self.backpack.selected_count), (0, None))
 
 
 class TestRerenderAndAnchoring(PanelFixture):
@@ -3310,7 +3555,11 @@ class TestEngineBindingResolution(unittest.TestCase):
         # 运行时注册声明——正是本条钉住的那条不通的路——因此搬到类体上
         # （`widgets/list_window_bindings.py`）。数在终端这一侧是因为
         # `TerminalPanelBase` 是它们的宿主。
-        expected = 24 + 13 + 1 + 12 + 3 + 3
+        # 右键按下、右键抬起、Shift 点击、悬停提示、三条耐久条：每种格子各一组（`SLOT_REGIONS`）。
+        # 点窗外丢出整叠、丢出一个：两条。触屏拖出按钮后松手的取消相位（背包、快捷栏、网络行）：三条。
+        # 原版进度条（长按拿取、拆堆选中、持物耐久）各三条：显示、总量、当前。
+        expected = (24 + 13 + 1 + 12 + 3 + 2 + 3 + 3 * len(terminal_panel.PROGRESS_BARS)
+                    + 7 * len(terminal_panel.SLOT_REGIONS))
         if terminal_panel._COLOR_BINDING_FLAG is None:
             expected -= 1
         if order_preview_bindings.COLOR_BINDING_FLAG is None:
@@ -3865,10 +4114,12 @@ class TestTemplateConfigHook(PanelFixture):
         self.panel.config = config
         self.addCleanup(setattr, self.panel, "config", None)
         self.panel._clock = lambda: 100.0
-        self.panel._press_index = 0
-        self.panel._press_at = 0.0
+        self.bind(BinderStub.BF_ButtonClickDown, "backpack_click", {"#collection_index": 0})
+        self.panel._clock = lambda: 101.0
+        self.panel.slot_input.touch.tick()
         self.click_backpack(0)
         self.assertEqual([], config.slot_calls, "长按没轮到它")
+        self.assertIsNotNone(self.backpack.selected_count)
 
     def test_a_consuming_config_takes_the_row_click_and_sends_nothing(self):
         self.engine_backpack((9, "minecraft:stone", 40))
@@ -3980,6 +4231,19 @@ class TestEscapeKey(PanelFixture):
         self.addCleanup(setattr, terminal_panel, "ESCAPE_KEY",
                         terminal_panel.ESCAPE_KEY)
 
+    def test_shift_released_while_editing_does_not_stick(self):
+        board = types.SimpleNamespace(KEY_LSHIFT=16, KEY_SPACE=32)
+        router = self.panel.slot_input
+        router.desktop = True
+        with patch.object(terminal_panel, "OnKeyPressInGame", types.SimpleNamespace(KeyBoardType=board)):
+            self.panel.OnEscapeKey(self.Event(16))
+            self.assertTrue(router.shift)
+            router.editing = True
+            self.panel.OnEscapeKey(self.Event(16, is_down=0))
+            self.assertFalse(router.shift, "编辑时松开也要记下")
+            self.panel.OnEscapeKey(self.Event(16))
+            self.assertFalse(router.shift, "编辑时的按下是在打字")
+
     def test_offline_the_key_is_unresolved_and_that_is_safe(self):
         """离线时 `ESCAPE_KEY` 是 `None`；监听器随之永不触发，不报错。"""
         self.assertIsNone(terminal_panel.ESCAPE_KEY)
@@ -4015,6 +4279,150 @@ class TestEscapeKey(PanelFixture):
         terminal_panel.ESCAPE_KEY = 27
         self.panel.OnEscapeKey(object())
         self.assertEqual([], self.removed)
+
+
+REPO_UI = os.path.join(testsupport.REPO_ROOT, "endernet_rp", "ui")
+
+
+class TestHoverJsonContract(unittest.TestCase):
+    """每种格子的集合名与提示绑定名，JSON 与 `terminal_panel.SLOT_REGIONS` 一致。"""
+
+    FILES = ("endernet_terminal_inventory.json", "endernet_ui_common.json",
+             "crafting_terminal_panel.json", "template_terminal_panel.json")
+
+    def wrappers(self):
+        found = {}
+        for name in self.FILES:
+            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
+                data = json.load(handle)
+            for key, value in data.items():
+                if key.endswith("@endernet_windows.item_can_be_selected"):
+                    found[value["$item_hover_text_binding"]] = value
+        return found
+
+    def test_every_region_has_a_matching_wrapper(self):
+        wrappers = self.wrappers()
+        for _area, prefix, _offset, collection in terminal_panel.SLOT_REGIONS:
+            wrapper = wrappers.pop(prefix + "_hover_text")
+            self.assertEqual(wrapper["$item_collection_name"], collection, prefix)
+            targets = [mapping["to_button_id"] for mapping in wrapper["$slot_mappings"]]
+            self.assertIn(prefix + "_secondary", targets)
+            self.assertIn(prefix + "_quick", targets)
+        self.assertEqual(wrappers, {})
+
+    def test_count_labels_follow_vanilla(self):
+        """格子数量照 `common.stack_count_label`，持物数量照 `inventory_selected_stack_size_text`。"""
+        with open(os.path.join(REPO_UI, "endernet_windows.json"), encoding="utf-8") as handle:
+            slot = json.load(handle)["item_can_be_selected"]
+        label = [entry["item_count"] for entry in slot["controls"] if "item_count" in entry][0]
+        self.assertNotIn("font_scale_factor", label)
+        self.assertEqual((label["anchor_to"], label["offset"], label["shadow"]), ("bottom_right", [0, 1], True))
+        self.assertEqual(slot["size"], [18.0, 18.0])
+        with open(os.path.join(REPO_UI, "endernet_container_common.json"), encoding="utf-8") as handle:
+            host = json.load(handle)["cursor_host"]
+        controls = dict((list(entry)[0].split("@")[0], list(entry.values())[0]) for entry in host["controls"])
+        count = controls["cursor_count"]
+        self.assertNotIn("font_size", count)
+        # 原版：16x16 按钮居中于鼠标，数量贴按钮右下角再左移 1 像素。
+        self.assertEqual((count["anchor_from"], count["anchor_to"], count["offset"]), ("center", "bottom_right", [7, 8]))
+        self.assertEqual((controls["cursor_item"]["size"], controls["cursor_item"]["offset"]), ([21, 21], [-1, -2]))
+
+    def test_the_hover_state_carries_highlight_and_tooltip(self):
+        with open(os.path.join(REPO_UI, "endernet_windows.json"), encoding="utf-8") as handle:
+            slot = json.load(handle)["item_can_be_selected"]
+        layers = dict((list(entry)[0], list(entry.values())[0].get("layer", 0)) for entry in slot["controls"])
+        button = layers.pop("interact_btn@common.button")
+        # 高亮在按钮的悬停态里，按钮比物品图标低一层：高亮落在图标之下（原版如此）。
+        self.assertLess(button, layers["item_renderer"])
+        controls = [entry for entry in slot["controls"] if "interact_btn@common.button" in entry][0]
+        hover = [entry["hover"] for entry in controls["interact_btn@common.button"]["controls"] if "hover" in entry][0]
+        names = [list(entry)[0] for entry in hover["controls"]]
+        self.assertEqual(names, ["highlight@common.highlight_slot", "hover_text@common.hover_text"])
+        binding = hover["controls"][1]["hover_text@common.hover_text"]["bindings"][0]
+        self.assertEqual(binding["binding_condition"], "always_when_visible")
+        self.assertEqual(binding["binding_name"], "$item_hover_text_binding")
+
+
+class TestFullScreenJsonContract(unittest.TestCase):
+    """界面铺满屏幕（原版容器的暗底），三台有持物的终端在屏幕层接「点窗外丢出」。"""
+
+    DROPPING = ("common_terminal_panel.json", "crafting_terminal_panel.json", "template_terminal_panel.json")
+
+    def mains(self):
+        for name in sorted(os.listdir(REPO_UI)):
+            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
+                data = json.load(handle)
+            for key, value in data.items():
+                if key.startswith("main@common."):
+                    yield name, value
+
+    def test_every_screen_has_the_vanilla_backdrop(self):
+        found = 0
+        for name, main in self.mains():
+            found += 1
+            self.assertEqual(main["$screen_bg_content"], "common.screen_background", name)
+            self.assertEqual(main["$screen_background_alpha"], 0.4, name)
+        self.assertGreater(found, 4)
+
+    def test_the_root_panel_fills_the_screen_and_holds_the_window(self):
+        with open(os.path.join(REPO_UI, "endernet_ui_common.json"), encoding="utf-8") as handle:
+            root = json.load(handle)["screen_root"]
+        self.assertEqual(root["size"], ["100%", "100%"])
+        names = [list(entry)[0].split("@")[0] for entry in root["controls"]]
+        self.assertEqual(names, ["window", "split_overlay", "item_details"])
+        self.assertEqual(list(root["controls"][0])[0], "window@$window_content")
+        self.assertEqual(slot_layout.WINDOW_ROOT, "/window")
+        for name, main in self.mains():
+            self.assertEqual(main["$screen_content"], "endernet_ui_common.screen_root", name)
+            namespace, control = main["$window_content"].split(".")
+            self.assertEqual(control, "content", name)
+            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle)["namespace"], namespace, name)
+
+    def test_the_slot_durability_bar_does_not_need_an_ancestor_variable(self):
+        """原版 `durability_bar` 的 `ignored` 只在祖先里找 `$durability_bar_required`，覆盖掉它。"""
+        with open(os.path.join(REPO_UI, "endernet_windows.json"), encoding="utf-8") as handle:
+            slot = json.load(handle)["item_can_be_selected"]
+        bar = [entry["durability@common.durability_bar"] for entry in slot["controls"]
+               if "durability@common.durability_bar" in entry][0]
+        self.assertIs(bar["ignored"], False)
+        # 和图标、数量一样每帧自取，不靠 `UpdateScreen` 整屏重算（那会让操作滞后、动画重播）。
+        self.assertEqual([(b["binding_name"], b["binding_condition"]) for b in bar["bindings"]],
+                         [("#item_durability_visible", "always_when_visible"),
+                          ("#item_durability_total_amount", "always_when_visible"),
+                          ("#item_durability_current_amount", "always_when_visible")])
+
+    def test_progress_bars_inherit_vanilla_and_read_the_panel_bindings(self):
+        """进度条继承原版控件，数据照原版走绑定（覆盖到 `#progress_bar_*`），名字与 `PROGRESS_BARS` 对上。"""
+        with open(os.path.join(REPO_UI, "endernet_container_common.json"), encoding="utf-8") as handle:
+            common = json.load(handle)
+        host = dict((list(entry)[0], list(entry.values())[0]) for entry in common["cursor_host"]["controls"])
+        bars = {"take_bar": host["cursor_take_bar@common.inventory_hold_icon"],
+                "split_bar": common["split_bar@common.inventory_hold_icon_release"],
+                "cursor_durability": host["cursor_durability"]}
+        self.assertEqual(sorted(bars), sorted(name for name, _ in terminal_panel.PROGRESS_BARS))
+        for name, bar in bars.items():
+            sources = dict((b["binding_name_override"], b["binding_name"]) for b in bar["bindings"])
+            self.assertEqual(sources["#progress_bar_total_amount"], terminal_panel.BINDING_PREFIX + name + "_total")
+            self.assertEqual(sources["#progress_bar_current_amount"], terminal_panel.BINDING_PREFIX + name + "_current")
+            visible = [b for b in bar["bindings"] if b["binding_name"].endswith("_visible")][0]
+            self.assertIn(visible["binding_name_override"], ("#progress_bar_visible", "#touch_progress_bar_visible"))
+            self.assertNotIn("#progress_bar_total_amount", bar.get("property_bag", {}), "不再靠属性袋写数")
+        for name in self.DROPPING:
+            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
+                content = json.load(handle)["content"]
+            self.assertIn("split_bar@endernet_container_common.split_bar",
+                          [list(entry)[0] for entry in content["controls"]], name)
+
+    def test_terminals_drop_the_held_stack_outside_the_window(self):
+        for name, main in self.mains():
+            mappings = dict((entry["from_button_id"], entry["to_button_id"])
+                            for entry in main.get("button_mappings", ()))
+            if name in self.DROPPING:
+                self.assertEqual(mappings, {"button.menu_select": terminal_panel.DROP_ALL_BINDING,
+                                            "button.menu_secondary_select": terminal_panel.DROP_ONE_BINDING}, name)
+            else:
+                self.assertEqual(mappings, {}, name)
 
 
 if __name__ == "__main__":

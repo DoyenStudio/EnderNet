@@ -163,7 +163,8 @@ class _PendingOp(object):
         if self.action == ACTION_SWAP:
             return (target, source)
         if self.action == ACTION_MERGE:
-            if target is None or target.key != source.key:
+            # 目标是空格时就是把拆出的那部分移过去（触屏长按拆堆）。
+            if target is not None and target.key != source.key:
                 return None
             moved = self.count
             if moved is None or moved <= 0 or moved > source.count():
@@ -172,7 +173,7 @@ class _PendingOp(object):
             return (
                 None if left <= 0
                 else BackpackEntry(_PredictedStack(left), source.key),
-                BackpackEntry(_PredictedStack(target.count() + moved), target.key),
+                BackpackEntry(_PredictedStack((target.count() if target else 0) + moved), source.key),
             )
         return None
 
@@ -250,6 +251,8 @@ class BackpackModel(object):
         #: 把这次新选中当成旧的清掉，之后点终端行就落到 `inv_put`——
         #: **方向与玩家的意图相反**。
         self._selection_revision = 0
+        #: 触屏长按拆出的数量；`None` = 整格。只跟着当前选中走，选中一变就清。
+        self.selected_count = None
         self.errors = 0
 
     def _set_selected(self, value):
@@ -260,6 +263,7 @@ class BackpackModel(object):
         if self.selected == value:
             return
         self.selected = value
+        self.selected_count = None
         self._selection_revision += 1
 
     def selection_revision(self):
@@ -391,6 +395,17 @@ class BackpackModel(object):
             self._set_selected(None)
         else:
             self._set_selected(ui_index)
+        return self.selected
+
+    def select_partial(self, ui_index, count):
+        # type: (int, object) -> object
+        """选中这一格的 `count` 个（触屏长按拆堆）。`count` 为空或不少于整格时就是整格选中；
+        与 `select()` 不同，同格不会取消。返回处理之后的选中下标。"""
+        entry = self.entry(ui_index)
+        if entry is None:
+            return self.selected
+        self._set_selected(ui_index)
+        self.selected_count = count if count and count < entry.count() else None
         return self.selected
 
     def clear_selection(self):
@@ -582,6 +597,9 @@ class BackpackModel(object):
         if source is None:
             return None
         count = source.count()
+        partial = self.selected_count is not None
+        if partial and self.selected_count < count:
+            count = self.selected_count
         if count <= 0:
             return None
         if target is not None and target.key == source.key:
@@ -591,14 +609,17 @@ class BackpackModel(object):
             if room < count:
                 count = room
             return (ACTION_MERGE, source_index, count)
+        if partial:
+            # 拆出的一部分只能放进空格或同类格；异种格要整格才交换（原版如此）。
+            return None if target is not None else (ACTION_MERGE, source_index, count)
         # 异种、或目标为空：都是**交换**。与空槽交换就是移动，因此移动不需要
         # 单独一个动作——那是交换的一个特例，不是第六个动作。
         return (ACTION_SWAP, source_index, None)
 
     # -- 这一点击要做什么 ----------------------------------------------
 
-    def pending_take(self, whole=False, half=False):
-        # type: (bool, bool) -> tuple
+    def pending_take(self, whole=False):
+        # type: (bool) -> tuple
         """选中的槽 → `(引擎槽号, key, 数量)`；没有可存的返回 `None`。
 
         数量有三种口径：
@@ -607,24 +628,18 @@ class BackpackModel(object):
           「取一组」互为镜像；
         - `whole=True`：**整槽**、不截断——「点列表空白处整槽存进网络」那条
           路（`inv_quick_move`）要的就是它；
-        - `half=True`：**一半** `该槽数量 // 2`——长按背包槽那条路
-          （`inv_split`，2026-10-01 User 定的手势）。
+        - 触屏长按拆出了数量（`selected_count`）：**就是那个数**，优先于前两种。
 
         三种共用这一处，是因为**发命令前的那几道核对完全相同**：重读那一格、
         确认它还在、确认它不是空的。分成两三份的话，迟早有一份忘了重读，而
         表现是「发了一条注定被拒的命令」——那要真机上才看得出来。
 
         **`whole` 与默认这两个口径仍是本轮定的默认、不是已定案的玩法**
-        （R12 的手势映射定稿后若改成右键取一个，改的是这一处）；`half` 那
-        一条的手势已经定了（长按），但**长按本身在真机上还没验过**。
+        （R12 的手势映射定稿后若改成右键取一个，改的是这一处）。
 
         这里**重读引擎**再给结果，用的不是选中那一刻的快照。选中之后物品
         被别的途径拿走了，在这一步就会发现（返回 `None`、清掉选中），而不是
         发一条注定被拒的命令出去换一张 `SLOT_CHANGED` 回执。
-
-        **`half` 在一格的堆叠是 1 时给不出正整数**：`1 // 2 == 0`，于是走
-        下面 `count <= 0` 那一支返回 `None`——「拆一半」在一件东西上没有
-        意义，调用方据此什么都不发，而不是发一条 `count=0` 去换越界拒绝。
         """
         if self.selected is None:
             return None
@@ -636,8 +651,8 @@ class BackpackModel(object):
         if entry is None:
             return None
         count = entry.count()
-        if half:
-            count = count // 2
+        if self.selected_count is not None:
+            count = min(count, self.selected_count)
         elif not whole:
             limit = stack_size.stack_limit(entry.key.name)
             if count > limit:

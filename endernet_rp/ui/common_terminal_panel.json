@@ -182,7 +182,7 @@
                 "cursor_host@endernet_container_common.cursor_host": {}
             },
             {
-                "slot_info@endernet_ui_common.terminal_slot_info": {}
+                "split_bar@endernet_container_common.split_bar": {}
             },
             {
                 "endernet_importer_overlay@endernet_universal_importer_ui.overlay_panel": {
@@ -192,7 +192,22 @@
         ]
     },
     "main@common.base_screen": {
-        "$screen_content": "common_terminal_panel_ui.content"
+        "$screen_background_alpha": 0.4,
+        "$screen_bg_content": "common.screen_background",
+        "$screen_content": "endernet_ui_common.screen_root",
+        "$window_content": "common_terminal_panel_ui.content",
+        "button_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetTerminal.drop_cursor_all"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetTerminal.drop_cursor_one"
+            }
+        ]
     },
     "namespace": "common_terminal_panel_ui",
     "terminal_items_grid@endernet_ui_common.terminal_items_grid": {

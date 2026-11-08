@@ -171,7 +171,10 @@
         ]
     },
     "main@common.inventory_screen_common": {
-        "$screen_content": "storage_driver_ui.content"
+        "$screen_background_alpha": 0.4,
+        "$screen_bg_content": "common.screen_background",
+        "$screen_content": "endernet_ui_common.screen_root",
+        "$window_content": "storage_driver_ui.content"
     },
     "namespace": "storage_driver_ui"
 }

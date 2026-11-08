@@ -17,7 +17,7 @@ try:
 except NameError:
     INTEGER_TYPES = (int,)
 
-#: 资源名 → `(id_aux, maxStackSize)`。两者都来自同一次 `GetBasicInfo()`，
+#: 资源名 → `(id_aux, maxStackSize, maxDurability)`。都来自同一次 `GetBasicInfo()`，
 #: 而 `id_aux` 在渲染路径上逐格要，每格新建一个 `Item` 只为读两个常量
 #: 没有道理。
 _CACHE = {}
@@ -31,7 +31,7 @@ def reset():
 
 def basic_info(item_id, aux=0):
     # type: (str, int) -> tuple
-    """`(id_aux, maxStackSize)`。查不到时退成 `(0, None)`。
+    """`(id_aux, maxStackSize, maxDurability)`。查不到时退成 `(0, None, 0)`。
 
     **不抛**：拿不到堆叠上限是要退化处理的事，不是错误——玩家仍然应该
     能点，只是按最保守的数量走（见 `stack_limit`）。
@@ -48,9 +48,9 @@ def basic_info(item_id, aux=0):
         try:
             from ....tooldelta.define.item import Item
             basic = (Item(item_id, aux) if aux else Item(item_id)).GetBasicInfo()
-            info = (basic.id_aux, basic.maxStackSize)
+            info = (basic.id_aux, basic.maxStackSize, getattr(basic, "maxDurability", 0))
         except Exception:
-            info = (0, None)
+            info = (0, None, 0)
         _CACHE[cache_key] = info
     return info
 
@@ -76,6 +76,34 @@ def stack_limit(item_id):
     if isinstance(limit, bool) or not isinstance(limit, INTEGER_TYPES) or limit < 1:
         return 1
     return int(limit)
+
+
+def max_durability(item_id):
+    # type: (str) -> int
+    """最大耐久；不是工具（或查不到）为 0。与损伤值无关，按资源名查。"""
+    value = basic_info(item_id)[2]
+    if isinstance(value, bool) or not isinstance(value, INTEGER_TYPES) or value < 0:
+        return 0
+    return int(value)
+
+
+def durability(key):
+    # type: (object) -> tuple
+    """耐久条 `(显示, 总量, 当前)`。满耐久或不是工具时不显示（同原版）。
+
+    当前耐久优先取物品身份里的 `durability`；没有时按「最大耐久 - 附加值」算
+    （工具的损伤记在附加值里，见 `item_codec` 的 `_EMPTY_IDENTITY`）。
+    """
+    if key is None:
+        return False, 0, 0
+    total = max_durability(key.name)
+    if total <= 0:
+        return False, 0, 0
+    current = key.raw_identity.get("durability")
+    if isinstance(current, bool) or not isinstance(current, INTEGER_TYPES):
+        current = total - (key.aux or 0)
+    current = max(0, min(total, int(current)))
+    return current < total, total, current
 
 
 def display_name(item_id):
