@@ -529,14 +529,8 @@ class TestSlotModelAssets(unittest.TestCase):
         cls.controllers = read_json(cls.gen.CONTROLLER_FILE)["render_controllers"]
 
     def test_generated_files_are_up_to_date(self):
-        stale = []
-        for path, payload in self.gen.outputs(self.definitions):
-            if not os.path.isfile(path):
-                stale.append(path)
-                continue
-            with open(path, "rb") as handle:
-                if handle.read() != payload:
-                    stale.append(path)
+        stale = [path for path, payload in self.gen.outputs(self.definitions)
+                 if not self.gen.same_content(path, payload)]
         self.assertEqual(stale, [], "请运行 python scripts/gen_slot_models.py")
 
     def test_blocks_json_points_at_the_entities(self):
