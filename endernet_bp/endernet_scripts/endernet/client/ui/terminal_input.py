@@ -7,6 +7,7 @@ from . import slot_layout, stack_size
 from .backpack_model import INTEGER_TYPES, engine_slot_of
 from .terminal_hover import ItemDetails, TerminalHover
 from .touch_input import TouchGesture
+from ...common.protocol import Reason
 from ...common.resource_key import ResourceKey
 
 
@@ -17,6 +18,15 @@ DOUBLE_CLICK_SECONDS = 0.25
 #: **按秒不按帧**：界面的渲染帧率与脚本 tick、模拟 tick 都不是一回事，
 #: 按帧数计时会让同一段时长在低帧率下拖长一截。
 LONG_PRESS_SECONDS = 0.4
+#: 搬格子的命令。它们的失败（格子空了、目标满了、格子刚被别处改过）原版容器一句话都
+#: 不说，格子自己会回到真实样子；只有 `LOUD_REASONS` 那种要玩家知道的才提示。
+SLOT_ACTIONS = frozenset((
+    "slot_click", "slot_batch", "cursor_drop", "cursor_return", "grid_move", "craft_take",
+    "inv_put", "inv_take", "inv_split", "inv_merge", "inv_swap", "inv_quick_move",
+    "template_cell_put", "template_cell_clear", "template_cell_count",
+    "template_input_put", "template_input_take", "template_output_take",
+))
+LOUD_REASONS = frozenset((Reason.CONTAINER_UNCERTAIN,))
 #: 键鼠长按拿取：过长按门槛后，拿取数量从 1 涨到整叠要多久（秒）。手感值，待真机对照原版调。
 TAKE_FILL_SECONDS = 1.0
 #: 输入模式（键鼠 / 触屏）多久查一次。每次查询都要新建一个 PlayerView 组件。
@@ -115,7 +125,12 @@ class TerminalInput(object):
         # type: () -> bool
         return self.screen._clock() < self.bag_watch_until
 
-    def notice(self, result):
+    def notice(self, result, action=None):
+        # type: (dict, object) -> None
+        """失败回执的原因进底部气泡；搬格子的失败不提示（见 `SLOT_ACTIONS`）。"""
+        reasons = result.get("reasons") or ()
+        if action in SLOT_ACTIONS and not (reasons and reasons[0].get("code") in LOUD_REASONS):
+            return
         self.details.notice(result)
 
     def tick(self):
@@ -662,7 +677,6 @@ class TerminalInput(object):
             if result.get("status") != "ok":
                 self.pending.clear()
                 self.settling_drag = None
-                self.notice(result)
             elif self.settling_drag:
                 for name in ("grid_revision", "template_revision"):
                     if name in payload:

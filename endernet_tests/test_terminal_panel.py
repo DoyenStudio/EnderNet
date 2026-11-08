@@ -2223,6 +2223,29 @@ class TestDesktopQDrop(PanelFixture):
         self.assertEqual(self.commands(), [])
 
 
+class TestQuietSlotNotices(PanelFixture):
+    """搬格子的失败（格子空了、目标满了）不进底部气泡，原版也不提示；要核对的照常提示。"""
+
+    def test_slot_failures_stay_quiet_but_other_failures_still_show(self):
+        from endernet_bp.endernet_scripts.endernet.common import protocol
+        router = self.panel.slot_input
+        router.details = Mock()
+        empty = {"status": "rejected", "reasons": [{"code": "insufficient_stock", "detail": "槽位为空"}]}
+        router.notice(empty, "slot_click")
+        router.notice(empty, "inv_merge")
+        router.details.notice.assert_not_called()
+        uncertain = {"status": "rejected", "reasons": [{"code": protocol.Reason.CONTAINER_UNCERTAIN,
+                                                        "detail": "持物交易等待核对"}]}
+        router.notice(uncertain, "slot_click")
+        router.notice(empty, "craft_import")
+        self.assertEqual(router.details.notice.call_count, 2)
+
+    def test_the_client_remembers_which_action_a_receipt_answers(self):
+        request_id = self.client.send_command("slot_click", target="bag", config={"gesture": "left"})
+        self.feed(CommandResultMessage(request_id, self.rejected(request_id)))
+        self.assertEqual(self.client.action_of(request_id), "slot_click")
+
+
 class TestDesktopDistribution(PanelFixture):
     def test_native_cursor_host_tracks_even_with_an_empty_hand(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input

@@ -1955,7 +1955,8 @@ class TerminalListView(object):
             if router is not None:
                 router.watch_bag()
                 if message.result.get("status") not in (STATUS_OK, "partial"):
-                    router.notice(message.result)
+                    router.notice(message.result,
+                                  self.cache.client.action_of(message.result.get("request_id")))
                 router.settle(message.result)
         del self.receipts[:-RECEIPT_MEMORY]
         if self.receipt_sink is not None:
