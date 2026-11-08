@@ -138,6 +138,9 @@ class ToolDeltaEventApi(object):
         # 玩家右键方块（11-03 的终端打开入口）。**只用于终端**：其余方块
         # 的交互都要么没有、要么有专门的容器事件（07 那四条）。
         self.ServerBlockUseEvent = events_module.ServerBlockUseEvent
+        # 手持物品对方块使用（11-09）。右键终端时取消它，否则手里的方块会
+        # 被放下、物品会被用掉（做法同蔚蓝科技的 `BaseClicker`）。
+        self.ServerItemUseOnEvent = events_module.ServerItemUseOnEvent
 
         # --- 容器变更（任务 07 的样板槽发现）---------------------------
         #
@@ -389,6 +392,10 @@ class ServerEventBinder(object):
         @self.listen(api.ServerBlockUseEvent)
         def on_block_use(event):
             self._on_block_use(event)
+
+        @self.listen(api.ServerItemUseOnEvent)
+        def on_item_use_on(event):
+            self._on_item_use_on(event)
 
         # --- 容器变更（07）--------------------------------------------
         # 四条都只做一件事：**把位置标脏**。顺序不定、一条动作可能派发多条，
@@ -783,6 +790,13 @@ class ServerEventBinder(object):
             # 另三个终端方块（合成/样板/工厂）有意**不在这里**——它们的界面
             # 是 11-04/11-05 的事，退回通用终端就是替那两项悄悄定案。
             return
+        player_id = getattr(event, "playerId", "")
+        if self._is_sneaking(player_id):
+            # 下蹲右键交给原版（贴着终端放方块），与蔚蓝科技的机器一致。
+            self._count("block_use_sneaking")
+            return
+        # 右键终端只开界面：取消这次方块交互（物品那一半见 `_on_item_use_on`）。
+        event.cancel()
         dimension = getattr(event, "dimensionId", 0)
         node_key = NodeKey(dimension, event.x, event.y, event.z)
         record = self.registry.get(node_key)
@@ -797,7 +811,6 @@ class ServerEventBinder(object):
         # 拿它去消耗窗口只会让「方块刚加载、玩家连点两下」的第二下被吞。
         # 被限速的那一击单独计数，否则诊断里只看得到 `block_use` 涨、
         # `block_use_opened` 不涨，分不清是限速还是别的原因。
-        player_id = getattr(event, "playerId", "")
         if not self._open_limiter.allow(player_id):
             self._count("block_use_limited")
             return
@@ -807,6 +820,26 @@ class ServerEventBinder(object):
             ui_key,
             {"device_ref": record.ref.to_dict(), "dimension": dimension},
         )
+
+    def _on_item_use_on(self, event):
+        """手持物品右键终端：取消物品的使用（放方块、用物品），只开界面。
+
+        `ServerBlockUseEvent` 的取消只拦方块交互，物品那一半要在这里拦
+        （做法同蔚蓝科技 `server/machinery/listeners/event_listener.py`）。
+        下蹲时不拦，与 `_on_block_use` 的口径一致。
+        """
+        if TERMINAL_SCREENS.get(getattr(event, "blockName", "")) is None:
+            return
+        if self._is_sneaking(getattr(event, "entityId", "")):
+            return
+        self._count("item_use_on_terminal")
+        event.cancel()
+
+    @staticmethod
+    def _is_sneaking(player_id):
+        # type: (str) -> bool
+        from ....tooldelta.api.server.player import IsSneaking
+        return bool(IsSneaking(player_id))
 
     def _on_container_block_use(self, event, ui_key):
         """玩家右键一台**容器类**设备 → 推一条「这个界面是哪台设备」。
