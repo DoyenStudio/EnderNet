@@ -76,6 +76,11 @@ MASTER_ROW_MISSING = "未连接到控制器"
 NET_ROW_UNKNOWN = "网络状态未知"
 ENERGY_ROW_UNKNOWN = "未知故障"
 
+#: 客户端自己合成的离线结论（会话被拒或断开、屏已收摊，见 `mark_offline`）用的
+#: 状态栏文字。与服务端 `state_text` 的「离线」同一个词，`validity=pending` 那条
+#: 口径一样：没有可用的会话就是离线，不是第三种状态。
+OFFLINE_TEXT = "离线"
+
 #: 第一行显示控制器原因，第三行显示能源原因，其余进入网络行。
 #: 分组的判据是「该找谁」：控制器不在/冲突/不支持，与网络能不能工作，
 #: 是两件要查不同东西的事。
@@ -122,7 +127,7 @@ class DeviceStatusModel(object):
     因此可以在离线测试里直接构造、喂消息、断言读出来的值。
     """
 
-    __slots__ = ("device_ref", "generation", "status", "_payload", "popup_open", "stats")
+    __slots__ = ("device_ref", "generation", "status", "_payload", "popup_open", "stats", "refusal")
 
     def __init__(self, device_ref=None):
         self.device_ref = device_ref
@@ -134,6 +139,9 @@ class DeviceStatusModel(object):
         self._payload = None
         self.popup_open = False
         self.stats = {"accepted": 0, "dropped": 0, "popup_opened": 0}
+        #: 会话没建起来或断了之后合成的离线结论：服务端给的原因（可能为空）。
+        #: `None` 表示没有这回事，状态照常读 `status`。
+        self.refusal = None
 
     # -- 接收 ----------------------------------------------------------
 
@@ -161,6 +169,7 @@ class DeviceStatusModel(object):
         if not self.accepts(message):
             self.stats["dropped"] += 1
             return False
+        self.refusal = None
         payload = message.to_dict()
         if payload == self._payload:
             return False
@@ -169,28 +178,44 @@ class DeviceStatusModel(object):
         self.stats["accepted"] += 1
         return True
 
+    def mark_offline(self, reasons=()):
+        # type: (tuple) -> None
+        """会话没建起来（服务端拒了）或建了又断，屏已经收摊：一直显示「离线」，
+        详情列出服务端给的原因。之前的在线结论作废，不会残留绿色。"""
+        self.refusal = tuple(reasons)
+
+    def _current(self):
+        # type: () -> object
+        """还能读的服务端结论；合成了离线结论之后就不再读它。"""
+        return None if self.refusal is not None else self.status
+
     # -- 状态栏 --------------------------------------------------------
 
     def visible(self):
         # type: () -> bool
-        """**没拿到结论就整个不显示**：宁可空着，也不先给一个假的「离线」。"""
-        return self.status is not None
+        """**没拿到结论就整个不显示**：宁可空着，也不先给一个假的「离线」。
+        会话被拒或断开时的离线是真结论（`mark_offline`），照样显示。"""
+        return self.status is not None or self.refusal is not None
 
     def text(self):
         # type: () -> str
+        if self.refusal is not None:
+            return OFFLINE_TEXT
         if self.status is None:
             return ""
         return self.status.state_text
 
     def color(self):
         # type: () -> list
-        if self.status is not None and self.status.online:
+        status = self._current()
+        if status is not None and status.online:
             return COLOR_ONLINE
         return COLOR_OFFLINE
 
     def icon(self):
         # type: () -> str
-        if self.status is not None and self.status.online:
+        status = self._current()
+        if status is not None and status.online:
             return ICON_ONLINE
         return ICON_OFFLINE
 
@@ -226,7 +251,11 @@ class DeviceStatusModel(object):
         master = []
         network = []
         energy = []
-        reasons = () if self.status is None else self.status.reasons
+        status = self._current()
+        if self.refusal is not None:
+            reasons = self.refusal
+        else:
+            reasons = () if status is None else status.reasons
         for reason in reasons:
             code, detail = _reason_pair(reason)
             if not detail:
@@ -243,11 +272,11 @@ class DeviceStatusModel(object):
             "；".join(master) if master else self._master_default(),
             MASK_OFFLINE if master else MASK_ONLINE,
             "；".join(network) if network else self._net_default(),
-            MASK_ONLINE if (not network and self.status is not None
-                            and self.status.bandwidth_ok is True) else MASK_OFFLINE,
+            MASK_ONLINE if (not network and status is not None
+                            and status.bandwidth_ok is True) else MASK_OFFLINE,
             "；".join(energy) if energy else self._energy_default(),
-            MASK_ONLINE if (not energy and self.status is not None
-                            and self.status.power_ok is True) else MASK_OFFLINE,
+            MASK_ONLINE if (not energy and status is not None
+                            and status.power_ok is True) else MASK_OFFLINE,
         )
 
     def master_text(self):
@@ -276,17 +305,19 @@ class DeviceStatusModel(object):
 
     def _master_default(self):
         # type: () -> str
-        if self.status is None:
+        status = self._current()
+        if status is None:
             return MASTER_ROW_MISSING
-        if self.status.master_instance_id:
+        if status.master_instance_id:
             return MASTER_ROW_OK
         return MASTER_ROW_MISSING
 
     def _net_default(self):
         # type: () -> str
-        if self.status is None:
+        status = self._current()
+        if status is None:
             return NET_ROW_UNKNOWN
-        return _tri_text(self.status.bandwidth_ok, "带宽")
+        return _tri_text(status.bandwidth_ok, "带宽")
 
     def _energy_default(self):
         # type: () -> str
