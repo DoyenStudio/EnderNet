@@ -4,7 +4,7 @@
 > 引擎的集合绑定驱动，走共享模板 `endernet_windows.item_can_be_selected`
 > （见 [终端背包 UI](terminal_inventory_ui.md)）。原因不是风格：grid 的格子要到
 > **渲染**时才生成、滚动时还会被回收换出，按控件路径取到的引用会过期。
-> 文中那个示例类 `CustomSlotView` **曾是**生产代码（`client/ui/terminal_panel.py`），
+> 文中那个示例类 `CustomSlotView` **曾是**生产代码（`client/ui/terminal/panel.py`），
 > 现已删除——**它在这里只是写法示例，不要当成现成接口**。
 > 本模板仍被 `crafting_terminal_panel.json`、`template_terminal_panel.json` 与
 > `ui_common.json` 引用，下面的控件接口说明仍然有效。

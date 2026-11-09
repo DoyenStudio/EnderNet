@@ -10,7 +10,7 @@
 替身服务留的，现在留着是因为**能源的替身口径**——库默认取保守的那一侧，
 而 DEV 档允许显式换成能跑得起来的那一侧。
 
-**「不是替身」不等于「能玩」。** 10 的回流分配已落地（`crafting/returns.py`），
+**「不是替身」不等于「能玩」。** 10 的回流分配已落地（`crafting/orders/returns.py`），
 装配仓 07-06 已经经 06 将 9 槽产物回网，再调用 `ReturnsPort.accept_assembled`。
 库默认装配**不给** `returns_sink`，理由是 09 的
 `returns_absent` 计数与一整套用例都钉在「库默认不假装能用」上；
@@ -54,35 +54,35 @@ from ..common.protocol import (
     ORDER_SOURCE_STAGE_WAITING,
     Reason,
 )
-from ..common.resource_key import ResourceKey
-from .adapters.containers_engine import (
+from ..common.resources import ResourceKey
+from .adapters.containers import (
     EngineContainerProvider,
     EngineInventoryProvider,
     EngineItemPrimitives,
     build_stack_limit,
 )
-from .adapters.events import ServerEventBinder
+from .adapters import ServerEventBinder
 from ..common.definitions import ENERGY_INPUT_ID
-from .adapters.energy import EnergyInputs
-from .adapters.fluids import RadiumFluidProvider
-from .adapters.messages import AdapterSyncPort
-from .adapters.order_notifications import notify_order_completed
-from .adapters.slot_display import publish_slot_display
-from .adapters.template_tips import resource_display_name as template_resource_name
-from .adapters.persistence_engine import EngineExtraDataBackend
-from .adapters.recipes import EngineRecipeSource
-from .adapters.world import ToolDeltaWorldAdapter
+from .adapters.compat import EnergyInputs
+from .adapters.compat import RadiumFluidProvider
+from .adapters import AdapterSyncPort
+from .adapters import notify_order_completed
+from .adapters.channels import publish_slot_display
+from .adapters import resource_display_name as template_resource_name
+from .adapters import EngineExtraDataBackend
+from .adapters import EngineRecipeSource
+from .adapters import ToolDeltaWorldAdapter
 from .application import ApplicationService
-from .devices.catalog import DeviceCatalog
-from .crafting.capacity import OrderPolicy
-from .crafting.executor import AbsentReturns, FactoryService
-from .crafting.jobs import StepStatus
-from .crafting.patterns import PatternPolicy
-from .crafting.planner import PlanPolicy, Planner, TargetSemantics
-from .crafting.returns import ReturnPolicy, ReturnsService
-from .crafting.preview import PreviewPolicy, PreviewService
-from .crafting.store import PatternStore
-from .crafting.template_terminal import (
+from .devices import DeviceCatalog
+from .crafting.orders import OrderPolicy
+from .crafting.orders import AbsentReturns, FactoryService
+from .crafting.orders import StepStatus
+from .crafting import PatternPolicy
+from .crafting.planning import PlanPolicy, Planner, TargetSemantics
+from .crafting.orders import ReturnPolicy, ReturnsService
+from .crafting.planning import PreviewPolicy, PreviewService
+from .crafting.providers import PatternStore
+from .crafting.terminals import (
     CRAFT_PREVIEW_CELL,
     GROUP_OUTPUTS,
     GROUP_SOURCE,
@@ -95,8 +95,8 @@ from .crafting.template_terminal import (
     TemplateStore,
     detect_crafting_output,
 )
-from .crafting.workbench import WORKBENCH_SCHEMA_VERSION, CraftingPolicy, WorkbenchStore, preview_of
-from .devices.io import (
+from .crafting.terminals import WORKBENCH_SCHEMA_VERSION, CraftingPolicy, WorkbenchStore, preview_of
+from .devices import (
     TEMPLATE as PORT_TEMPLATE_ROLE,
     PortGateway,
     PortPolicy,
@@ -104,45 +104,45 @@ from .devices.io import (
     config_view,
     port_blocker,
 )
-from .devices.registry import DeviceRegistry
-from .devices.memory_slot import MemorySlotStore
-from .devices.slot_display import SlotDisplayTracker
-from .devices.storage_driver import (
+from .devices import DeviceRegistry
+from .devices import MemorySlotStore
+from .devices import SlotDisplayTracker
+from .devices import (
     DriverPolicy,
     StorageDriverStore,
     is_storage_driver,
 )
-from .persistence.repository import ExtraDataRepository, Record
-from .persistence.terminals import TerminalInventoryArchive
-from .persistence.recovery import (
+from .persistence import ExtraDataRepository, Record
+from .persistence import TerminalInventoryArchive
+from .persistence import (
     RecoveryGate,
     assert_consistent,
     consistency_report,
 )
-from .network.admission import AdmissionService
-from .network.energy import DEVICE_IDLE, DEVICE_WORK, EnergyPolicy, EnergyService
-from .network.runtime import RuntimeChange, RuntimeManager
-from .network.services import (
+from .network import AdmissionService
+from .network import DEVICE_IDLE, DEVICE_WORK, EnergyPolicy, EnergyService
+from .network import RuntimeChange, RuntimeManager
+from .network import (
     AssemblyProfile,
     ServiceFactory,
     ServiceId,
     ServiceRegistry,
 )
-from .network.ticking import SchedulerService
-from .network.topology import TopologyService
-from .runtime.events import EventKind, EventQueue
-from .runtime.lifecycle import ChangeKind, DeviceLifecycle
-from .runtime.scheduler import LogicalClock, SchedulerPolicy
-from .storage.medium import MediumPolicy
-from .storage.projection import NetworkItemProjection
+from .network import SchedulerService
+from .network import TopologyService
+from .runtime import EventKind, EventQueue
+from .runtime import ChangeKind, DeviceLifecycle
+from .runtime import LogicalClock, SchedulerPolicy
+from .storage import MediumPolicy
+from .storage import NetworkItemProjection
 from .storage.service import (
     NETWORK_RECORD_KIND,
     NETWORK_STATE_SCHEMA_VERSION,
     StorageService,
 )
-from .storage.transfer import TransferPolicy
-from .sync.sessions import SessionContext, SessionPolicy, SessionRegistry
-from .sync.terminal import SyncPolicy, TerminalSyncHub
+from .storage import TransferPolicy
+from .sync import SessionContext, SessionPolicy, SessionRegistry
+from .sync import SyncPolicy, TerminalSyncHub
 
 
 def _scheduler_builder(policy):
@@ -798,7 +798,7 @@ class ServerBootstrap(object):
             CRAFTING_TERMINAL_DEVICE_ID, self.workbench, "grids", "grid", WORKBENCH_SCHEMA_VERSION)
         self.terminal_archive.add_store(
             TEMPLATE_TERMINAL_DEVICE_ID, self.templates, "states", "state", TEMPLATE_SCHEMA_VERSION)
-        #: 样板终端的未定口径（`template_terminal.TemplatePolicy`）。
+        #: 样板终端的未定口径（`crafting/terminals/template.py` 的 `TemplatePolicy`）。
         #: **全进程一份**，理由与 `crafting_policy` 相同。
         self.template_policy = TemplatePolicy()
         #: 工作台配方来源。引擎调用写在方法体里，构造它是安全的。
@@ -871,7 +871,7 @@ class ServerBootstrap(object):
         #: 内存槽状态集合（2026-10-03）。与上面三份同一地位：内存条是**方块
         #: 容器里的实物**，网络断开、主控移除、运行时重建都不等于它被拔了。
         #: 它替换掉了「内存容量 = 内存槽台数 × 1024 B」那个替身
-        #: （`crafting/capacity.py` 的旧口径），因此**它是内存容量的唯一来源**。
+        #: （`crafting/orders/capacity.py` 的旧口径），因此**它是内存容量的唯一来源**。
         #: 读数变化时把根数推给能源（`blocks.md` 的「内存条个数 × 8 EN/t」）。
         self.memory_slots = MemorySlotStore(
             self.definitions,

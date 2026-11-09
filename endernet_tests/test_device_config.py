@@ -34,7 +34,7 @@ from endernet.common.protocol import (
     SyncEnvelope,
     VIEW_ITEM,
 )
-from endernet.server.devices.io import (
+from endernet.server.devices.bus_io import (
     FILTER_MODES,
     INTAKE,
     OUTPUT,

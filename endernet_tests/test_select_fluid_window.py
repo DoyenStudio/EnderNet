@@ -17,15 +17,15 @@ from test_select_item_window import (
     Event,
     Screen,
 )
-from endernet_bp.endernet_scripts.endernet.common.fluid_catalog import build_fluid_catalog
-from endernet_bp.endernet_scripts.endernet.client.item_catalog import ItemCatalogClient
-from endernet_bp.endernet_scripts.endernet.server.adapters.item_catalog import load_catalog
+from endernet_bp.endernet_scripts.endernet.common.channels.fluid_catalog import build_fluid_catalog
+from endernet_bp.endernet_scripts.endernet.client.channels.item_catalog import ItemCatalogClient
+from endernet_bp.endernet_scripts.endernet.server.adapters.channels.item_catalog import load_catalog
 
 
 class FluidItem(object):
     def __init__(self, item_id, count=1):
         self.newItemName = item_id
-        #: 真 `Item` 有的第二个字段（渲染要用，见 `widgets/control_api.py`）。
+        #: 真 `Item` 有的第二个字段（渲染要用，见 `shared/control_api.py`）。
         self.newAuxValue = 0
         self.count = count
 
@@ -116,10 +116,10 @@ class FluidWindowTests(unittest.TestCase):
             return module
 
         with patch.dict(sys.modules, modules):
-            cls.items = load("select_item_window")
+            cls.items = load("windows/select_item")
             with patch.dict(sys.modules, {cls.items.__name__: cls.items}):
-                cls.fluids = load("select_fluid_window")
-            cls.bindings_module = load("widgets/list_window_bindings")
+                cls.fluids = load("windows/select_fluid")
+            cls.bindings_module = load("windows/list_bindings")
         # 同一块屏上会同时开物品选择器与流体选择器，因此宿主两条混入都要有——
         # 这正是「两条绑定各认各的 `_vars` 槽」那条判据的现场。
         cls.Host = type(

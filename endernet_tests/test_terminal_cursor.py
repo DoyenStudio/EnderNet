@@ -4,11 +4,11 @@ import copy
 
 from test_crafting_handlers import Fixture, PLANKS, STICK, STICK_RECIPE
 from test_containers_engine import FakePlayerPrimitives
-from endernet.common.item_codec import item_dict_from_key, item_key_from_dict
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers_engine import EngineInventoryProvider, build_stack_limit
+from endernet.common.resources.item_codec import item_dict_from_key, item_key_from_dict
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.engine import EngineInventoryProvider, build_stack_limit
 from endernet.server.crafting.patterns import MODE_CRAFTING, PatternDefinition, PatternStack
-from endernet.server.crafting.template_terminal import encode_template_item
+from endernet.server.crafting.terminals.template import encode_template_item
 
 
 class CursorPrimitives(FakePlayerPrimitives):

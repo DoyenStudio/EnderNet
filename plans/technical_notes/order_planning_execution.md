@@ -158,7 +158,7 @@
 离线门禁：`python -B endernet_tests/run_tests.py` → **1792 项全绿**，
 `py2check: 60 个文件全部通过`。证据位置：
 
-- 节点语义：`server/crafting/executor.py` 的 `PLAN_NODES_PER_TICK`、
+- 节点语义：`server/crafting/orders/executor.py` 的 `PLAN_NODES_PER_TICK`、
   `_start_planning()`（「提交这一帧不吃预算」）、`PlanJob.step(nodes, frame)`。
 - 候选回退（08-04，见「候选预筛」那一节）：`planner.py` 的
   `PlanJob._screen_inputs()`／`_record_recursion_gap()`／`_merge_input_stacks()`、
@@ -168,7 +168,7 @@
   反例，改前报 `COMPLETE`）、`test_a_truncated_candidate_window_is_not_a_confirmed_shortage`
   与 `test_the_three_ways_a_key_can_be_unreachable_stay_distinct`（验收 4／4b）、
   `test_the_defensive_edge_refusal_never_fires`（预筛与走查一致性的唯一观测点）。
-- 字节口径（08 侧）：`server/crafting/planner.py` 的 `leaf_units()`、
+- 字节口径（08 侧）：`server/crafting/planning/planner.py` 的 `leaf_units()`、
   `required_micro_units()`、`required_bytes()`、`total_recipe_tasks()`、
   `class ByteRounding`；`PlanPolicy.__slots__` 共 8 项（`memory_units_per_step`
   已被 `byte_rounding` 取代）。
@@ -180,7 +180,7 @@
   `_complete_execution()`（完成时 `slots.release_slot(execution_id)`）。
   整单领一次的 `SlotLedger.claim_for_order` / `MemoryLedger.claim_for_order`
   与 `slots_per_order` / `memory_units_per_step` 两个旋钮**已删**。
-- 拒绝记录：`server/crafting/jobs.py` 的 `RejectedRequest`／`RejectedRequestStore`、
+- 拒绝记录：`server/crafting/orders/jobs.py` 的 `RejectedRequest`／`RejectedRequestStore`、
   `executor.py` 的 `_reject_request()`。
 - 进度（**2026-09-28 已改到新口径**）：`jobs.py` 的 `Order.progress()`
   （`tasks_total = sum(step.batches)`，完成／阻塞／取消按执行实例计；

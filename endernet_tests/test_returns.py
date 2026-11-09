@@ -28,7 +28,7 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.identity import NodeKey
-from endernet.common.item_codec import item_dict_from_key
+from endernet.common.resources.item_codec import item_dict_from_key
 from endernet.common.protocol import (
     ORIGIN_EXTERNAL,
     ORIGIN_INTERNAL,
@@ -39,13 +39,13 @@ from endernet.common.protocol import (
     STATUS_OK,
     TransferRequest,
 )
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import ContainerEntry, FakeContainer
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import ContainerEntry, FakeContainer
 from endernet.server.bootstrap import ServerBootstrap
 from endernet.server.crafting import patterns as pattern_module
-from endernet.server.crafting.executor import AbsentReturns
-from endernet.server.crafting.jobs import OrderStatus, StepOutput, StepStatus
-from endernet.server.crafting.returns import (
+from endernet.server.crafting.orders.executor import AbsentReturns
+from endernet.server.crafting.orders.jobs import OrderStatus, StepOutput, StepStatus
+from endernet.server.crafting.orders.returns import (
     Priority,
     ReturnPolicy,
     ReturnsService,

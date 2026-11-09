@@ -124,7 +124,7 @@ User 的分类规则独立预测出这个切分，实测恰好相符，两条线
 
 | `is_proxy` | 调用 | 用途 |
 | --- | --- | --- |
-| `False`（默认） | `RegisterUI(GetModName(), ui_key, path, bound_ui_name)`（`:71`） | 注册一个**自有**屏幕；本仓通用终端走这条（`client/ui/terminal_panel.py:127`） |
+| `False`（默认） | `RegisterUI(GetModName(), ui_key, path, bound_ui_name)`（`:71`） | 注册一个**自有**屏幕；本仓通用终端走这条（`client/ui/terminal/panel.py:127`） |
 | `True` | `NSManagerIns.RegisterScreenProxy(bound_ui_name, path)`（`:67`） | 挂到**既有原生屏幕**上（`general_screen.py` 的 `_register_as_proxy`） |
 
 两条分支各对应 §零 的一类方块：
@@ -264,7 +264,7 @@ OpenNeteaseContainer(self, screenName, customDescription, isCloseReturnItem=Fals
    服务端 `tick_errors.count = 0`、错误日志为空（11-07 清单 §九末有探针表）。
    这属于 11 的物品／流体选择链路，不属本文题目。
 6. **方块实体侧的容器是真的（只读补测，不需要右键）**。用与
-   `server/adapters/containers_engine.py:429-440` **完全相同的原语**
+   `server/adapters/containers/engine.py:429-440` **完全相同的原语**
    （`f.CreateItem(GetLevelId()).GetContainerSize(pos, dim)` 与
    `GetContainerItem(pos, slot, dim, True)`）读同一维度里的相邻两台：
 
@@ -312,7 +312,7 @@ OpenNeteaseContainer(self, screenName, customDescription, isCloseReturnItem=Fals
 | # | 问题 | 判据 |
 | --- | --- | --- |
 | Q1 | 右键端口方块，屏幕是否打开、是否是 `endernet_bus_item_output_io.main` | `get_latest_logs` / `jsonui_debugger` 能看到屏幕与命名空间 |
-| Q2 | 端口自己的格（取货口 5 格／存货口 9 格）是否被引擎填充（不是空网格） | 往格里放一样东西后，用 `execute_code` 读方块实体，读法与 `server/adapters/containers_engine.py:429-440` 一致 |
+| Q2 | 端口自己的格（取货口 5 格／存货口 9 格）是否被引擎填充（不是空网格） | 往格里放一样东西后，用 `execute_code` 读方块实体，读法与 `server/adapters/containers/engine.py:429-440` 一致 |
 | Q3 | 槽位子控件的**运行时**路径（JSON 定义路径 ≠ 运行时路径） | `jsonui_debugger` 的节点查询。**只对路径甲有效**——脚本屏不进原生树（§五 4） |
 | Q4 | 对一个本仓屏幕调 `OpenNeteaseContainer` 会怎样 | 预期因集合名不符而失败或网格为空。**已试一次：返回 `False`**，无引擎报错；不足以定论（§五 3） |
 | Q5 | `PushUI` 打开一个已注册的脚本屏幕 | 代表 `is_proxy=False` 那条路，即终端类。**已试：屏渲染出来了，但 `CreateUI` 返回 `None`**，脚本路径与 JSON 不一致（§五 2） |

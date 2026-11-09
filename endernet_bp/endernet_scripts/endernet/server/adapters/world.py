@@ -21,7 +21,7 @@
 """
 
 from ...common.identity import ChunkKey, NodeKey  # noqa: F401 (NodeKey 仅用于 # type: 注释)
-from ...common.item_codec import item_dict_for_drop
+from ...common.resources import item_dict_for_drop
 
 
 class ToolDeltaWorldAdapter(object):
@@ -123,7 +123,7 @@ class ToolDeltaWorldAdapter(object):
         # type: (NodeKey) -> object
         """旧方块重载仍携带同一标记；同位置新放的方块获得自己的库存。"""
         import random
-        from ...common.resource_key import _TEXT_TYPES
+        from ...common.resources.key import _TEXT_TYPES
         from ....tooldelta.api.server.block import GetBlockEntityData
 
         entity = GetBlockEntityData(node_key.dimension, node_key.as_tuple())

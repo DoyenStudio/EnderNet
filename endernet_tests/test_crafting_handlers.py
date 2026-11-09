@@ -30,8 +30,8 @@ from endernet.common.protocol import (
     TransferReceipt,
     TransferStatus,
 )
-from endernet.common.resource_key import ResourceKey
-from endernet.server.crafting.workbench import (
+from endernet.common.resources.key import ResourceKey
+from endernet.server.crafting.terminals.workbench import (
     IMPORT_KEEP,
     CraftingPolicy,
     WorkbenchStore,
@@ -170,7 +170,7 @@ STICK_BIRCH = recipe(["A", "A"], {"A": (stack("minecraft:birch_planks"),)},
 class Fixture(unittest.TestCase):
 
     def setUp(self):
-        from endernet.server.crafting.workbench import WorkbenchStore
+        from endernet.server.crafting.terminals.workbench import WorkbenchStore
 
         self.stand = testsupport.StorageStand()
         self.stand.place(0)
@@ -259,7 +259,7 @@ class TestImport(Fixture):
     def test_a_missing_material_leaves_its_slot_empty(self):
         # 网络里只有一块木板、背包也空：一格摆上、一格留空，
         # **不因为缺料取消整次导入**。
-        from endernet.server.crafting.workbench import WorkbenchStore as _S
+        from endernet.server.crafting.terminals.workbench import WorkbenchStore as _S
 
         stand = testsupport.StorageStand()
         stand.place(90)

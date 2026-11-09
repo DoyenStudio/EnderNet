@@ -79,12 +79,12 @@ from ..common.protocol import (
     SyncEnvelope,
     TerminalCommand,
 )
-from ..common.resource_sync import ResourceDescriptions
+from ..common.resources import ResourceDescriptions
 
 #: 收件队列的默认上限。**待定值**：任务 11 页尾写明「请求大小、会话过期和
 #: 分页上限由目标环境测量后确定」，这一条属于同类。丢弃旧包不会静默出错：
 #: 增量批带 `base_version`，缺了一批之后下一批的基准就对不上，模型会抛
-#: `ListResyncRequired` 去重取快照（见 `client/ui/item_list_model.py`）。
+#: `ListResyncRequired` 去重取快照（见 `client/ui/terminal/item_list_model.py`）。
 #: 也就是说这个上限**只影响要重取多少，不影响正确性**——正因为这样，
 #: 现在给一个未经测量的数字是可以接受的，而它仍然标着「待定」。
 DEFAULT_QUEUE_LIMIT = 256
@@ -405,7 +405,7 @@ class NetworkClient(object):
 
     **不持有任何权威状态**（架构规划 6.6）：这里记的版本、会话 id 与
     网络 id 都是**服务端告诉它的**，它不判断库存、订单或能量。列表内容
-    归 `client/ui/item_list_model.py`，这里只把线上来的东西解出来交给它。
+    归 `client/ui/terminal/item_list_model.py`，这里只把线上来的东西解出来交给它。
     """
 
     def __init__(self, port=None, view_kind=VIEW_ITEM, queue_limit=None):
@@ -599,7 +599,7 @@ class NetworkClient(object):
         「本地**已应用**到的版本」。两者在增量批收了一半时并不相等，而用错的
         后果是服务端按一个客户端并没有的版本去补增量——补出来的表看着正常，
         内容却缺了那半批。因此调用方必须显式写出来源，通常是
-        `model.version()`（`client/ui/item_list_model.py`）。
+        `model.version()`（`client/ui/terminal/item_list_model.py`）。
         """
         self._require_session("取快照")
         request_id = self._next_request_id()
@@ -936,7 +936,7 @@ class NetworkClient(object):
         两个包里**每一条都带引用**——症状是内容全丢、`bad_packets` 却只
         缓慢上涨，而 `session_ready` / `snapshot_begin` / `snapshot_end`
         这些不带引用的消息照常通过，看起来像「只有内容丢了」。
-        `resource_sync.py` 开头那句「供服务端发送与客户端解码分别持有」
+        `resources/sync.py` 开头那句「供服务端发送与客户端解码分别持有」
         说的就是这份表。
 
         **建表的依据是「服务端换过一次表」**，所以判据取会话与 epoch 两样：

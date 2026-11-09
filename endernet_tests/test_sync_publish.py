@@ -53,7 +53,7 @@ from endernet.common.protocol import (
     VIEW_ITEM,
     VIEW_ORDER,
 )
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 from endernet.server.sync.sessions import SESSION_ACTIVE, SessionContext
 from endernet.server.sync import terminal as sync_terminal
 from endernet.server.sync.terminal import SyncPolicy, TerminalSyncHub
@@ -368,7 +368,7 @@ class InventoryPrimitives(object):
 class TestInventoryVersions(Fixture):
     def setUp(self):
         Fixture.setUp(self)
-        from endernet.server.adapters.containers_engine import EngineInventoryProvider
+        from endernet.server.adapters.containers.engine import EngineInventoryProvider
         from endernet.client.network_client import NetworkClient
         self.primitives = InventoryPrimitives()
         self.provider = EngineInventoryProvider(self.primitives)
@@ -417,10 +417,10 @@ class TestInventoryVersions(Fixture):
 
     def test_reopen_reconciles_returned_template_before_showing_cursor(self):
         from test_terminal_cursor import CursorPrimitives
-        from endernet.common.item_codec import item_dict_from_key
-        from endernet.server.adapters.containers_engine import EngineInventoryProvider
+        from endernet.common.resources.item_codec import item_dict_from_key
+        from endernet.server.adapters.containers.engine import EngineInventoryProvider
         from endernet.server.crafting.patterns import MODE_CRAFTING, PatternDefinition, PatternStack
-        from endernet.server.crafting.template_terminal import encode_template_item
+        from endernet.server.crafting.terminals.template import encode_template_item
 
         recipe = PatternDefinition(MODE_CRAFTING, (PatternStack(LOG, 1, slot=0),),
                                    (PatternStack(STONE, 1),))
@@ -2373,7 +2373,7 @@ class TestPreviewPublish(Fixture):
         self.assertEqual(indexes, [0, 1], "分片按序发，一片不少")
 
     def test_shortfall_rows_reach_the_window_and_finish_loading(self):
-        from endernet.client.ui.widgets.order_preview import OrderPreviewModel
+        from endernet.client.ui.order_preview.model import OrderPreviewModel
         row = self.row()
         row["shortfall"] = 0
         previews = self.FakePreviews(self.delivery(rows=[row], packet_count=1))

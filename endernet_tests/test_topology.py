@@ -863,7 +863,7 @@ class TestPublication(NetworkFixture):
 
         **原来这里验的是「发得对」**（连接器一拆，清单上出现一条
         `before_slots=1 / after_slots=0`）。那条清单从发布到删除**一个消费者
-        都没有**——09 的槽位容量每帧从快照重算（`crafting/capacity.py` 的
+        都没有**——09 的槽位容量每帧从快照重算（`crafting/orders/capacity.py` 的
         `slot_capacity`），从不订阅发布。留着它，下一个人会以为槽位变更
         「必须」被消费，于是再建一套推送与拉取并存的账。
 

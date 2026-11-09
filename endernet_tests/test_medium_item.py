@@ -17,7 +17,7 @@ import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
 
-from endernet.common.medium_item import (
+from endernet.common.resources.medium_item import (
     CARRIER_VERSION,
     MEDIUM_CARRIER_KEY,
     MANAGED_LORE_MARK,

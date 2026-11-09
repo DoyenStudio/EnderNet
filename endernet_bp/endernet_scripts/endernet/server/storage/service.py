@@ -37,7 +37,7 @@ from ...common.protocol import (
     validate_slot_batch,
 )
 from ...common.crafting_recipe import match
-from ...common.item_codec import item_dict_from_key, item_key_from_dict
+from ...common.resources import item_dict_from_key, item_key_from_dict
 from ...common.definitions import (
     ITEM_TEMPLATES,
     PATTERN_MODE_CRAFTING,
@@ -45,15 +45,15 @@ from ...common.definitions import (
     PATTERN_MODES,
     TEMPLATE_PANEL_ITEM_ID,
 )
-from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
-from ..crafting.workbench import (
+from ...common.resources import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
+from ..crafting.terminals import (
     IMPORT_REFUSE,
     CraftingPolicy,
     WorkbenchContainer,
     plan_import,
 )
-from ..crafting.patterns import PatternStack, PatternValidationError
-from ..crafting.template_terminal import (
+from ..crafting import PatternStack, PatternValidationError
+from ..crafting.terminals import (
     CELL_COUNT_OF,
     GROUP_OUTPUTS,
     GROUP_SOURCE,
@@ -66,7 +66,7 @@ from ..crafting.template_terminal import (
     encode_template_item,
     pattern_from_config,
 )
-from ..devices.io import (
+from ..devices.bus_io import (
     FILTER_MODES,
     INTAKE,
     MODE_WHITELIST,
@@ -83,16 +83,16 @@ from ..devices.io import (
     port_blocker,
     role_of,
 )
-from ..devices.storage_driver import DRIVER_DEVICE_ID
-from ..network.controller import RequestLedger
-from ..network.services import NetworkService, ServiceId
+from ..devices import DRIVER_DEVICE_ID
+from ..network import RequestLedger
+from ..network import NetworkService, ServiceId
 from .medium import (
     DIRECTION_READ,
     DIRECTION_WRITE,
     MediumRecovery,
     TransferBudget,
 )
-from .terminal_slots import DeviceSlots
+from ..crafting.terminals import DeviceSlots
 from .transfer import (
     CURSOR_IGNORE,
     NetworkEndpoint,
@@ -289,7 +289,7 @@ class StorageService(NetworkService):
         #: 每网络一份的转移协调器。**惰性构造**：接口跑起来之前它不该存在，
         #: 否则每个网络都会白拿一份账本与待核对台账。
         self._transfer = None
-        #: 背包提供者（06-09）。生产实现是 `adapters/containers_engine.py`
+        #: 背包提供者（06-09）。生产实现是 `adapters/containers/engine.py`
         #: 的 `EngineInventoryProvider`，离线测试注入替身。
         self.inventories = inventories
         #: 合成终端的工作台集合（11-04）。**由启动层注入**，与 `drivers`
@@ -301,7 +301,7 @@ class StorageService(NetworkService):
         #: 未接线时为 None，导入一律明确拒绝，**不返回空候选**——
         #: 空候选会被读成「这个产物没有配方」。
         self.recipes = recipes
-        #: 未定口径（`crafting/workbench.py` 的 `CraftingPolicy`）。
+        #: 未定口径（`crafting/terminals/workbench.py` 的 `CraftingPolicy`）。
         self.crafting_policy = (
             crafting_policy if crafting_policy is not None else CraftingPolicy()
         )
@@ -310,7 +310,7 @@ class StorageService(NetworkService):
         #: 样板槽里是真物品，不能因为运行时重建就没了。未接线时为 None，
         #: 样板命令一律 `SERVICE_NOT_READY`。
         self.templates = templates
-        #: 样板终端的未定口径（`template_terminal.TemplatePolicy`）。
+        #: 样板终端的未定口径（`crafting/terminals/template.py` 的 `TemplatePolicy`）。
         self.template_policy = (
             template_policy if template_policy is not None else TemplatePolicy()
         )
@@ -2661,7 +2661,7 @@ class StorageService(NetworkService):
             grid.take_at(slot, count)
         movements = []
         if destination in ("cursor", "bag"):
-            from ..crafting.workbench import plan_refill
+            from ..crafting.terminals import plan_refill
             container = WorkbenchContainer(grid, limit_of=self.grid_stack_limit)
             for cell, alternatives, need in plan_refill(recipe, original):
                 if grid.count_at(cell) == 0:

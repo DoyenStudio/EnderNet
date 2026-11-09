@@ -33,7 +33,7 @@ from ..common.protocol import (
     Reason,
     reason_code,
 )
-from .network.services import (
+from .network import (
     AssemblyProfile,
     ServiceId,
     is_read_only,
@@ -450,11 +450,11 @@ class ApplicationService(object):
         if ref is not None or node_key is not None:
             return self.patterns.view(node_key=node_key, ref=ref)
         if output is not None:
-            # **视图的拼装在 `crafting/execution.py` 里，不在这里。**
+            # **视图的拼装在 `crafting/providers/execution.py` 里，不在这里。**
             # 那份形状是 07-07 交给 08 的契约（「只读配方索引与可用提供者」），
             # 归属在样板层；在门面里再抄一份的话，两处迟早对不上，
             # 而症状是「08 拿到的字段与 07 文档写的不一样」。
-            from .crafting.execution import candidate_view
+            from .crafting.providers import candidate_view
 
             return {
                 "output": output.name,
@@ -717,12 +717,12 @@ def summarize_result(result):
 
 def _blocker_dict(state):
     # type: (object) -> object
-    """接口为什么不工作。措辞与界面共用一份（`devices/io.py::port_blocker`）。
+    """接口为什么不工作。措辞与界面共用一份（`devices/bus_io.py::port_blocker`）。
 
     延迟导入：`application.py` 是命令门面，为了一个诊断字段把它和
-    `devices/io.py` 绑死在导入期不划算。
+    `devices/bus_io.py` 绑死在导入期不划算。
     """
-    from .devices.io import port_blocker
+    from .devices import port_blocker
 
     blocker = port_blocker(state)
     return blocker.to_dict() if blocker is not None else None

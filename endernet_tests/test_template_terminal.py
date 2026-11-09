@@ -1,7 +1,7 @@
 # coding=utf-8
 """样板终端的设备侧状态：两个真实槽、虚拟配置、存档与「配置 → 样板」（11-05）。
 
-**全部离线。** `server/crafting/template_terminal.py` 不 import 引擎——需要引擎
+**全部离线。** `server/crafting/terminals/template.py` 不 import 引擎——需要引擎
 的两件事（拆方块掉落、某个资源键的堆叠上限）都是注入的回调。
 
 三条贯穿全篇的判据：
@@ -24,9 +24,9 @@ from endernet.common.definitions import (
     PATTERN_MODE_FACTORY,
 )
 from endernet.common.identity import DeviceRef, NodeKey
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 from endernet.server.crafting import patterns
-from endernet.server.crafting.template_terminal import (
+from endernet.server.crafting.terminals.template import (
     BREAK_KEEP,
     DEFAULT_STACK_LIMIT,
     GROUP_OUTPUTS,

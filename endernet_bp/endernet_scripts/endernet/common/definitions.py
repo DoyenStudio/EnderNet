@@ -623,7 +623,7 @@ ASSEMBLE_CHAMBER_SLOT_COUNT = Value(
 #: 这个集合」，不比对格数。改完之后它也不会被自动拦住——见 11-07 的 B 组。
 #:
 #: **两端现在都认这 5 格。** 领域层那半边于 2026-09-29 补上（与取货口一并，
-#: 11-07 的 C1）：`server/devices/io.py` 的 `PortStore.ensure` 为 `INTAKE` 建了
+#: 11-07 的 C1）：`server/devices/bus_io.py` 的 `PortStore.ensure` 为 `INTAKE` 建了
 #: `BUFFER_CONTAINER` 形态的 `TransferBuffer`，件数上界由
 #: `PortPolicy.intake_buffer_capacity` 从本值推出。
 #:
@@ -640,7 +640,7 @@ ITEM_INTAKE_PORT_SLOT_COUNT = Value(
 #: 界面 JSON `grid_dimensions = [5, 1]`），这条只是把它收进单一来源表。
 #:
 #: **两端现在都认这 5 格。** 领域层那半边于 2026-09-29 补上（11-07 的 C1）：
-#: `server/devices/io.py` 的 `PortStore.ensure` 为 `OUTPUT` 建了
+#: `server/devices/bus_io.py` 的 `PortStore.ensure` 为 `OUTPUT` 建了
 #: `BUFFER_CONTAINER` 形态的 `TransferBuffer`，件数上界由
 #: `PortPolicy.output_cache_capacity` 从本值推出。
 #:
@@ -837,7 +837,7 @@ TERMINAL_SCREENS = {
 #: - 终端类：屏幕是本模组自有的，服务端要 `PushUIRequest` 把它**推**开；
 #: - 这一张：屏幕由**引擎**按方块组件自动打开，服务端只推一条**身份**
 #:   （「你打开的这个界面是这台设备」），由屏上的代理自己认领。
-#:   详见 `common/device_identity.py` 与 `plans/technical_notes/netease_container_screens.md`。
+#:   详见 `common/channels/device_identity.py` 与 `plans/technical_notes/netease_container_screens.md`。
 #:
 #: 三条纪律：
 #:

@@ -37,11 +37,9 @@ from test_crafting_panel import (  # noqa: F401
 from endernet_bp.endernet_scripts.endernet.client.network_client import (
     NetworkClient,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui import (
-    factoric_panel,
-    stack_size,
-)
-from endernet_bp.endernet_scripts.endernet.client.ui.factoric_panel import (
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal import factoric_panel
+from endernet_bp.endernet_scripts.endernet.client.ui.shared import stack_size
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal.factoric_panel import (
     ACTION_CANCEL,
     BINDING_PREFIX,
     COLOR_DONE,

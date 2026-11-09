@@ -18,8 +18,8 @@ from endernet.common.protocol import (
     VIEW_ORDER,
     SessionOpen,
 )
-from endernet.common.resource_key import ResourceKey
-from endernet.common.resource_sync import ResourceResyncRequired
+from endernet.common.resources.key import ResourceKey
+from endernet.common.resources.sync import ResourceResyncRequired
 from endernet.server.sync.sessions import (
     SESSION_ACTIVE,
     SESSION_CLOSED,

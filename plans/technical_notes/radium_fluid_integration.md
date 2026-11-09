@@ -1,7 +1,7 @@
 # radium 公共流体接口接入
 
-2026-11-06。实现入口为 `server/adapters/fluids.py`，装配与设备接线在
-`server/bootstrap.py`、`server/devices/io.py`。
+2026-11-06。实现入口为 `server/adapters/compat/fluids.py`，装配与设备接线在
+`server/bootstrap.py`、`server/devices/bus_io.py`。
 
 ## 前置与接入范围
 

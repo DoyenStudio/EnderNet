@@ -53,7 +53,7 @@ from endernet.common.definitions import (  # noqa: E402
     TEMPLATE_CONTAINER_SLOT_COUNT,
     DefinitionSet,
 )
-from endernet.common.slot_display import DISPLAY_DEVICES  # noqa: E402
+from endernet.common.channels.slot_display import DISPLAY_DEVICES  # noqa: E402
 
 #: 方块 JSON 的 format_version。与同环境可正常运行的 SkyblueTech 保持一致：
 #: `netease:tier` 与 traits 需要较新的格式。

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import testsupport  # noqa: F401  设置 sys.path
 
-from endernet.common.resource_key import (
+from endernet.common.resources.key import (
     ITEM_MICRO_UNITS,
     ResourceKey,
     canonical_tree,
@@ -207,7 +207,7 @@ class TestMediumIdentityProjection(unittest.TestCase):
     TAPE = "endernet:singleside_tape"
 
     def _media_user_data(self, medium_id, lines):
-        from endernet.common.medium_item import carrier_of, mark_managed_line
+        from endernet.common.resources.medium_item import carrier_of, mark_managed_line
 
         user_data = carrier_of(_FakeMedium(medium_id))
         user_data["display"] = {
@@ -232,7 +232,7 @@ class TestMediumIdentityProjection(unittest.TestCase):
 
     def test_other_lore_still_distinguishes(self):
         """只排除管理行——玩家自己写的那一行仍然参与身份。"""
-        from endernet.common.medium_item import carrier_of
+        from endernet.common.resources.medium_item import carrier_of
 
         base = carrier_of(_FakeMedium("medium:1"))
         left = dict(base, display={"Lore": ["玩家 A"]})
@@ -242,7 +242,7 @@ class TestMediumIdentityProjection(unittest.TestCase):
         )
 
     def test_custom_name_still_distinguishes(self):
-        from endernet.common.medium_item import carrier_of
+        from endernet.common.resources.medium_item import carrier_of
 
         base = carrier_of(_FakeMedium("medium:1"))
         left = dict(base, display={"Name": "甲"})
@@ -253,7 +253,7 @@ class TestMediumIdentityProjection(unittest.TestCase):
 
     def test_unmanaged_item_is_completely_unaffected(self):
         """**平行对照**：没有载体的物品，Lore 里就算有一样的标记也照旧参与身份。"""
-        from endernet.common.medium_item import mark_managed_line
+        from endernet.common.resources.medium_item import mark_managed_line
 
         left = ResourceKey.item(
             IRON, user_data={"display": {"Lore": [mark_managed_line("一样的标记")]}}
@@ -263,7 +263,7 @@ class TestMediumIdentityProjection(unittest.TestCase):
 
     def test_other_user_data_keys_still_distinguish(self):
         """别的模组的键不归我们管，照旧参与身份。"""
-        from endernet.common.medium_item import carrier_of
+        from endernet.common.resources.medium_item import carrier_of
 
         base = carrier_of(_FakeMedium("medium:1"))
         left = dict(base, **{"别的模组": 1})
@@ -280,7 +280,7 @@ class TestMediumIdentityProjection(unittest.TestCase):
 
     def test_round_trip_preserves_identity(self):
         """`to_dict` / `from_dict` 之后身份不变——两条构造路径都要走投影。"""
-        from endernet.common.resource_key import ResourceKey as RK
+        from endernet.common.resources.key import ResourceKey as RK
 
         key = RK.item(self.TAPE, user_data=self._media_user_data("medium:1", ["12", "1728"]))
         restored = RK.from_dict(key.to_dict())
@@ -289,7 +289,7 @@ class TestMediumIdentityProjection(unittest.TestCase):
 
     def test_a_capacity_refresh_does_not_change_the_key(self):
         """把「按最新权威摘要物化」接在身份上：刷新前后必须是同一个键。"""
-        from endernet.common.medium_item import apply_capacity_lines, carrier_of
+        from endernet.common.resources.medium_item import apply_capacity_lines, carrier_of
 
         user_data = carrier_of(_FakeMedium("medium:1"))
         before = ResourceKey.item(self.TAPE, user_data=user_data)
@@ -360,7 +360,7 @@ class TestCanonicalCache(unittest.TestCase):
             expected = u"%s|%s|%d|%s" % (
                 key.kind, key.name, key.aux, tree_text(key.identity))
             self.assertEqual(key.canonical(), expected)
-            with patch("endernet.common.resource_key.tree_text",
+            with patch("endernet.common.resources.key.tree_text",
                        side_effect=AssertionError("identity encoded again")):
                 self.assertEqual(key.canonical(), expected)
 

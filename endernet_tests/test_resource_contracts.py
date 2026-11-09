@@ -6,11 +6,11 @@ import unittest
 import testsupport  # noqa: F401
 from endernet.common import protocol
 from endernet.common.identity import DeviceRef, NodeKey
-from endernet.common.resource_key import ResourceKey, canonical_tree, tree_text
-from endernet.common.item_codec import item_key, item_key_from_dict, item_dict_for_drop, item_dict_from_key, item_from_key, normalize_engine_item, unbox_engine_value
+from endernet.common.resources.key import ResourceKey, canonical_tree, tree_text
+from endernet.common.resources.item_codec import item_key, item_key_from_dict, item_dict_for_drop, item_dict_from_key, item_from_key, normalize_engine_item, unbox_engine_value
 from endernet.common.protocol import StorageChanged
-from endernet.common.resource_sync import ResourceDescriptions, ResourceResyncRequired
-from endernet.server.adapters.containers import ContainerEntry
+from endernet.common.resources.sync import ResourceDescriptions, ResourceResyncRequired
+from endernet.server.adapters.containers.contract import ContainerEntry
 from endernet.server.persistence.resources import RestoredResourceEntry, UnavailableResourceError
 from endernet.common import settings
 
@@ -205,7 +205,7 @@ class ItemCodecTests(unittest.TestCase):
         而服务端把 `0` 归一成 `None`，`ResourceKey` 又把这两者当成两个身份。
         因此客户端**必须**回到原始字典走归一化，不能按属性取身份。
         """
-        from endernet.common.item_codec import (
+        from endernet.common.resources.item_codec import (
             engine_item_key,
             normalize_engine_item,
         )
@@ -224,7 +224,7 @@ class ItemCodecTests(unittest.TestCase):
         静默算一个键出来正是这条修法要消灭的失效模式：那种错不会报，
         只会让服务端一直说「槽里的东西不是你说的那件」。
         """
-        from endernet.common.item_codec import engine_item_key
+        from endernet.common.resources.item_codec import engine_item_key
         module = _load_real_item_module()
         key = ResourceKey.item("minecraft:stone")
         _register_stack_size(module, key, 64)

@@ -19,9 +19,9 @@ import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.protocol import Reason
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import FakeContainer
-from endernet.server.devices.io import (
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import FakeContainer
+from endernet.server.devices.bus_io import (
     MODE_BLACKLIST,
     ORIGIN_EXTERNAL,
     ORIGIN_INTERNAL,

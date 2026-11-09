@@ -3,11 +3,11 @@
 
 **本模块是领域层**：不 import 引擎（`test_import_boundaries` 静态拦着）。
 引擎访问全部经注入的契约——`ContainerProvider.container_at(node_key)`
-（生产实现在 `adapters/containers_engine.py`，测试传 `containers.FakeContainer`）。
+（生产实现在 `adapters/containers/engine.py`，测试传 `containers.FakeContainer`）。
 
 ## 它替换掉了什么
 
-在这之前，内存容量是一个**替身**：`crafting/capacity.py` 的
+在这之前，内存容量是一个**替身**：`crafting/orders/capacity.py` 的
 `memory_capacity()` 数网络里有几台内存槽，乘 `OrderPolicy.bytes_per_memory_slot`
 （默认 1024 B）。那个数不是玩法数值，而是「R04 的内存条规格未定」时
 唯一能开工的量级。内存条物品（`plans/items.md` 的「内存」一节，2026-10-03）
@@ -28,11 +28,11 @@
 
 ## 变更检测：事件 -> 脏标记 -> 去抖重读
 
-与 `crafting/store.py` **同一套机制、同一套理由**（ModAPI 明说容器事件
+与 `crafting/providers/store.py` **同一套机制、同一套理由**（ModAPI 明说容器事件
 「分多次触发并且顺序不定」，因此事件只当脏标记）。
 
-**常量在这里另写一份，不 import `crafting/store.py`**：那是 crafting 层，
-而 `crafting/store.py:69` 已经 `from ..devices.capabilities import`——
+**常量在这里另写一份，不 import `crafting/providers/store.py`**：那是 crafting 层，
+而 `crafting/providers/store.py:69` 已经 `from ..devices.capabilities import`——
 反向 import 会成环（分层由 `test_import_boundaries.py` 静态强制）。
 两侧数值今天相同，但它们是**两条独立的节拍**，改一侧不会连累另一侧。
 
@@ -58,12 +58,12 @@
 """
 
 from ...common.definitions import CATEGORY_MEMORY, MEMORY_SLOT_COUNT
-from ...common.item_codec import is_empty_item, item_key_from_dict
-from ..runtime.lifecycle import ChangeKind
+from ...common.resources import is_empty_item, item_key_from_dict
+from ..runtime import ChangeKind
 
 # -- 节拍 ------------------------------------------------------------------
 
-#: 收到变更之后再静默这么多帧才重读。理由同 `crafting/store.py`
+#: 收到变更之后再静默这么多帧才重读。理由同 `crafting/providers/store.py`
 #: 的 `PATTERN_SETTLE_FRAMES`（一次拖入会派发多条事件，且顺序不定）。
 MEMORY_SETTLE_FRAMES = 2
 
@@ -80,7 +80,7 @@ def is_memory_slot(device_id, definitions=None):
     """这台设备是不是内存槽。
 
     **按分类判定，不按设备名**：分类的真相只有定义表一处
-    （与 `crafting/capacity.py` 筛成员时用的是同一个 `CATEGORY_MEMORY`）。
+    （与 `crafting/orders/capacity.py` 筛成员时用的是同一个 `CATEGORY_MEMORY`）。
     定义表缺失（离线夹具）时退到「标识就叫 `endernet:memory_slot`」。
     """
     if definitions is not None:
@@ -99,7 +99,7 @@ def _slot_count_of(adapter, fallback):
     `SlotBackedContainer.slot_count()` 是按槽读写面（引擎容器实现它）。
     只认一个的话，「离线夹具通过、真机槽数 0」这种偏差只能在游戏里暴露。
 
-    **与 `crafting/store.py:container_slot_count` 是同一条规则的两个副本**，
+    **与 `crafting/providers/store.py:container_slot_count` 是同一条规则的两个副本**，
     不是漏改：跨层 import 会成环（见模块 docstring）。拿不到时退回定义表
     那条已定案的 10——它同时就是 `gen_blocks.py` 写进方块容器的
     `container_size`，因此这个回退不可能与真实格数分叉。
@@ -318,7 +318,7 @@ class MemorySlotStore(object):
         self.definitions = definitions
         self.registry = registry
         #: `ContainerProvider`：位置 -> ContainerAdapter。生产实现在
-        #: `adapters/containers_engine.py`，测试传 `containers.FakeContainer`。
+        #: `adapters/containers/engine.py`，测试传 `containers.FakeContainer`。
         #: **可为 None**，此时所有需要容器的动作明确报读不到，而不是当成空槽。
         self.containers = containers
         #: 读数变化后的钩子（`bootstrap._note_memory_load_changed`），

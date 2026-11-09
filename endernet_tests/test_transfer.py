@@ -2,7 +2,7 @@
 """转移协调器：端点、两段式提交、实际数量回执与有界中转缓冲。
 
 对应任务 06-01 至 06-03 的离线验证。**全部离线**：转移层不 import 任何引擎
-模块，容器一侧用的是 13-01 的假适配器（`adapters/containers.py`）。
+模块，容器一侧用的是 13-01 的假适配器（`adapters/containers/contract.py`）。
 
 **这些用例刻意不抄被测算法。** 凡是「守恒」「不重复计入」「不确定不算成功」
 这类性质，都用**独立求和**去验证：把所有端点上的数量各数一遍再加起来，
@@ -26,10 +26,10 @@ from endernet.common.protocol import (
     TransferRequest,
     TransferStatus,
 )
-from endernet.common.item_codec import item_dict_from_key, item_key_from_dict
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers_engine import SlotBackedContainer
-from endernet.server.adapters.containers import (
+from endernet.common.resources.item_codec import item_dict_from_key, item_key_from_dict
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.engine import SlotBackedContainer
+from endernet.server.adapters.containers.contract import (
     ContainerEntry,
     FakeContainer,
     GhostContainer,
@@ -737,7 +737,7 @@ class TestSlotAnchor(unittest.TestCase):
     """背包槽的定位：**槽号 + 指纹 + 槽版本**，三样缺一不可。"""
 
     def setUp(self):
-        from endernet.server.adapters.containers_engine import (
+        from endernet.server.adapters.containers.engine import (
             EnginePlayerInventory,
             build_stack_limit,
         )
@@ -904,7 +904,7 @@ class TestSlotAnchor(unittest.TestCase):
         源槽里装着对方的东西，问「空没空」必然答错，每次都会误报不确定。
         这里问的是「源物品现在在对面没有」。
         """
-        from endernet.server.adapters.containers_engine import (
+        from endernet.server.adapters.containers.engine import (
             EnginePlayerInventory,
             build_stack_limit,
         )

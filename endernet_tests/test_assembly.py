@@ -7,10 +7,10 @@ from test_returns import (
     PROCESSOR_KEY, ENERGY_KEY,
     key, CONNECTOR, PROCESSOR,
 )
-from endernet.server.adapters.containers import FakeContainer
+from endernet.server.adapters.containers.contract import FakeContainer
 from endernet.server.crafting.patterns import PatternDefinition, PatternStack, MODE_CRAFTING
 from endernet.server.storage.transfer import slot_read
-from endernet.common.item_codec import item_dict_from_key
+from endernet.common.resources.item_codec import item_dict_from_key
 from endernet.common.protocol import Reason, DeviceCommand, CommandKind, CommandSource
 from endernet.server.runtime.events import NormalizedEvent
 from endernet.server.network.services import ServiceId

@@ -1,7 +1,7 @@
 # coding=utf-8
 """合成终端的工作台：九宫格、存档、容器适配与计划（11-04）。
 
-**全部离线。** `server/crafting/workbench.py` 不 import 引擎。
+**全部离线。** `server/crafting/terminals/workbench.py` 不 import 引擎。
 
 三条贯穿全篇的判据：
 
@@ -22,8 +22,8 @@ import testsupport  # noqa: F401 - 导入即完成 sys.path 设置
 from endernet.common.crafting_recipe import normalize_recipe
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.protocol import TransferStatus
-from endernet.common.resource_key import ResourceKey
-from endernet.server.crafting.workbench import (
+from endernet.common.resources.key import ResourceKey
+from endernet.server.crafting.terminals.workbench import (
     CLEAR_KEEP_REMAINDER,
     IMPORT_KEEP,
     IMPORT_REFUSE,

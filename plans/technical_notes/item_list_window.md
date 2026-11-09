@@ -1,6 +1,6 @@
 # 物品列表窗口
 
-客户端入口：`endernet/client/ui/item_list_window.py`。
+客户端入口：`endernet/client/ui/windows/item_list.py`。
 
 ```python
 # 在 endernet/client/ui/ 下的 ToolDeltaScreen 脚本中：

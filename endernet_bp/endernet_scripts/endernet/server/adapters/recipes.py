@@ -1,7 +1,7 @@
 # coding=utf-8
 """工作台预设配方的引擎适配（11-04）。
 
-把 tooldelta 的 `GetRecipesByResult` 包成 `crafting/execution.py` 里那个
+把 tooldelta 的 `GetRecipesByResult` 包成 `crafting/providers/execution.py` 里那个
 `PresetRecipeSource` 鸭子类型（`recipes_for` / `version`），供合成终端
 「导入」与产物预览使用。
 

@@ -17,7 +17,7 @@ class ItemStub(object):
     def __init__(self, item_id):
         self.item_id = item_id
         self.newItemName = item_id
-        #: 真 `Item` 有的第二个字段（渲染要用，见 `widgets/control_api.py`）。
+        #: 真 `Item` 有的第二个字段（渲染要用，见 `shared/control_api.py`）。
         self.newAuxValue = 0
 
     def GetBasicInfo(self):
@@ -48,11 +48,11 @@ class ItemListWindowTests(unittest.TestCase):
             return module
 
         with patch.dict(sys.modules, modules):
-            cls.selector = load("select_item_window")
+            cls.selector = load("windows/select_item")
             with patch.dict(sys.modules, {cls.selector.__name__: cls.selector}):
-                cls.module = load("item_list_window")
+                cls.module = load("windows/item_list")
             # 绑定在**宿主的类体**上（11-07），测试因此也要有一个宿主。
-            cls.bindings_module = load("widgets/list_window_bindings")
+            cls.bindings_module = load("windows/list_bindings")
         cls.Host = type(
             "HostScreen",
             (cls.bindings_module.ItemListWindowBindingsMixin, Screen),

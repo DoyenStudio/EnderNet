@@ -1,7 +1,7 @@
 # coding=utf-8
 """订单完成提示与声音的引擎边界。"""
 
-from ...common.resource_amount import format_resource_amount
+from ...common.resources import format_resource_amount
 from .engine_text import engine_text
 
 ORDER_FINISHED_SOUND = "note.endernet.order_finished"

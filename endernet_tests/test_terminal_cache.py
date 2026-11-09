@@ -15,7 +15,7 @@ import unittest
 
 import testsupport
 from endernet.client import network_client
-from endernet.client.ui.terminal_cache import TerminalCache
+from endernet.client.ui.terminal.cache import TerminalCache
 from endernet.common.protocol import (
     MSG_ACK,
     MSG_SNAPSHOT_REQUEST,
@@ -27,7 +27,7 @@ from endernet.common.protocol import (
     SnapshotEnd,
     SyncEnvelope,
 )
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 
 STONE = ResourceKey.item("minecraft:stone")
 DIRT = ResourceKey.item("minecraft:dirt")

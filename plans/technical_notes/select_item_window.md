@@ -1,6 +1,6 @@
 # 通用物品 ID 选择窗口
 
-入口：`endernet/client/ui/select_item_window.py` 的
+入口：`endernet/client/ui/windows/select_item.py` 的
 `show_select_item_window(screen, network_item_ids, select_callback)`。
 只在客户端、当前 `ToolDeltaScreen` 已创建后调用；宿主继承
 `SelectItemWindowBindingsMixin` 以提供静态搜索绑定，网格绑定由窗口动态注册。
@@ -53,9 +53,9 @@ ID 列表，窗口复制并按首次出现顺序去重，不发送网络库存�
 
 ## 全部物品目录初始化
 
-`modMain.py` 在两端初始化时分别启动 `client/item_catalog.py` 与
-`server/adapters/item_catalog.py`，在两端卸载时注销监听并清空缓存。
-事件载荷定义在不依赖引擎的 `common/item_catalog.py` 中。
+`modMain.py` 在两端初始化时分别启动 `client/channels/item_catalog.py` 与
+`server/adapters/channels/item_catalog.py`，在两端卸载时注销监听并清空缓存。
+事件载荷定义在不依赖引擎的 `common/channels/item_catalog.py` 中。
 
 1. 客户端收到 `UiInitFinishedEvent` 后，仅发送一次
    `EnderNet:ItemCatalogRequest`。

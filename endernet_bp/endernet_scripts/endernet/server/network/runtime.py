@@ -29,7 +29,7 @@
 """
 
 from ...common.protocol import BlockReason, Reason
-from ..persistence.repository import Record
+from ..persistence import Record
 from .controller import (
     AccessGrant,  # noqa: F401（供 # type: 注释）
     MasterController,
@@ -49,7 +49,7 @@ from .services import (
     ServiceFactory,
     ServiceId,
 )
-from ..runtime.scheduler import SchedulerPolicy
+from ..runtime import SchedulerPolicy
 from .ticking import NodeLocator, RotationCursor
 from .topology import MigrationKind
 

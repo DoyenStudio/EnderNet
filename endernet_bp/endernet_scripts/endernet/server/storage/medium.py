@@ -11,7 +11,7 @@
 三条必须成立的性质：
 
 1. **数量整数、无浮点累计。** 容量与用量都以「微单位物」记账
-   （物品 1 个 = 50，流体 1 mB = 1，见 `common/resource_key.py`）。
+   （物品 1 个 = 50，流体 1 mB = 1，见 `common/resources/key.py`）。
    25 mB 因此不会被截断成 0，也不会攒出浮点误差。
 2. **模拟不改任何东西。** `plan()` 是纯函数；只有 `commit(plan)` 落账。
    验收要求「模拟、失败、重复请求不消耗实际库存或预算」，靠的就是这条。
@@ -21,7 +21,7 @@
 
 from ...common.definitions import MediumSpec  # noqa: F401 (仅用于 # type: 注释)
 from ...common.protocol import Reason
-from ...common.resource_key import (
+from ...common.resources.key import (
     MICRO_UNITS_PER_UNIT,
     ResourceKey,
     _INT_TYPES,

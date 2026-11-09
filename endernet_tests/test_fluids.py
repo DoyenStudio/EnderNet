@@ -13,8 +13,8 @@ import testsupport  # noqa: F401
 
 from endernet.common.identity import NodeKey
 from endernet.common.protocol import TransferStatus
-from endernet.common.resource_key import ResourceKey, canonical_tree
-from endernet.server.adapters.fluids import RadiumFluidProvider
+from endernet.common.resources.key import ResourceKey, canonical_tree
+from endernet.server.adapters.compat.fluids import RadiumFluidProvider
 
 
 WATER = ResourceKey.fluid("minecraft:water")

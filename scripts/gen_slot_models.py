@@ -33,7 +33,7 @@
     endernet_rp/animations/endernet_slot_modules.animation.json
 
 骨骼 `s<槽>_<名字>` 的显隐由 `variable.s<槽>` 决定，取值规则见
-`endernet/common/slot_display.py`（运行时与本脚本共用）。
+`endernet/common/channels/slot_display.py`（运行时与本脚本共用）。
 """
 
 import argparse
@@ -54,7 +54,7 @@ from _console import use_utf8_stdout  # noqa: E402
 from _png import png_bytes, read_png  # noqa: E402
 
 from endernet.common.definitions import DefinitionSet  # noqa: E402
-from endernet.common.slot_display import (  # noqa: E402
+from endernet.common.channels.slot_display import (  # noqa: E402
     DISK,
     DISPLAY_DEVICES,
     FACING_VARIABLE,

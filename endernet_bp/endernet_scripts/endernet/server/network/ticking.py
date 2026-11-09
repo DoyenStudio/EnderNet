@@ -30,7 +30,7 @@
 - 重排就是替换：同一 `(ref, kind)` 只有一条活体，不必先 `cancel`。
 """
 
-from ..runtime.scheduler import (
+from ..runtime import (
     DeviceLane,
     DueQueue,
     PollOutcome,

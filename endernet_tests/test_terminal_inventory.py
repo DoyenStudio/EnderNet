@@ -35,7 +35,7 @@ if ROOT not in sys.path:
 
 import testsupport  # noqa: E402  设置 sys.path，并提供引擎物品字典的实测形状
 
-from endernet_bp.endernet_scripts.endernet.client.ui.inventory_model import (  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal.inventory_model import (  # noqa: E402
     InventoryModel, SLOT_COUNT, item_key,
 )
 
@@ -211,10 +211,10 @@ class ScreenTests(unittest.TestCase):
         # `setUpClass` 上炸，而全量跑时它可能被前一个文件缓存的模块盖住。
         ui.RegistToolDeltaScreen = (
             lambda name, is_proxy=False: lambda screen: screen)
-        prefix_path = "endernet.client.ui."
+        prefix_path = "endernet.client.ui.terminal."
         path = os.path.join(ROOT, "endernet_bp", "endernet_scripts", "endernet", "client", "ui")
         spec = importlib.util.spec_from_file_location(
-            prefix + prefix_path + "terminal_panel", os.path.join(path, "terminal_panel.py"))
+            prefix + prefix_path + "panel", os.path.join(path, "terminal", "panel.py"))
         cls.module = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, {ui.__name__: ui, item.__name__: item}):
             spec.loader.exec_module(cls.module)

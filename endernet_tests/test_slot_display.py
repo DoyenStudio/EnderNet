@@ -3,7 +3,7 @@
 
 被测的是**规则与接线**，不是引擎：总线、事件基类、变量写入口都是替身。
 真机上要另外核对的几条（实体与方块几何能否并存、朝向正负号、物品栏图标）
-写在 `common/slot_display.py` 与交付说明里，这里测不出来。
+写在 `common/channels/slot_display.py` 与交付说明里，这里测不出来。
 """
 
 import io
@@ -16,7 +16,7 @@ import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import DefinitionSet
 from endernet.common.identity import NodeKey
-from endernet.common.slot_display import (
+from endernet.common.channels.slot_display import (
     DISK,
     DISPLAY_DEVICES,
     EMPTY,
@@ -35,8 +35,8 @@ from endernet.common.slot_display import (
     slot_variable,
     update_payload,
 )
-from endernet.client.slot_display import SlotDisplayClient
-from endernet.server.adapters.slot_display import SlotDisplayRequests
+from endernet.client.channels.slot_display import SlotDisplayClient
+from endernet.server.adapters.channels.slot_display import SlotDisplayRequests
 from endernet.server.devices.slot_display import SlotDisplayTracker
 
 REPO = testsupport.REPO_ROOT

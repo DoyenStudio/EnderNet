@@ -6,9 +6,10 @@ from unittest.mock import Mock, patch
 
 import testsupport  # noqa: F401  设置 sys.path
 
-from endernet.common.resource_key import ResourceKey
-from endernet.client.ui import slot_layout, touch_input
-from endernet.client.ui.touch_input import TouchGesture, slide_count
+from endernet.common.resources.key import ResourceKey
+from endernet.client.ui.shared import slot_layout
+from endernet.client.ui.terminal import touch_input
+from endernet.client.ui.terminal.touch_input import TouchGesture, slide_count
 
 THRESHOLD = 0.4
 SLOT = (100.0, 200.0, 18.0, 18.0)

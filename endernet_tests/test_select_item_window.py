@@ -14,8 +14,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from endernet_bp.endernet_scripts.endernet.client.item_catalog import ItemCatalogClient  # noqa: E402
-from endernet_bp.endernet_scripts.endernet.server.adapters.item_catalog import (  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.channels.item_catalog import ItemCatalogClient  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.server.adapters.channels.item_catalog import (  # noqa: E402
     ItemCatalogService, filter_item_ids,
 )
 
@@ -266,12 +266,12 @@ class SelectorTests(unittest.TestCase):
             return module
 
         with patch.dict(sys.modules, modules):
-            cls.module = load("select_item_window")
+            cls.module = load("windows/select_item")
             # 绑定在**宿主的类体**上（11-07），因此测试也要有一个宿主。
             # 真引擎那一步是 `ToolDeltaScreen._get_tdscreen_bindings` 生成
             # `_Base`；这里只要求「按名字取得到」，机制的取证在
             # `test_terminal_panel.TestEngineBindingResolution`。
-            cls.bindings_module = load("widgets/list_window_bindings")
+            cls.bindings_module = load("windows/list_bindings")
         cls.Host = type(
             "HostScreen",
             (cls.bindings_module.SelectItemWindowBindingsMixin, Screen),

@@ -37,14 +37,14 @@ from endernet.common.protocol import (
     TransferReceipt,
     TransferStatus,
 )
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import (
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import (
     ContainerEntry,
     FakeContainer,
     NoSimulateContainer,
     UncertainContainer,
 )
-from endernet.server.devices.io import (
+from endernet.server.devices.bus_io import (
     BUFFER_AS_EXTERNAL_SIDE,
     BUFFER_CONTAINER,
     BUFFER_MEMORY,
@@ -1330,7 +1330,7 @@ class TestIntakePort(PortFixture):
     device_id = INPUT
 
     def test_poll_stops_after_compensation_cannot_return_items_to_source(self):
-        from endernet.server.adapters.containers import ReadOnlyContainer
+        from endernet.server.adapters.containers.contract import ReadOnlyContainer
 
         source = ReadOnlyContainer(slots=1)
         source.set_slot(0, ContainerEntry(STONE, 10))
@@ -2005,7 +2005,7 @@ class FakeInventoryProvider(object):
     因此 `inv_*` 走的是**真实的** `EnginePlayerInventory` + 槽锚。"""
 
     def __init__(self):
-        from endernet.server.adapters.containers_engine import (
+        from endernet.server.adapters.containers.engine import (
             EnginePlayerInventory,
             build_stack_limit,
         )

@@ -22,11 +22,11 @@ from ...common.definitions import (
     TERMINAL_OPEN_LIMIT_SECONDS,
     TERMINAL_SCREENS,
 )
-from ...common.device_identity import identity_payload
+from ...common.channels import identity_payload
 from ...common.rate_limit import PlayerRateLimiter
 from ...common.identity import ChunkKey, NodeKey
-from .device_identity import send_device_identity
-from ..runtime.events import EventKind, NormalizedEvent, WakeSet
+from .channels import send_device_identity
+from ..runtime import EventKind, NormalizedEvent, WakeSet
 
 
 def engine_player_dimension(player_id):

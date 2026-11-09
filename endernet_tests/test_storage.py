@@ -26,7 +26,7 @@ from endernet.common.definitions import (
     DefinitionSet,
 )
 from endernet.common.identity import NodeKey
-from endernet.common.medium_item import CARRIER_VERSION
+from endernet.common.resources.medium_item import CARRIER_VERSION
 from endernet.common.protocol import (
     CommandKind,
     CommandSource,
@@ -37,7 +37,7 @@ from endernet.common.protocol import (
     STATUS_REJECTED,
     TransferStatus,
 )
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 from endernet.server.devices.capabilities import STORAGE_PROVIDER
 from endernet.server.devices.registry import DeviceRegistry
 from endernet.server.devices.storage_driver import (

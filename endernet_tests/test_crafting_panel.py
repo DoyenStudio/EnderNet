@@ -368,10 +368,9 @@ _install_stubs()
 from endernet_bp.endernet_scripts.endernet.client.network_client import (  # noqa: E402
     NetworkClient,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui import (  # noqa: E402
-    crafting_panel, slot_layout, stack_size, terminal_panel,
-)
-from endernet_bp.endernet_scripts.endernet.client.ui.terminal_cache import (  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal import crafting_panel, panel as terminal_panel  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.shared import slot_layout, stack_size  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal.cache import (  # noqa: E402
     TerminalCache,
 )
 from endernet_bp.endernet_scripts.endernet.common.definitions import (  # noqa: E402
@@ -393,7 +392,7 @@ from endernet_bp.endernet_scripts.endernet.common.protocol import (  # noqa: E40
     SnapshotEnd,
     SyncEnvelope,
 )
-from endernet_bp.endernet_scripts.endernet.common.resource_key import (  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.common.resources.key import (  # noqa: E402
     ResourceKey,
 )
 
@@ -1239,7 +1238,7 @@ class TestRegistration(unittest.TestCase):
             TERMINAL_SCREENS.get("endernet:crafting_terminal_panel"))
         self.assertIn(crafting_panel.CraftingPanel._screen_key, REGISTERED_KEYS)
         # 通用终端也在册：两条都注册了，定义表才有资格列两条。
-        from endernet_bp.endernet_scripts.endernet.client.ui.terminal_panel import (
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal.panel import (
             CommonTerminalPanel,
         )
         self.assertEqual(
@@ -1248,7 +1247,7 @@ class TestRegistration(unittest.TestCase):
 
     def test_register_screens_returns_both_panels(self):
         from testsupport import registered_device_screens as register_screens
-        from endernet_bp.endernet_scripts.endernet.client.ui.terminal_panel import (
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal.panel import (
             CommonTerminalPanel,
         )
         # 11-07 起元组里还跟着四个容器类设备的代理屏。它们的键、旗标与

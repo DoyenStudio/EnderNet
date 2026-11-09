@@ -293,12 +293,14 @@ flowchart TD
 
 ## 8. 建议目录
 
+> 2026-11 注：下面是 09-25 的建议目录，已被 2026-11 目录重组取代；现行目录以 [script_architecture.md](technical_notes/script_architecture.md) §2 为准（含旧路径 → 新路径对照）。
+
 脚本业务全部位于用户指定的 `endernet_bp/endernet_scripts/endernet`；外层 `modMain.py` 只负责注册和启动。下列为目标边界，可随功能逐步建立，不要求首版一次性创建所有文件；各 Python 包补充 `__init__.py`。2026-09-25 的设备侧细化以 [设备脚本架构与存储驱动器实施交接](technical_notes/script_architecture.md) 为准，包含当前文件状态、权威数据归属、真实适配器边界和开工／评审清单。
 
 ```text
 endernet/
   common/
-    resource_key.py          # 无端侧依赖的资源身份和整数单位
+    resources/key.py          # 无端侧依赖的资源身份和整数单位
     definitions.py           # 设备、介质、负载、能耗配置
     protocol.py              # 请求、响应、增量消息定义
   server/
@@ -333,8 +335,8 @@ endernet/
       returns.py            # 按实际数量独占分配回流
     adapters/
       events.py             # 网易/ToolDelta 事件归一化
-      containers.py        # 纯容器契约、核对逻辑与测试替身
-      containers_engine.py # 真实背包与容器的引擎实现
+      containers/contract.py        # 纯容器契约、核对逻辑与测试替身
+      containers/engine.py # 真实背包与容器的引擎实现
       messages.py          # 消息收发与可信玩家身份提取
       persistence_engine.py # 经验证的真实存档后端
       fluids.py            # 其他模组流体接口
@@ -352,7 +354,7 @@ endernet/
     bootstrap.py
     network_client.py      # 命令与同步接收
     ui/                    # 沿用当前目录，不另建 screens/slots/render
-      terminal_panel.py    # 终端基类与通用终端
+      terminal/panel.py    # 终端基类与通用终端
       storage_driver.py    # 驱动器介质槽与容量信息
       inventory_model.py   # 背包显示与交互状态
       item_list_model.py   # 网络物品摘要、搜索与排序

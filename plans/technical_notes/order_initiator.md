@@ -21,7 +21,7 @@
 不直接把 `unicode` 交给引擎。音效指令显式指定 `@s ~ ~ ~ 1 1 1`，
 在发起者位置播放并设置最低音量；指令返回失败会计入通知失败。
 
-公共数量格式化函数位于 `common/resource_amount.py`。
+公共数量格式化函数位于 `common/resources/amount.py`。
 `format_resource_amount(kind, amount)` 接收整数单位物：物品直接显示数量，
 流体按 `1 单位物 = 50 mB` 显示，例如 20 单位物显示为 `1000mB`。
 订单数量沿用原生单位（物品个数 / 流体 mB），通知调用时显式传

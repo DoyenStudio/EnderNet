@@ -17,7 +17,7 @@ class ItemStub(object):
     def __init__(self, item_id):
         self.item_id = item_id
         self.newItemName = item_id
-        #: 真 `Item` 有的第二个字段（渲染要用，见 `widgets/control_api.py`）。
+        #: 真 `Item` 有的第二个字段（渲染要用，见 `shared/control_api.py`）。
         self.newAuxValue = 0
 
     def GetBasicInfo(self):
@@ -48,16 +48,16 @@ class FluidListWindowTests(unittest.TestCase):
             return module
 
         with patch.dict(sys.modules, modules):
-            cls.item_selector = load("select_item_window")
+            cls.item_selector = load("windows/select_item")
             with patch.dict(sys.modules, {cls.item_selector.__name__: cls.item_selector}):
-                cls.item_list = load("item_list_window")
-                cls.selector = load("select_fluid_window")
+                cls.item_list = load("windows/item_list")
+                cls.selector = load("windows/select_fluid")
                 with patch.dict(sys.modules, {
                     cls.item_list.__name__: cls.item_list,
                     cls.selector.__name__: cls.selector,
                 }):
-                    cls.module = load("fluid_list_window")
-            cls.bindings_module = load("widgets/list_window_bindings")
+                    cls.module = load("windows/fluid_list")
+            cls.bindings_module = load("windows/list_bindings")
         # 有一组用例在**同一块屏**上同时开物品名单与流体名单（两份混入都要有，
         # 否则那组用例里的物品那一半在真机上根本解析不到绑定）。
         cls.Host = type(

@@ -1,7 +1,7 @@
 # coding=utf-8
 """客户端设备状态模型：代次隔离、两行分组、弹窗单例（11-13）。
 
-**全部离线**：`client/ui/widgets/device_status.py` 不 import 引擎，只提供
+**全部离线**：`client/ui/device_status/model.py` 不 import 引擎，只提供
 绑定要读的值，因此这里直接构造模型、喂消息、断言读出来的东西。
 
 三条判据：
@@ -19,7 +19,7 @@ import unittest
 
 import testsupport  # noqa: F401  (放进 sys.path)
 
-from endernet.client.ui.widgets import device_status
+from endernet.client.ui.device_status import model as device_status
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.protocol import DeviceStatusMessage, Reason
 

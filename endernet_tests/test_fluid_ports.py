@@ -7,8 +7,8 @@ from test_io import (
     BootstrapFixture, PortFixture, WATER, STONE, TEMPLATE_DEVICE, FLUID_BUS, key,
 )
 from endernet.common.protocol import Reason, STATUS_BLOCKED, STATUS_OK
-from endernet.server.adapters.containers import ContainerEntry, FakeContainer
-from endernet.server.devices.io import neighbor_key, port_blocker
+from endernet.server.adapters.containers.contract import ContainerEntry, FakeContainer
+from endernet.server.devices.bus_io import neighbor_key, port_blocker
 from endernet.server.runtime.events import NormalizedEvent
 
 
@@ -162,7 +162,7 @@ class TestFluidPortsThroughMaster(BootstrapFixture):
 class TestFluidProviderLifecycle(BootstrapFixture):
     def setUp(self):
         from test_fluids import FakeRadium
-        from endernet.server.adapters.fluids import RadiumFluidProvider
+        from endernet.server.adapters.compat.fluids import RadiumFluidProvider
 
         BootstrapFixture.setUp(self)
         self.api = FakeRadium()

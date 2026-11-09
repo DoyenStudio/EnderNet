@@ -4,7 +4,7 @@
 对应任务 03-01/03-05 的协议部分，以及 13-01 统一容器契约中**与引擎无关**的那一半。
 
 放在 common 层是有意的：转移回执类型会被存储与工厂服务引用，
-若把它写在 `server/adapters/containers.py` 里，领域层为了拿到回执类型
+若把它写在 `server/adapters/containers/contract.py` 里，领域层为了拿到回执类型
 就得 import 一个拖进 `mod.server.*` 的模块，离线测试立刻失效。
 适配器**实现**仍在 adapters 下。
 
@@ -16,7 +16,7 @@
 import json
 
 from .definitions import PATTERN_MODES
-from .resource_key import ResourceKey, _TEXT_TYPES, _require_count
+from .resources.key import ResourceKey, _TEXT_TYPES, _require_count
 from . import settings
 
 # -- 结果状态 --------------------------------------------------------------
@@ -1069,7 +1069,7 @@ SYNC_CHANNEL_S2C = "endernet:terminal_sync"
 #: 玩家右键那一刻查到注册表后推过去，而那一刻**还没有会话**（会话要等屏
 #: 挂上代理、客户端采纳身份之后才开），因此它不能是一条会话内的消息。
 #:
-#: 载荷形状见 `common/device_identity.py`；事件名两侧必须逐字相同。
+#: 载荷形状见 `common/channels/device_identity.py`；事件名两侧必须逐字相同。
 DEVICE_IDENTITY_CHANNEL_S2C = "endernet:device_identity"
 
 #: 视图种类。两种都**是已知种类**，且都已有生产者；与「客户端发来一个我们
@@ -1684,7 +1684,7 @@ class CraftStateMessage(SyncMessage):
         return cls(data["revision"], data["slots"], data["recipe"], data["preview"])
 
 
-#: 样板终端的两片虚格各有几格。**与 `template_terminal` 的同名常量是同一个
+#: 样板终端的两片虚格各有几格。**与 `server/crafting/terminals/template.py` 的同名常量是同一个
 #: 数**，这里再写一份的理由与 `CRAFT_SLOT_COUNT` 相同：同步层必须钉住线上
 #: 格数，不能跟着对面变。
 TEMPLATE_SOURCE_CELLS = 9
@@ -3174,7 +3174,7 @@ PORT_CONFIG_FIELDS = (
     "cache_enabled",
 )
 
-#: 过滤模式的**线上词汇**。同样是镜像：真身是 `server/devices/io.py` 的
+#: 过滤模式的**线上词汇**。同样是镜像：真身是 `server/devices/bus_io.py` 的
 #: `FILTER_MODES`，跨层用例钉住两者相等。下发与回传的 `filter_mode` 都只
 #: 允许这两个词——写错了要当场拒收，而不是让服务端在 `PortConfig` 的
 #: 构造器里抛一个「未知过滤模式」。
@@ -3190,7 +3190,7 @@ class PortConfigMessage(SyncMessage):
     为它建一套版本协调，收益远小于它引入的第二份真相源。
 
     **不含任何版本字段**，理由见 `PORT_CONFIG_FIELDS` 上方与
-    `server/devices/io.py` 的 `config_view`：配置版本今天不存在，而另外两个
+    `server/devices/bus_io.py` 的 `config_view`：配置版本今天不存在，而另外两个
     版本词汇（交易版本、存档结构版本）各有其名，挪用它们会让「按哪个版本
     判断过期」变成猜。
 

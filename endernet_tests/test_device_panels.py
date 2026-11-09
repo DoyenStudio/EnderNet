@@ -193,19 +193,15 @@ def _install_stubs():
 
 _install_stubs()
 
-from endernet_bp.endernet_scripts.endernet.client import (  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.channels import (  # noqa: E402
     device_identity as client_identity,
 )
 from endernet_bp.endernet_scripts.endernet.client.network_client import (  # noqa: E402
     NetworkClient,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui import (  # noqa: E402
-    device_panels, proxy_panel,
-)
-from endernet_bp.endernet_scripts.endernet.client.ui.widgets import (  # noqa: E402
-    device_status, device_status_bindings,
-)
-from endernet_bp.endernet_scripts.endernet.common import device_identity  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.devices import panels as device_panels, proxy_panel  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.device_status import model as device_status, bindings as device_status_bindings  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.common.channels import device_identity  # noqa: E402
 from endernet_bp.endernet_scripts.endernet.common import protocol  # noqa: E402
 from endernet_bp.endernet_scripts.endernet.common.definitions import (  # noqa: E402
     CONTAINER_SCREENS, TERMINAL_SCREENS,
@@ -533,7 +529,7 @@ class TestPortConfigPanelLifecycle(unittest.TestCase):
 
 class TestItemPickerSearch(unittest.TestCase):
     def test_port_search_binding_filters_localized_item_names(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import select_item_window
+        from endernet_bp.endernet_scripts.endernet.client.ui.windows import select_item as select_item_window
         from test_select_item_window import ItemStub as SearchItem
 
         for panel_cls in (device_panels.BusItemInputPanel, device_panels.BusItemOutputPanel):
@@ -1070,9 +1066,7 @@ class TestSharedStatusHandler(unittest.TestCase):
                     self.assertIsNone(panel.status)
 
     def test_terminals_and_proxies_inherit_the_same_status_handler(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import (
-            terminal_panel, crafting_panel,
-        )
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import panel as terminal_panel, crafting_panel
         shared = device_status_bindings.DeviceStatusBindingsMixin._make_status_handler
         for panel_cls in (terminal_panel.CommonTerminalPanel,
                           crafting_panel.CraftingPanel, proxy_panel.ProxyPanelBase):
@@ -1193,7 +1187,7 @@ class TestServerSidePush(unittest.TestCase):
         self.assertEqual(binder.counts["block_use_container_unknown"], 1)
 
     def test_send_device_identity_skips_a_missing_recipient(self):
-        from endernet_bp.endernet_scripts.endernet.server.adapters import (
+        from endernet_bp.endernet_scripts.endernet.server.adapters.channels import (
             device_identity as server_identity,
         )
         sent = []

@@ -7,12 +7,12 @@ import unittest
 import testsupport  # noqa: F401
 
 from endernet.common.definitions import TEMPLATE_PANEL_ITEM_ID
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 from endernet.server.adapters.template_tips import resource_display_name
 from endernet.server.crafting.patterns import (
     MODE_CRAFTING, MODE_FACTORY, PatternDefinition, PatternStack,
 )
-from endernet.server.crafting.template_terminal import encode_template_item
+from endernet.server.crafting.terminals.template import encode_template_item
 
 
 class TestTemplateTips(unittest.TestCase):

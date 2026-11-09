@@ -5,7 +5,7 @@ import unittest
 
 import testsupport  # noqa: F401
 from endernet.common.protocol import STATUS_OK
-from endernet.server.crafting.jobs import Order
+from endernet.server.crafting.orders.jobs import Order
 from test_executor import OneLevel, BLOCK, IRON
 
 

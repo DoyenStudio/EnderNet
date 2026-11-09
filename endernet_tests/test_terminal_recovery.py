@@ -5,14 +5,14 @@ import testsupport
 from test_bootstrap import FakeWorld
 from test_terminal_cursor import CursorPrimitives
 from endernet.common.identity import NodeKey
-from endernet.common.item_codec import item_dict_from_key
+from endernet.common.resources.item_codec import item_dict_from_key
 from endernet.common.protocol import CommandKind, CommandSource, DeviceCommand
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers_engine import EngineInventoryProvider
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.engine import EngineInventoryProvider
 from endernet.server.bootstrap import (
     CRAFTING_TERMINAL_DEVICE_ID, TEMPLATE_TERMINAL_DEVICE_ID, ServerBootstrap,
 )
-from endernet.server.crafting.template_terminal import GROUP_SOURCE, INPUT_SLOT, RESULT_SLOT
+from endernet.server.crafting.terminals.template import GROUP_SOURCE, INPUT_SLOT, RESULT_SLOT
 from endernet.server.network.energy import EnergyPolicy
 from endernet.server.persistence.terminals import TERMINAL_RECORD_ID, TERMINAL_RECORD_KIND
 from endernet.server.runtime.events import NormalizedEvent

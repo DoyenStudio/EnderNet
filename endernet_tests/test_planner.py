@@ -34,10 +34,11 @@ import testsupport  # noqa: F401  设置 sys.path
 from endernet.common.definitions import DefinitionSet
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.protocol import Reason
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import FakeContainer
-from endernet.server.crafting import patterns, planner
-from endernet.server.crafting.store import PatternStore
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import FakeContainer
+from endernet.server.crafting import patterns
+from endernet.server.crafting.planning import planner
+from endernet.server.crafting.providers.store import PatternStore
 from endernet.server.storage.service import StorageService
 
 TEMPLATE_DEVICE = "endernet:bus_template_io"

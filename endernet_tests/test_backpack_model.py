@@ -33,9 +33,8 @@ if ROOT not in sys.path:
 
 import testsupport  # noqa: E402  设置 sys.path，并提供引擎物品字典的实测形状
 
-from endernet_bp.endernet_scripts.endernet.client.ui import (  # noqa: E402
-    backpack_model, stack_size,
-)
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal import backpack_model  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.shared import stack_size  # noqa: E402
 
 #: `stack_size.basic_info` 里那句 `from ....tooldelta.define.item import Item`
 #: 解析出来的模块名。**必须与那四个点算出来的完全一致**，少一层就会落回

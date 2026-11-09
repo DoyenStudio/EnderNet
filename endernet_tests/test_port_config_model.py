@@ -19,9 +19,9 @@ import testsupport  # noqa: F401  (放进 sys.path)
 
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.protocol import PortConfigMessage
-from endernet.common.resource_key import ResourceKey
-from endernet.client.ui import port_config_model
-from endernet.client.ui.port_config_model import (
+from endernet.common.resources.key import ResourceKey
+from endernet.client.ui.devices import port_config_model
+from endernet.client.ui.devices.port_config_model import (
     BARRIER_ITEM,
     MODE_ICON_SIZE,
     PortConfigModel,

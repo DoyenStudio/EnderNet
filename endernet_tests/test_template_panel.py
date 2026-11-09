@@ -39,12 +39,9 @@ from test_crafting_panel import (
 from endernet_bp.endernet_scripts.endernet.client.network_client import (
     NetworkClient,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui import (
-    backpack_model,
-    stack_size,
-    template_panel,
-)
-from endernet_bp.endernet_scripts.endernet.client.ui.template_panel import (
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal import backpack_model, template_panel
+from endernet_bp.endernet_scripts.endernet.client.ui.shared import stack_size
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal.template_panel import (
     BINDING_PREFIX,
     COLLECTION_OF,
     MODE_CRAFTING,
@@ -55,10 +52,10 @@ from endernet_bp.endernet_scripts.endernet.client.ui.template_panel import (
     SURFACE_SOURCE,
     TemplateView,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui.terminal_cache import (
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal.cache import (
     TerminalCache,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui import terminal_panel
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal import panel as terminal_panel
 from endernet_bp.endernet_scripts.endernet.common.definitions import (
     TERMINAL_SCREENS,
 )
@@ -76,7 +73,7 @@ from endernet_bp.endernet_scripts.endernet.common.protocol import (
     SyncEnvelope,
     TemplateStateMessage,
 )
-from endernet_bp.endernet_scripts.endernet.common.resource_key import (
+from endernet_bp.endernet_scripts.endernet.common.resources.key import (
     ResourceKey,
 )
 
@@ -455,7 +452,7 @@ class TestTwoWayModel(TemplateFixture):
         self.assertEqual(router.drag["remainder"], 1)
         self.assertEqual(list(router.pending), [])
         self.assertEqual(self.view.cell(SURFACE_SOURCE, 0)["name"], STICK.name)
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         with patch.object(terminal_input, "input_api", return_value=Mock()):
             with patch.object(self.client, "send_command", wraps=self.client.send_command) as send:
                 router.finish("bag", 1, "left")
@@ -1284,7 +1281,7 @@ class TestRegistration(unittest.TestCase):
             registered[:2],
             (terminal_panel.CommonTerminalPanel,
              __import__("endernet_bp.endernet_scripts.endernet.client.ui."
-                        "crafting_panel", fromlist=["CraftingPanel"]
+                        "terminal.crafting_panel", fromlist=["CraftingPanel"]
                         ).CraftingPanel),
             "前两个位置是钉住的，新的必须插在后面")
 

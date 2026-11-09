@@ -205,7 +205,7 @@ _slots ←───────┘  + _pending（还没被真值兑现的本地�
 - `test_terminal_panel.py::TestBackpackHandoff`：有选中发 `inv_take`、无选中仍发
   `inv_put`、回执按 `request_id` 清选中、被拒时清选中并重读。
   > **2026-09-30 更正**：本条原写「`slot_version` 发 `None`」——**已过期**。
-  > S-15 之后 `inv_take` 发的是**服务端真实槽版本**（`terminal_panel.py:696` 取
+  > S-15 之后 `inv_take` 发的是**服务端真实槽版本**（`terminal/panel.py:696` 取
   > `view["slot_version"]`，用例断言 `== 7`），无匹配快照时等待同步、不发命令。
   > 顶部 S-15 引用块记的就是这次变更，这一行当时漏改。
 - `test_terminal_panel.py::TestBackpackCellBindings`：八个集合绑定的名字/旗标/集合同

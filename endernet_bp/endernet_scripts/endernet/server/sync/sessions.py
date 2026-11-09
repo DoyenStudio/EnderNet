@@ -26,7 +26,7 @@ from ...common.protocol import (
     VIEW_KINDS,
     VIEW_KINDS_WITH_PRODUCER,
 )
-from ...common.resource_sync import ResourceDescriptions
+from ...common.resources import ResourceDescriptions
 
 #: 会话状态。`snapshotting` 表示快照还在途，**它仍然算订阅者**
 #: （`terminal_item_index.md` §5），因此增量照发，只是客户端要收齐快照

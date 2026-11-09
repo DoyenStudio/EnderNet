@@ -38,7 +38,7 @@ from ...common.identity import (  # noqa: F401 (NodeKey 仅用于 # type: 注释
     NodeKey,
 )
 from ...common.protocol import BlockReason, Reason, TopologyChanged
-from ..runtime.lifecycle import ChangeKind
+from ..runtime import ChangeKind
 from .node import NetworkNode, PortRuleSet, opposite_face
 
 
@@ -286,14 +286,14 @@ class ProcessorGroup(_SortedMixin):
         """是否真的向网络贡献槽位。归属待定时不予贡献。
 
         **工厂服务不靠这个数开工。** 它每帧从快照重算本网络的槽位容量
-        （`crafting/capacity.py` 的 `slot_capacity`），那里读的是
+        （`crafting/orders/capacity.py` 的 `slot_capacity`），那里读的是
         `contributes_slots()` 与 `slots`，且**另带一层跨群去重**：02 建群
         时按 `visited` 去过重，工厂那一层不去信这个保证（万一去重被改坏，
         症状是槽位凭空变多，不设防的话几乎查不出来）。
 
         2026-09-28（台账 D-03）：这里曾经还有一个 `slot_count()`——本方法的
         `slots` 简写，唯一调用方是 02 的槽位来源清单，而那份清单没有消费者。
-        清单连同它一并删除，理由见 `crafting/capacity.py` 模块 docstring。
+        清单连同它一并删除，理由见 `crafting/orders/capacity.py` 模块 docstring。
         """
         return self.ownership == ProcessorOwnership.ATTACHED
 
@@ -657,7 +657,7 @@ class TopologyPublication(object):
     **这里只有「变化」是给人推的，容量不是。** `migrations` 有真消费者
     （03 的 `_apply_migration` 与 `admission`），因为服务迁移**必须**在
     发布的那一刻被处理；槽位容量不同——09 每帧从 `snapshot` 重算
-    （`crafting/capacity.py`），推一份容量增量的清单只会是第二份来源。
+    （`crafting/orders/capacity.py`），推一份容量增量的清单只会是第二份来源。
     02 曾经发过这样一份清单（`slot_changes`），2026-09-28 随台账 D-03
     删除，逐条理由见该模块 docstring。
     """
@@ -1569,7 +1569,7 @@ class TopologyService(object):
     # **没有 `_diff_slot_sources` 了。** 02-06 原文「通知 09 更新槽位来源」
     # 曾由它实现：把每个处理器群的槽位/归属前后值做成一份清单发出去。
     # 2026-09-28 随台账 D-03 定案删除——09 不消费这份清单，它每帧从
-    # `snapshot().processor_groups` 重算容量（`crafting/capacity.py`），
+    # `snapshot().processor_groups` 重算容量（`crafting/orders/capacity.py`），
     # 那是**唯一**一份来源。保留一个没人接的推送，只会让下一个读者以为
     # 槽位变更必须被消费。
 

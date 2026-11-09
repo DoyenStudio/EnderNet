@@ -1,7 +1,7 @@
 # coding=utf-8
 """槽位模块显示的服务端一侧：从驱动器 / 内存槽的读数算出每槽的模型取值，变了就发。
 
-规则（取值、变量名、载荷）在 `common/slot_display.py`；本模块只做两件事：
+规则（取值、变量名、载荷）在 `common/channels/slot_display.py`；本模块只做两件事：
 
 1. **算**：驱动器看 `DriverState.occupied()` 里每块介质的型号
    （`StorageDriverStore.medium(id).model_id`），内存槽看 `MemorySlotState.entries`
@@ -20,7 +20,7 @@
 本来就要做的「遍历一遍状态表」同一量级。
 """
 
-from ...common.slot_display import (
+from ...common.channels import (
     DISK,
     EMPTY,
     MEMORY,

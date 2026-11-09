@@ -5,7 +5,7 @@
 
 终端 UI 在 client/ui 中注册；物品与流体列表已经接上真实网络的会话同步
 （任务 11），终端下半屏渲染的也是**真实玩家背包**（本地读引擎，见
-`ui/backpack_model.py`）。这里保证：
+`ui/terminal/backpack_model.py`）。这里保证：
 
 - 模组在客户端能正常初始化与销毁，不会因为缺少客户端入口而报错；
 - 客户端**不持有任何权威状态**（架构规划 6.6）：它不判断库存、订单完成或能量余额。
@@ -42,8 +42,8 @@ class ClientBootstrap(object):
 
     def diagnostics(self):
         # type: () -> dict
-        from .device_identity import get_device_identity
-        from .slot_display import get_slot_display
+        from .channels import get_device_identity
+        from .channels import get_slot_display
 
         service = get_device_identity()
         slots = get_slot_display()
@@ -74,8 +74,8 @@ def start_client():
     # type: () -> ClientBootstrap
     """由 `modMain.OnClientInited` 调用。"""
     global _CLIENT
-    from .device_identity import start_device_identity
-    from .slot_display import start_slot_display
+    from .channels import start_device_identity
+    from .channels import start_slot_display
     from .ui import register_screens
 
     register_screens()
@@ -97,9 +97,9 @@ def start_client():
 def stop_client():
     # type: () -> None
     global _CLIENT
-    from .device_identity import stop_device_identity
-    from .slot_display import stop_slot_display
-    from .ui.universal_importer import close_universal_importer
+    from .channels import stop_device_identity
+    from .channels import stop_slot_display
+    from .ui.universal_importer.screen import close_universal_importer
 
     close_universal_importer()
     stop_slot_display()

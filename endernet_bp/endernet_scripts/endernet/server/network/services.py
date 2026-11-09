@@ -556,12 +556,12 @@ def default_builders():
     `_storage_builder()` / `_factory_builder()` 注入。
 
     **导入写在函数体里是有意的。** 本模块是契约层，`ticking.py`、`energy.py`、
-    `storage/service.py` 与 `crafting/executor.py` 是实现层，它们在模块级
+    `storage/service.py` 与 `crafting/orders/executor.py` 是实现层，它们在模块级
     import 本模块；若在这里也模块级 import 回去就成环了。而
     `default_builders()` 只在构造工厂/注册表时被调用，不在导入期，
     因此函数内导入不引入环——**不要把它提到模块顶部**。
     """
-    from ..crafting.executor import FactoryService
+    from ..crafting.orders import FactoryService
     from ..storage.service import StorageService
     from .energy import EnergyService
     from .ticking import SchedulerService

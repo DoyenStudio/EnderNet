@@ -76,9 +76,9 @@ from ...common.protocol import (
     VIEW_ITEM,
     VIEW_ORDER,
 )
-from ...common.resource_sync import ResourceResyncRequired
-from ..network.runtime import RuntimeChange
-from ..network.ticking import RotationCursor
+from ...common.resources import ResourceResyncRequired
+from ..network import RuntimeChange
+from ..network import RotationCursor
 from .device_config import (
     PortConfigSubscriptions,
     build_config_message,

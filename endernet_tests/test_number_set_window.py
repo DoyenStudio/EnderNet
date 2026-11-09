@@ -55,9 +55,9 @@ class NumberSetWindowTests(unittest.TestCase):
             return module
 
         with patch.dict(sys.modules, modules):
-            cls.module = load("number_set_window")
+            cls.module = load("windows/number_set")
             # 编辑框的绑定写在**宿主的类体**上（11-07），测试因此也要有宿主。
-            cls.bindings_module = load("widgets/list_window_bindings")
+            cls.bindings_module = load("windows/list_bindings")
         cls.Host = type(
             "HostScreen",
             (cls.bindings_module.NumberSetWindowBindingsMixin, NumberScreen),

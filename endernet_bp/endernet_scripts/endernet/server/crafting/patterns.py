@@ -37,7 +37,7 @@
 
 **内容指纹（`digest()`）就是「样板版本」。** 它由内容派生，因此「编辑之后
 旧规划必须复核」是结构性的，不靠某处记得递增一个计数器。指纹算法直接复用
-`common/resource_key.py` 的 `canonical_tree` + `tree_text`——那套设施已经
+`common/resources/key.py` 的 `canonical_tree` + `tree_text`——那套设施已经
 承担了「跨 py2 窄/宽 Unicode 与 py3 稳定」的责任，另造一套只会多一处要验。
 
 ## 校验为什么抛异常而不是返回错误列表
@@ -64,7 +64,7 @@ from ...common.definitions import (
     PATTERN_MODES,
     devices_for_mode,
 )
-from ...common.resource_key import (
+from ...common.resources.key import (
     ResourceKey,
     _require_count,
     canonical_tree,

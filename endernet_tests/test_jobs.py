@@ -15,9 +15,9 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.protocol import Reason
-from endernet.common.resource_key import ResourceKey
-from endernet.server.crafting import capacity, jobs
-from endernet.server.crafting.executor import AbsentReturns
+from endernet.common.resources.key import ResourceKey
+from endernet.server.crafting.orders import capacity, jobs
+from endernet.server.crafting.orders.executor import AbsentReturns
 
 IRON = ResourceKey.item("minecraft:iron_ingot")
 GOLD = ResourceKey.item("minecraft:gold_ingot")

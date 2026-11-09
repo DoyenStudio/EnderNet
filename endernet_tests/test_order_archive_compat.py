@@ -5,8 +5,8 @@ import json
 import unittest
 
 import testsupport  # noqa: F401
-from endernet.server.crafting.jobs import Order
-from endernet.server.crafting.order_archive import export_order, import_order
+from endernet.server.crafting.orders.jobs import Order
+from endernet.server.crafting.orders.archive import export_order, import_order
 from test_executor import OneLevel, BLOCK, IRON
 from test_order_recovery import RestartMixin
 
