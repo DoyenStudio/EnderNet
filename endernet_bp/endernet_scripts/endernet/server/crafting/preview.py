@@ -353,9 +353,7 @@ class PreviewService(object):
             return CommandResult.rejected(request_id, [
                 BlockReason(
                     Reason.NO_CAPACITY,
-                    u"这个会话已经有 %d 份预览在算（上限 %d），"
-                    u"先等它们算完或关掉预览"
-                    % (len(live), self.policy.max_per_session),
+                    u"正在计算的预览太多，请稍后再试",
                 )
             ])
         if len(self._jobs) >= self.policy.max_per_network:
@@ -363,8 +361,7 @@ class PreviewService(object):
             return CommandResult.rejected(request_id, [
                 BlockReason(
                     Reason.NO_CAPACITY,
-                    u"这张网络已经有 %d 份预览在算（上限 %d）"
-                    % (len(self._jobs), self.policy.max_per_network),
+                    u"正在计算的预览太多，请稍后再试",
                 )
             ])
 
@@ -399,7 +396,7 @@ class PreviewService(object):
             return CommandResult.rejected(request_id, [
                 BlockReason(
                     Reason.SESSION_INVALID,
-                    u"这份预览不属于当前会话，不能取消",
+                    u"预览已失效，请重新预览",
                 )
             ])
         job.job.cancel(u"调用方取消了预览")
@@ -508,7 +505,7 @@ class PreviewService(object):
         if (job.session_id and job.session_id != session_id) or \
                 (job.player_id and job.player_id != player_id):
             return None, None, [
-                BlockReason(Reason.SESSION_INVALID, u"这份预览不属于当前会话")
+                BlockReason(Reason.SESSION_INVALID, u"预览已失效，请重新预览")
             ]
         #: 预览是**每网络一份**的，因此「这张网络吗」由 `self.network_id`
         #: 回答；`CommandSource` 上没有网络字段（会话已经是权威，命令不再
@@ -516,7 +513,7 @@ class PreviewService(object):
         #: 网络标识可能变，那正是这条要拦的情形。
         if job.network_id and self.network_id and job.network_id != self.network_id:
             return None, None, [
-                BlockReason(Reason.WRONG_NETWORK, u"这份预览是在另一张网络上算的")
+                BlockReason(Reason.WRONG_NETWORK, u"预览已失效，请重新预览")
             ]
         #: 目标与数量**必须与预览时逐字相同**。这里用的是**预览记下来的**
         #: 那一对，不是客户端这回带上来的——客户端回显只用于比对，
@@ -525,8 +522,7 @@ class PreviewService(object):
             return None, None, [
                 BlockReason(
                     Reason.BAD_PARAMETER,
-                    u"下单的目标或数量与这份预览对不上（预览的是 %s × %d）"
-                    % (job.target.canonical(), job.amount),
+                    u"订单与预览不一致，请重新预览",
                 )
             ]
         if self._tick - job.created_tick >= self.policy.ttl_ticks:

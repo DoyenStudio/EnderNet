@@ -2235,7 +2235,7 @@ class TestQuietSlotNotices(PanelFixture):
         router.notice(empty, "inv_merge")
         router.details.notice.assert_not_called()
         uncertain = {"status": "rejected", "reasons": [{"code": protocol.Reason.CONTAINER_UNCERTAIN,
-                                                        "detail": "持物交易等待核对"}]}
+                                                        "detail": "持有的物品状态未确认，请稍后再试"}]}
         router.notice(uncertain, "slot_click")
         router.notice(empty, "craft_import")
         self.assertEqual(router.details.notice.call_count, 2)

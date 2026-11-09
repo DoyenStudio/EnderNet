@@ -387,8 +387,8 @@ class TestErrorsAreContained(ApplicationFixture):
         self.assertIn(Reason.INTERNAL, result.reason_codes())
         self.assertEqual(self.application.stats["errors"], 1)
 
-    def test_the_error_detail_names_the_exception_type(self):
-        """缺陷要看得见：堆栈由调用方记，类型与消息在这里。"""
+    def test_the_exception_goes_to_diagnostics_not_the_player(self):
+        """缺陷要看得见，但不给玩家看：类型与消息在诊断里。"""
 
         class Boom(object):
             def submit(self, command):
@@ -400,8 +400,10 @@ class TestErrorsAreContained(ApplicationFixture):
         runtime = self.runtime_for(self.A_DEV)
         runtime.master = Boom()
         result = self.submit(request_id="boom")
-        self.assertIn("ValueError", result.reasons[0].detail)
-        self.assertIn("坏参数", result.reasons[0].detail)
+        self.assertNotIn("ValueError", result.reasons[0].detail)
+        last_error = self.application.last_error
+        self.assertIn("ValueError", last_error)
+        self.assertIn("坏参数", last_error)
 
 
 class TestReadOnlyFacade(RoutedFixture):

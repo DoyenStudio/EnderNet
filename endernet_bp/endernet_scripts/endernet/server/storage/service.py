@@ -362,6 +362,9 @@ class StorageService(NetworkService):
             "requests": 0,
             "refused": 0,
         }
+        #: 最近一次参数错误或配方来源异常的类型与消息。玩家只看到通用说明，
+        #: 排查看这里。
+        self.last_error = ""
 
     # -- NetworkService 入口 -------------------------------------------
 
@@ -744,6 +747,7 @@ class StorageService(NetworkService):
                 "publish_version": self.publish_version,
                 "clock_tick": self._clock_tick,
                 "ledger": self._ledger.stats,
+                "last_error": self.last_error,
                 # 接口那半边的内容在 `bootstrap.io_diagnostics()` 里，这里不抄
                 # 一份——抄一份的代价是两处迟早对不上（同 `energy_diagnostics`
                 # 把逐设备明细留在 `status_view()` 的理由）。
@@ -1617,8 +1621,9 @@ class StorageService(NetworkService):
         try:
             return handler(command, payload)
         except (KeyError, TypeError, ValueError) as error:
+            self.last_error = "%s: %s" % (type(error).__name__, error)
             return self._reject(
-                command, Reason.BAD_PARAMETER, "动作 %s 的参数不合法：%s" % (action, error)
+                command, Reason.BAD_PARAMETER, "操作失败，请重试"
             )
 
     def _reject(self, command, code, detail):
@@ -2393,10 +2398,11 @@ class StorageService(NetworkService):
         try:
             return list(self.recipes.recipes_for(output_key)), None
         except Exception as error:
+            self.last_error = "%s: %s" % (type(error).__name__, error)
             return None, CommandResult.blocked(
                 "",
                 [BlockReason(Reason.NO_ADAPTER,
-                             "工作台配方来源不可用：%s" % (error,))],
+                             "暂时读不到配方，请稍后再试")],
             )
 
     def _retained_recipe(self, grid):
@@ -2462,7 +2468,7 @@ class StorageService(NetworkService):
 
         recipes, blocked = self._craft_recipes_for(output)
         if blocked is not None:
-            return blocked
+            return CommandResult.blocked(command.request_id, blocked.reasons)
         if recipes is None:
             return self._reject(command, Reason.NO_ADAPTER, "存储服务未接入配方来源")
         if not recipes:
@@ -2781,8 +2787,7 @@ class StorageService(NetworkService):
         if expected != state.revision:
             return self._reject(
                 command, Reason.STALE_VERSION,
-                "配置已经被改过（当前修订 %d），等界面同步后再改"
-                % (state.revision,),
+                "样板配置刚被修改，请稍后再试",
             )
         return None
 
@@ -2841,14 +2846,15 @@ class StorageService(NetworkService):
             return None, None
         if self.recipes is None:
             return None, CommandResult.blocked(
-                "", [BlockReason(Reason.NO_ADAPTER, "存储服务未接入配方来源")],
+                "", [BlockReason(Reason.NO_ADAPTER, "暂时读不到配方，请稍后再试")],
             )
         try:
             return detect_crafting_output(
                 state.config.cells(GROUP_SOURCE), self.recipes), None
         except Exception as error:
+            self.last_error = "%s: %s" % (type(error).__name__, error)
             return None, CommandResult.blocked(
-                "", [BlockReason(Reason.NO_ADAPTER, "配方来源不可用：%s" % (error,))],
+                "", [BlockReason(Reason.NO_ADAPTER, "暂时读不到配方，请稍后再试")],
             )
 
     def _cmd_template_mode(self, command, payload):
@@ -2897,7 +2903,7 @@ class StorageService(NetworkService):
             return self._reject(command, Reason.BAD_PARAMETER, "产物必须是物品")
         recipes, blocked = self._craft_recipes_for(output)
         if blocked is not None:
-            return blocked
+            return CommandResult.blocked(command.request_id, blocked.reasons)
         if recipes is None:
             return self._reject(command, Reason.NO_ADAPTER, "未接入配方来源")
         digest = payload.get("recipe")
@@ -3045,9 +3051,9 @@ class StorageService(NetworkService):
             else:
                 stack = PatternStack(key, count)
         except PatternValidationError as error:
-            return "%s（%s）" % (error.detail or "这个物品不能进样板", error.code)
+            return error.detail or "这个物品不能放进样板"
         except (TypeError, ValueError) as error:
-            return "这个物品不能进样板：%s" % (error,)
+            return "这个物品不能放进样板"
         return None
 
     def _cmd_template_clear(self, command, payload):
@@ -3141,31 +3147,30 @@ class StorageService(NetworkService):
             return gate
         preview, blocked = self._template_detect(state)
         if blocked is not None:
-            return blocked
+            return CommandResult.blocked(command.request_id, blocked.reasons)
         try:
             definition = pattern_from_config(
                 state.config, preview, self.template_policy)
         except PatternValidationError as error:
             return self._reject(
                 command, Reason.TEMPLATE_CONFIG_INVALID,
-                "当前配置还构不成一块样板：%s（%s）"
-                % (error.detail or "配置不完整", error.code),
+                error.detail or "样板配置不完整",
             )
 
         entry = state.slots.entry(INPUT_SLOT)
         cost = self.template_policy.encode_input_cost
         if entry is None:
             return self._reject(
-                command, Reason.OUT_OF_RANGE, "输入槽是空的，先放一块工厂样板",
+                command, Reason.OUT_OF_RANGE, "输入槽缺少工厂样板",
             )
         if entry[0].name != TEMPLATE_PANEL_ITEM_ID:
             return self._reject(
                 command, Reason.PATTERN_KIND_MISMATCH,
-                "输入槽里不是工厂样板（是 %s）" % (entry[0].name,),
+                "输入槽只能放空白工厂样板",
             )
         if entry[1] < cost:
             return self._reject(
-                command, Reason.OUT_OF_RANGE, "输入槽里的样板不够扣",
+                command, Reason.OUT_OF_RANGE, "输入槽里的工厂样板不足",
             )
 
         key, _item = encode_template_item(definition, name_of=self.templates.name_of)
@@ -3174,11 +3179,11 @@ class StorageService(NetworkService):
         if result is not None and result[0] != key:
             return self._reject(
                 command, Reason.SLOT_OCCUPIED,
-                "产物槽里是另一块样板；先取走再制作",
+                "无法与输出槽内的样板堆叠，请先取出",
             )
         if room < self.template_policy.encode_output_count:
             return self._reject(
-                command, Reason.NO_CAPACITY, "产物槽放不下这一块样板",
+                command, Reason.NO_CAPACITY, "输出槽放不下这一块样板",
             )
 
         added = state.slots.add_at(
@@ -3188,7 +3193,7 @@ class StorageService(NetworkService):
             state.slots.take_at(RESULT_SLOT, added)
             self.craft_undo_failures += 1
             return self._reject(
-                command, Reason.NO_CAPACITY, "产物槽放不下这一块样板",
+                command, Reason.NO_CAPACITY, "输出槽放不下这一块样板",
             )
         state.slots.take_at(INPUT_SLOT, cost)
         return CommandResult.ok(command.request_id, {
@@ -3205,7 +3210,7 @@ class StorageService(NetworkService):
             return None, ""
         if item_key.name in ITEM_TEMPLATES:
             return (Reason.PATTERN_KIND_MISMATCH,
-                    "输入槽只收工厂样板，%s 是另一种样板" % (item_key.name,))
+                    "输出槽只能放入工厂样板，%s 是另一种样板" % (item_key.name,))
         return (Reason.PATTERN_NOT_A_TEMPLATE,
                 "%s 不是本模组的样板" % (item_key.name,))
 
@@ -3243,10 +3248,10 @@ class StorageService(NetworkService):
         current = state.slots.entry(INPUT_SLOT)
         if current is not None and current[0] != item_key:
             return self._reject(
-                command, Reason.SLOT_OCCUPIED, "输入槽里已经是另一块样板")
+                command, Reason.SLOT_OCCUPIED, "输入槽里已是另一块样板")
         room = self.templates.room_for(state, INPUT_SLOT, item_key)
         if room <= 0:
-            return self._reject(command, Reason.SLOT_OCCUPIED, "输入槽已经满了")
+            return self._reject(command, Reason.SLOT_OCCUPIED, "输入槽已满")
         want = room
         if self.template_policy.device_slot_put_count == PUT_COUNT_ONE:
             want = 1
@@ -3260,8 +3265,7 @@ class StorageService(NetworkService):
             return self._reject(
                 command,
                 receipt.reason or Reason.INSUFFICIENT_STOCK,
-                "这块样板没能从背包里取出来（%s）"
-                % (receipt.reason or "端点未给原因",),
+                "未能从背包取出此样板，请检查背包",
             )
         added = state.slots.add_at(INPUT_SLOT, item_key, receipt.moved)
         if added < receipt.moved:
@@ -3330,7 +3334,7 @@ class StorageService(NetworkService):
             return self._reject(
                 command,
                 receipt.reason or Reason.NO_CAPACITY,
-                "这块样板没能放进背包（%s）" % (receipt.reason or "端点未给原因",),
+                "背包放不下这块样板",
             )
         state.slots.take_at(index, receipt.moved)
         return CommandResult.ok(command.request_id, {
@@ -3347,7 +3351,7 @@ class StorageService(NetworkService):
             return error
         cursor = self.inventories.cursor_of(command.source.player_id)
         if cursor is None or not cursor.return_to_player(bag.adapter):
-            return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持物等待归还")
+            return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持有的物品状态未确认，请稍后再试")
         return CommandResult.ok(command.request_id, {"cursor": cursor.snapshot()})
 
     def _cmd_cursor_drop(self, command, payload):
@@ -3365,7 +3369,7 @@ class StorageService(NetworkService):
         if not hand["count"]:
             return self._reject(command, Reason.BAD_PARAMETER, "手上没有物品")
         if not cursor.drop(1 if options.get("count") == "one" else None):
-            return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持物等待核对")
+            return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持有的物品状态未确认，请稍后再试")
         return CommandResult.ok(command.request_id, {"cursor": cursor.snapshot()})
 
     def _cmd_grid_move(self, command, payload):
@@ -3431,7 +3435,7 @@ class StorageService(NetworkService):
         if hand["revision"] != config["revision"] or not hand["key"]:
             return self._reject(command, Reason.STALE_VERSION, "持物已变化")
         if cursor.primitives.cursor_record(command.source.player_id).get("pending"):
-            return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持物交易等待核对")
+            return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持有的物品状态未确认，请稍后再试")
         devices = {}
         for entry in config["placements"]:
             area = entry["target"]
@@ -3509,7 +3513,7 @@ class StorageService(NetworkService):
                     cursor.reconcile(DeviceSlots(slots, bag.adapter.stack_limit_of),
                                      area, str(command.device_ref))
             if cursor.primitives.cursor_record(owner).get("pending"):
-                return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持物交易等待核对")
+                return self._reject(command, Reason.CONTAINER_UNCERTAIN, "持有的物品状态未确认，请稍后再试")
         hand = cursor.snapshot()
         options = payload.get("config") or {}
         mode = options.get("gesture")
@@ -3592,7 +3596,7 @@ class StorageService(NetworkService):
             if mode != "left" or area not in ("bag", "grid"):
                 return self._reject(command, Reason.SLOT_OCCUPIED, "槽位已占用")
             if not cursor.exchange(other.adapter, other.slot, area, owner if area == "bag" else str(command.device_ref)):
-                return self._reject(command, Reason.CONTAINER_UNCERTAIN, "交换尚待核对")
+                return self._reject(command, Reason.CONTAINER_UNCERTAIN, "物品状态未确认，请重新打开界面检查")
             result = CommandResult.ok(command.request_id, {"moved": hand["count"],
                                       "reverse": key.to_dict()})
         else:
@@ -3625,7 +3629,7 @@ class StorageService(NetworkService):
                 hand_after = item_dict_from_key(resource, hand_count) if hand_count else None
                 identity = owner if area == "bag" else str(command.device_ref)
                 if not cursor.replace_pair(other.adapter, other.slot, area, identity, after, hand_after):
-                    return self._reject(command, Reason.CONTAINER_UNCERTAIN, "槽位变化尚待核对")
+                    return self._reject(command, Reason.CONTAINER_UNCERTAIN, "物品状态未确认，请重新打开界面检查")
                 result = CommandResult.ok(command.request_id, {"moved": moved})
             else:
                 bag_before = bag.inventory_view()["slots"] if target is bag else ()
@@ -3671,7 +3675,7 @@ class StorageService(NetworkService):
             after = dict(data, count=data["count"] - moved) if moved < data["count"] else None
             if not cursor.replace_pair(bag.adapter, source, "bag", owner, after,
                                        item_dict_from_key(key, count + moved)):
-                result = self._reject(command, Reason.CONTAINER_UNCERTAIN, "背包补叠尚待核对")
+                result = self._reject(command, Reason.CONTAINER_UNCERTAIN, "物品状态未确认，请重新打开界面检查")
                 break
             count += moved
             taken_slots.append(source)
@@ -3697,7 +3701,7 @@ class StorageService(NetworkService):
                     or item_key_from_dict(current) != key
                     or not cursor.replace_pair(bag.adapter, slot, "bag", owner,
                                                item_dict_from_key(key, landing), None)):
-                result = self._reject(command, Reason.CONTAINER_UNCERTAIN, "背包补叠落点尚待核对")
+                result = self._reject(command, Reason.CONTAINER_UNCERTAIN, "物品状态未确认，请重新打开界面检查")
         if to_slot and not result.is_applied() and collected:
             cursor.return_to_player(bag.adapter)
         result.payload.update(cursor=cursor.snapshot(), key=key.to_dict(), bag_after=bag.slot_view(slot),

@@ -345,8 +345,7 @@ class OrderExecutor(object):
             return _blocked(
                 request_id,
                 Reason.ORDER_NO_CAPACITY,
-                u"这张网络已经有 %d 张未完成的订单（上限 %d）；"
-                u"先完成或取消一些再下单" % (live, self.policy.max_orders),
+                u"未完成的订单已达上限（%d 个），请等待完成或取消一些" % (self.policy.max_orders,),
             )
 
         tick = int(getattr(command.source, "received_tick", 0) or 0)
@@ -369,7 +368,7 @@ class OrderExecutor(object):
             # 也永远不会被推进的订单记录，在 11 的列表里与一张真的排着队的
             # 订单长得一模一样。
             reasons = list(order.blockers) or [
-                BlockReason(Reason.INTERNAL, u"订单在提交阶段就失败了")
+                BlockReason(Reason.INTERNAL, u"下单失败，请重试")
             ]
             service.orders.remove(order.order_id)
             return CommandResult.rejected(request_id, reasons)

@@ -365,8 +365,9 @@ class TestRecoveryGate(unittest.TestCase):
         gate.note_restored(False, "载荷读不动")
         self.assertEqual(gate.phase, PHASE_LOADING)
         self.assertFalse(gate.is_open())
-        self.assertIn("不把读不出的存档当成空存档", gate.blocker())
+        self.assertIn("存档读取失败", gate.blocker())
         self.assertFalse(gate.diagnostics()["open"])
+        self.assertEqual(gate.diagnostics()["detail"], "载荷读不动")
 
     def test_steps_are_a_reproducible_record(self):
         gate = RecoveryGate()

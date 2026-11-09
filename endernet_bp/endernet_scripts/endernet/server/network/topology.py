@@ -162,21 +162,21 @@ class ComponentInfo(_SortedMixin):
     def reason_list(self):
         out = list(self.reasons)
         if self.pending:
-            out.append(BlockReason(Reason.REBUILDING, "分量正在重建"))
+            out.append(BlockReason(Reason.REBUILDING, "网络正在刷新，请稍候"))
         if self.controller_state == ControllerState.NONE:
-            out.append(BlockReason(Reason.NO_CONTROLLER, "分量内没有控制器"))
+            out.append(BlockReason(Reason.NO_CONTROLLER, "网络中没有控制器"))
         elif self.controller_state == ControllerState.CONFLICT:
             out.append(
                 BlockReason(
                     Reason.CONTROLLER_CONFLICT,
-                    "分量内有 %d 个控制器实例" % (len(self.controllers),),
+                    "网络中只能有1个单独的控制器结构，当前有 %d 个" % (len(self.controllers),),
                 )
             )
         elif self.controller_state == ControllerState.UNKNOWN and self.partial:
             out.append(
                 BlockReason(
                     Reason.TOPOLOGY_UNKNOWN,
-                    "还有 %d 个成员未加载，控制器数量未确认"
+                    "网络中有 %d 台设备所在区块未加载"
                     % (len(self.members) - len(self.loaded_members),),
                 )
             )
@@ -1614,12 +1614,12 @@ class TopologyService(object):
         component = snapshot.component_of(ref.node_key)
         if component is None or snapshot.is_pending(ref.node_key):
             return TopologyVerdict(
-                False, "blocked", [BlockReason(Reason.REBUILDING, "分量正在重建或尚未归属")],
+                False, "blocked", [BlockReason(Reason.REBUILDING, "网络正在刷新，请稍候")],
                 self.version, None, (), ControllerState.UNKNOWN,
             )
         if component.pending:
             return TopologyVerdict(
-                False, "blocked", [BlockReason(Reason.REBUILDING, "分量正在重建")],
+                False, "blocked", [BlockReason(Reason.REBUILDING, "网络正在刷新，请稍候")],
                 self.version, component.component_id, snapshot.domain_ids_of(ref.node_key),
                 ControllerState.UNKNOWN,
             )

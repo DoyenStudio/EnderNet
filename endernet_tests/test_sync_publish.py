@@ -1937,6 +1937,8 @@ class TestTerminalCommands(Fixture):
         self.assertEqual(reply.message.code, Reason.INTERNAL)
         self.assertEqual(reply.message.request_id, "c1")
         self.assertEqual(self.hub.stats["command_errors"], 1)
+        self.assertNotIn("boom", reply.message.detail)
+        self.assertIn("boom", self.hub.diagnostics()["last_command_error"])
 
     def test_an_executor_returning_the_wrong_type_is_never_a_success(self):
         """注入接错时**绝不假装成功**：静默当成 ok 会让界面显示一次

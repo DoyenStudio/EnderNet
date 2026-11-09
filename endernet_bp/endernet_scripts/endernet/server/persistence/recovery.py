@@ -127,9 +127,8 @@ class RecoveryGate(object):
                 return self.network_blockers.get(node_key_text(master_key), "")
             return ""
         if self.restore_ok is False:
-            return "存档读取失败，已拒绝新存取（不把读不出的存档当成空存档）：%s" % (
-                self.detail,)
-        return "恢复尚未完成（当前阶段：%s）" % (PHASE_TEXT.get(self.phase, self.phase),)
+            return "网络存档读取失败，暂时无法使用"
+        return "网络正在加载，请稍后再试"
 
     def diagnostics(self):
         # type: () -> dict

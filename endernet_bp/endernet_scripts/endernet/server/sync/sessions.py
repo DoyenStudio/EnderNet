@@ -433,17 +433,17 @@ class SessionRegistry(object):
 
         if not context.player_id:
             return SessionCheckResult.refused(
-                Reason.SESSION_INVALID, "无法确认玩家身份（缺少可信来源）"
+                Reason.SESSION_INVALID, "无法打开界面，请重试"
             )
 
         if view_kind not in VIEW_KINDS:
             return SessionCheckResult.refused(
-                Reason.UNSUPPORTED, "未知的视图种类 %r" % (view_kind,)
+                Reason.UNSUPPORTED, "无法打开界面，请重试"
             )
         if view_kind not in VIEW_KINDS_WITH_PRODUCER:
             return SessionCheckResult.refused(
                 Reason.UNSUPPORTED,
-                "%s 视图尚未接入（依赖 11-06/11-09）" % (view_kind,),
+                "此界面暂不可用",
             )
 
         return self._check_target(context, request.device_ref, request.dimension)
@@ -468,7 +468,7 @@ class SessionRegistry(object):
         """
         if context is None:
             return SessionCheckResult.refused(
-                Reason.WRONG_NETWORK, "该终端当前不属于任何网络"
+                Reason.WRONG_NETWORK, "该设备未连接到网络"
             )
         return self._check_target(context, session.device_ref, session.dimension)
 
@@ -482,49 +482,47 @@ class SessionRegistry(object):
         """
         if context.record_ref is None:
             return SessionCheckResult.refused(
-                Reason.DEVICE_GONE, "该位置上没有本模组的方块实例"
+                Reason.DEVICE_GONE, "设备已被拆除，请重新打开界面"
             )
         if not device_ref.matches(context.record_ref):
             # 位置相同、代次不同 = 方块被拆掉又在原地放了一个。
             return SessionCheckResult.refused(
                 Reason.STALE_INSTANCE,
-                "终端实例已被替换（请求 %d，当前 %d）"
-                % (device_ref.generation, context.record_ref.generation),
+                "设备已被替换，请重新打开界面",
             )
 
         if context.player_dimension is None:
             return SessionCheckResult.refused(
-                Reason.SESSION_INVALID, "无法确认玩家所在维度"
+                Reason.SESSION_INVALID, "无法打开界面，请重试"
             )
         if context.player_dimension != dimension:
             return SessionCheckResult.refused(
                 Reason.SESSION_INVALID,
-                "维度不符（玩家 %r，请求 %r）" % (context.player_dimension, dimension),
+                "不在同一维度，无法使用该设备",
             )
         if context.player_dimension != context.record_ref.node_key.dimension:
             return SessionCheckResult.refused(
                 Reason.SESSION_INVALID,
-                "玩家与终端不在同一维度（%r / %r）"
-                % (context.player_dimension, context.record_ref.node_key.dimension),
+                "不在同一维度，无法使用该设备",
             )
 
         if not self._position_ok(context):
             return SessionCheckResult.refused(
                 Reason.OUT_OF_RANGE,
-                "超出交互距离 %g" % (self.policy.max_interaction_distance,),
+                "距离设备太远 (最远 %g 格)" % (self.policy.max_interaction_distance,),
             )
 
         if context.network_id is None:
             return SessionCheckResult.refused(
-                Reason.WRONG_NETWORK, "该终端当前不属于任何网络"
+                Reason.WRONG_NETWORK, "该设备未连接到网络"
             )
         if context.master_instance_id is None:
             return SessionCheckResult.refused(
-                Reason.MASTER_UNLOADED, "该网络当前没有主控接管"
+                Reason.MASTER_UNLOADED, "网络中没有可用的控制器"
             )
         if not context.network_workable:
             return SessionCheckResult.refused(
-                Reason.WRONG_NETWORK, "该网络当前不允许工作"
+                Reason.WRONG_NETWORK, "网络当前无法工作，请检查控制器、能源与带宽"
             )
         return SessionCheckResult.accepted()
 

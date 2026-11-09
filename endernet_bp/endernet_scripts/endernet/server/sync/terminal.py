@@ -176,12 +176,12 @@ _RUNTIME_CLOSE_REASONS = {
 #: 中文。文本的唯一真源在服务端（`zh_CN.lang` 只管标识符 → 显示名），与
 #: `device_status` 的原因文本同一条口径。
 _GONE_DETAILS = {
-    CLOSE_NETWORK_RETIRED: "所属网络已退役，请重新打开界面",
-    CLOSE_NETWORK_CLOSED: "网络已关闭，请重新打开界面",
-    CLOSE_MASTER_LOST: "网络主控已失去，请重新打开界面",
+    CLOSE_NETWORK_RETIRED: "网络已变动，请重新打开界面",
+    CLOSE_NETWORK_CLOSED: "网络已暂停工作，请重新打开界面",
+    CLOSE_MASTER_LOST: "网络控制器已被拆除或卸载，请重新打开界面",
     #: `_drop_stale_devices` 专用。它不走 `_RUNTIME_CLOSE_REASONS`（那条路
     #: 关的是**整网**），所以单独列在这里。
-    CLOSE_DEVICE_REPLACED: "终端已被替换，请重新打开界面",
+    CLOSE_DEVICE_REPLACED: "设备已被拆除或替换，请重新打开界面",
 }
 
 
@@ -668,6 +668,8 @@ class TerminalSyncHub(object):
         #: 是个字符串令牌（`runtimes.tick` 就用 `"manager#N"`），拿它做
         #: TTL 与退避的算术会静默出错。
         self._frame = 0
+        #: 最近一次执行异常的类型与消息。玩家只看到「操作失败」，排查看这里。
+        self.last_command_error = ""
         self.stats = {
             "frames": 0,
             "windows": 0,
@@ -821,7 +823,7 @@ class TerminalSyncHub(object):
                 "",
                 request_id,
                 Reason.SESSION_INVALID,
-                "会话不存在或已关闭",
+                "界面已失效，请重新打开",
             )
         if session.player_id != player_id:
             # 别人的会话：**不告诉他这条会话存在**，与「不存在」同一个回答。
@@ -830,7 +832,7 @@ class TerminalSyncHub(object):
                 "",
                 request_id,
                 Reason.SESSION_INVALID,
-                "会话不存在或已关闭",
+                "界面已失效，请重新打开",
             )
         if kind == MSG_SESSION_CLOSE:
             # 关会话**不做复核**：客户端说要走，那就让它走。复核失败也只会
@@ -897,7 +899,7 @@ class TerminalSyncHub(object):
         if context is None:
             self.stats["sessions_refused"] += 1
             return self._error(
-                "", request.request_id, Reason.WRONG_NETWORK, "该终端当前不属于任何网络"
+                "", request.request_id, Reason.WRONG_NETWORK, "该设备未连接到网络"
             )
         session, result = self.registry.open(envelope, context, frame)
         if session is None:
@@ -1071,11 +1073,12 @@ class TerminalSyncHub(object):
             result = self._submit(command)
         except Exception as error:
             self.stats["command_errors"] += 1
+            self.last_command_error = "%s: %s" % (type(error).__name__, error)
             return self._error(
                 session.session_id,
                 message.request_id,
                 Reason.INTERNAL,
-                "命令执行异常：%s" % (error,),
+                "操作失败，请重试",
             )
         if not isinstance(result, CommandResult):
             # 注入接错时的兜底。静默当成成功会让界面显示一次没发生的存取，
@@ -2096,6 +2099,7 @@ class TerminalSyncHub(object):
         # type: () -> dict
         report = dict(self.stats)
         report["frame"] = self._frame
+        report["last_command_error"] = self.last_command_error
         report["networks"] = {}
         for network_id in sorted(self._subs):
             subs = self._subs[network_id]
