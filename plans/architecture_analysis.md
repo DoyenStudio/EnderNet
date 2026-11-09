@@ -270,7 +270,7 @@ flowchart TD
 
 状态诊断会话在验证玩家权限、维度、距离和设备实例后即可读取，不要求网络先可工作。未收到有效快照、状态过期或重建期间，状态栏显示红色“离线”，详情解释“等待状态确认/网络重建中”；不得显示第三种状态栏文本或保留过期绿色结果。窗口可在离线时打开，并随同一设备的新快照更新；连点只打开一个实例，关闭设备界面、设备被替换或玩家离开时关闭详情并清理订阅。控制器界面不自动挂载这套设备状态栏和弹窗流程。
 
-2026-09-24 已检查现有资源：`storage_driver.json` 和 `bus_item_io.json` 都在 `content/root_panel/bg/main` 下实例化 `stat_bar`；公共模板含 `stat_icon`、`stat_text`、`interact_btn`。`endernet_windows.json` 已在 `_ui_defs.json` 登记，详情控件是 panel，内有 `controller_conn_stat`、`network_conn_stat` 和关闭按钮，但尚未实例化到这两个设备界面。当前状态文本/颜色是静态占位，按钮使用编辑器占位事件，客户端也尚无对应 UI 处理类。后续按任务 11 补充实际挂载和 ToolDelta 绑定；代码检查不等于游戏内交互验证。
+2026-09-24 已检查现有资源：`storage_driver.json` 和 `bus_item_io.json` 都在 `content/root_panel/bg/main` 下实例化 `stat_bar`；公共模板含 `stat_icon`、`stat_text`、`interact_btn`。`windows.json` 已在 `_ui_defs.json` 登记，详情控件是 panel，内有 `controller_conn_stat`、`network_conn_stat` 和关闭按钮，但尚未实例化到这两个设备界面。当前状态文本/颜色是静态占位，按钮使用编辑器占位事件，客户端也尚无对应 UI 处理类。后续按任务 11 补充实际挂载和 ToolDelta 绑定；代码检查不等于游戏内交互验证。
 
 原版容器、其他模组物品接口、流体接口、transferlib（radium）公共 FE 接口都放在适配层。流体和 FE 的接入协议、转换比例不能从 AE2 推导，也不能认为 ToolDelta 已提供全部能力。
 

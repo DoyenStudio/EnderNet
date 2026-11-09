@@ -127,7 +127,7 @@ RECEIPT_MEMORY = 8
 
 # 宿主预制的配方候选窗口及其 collection 滚动区域。
 RECIPE_WINDOW_ATTRIBUTE = "_endernet_recipe_choice_window"
-RECIPE_WINDOW_DEFINITION = "crafting_terminal_panel_ui.load_recipe_window"
+RECIPE_WINDOW_DEFINITION = "endernet_crafting_terminal_panel.load_recipe_window"
 RECIPE_WINDOW_NAME = "endernet_recipe_choice_window"
 RECIPE_SCROLL_PATH = "/" + RECIPE_WINDOW_NAME + "/scroll_view"
 
@@ -814,7 +814,7 @@ class RecipeChoiceWindow(object):
             cancel()
 
 
-@RegistToolDeltaScreen("crafting_terminal_panel_ui.main")
+@RegistToolDeltaScreen("endernet_crafting_terminal_panel.main")
 class CraftingPanel(RecipeChoiceBindings, TerminalPanelBase):
     """合成终端：通用终端的一切 + 九宫格工作台。
 

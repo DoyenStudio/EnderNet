@@ -1295,13 +1295,13 @@ class TestJsonContract(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.panel = cls.load("template_terminal_panel.json")
-        cls.common_panel = cls.load("common_terminal_panel.json")
-        cls.windows = cls.load("endernet_windows.json")
+        cls.panel = cls.load("terminal/template_terminal_panel.json")
+        cls.common_panel = cls.load("terminal/common_terminal_panel.json")
+        cls.windows = cls.load("common/windows.json")
 
     @staticmethod
     def load(name):
-        path = os.path.join(ROOT, "endernet_rp", "ui", name)
+        path = os.path.join(ROOT, "endernet_rp", "ui", "endernet", *name.split("/"))
         with open(path, encoding="utf-8") as handle:
             from ui_terminal_templates import inline_terminal_controls
             return inline_terminal_controls(json.load(handle))
@@ -1372,11 +1372,11 @@ class TestJsonContract(unittest.TestCase):
         self.assertEqual(panel["source_grid"]["collection_name"],
                          COLLECTION_OF[SURFACE_SOURCE])
         self.assertEqual(panel["source_grid"]["grid_item_template"],
-                         "template_terminal_panel_ui.template_source_cell")
+                         "endernet_template_terminal_panel.template_source_cell")
         self.assertEqual(panel["outputs_grid"]["collection_name"],
                          COLLECTION_OF[SURFACE_OUTPUTS])
         self.assertEqual(panel["outputs_grid"]["grid_item_template"],
-                         "template_terminal_panel_ui.template_outputs_cell")
+                         "endernet_template_terminal_panel.template_outputs_cell")
         for name, surface in (("template_input_slot", SURFACE_INPUT),
                               ("template_output_slot", SURFACE_RESULT)):
             grid = panel[name]
@@ -1385,21 +1385,21 @@ class TestJsonContract(unittest.TestCase):
             self.assertEqual(grid["collection_name"], COLLECTION_OF[surface])
             self.assertEqual(
                 grid["grid_item_template"],
-                "template_terminal_panel_ui.template_%s_cell" % surface)
+                "endernet_template_terminal_panel.template_%s_cell" % surface)
             # 几何必须原样保留（交接第 3 节记的偏移）。
             self.assertEqual("top_right", grid["anchor_from"], name)
 
     def test_the_network_list_is_the_same_wiring_as_the_common_terminal(self):
-        """本面板持有**自己的一份**薄包装，不指向 `common_terminal_panel_ui.*`
+        """本面板持有**自己的一份**薄包装，不指向 `endernet_common_terminal_panel.*`
         ——跨面板耦合会让改一个界面动到另一个。格子那一份要与通用终端逐字段
         相同，否则「同一个列表」在两个界面上会有两种行为。"""
         ours = self.content()
         self.assertEqual(
             ours["terminal_items_scroll"]["$scrolling_content"],
-            "template_terminal_panel_ui.terminal_items_grid")
+            "endernet_template_terminal_panel.terminal_items_grid")
         self.assertEqual(
             ours["terminal_items_scroll"]["$scroll_background_image_control"],
-            "template_terminal_panel_ui.terminal_scroll_background")
+            "endernet_template_terminal_panel.terminal_scroll_background")
         common_grid = self.common_panel["terminal_items_grid"]
         ours_grid = dict(self.panel["terminal_items_grid"])
         ours_grid["grid_item_template"] = common_grid["grid_item_template"]
@@ -1408,7 +1408,7 @@ class TestJsonContract(unittest.TestCase):
         self.assertEqual("terminal_slots", grid["collection_name"])
         self.assertEqual([9, 2], grid["grid_dimensions"])
         self.assertEqual(grid["grid_item_template"],
-                         "template_terminal_panel_ui.terminal_slot")
+                         "endernet_template_terminal_panel.terminal_slot")
         self.assertEqual([{"binding_condition": "always",
                            "binding_name": "#EnderNetTerminal.count",
                            "binding_name_override": "#maximum_grid_items",
@@ -1513,7 +1513,7 @@ class TestJsonContract(unittest.TestCase):
                   "$scroll_box_mouse_image_control",
                   "$scroll_box_touch_image_control",
                   "$scroll_track_image_control")
-        prefix = "template_terminal_panel_ui."
+        prefix = "endernet_template_terminal_panel."
         references = []
         missing = []
         for name, node in self.every_control(self.panel["content"]):
@@ -1526,12 +1526,12 @@ class TestJsonContract(unittest.TestCase):
                     missing.append((name, field, value))
         self.assertEqual([], missing, "引用了本文件里没有定义的模板")
         # 至少要扫到那几处，否则这条用例是一句空话。
-        for expected in ("template_terminal_panel_ui.template_source_cell",
-                         "template_terminal_panel_ui.template_outputs_cell",
-                         "template_terminal_panel_ui.template_input_cell",
-                         "template_terminal_panel_ui.template_result_cell",
-                         "template_terminal_panel_ui.terminal_items_grid",
-                         "template_terminal_panel_ui.terminal_scroll_background"):
+        for expected in ("endernet_template_terminal_panel.template_source_cell",
+                         "endernet_template_terminal_panel.template_outputs_cell",
+                         "endernet_template_terminal_panel.template_input_cell",
+                         "endernet_template_terminal_panel.template_result_cell",
+                         "endernet_template_terminal_panel.terminal_items_grid",
+                         "endernet_template_terminal_panel.terminal_scroll_background"):
             self.assertIn(expected, references, expected)
 
     def python_collection(self, surface):

@@ -20,9 +20,9 @@ from . import slot_layout
 from .universal_importer_config import save_config
 
 
-UI_DEFINITION = "endernet_universal_importer_ui.main"
-PANEL_DEFINITION = "endernet_universal_importer_ui.overlay_panel"
-SLOT_DEFINITION = "endernet_universal_importer_ui.slot_section"
+UI_DEFINITION = "endernet_universal_importer.main"
+PANEL_DEFINITION = "endernet_universal_importer.overlay_panel"
+SLOT_DEFINITION = "endernet_universal_importer.slot_section"
 OVERLAY_LAYER = 100000
 MAX_MOUNT_ATTEMPTS = 5
 IMMEDIATE_SECTION_LIMIT = 16

@@ -25,9 +25,9 @@ if 0 > 1:
 COLLECTION = "endernet_select_items"
 BINDING_PREFIX = "#EnderNetSelectItem."
 MAX_ITEMS = 40
-DEFAULT_TEXTURE = "textures/ui/endernet/background_panel_opaque"
-PRESSED_TEXTURE = "textures/ui/endernet/button_pressed"
-HOVER_TEXTURE = "textures/ui/endernet/button_hovered"
+DEFAULT_TEXTURE = "textures/endernet/ui/background_panel_opaque"
+PRESSED_TEXTURE = "textures/endernet/ui/button_pressed"
+HOVER_TEXTURE = "textures/endernet/ui/button_hovered"
 SOURCE_BUTTONS = (
     ("backpack", "select_from_backpack_btn"),
     ("network", "select_from_net_btn"),

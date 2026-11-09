@@ -41,7 +41,7 @@ from .stack_size import id_aux
 from .terminal_cache import TerminalCache
 
 
-@RegistToolDeltaScreen("bus_item_output_io_ui.main", is_proxy=True)
+@RegistToolDeltaScreen("endernet_bus_item_output_io.main", is_proxy=True)
 class BusItemOutputPanel(ItemPortPanelBase):
     """总线物品取货口（`endernet:bus_item_output_io`）。
 
@@ -57,7 +57,7 @@ class BusItemOutputPanel(ItemPortPanelBase):
     """
 
     DEVICE_ID = "endernet:bus_item_output_io"
-    SETTINGS_DEFINITION = "bus_item_output_io_ui.settings_window"
+    SETTINGS_DEFINITION = "endernet_bus_item_output_io.settings_window"
     #: 缓存开关（设置窗里那一个）。取货口独有——存货口没有它。
     CACHE_SWITCH = SETTINGS_CACHE_SWITCH
     #: 取货口**只接受白名单**（`ROLE_FILTER_MODES`），因此没有模式切换控件，
@@ -70,7 +70,7 @@ class BusItemOutputPanel(ItemPortPanelBase):
     FILTER_TITLE = "自动输出物品"
 
 
-@RegistToolDeltaScreen("bus_item_input_io_ui.main", is_proxy=True)
+@RegistToolDeltaScreen("endernet_bus_item_input_io.main", is_proxy=True)
 class BusItemInputPanel(ItemPortPanelBase):
     """总线物品存货口（`endernet:bus_item_input_io`）。
 
@@ -84,7 +84,7 @@ class BusItemInputPanel(ItemPortPanelBase):
     """
 
     DEVICE_ID = "endernet:bus_item_input_io"
-    SETTINGS_DEFINITION = "bus_item_input_io_ui.settings_window"
+    SETTINGS_DEFINITION = "endernet_bus_item_input_io.settings_window"
     MODE_BUTTON = SETTINGS_MODE_BUTTON
     MODE_ICON = SETTINGS_MODE_ICON
     MODE_TEXT = SETTINGS_MODE_TEXT
@@ -92,7 +92,7 @@ class BusItemInputPanel(ItemPortPanelBase):
     FILTER_TITLE_FROM_MODE = True
 
 
-@RegistToolDeltaScreen("bus_template_io_ui.main", is_proxy=True)
+@RegistToolDeltaScreen("endernet_bus_template_io.main", is_proxy=True)
 class BusTemplatePanel(ProxyPanelBase):
     """总线样板接口（`endernet:bus_template_io`）。
 
@@ -101,7 +101,7 @@ class BusTemplatePanel(ProxyPanelBase):
     """
 
 
-@RegistToolDeltaScreen("assemble_chamber_ui.main", is_proxy=True)
+@RegistToolDeltaScreen("endernet_assemble_chamber.main", is_proxy=True)
 class AssembleChamberPanel(ProxyPanelBase):
     """装配仓（`endernet:assemble_chamber`）。
 
@@ -111,7 +111,7 @@ class AssembleChamberPanel(ProxyPanelBase):
     """
 
 
-@RegistToolDeltaScreen("storage_driver_ui.main", is_proxy=True)
+@RegistToolDeltaScreen("endernet_storage_driver.main", is_proxy=True)
 class StorageDriverPanel(ProxyPanelBase):
     """存储驱动器（`endernet:storage_driver`）。**这是一张空屏，有意如此。**
 
@@ -130,7 +130,7 @@ class StorageDriverPanel(ProxyPanelBase):
     """
 
 
-@RegistToolDeltaScreen("bus_item_io_ui.main", is_proxy=True)
+@RegistToolDeltaScreen("endernet_bus_item_io.main", is_proxy=True)
 class BusItemPanel(ItemPortPanelBase):
     """上排逐列设置取货物品，下排由原生容器持有实物。"""
 
@@ -201,17 +201,17 @@ class BusItemPanel(ItemPortPanelBase):
             show_select_item_window(self, names, select)
 
 
-@RegistToolDeltaScreen("memory_slot_ui.main", is_proxy=True)
+@RegistToolDeltaScreen("endernet_memory_slot.main", is_proxy=True)
 class MemorySlotPanel(ProxyPanelBase):
     """内存槽：只接入公共状态与详情。"""
 
 
-@RegistToolDeltaScreen("bus_fluid_input_io_ui.main", is_proxy=True)
+@RegistToolDeltaScreen("endernet_bus_fluid_input_io.main", is_proxy=True)
 class BusFluidInputPanel(ProxyPanelBase):
     """总线流体存货口：只接入公共状态与详情。"""
 
 
-@RegistToolDeltaScreen("bus_fluid_output_io_ui.main", is_proxy=True)
+@RegistToolDeltaScreen("endernet_bus_fluid_output_io.main", is_proxy=True)
 class BusFluidOutputPanel(ProxyPanelBase):
     """总线流体取货口：只接入公共状态与详情。"""
 

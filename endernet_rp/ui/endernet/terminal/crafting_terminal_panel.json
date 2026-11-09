@@ -1,0 +1,1046 @@
+{
+    "content": {
+        "type": "panel",
+        "size": [
+            180.0,
+            220.0
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "bg@common.dialog_background_opaque": {
+                    "layer": 0,
+                    "texture": "textures/endernet/ui/background_panel_thick"
+                }
+            },
+            {
+                "close@endernet_ui_common.terminal_close_button": {
+                    "offset": [
+                        -2,
+                        2
+                    ]
+                }
+            },
+            {
+                "title@endernet_ui_common.terminal_title": {
+                    "controls": [
+                        {
+                            "title_text@endernet_ui_common.terminal_title_text": {
+                                "text": "tile.endernet:crafting_terminal_panel.name"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "stat_bar@endernet_ui_common.device_stat_bar": {
+                    "offset": [
+                        72,
+                        2
+                    ]
+                }
+            },
+            {
+                "crafting_panel": {
+                    "type": "panel",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        0.0,
+                        76.0
+                    ],
+                    "size": [
+                        "default",
+                        "100%cm+0px"
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "crafting_grid": {
+                                "type": "grid",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    27.0,
+                                    0.0
+                                ],
+                                "layer": 1,
+                                "collection_name": "crafting_grid",
+                                "grid_dimensions": [
+                                    3,
+                                    3
+                                ],
+                                "grid_item_template": "endernet_crafting_terminal_panel.craft_slot"
+                            }
+                        },
+                        {
+                            "arrow_img": {
+                                "type": "image",
+                                "anchor_from": "top_left",
+                                "anchor_to": "left_middle",
+                                "offset": [
+                                    88.0,
+                                    28.0
+                                ],
+                                "size": [
+                                    24.0,
+                                    20.0
+                                ],
+                                "layer": 1,
+                                "texture": "textures/ui/arrow_active"
+                            }
+                        },
+                        {
+                            "output_slot": {
+                                "type": "grid",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    117,
+                                    18
+                                ],
+                                "size": [
+                                    18.0,
+                                    18.0
+                                ],
+                                "layer": 1,
+                                "collection_name": "endernet_craft_output",
+                                "grid_dimensions": [
+                                    1,
+                                    1
+                                ],
+                                "grid_item_template": "endernet_crafting_terminal_panel.craft_output_slot"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "terminal_items_scroll@endernet_ui_common.terminal_items_scroll": {
+                    "$scroll_background_image_control": "endernet_crafting_terminal_panel.terminal_scroll_background",
+                    "$scroll_background_texture": "textures/endernet/ui/background_bottom",
+                    "$scroll_box_size|default": [
+                        "100%+0px",
+                        "100%+0px"
+                    ],
+                    "$scrolling_content": "endernet_crafting_terminal_panel.terminal_items_grid",
+                    "$scrolling_pane_size_touch|default": [
+                        "100%+0px",
+                        "100%+0px"
+                    ],
+                    "layer": 9,
+                    "offset": [
+                        0,
+                        34
+                    ],
+                    "size": [
+                        162,
+                        36
+                    ],
+                    "visible": true
+                }
+            },
+            {
+                "inventory@endernet_terminal_inventory.inventory": {
+                    "$display_inventory_label": false,
+                    "offset": [
+                        0,
+                        2
+                    ]
+                }
+            },
+            {
+                "unavailable_mask@endernet_ui_common.terminal_unavailable_mask": {
+                    "visible": false,
+                    "controls": [
+                        {
+                            "mask_img@endernet_ui_common.terminal_mask_image": {
+                                "clip_direction": "left",
+                                "clip_ratio": 0.0
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "item_search_editor@endernet_ui_common.terminal_search_editor": {}
+            },
+            {
+                "sort_method_btn@endernet_ui_common.terminal_sort_method_button": {
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {}
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {}
+                        },
+                        {
+                            "icon@endernet_ui_common.terminal_sort_icon": {
+                                "texture": "textures/endernet/ui/terminal_item_sort_methods_icon"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "sort_order_btn@endernet_ui_common.terminal_sort_order_button": {
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ]
+                }
+            },
+            {
+                "load_recipe_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "textures/endernet/ui/button_default",
+                    "$hover_texture": "textures/endernet/ui/button_hovered",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "$label_font_scale_factor": 1.5,
+                    "$label_font_size": "small",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0.0,
+                        -1.0
+                    ],
+                    "$label_text": "导入",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "#EnderNetCraft.import",
+                    "$pressed_texture": "textures/endernet/ui/button_pressed",
+                    "$texture_layer": 2,
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        146.0,
+                        77.0
+                    ],
+                    "size": [
+                        24.0,
+                        14.0
+                    ],
+                    "layer": 2,
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {}
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {}
+                        },
+                        {
+                            "button_label@netease_editor_template_namespace.button_label": {
+                                "shadow": true
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "put_items_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "textures/endernet/ui/button_default",
+                    "$hover_texture": "textures/endernet/ui/button_hovered",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "$label_font_scale_factor": 1.5,
+                    "$label_font_size": "small",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0.0,
+                        -1.0
+                    ],
+                    "$label_text": "摆满",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_texture": "textures/endernet/ui/button_pressed",
+                    "$texture_layer": 2,
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        146.0,
+                        95.0
+                    ],
+                    "size": [
+                        24.0,
+                        14.0
+                    ],
+                    "layer": 2,
+                    "button_mappings": [],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {}
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {}
+                        },
+                        {
+                            "button_label@netease_editor_template_namespace.button_label": {
+                                "shadow": true
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "clear_items_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "textures/endernet/ui/button_default",
+                    "$hover_texture": "textures/endernet/ui/button_hovered",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ],
+                    "$label_font_scale_factor": 1.5,
+                    "$label_font_size": "small",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0.0,
+                        -1.0
+                    ],
+                    "$label_text": "清空",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "#EnderNetCraft.clear",
+                    "$pressed_texture": "textures/endernet/ui/button_pressed",
+                    "$texture_layer": 2,
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        146.0,
+                        113.0
+                    ],
+                    "size": [
+                        24.0,
+                        14.0
+                    ],
+                    "layer": 2,
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {}
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {}
+                        },
+                        {
+                            "button_label@netease_editor_template_namespace.button_label": {
+                                "shadow": true
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "flying_items": {
+                    "type": "panel",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "size": [
+                        "100%",
+                        "100%"
+                    ],
+                    "offset": [
+                        0,
+                        0
+                    ],
+                    "layer": 0,
+                    "controls": [
+                        {
+                            "flying_item@endernet_ui_common.terminal_flying_item": {}
+                        },
+                        {
+                            "flying_item_1@endernet_ui_common.terminal_flying_item": {}
+                        },
+                        {
+                            "flying_item_2@endernet_ui_common.terminal_flying_item": {}
+                        },
+                        {
+                            "flying_item_3@endernet_ui_common.terminal_flying_item": {}
+                        },
+                        {
+                            "flying_item_4@endernet_ui_common.terminal_flying_item": {}
+                        },
+                        {
+                            "flying_item_5@endernet_ui_common.terminal_flying_item": {}
+                        }
+                    ]
+                }
+            },
+            {
+                "device_status_popup@endernet_ui_common.terminal_device_status_popup": {}
+            },
+            {
+                "order_preview@endernet_ui_common.terminal_order_preview": {}
+            },
+            {
+                "endernet_number_set_window@endernet_windows.number_set_window": {
+                    "layer": 65,
+                    "visible": false
+                }
+            },
+            {
+                "endernet_select_item_window@endernet_windows.select_item_window": {
+                    "layer": 65,
+                    "visible": false
+                }
+            },
+            {
+                "endernet_recipe_choice_window@endernet_crafting_terminal_panel.load_recipe_window": {
+                    "layer": 65,
+                    "visible": false
+                }
+            },
+            {
+                "cursor_host@endernet_container_common.cursor_host": {}
+            },
+            {
+                "split_bar@endernet_container_common.split_bar": {}
+            },
+            {
+                "endernet_importer_overlay@endernet_universal_importer.overlay_panel": {
+                    "visible": false
+                }
+            }
+        ]
+    },
+    "craft_output_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "endernet_craft_output",
+        "$item_count_binding": "#EnderNetCraft.output_item_count",
+        "$item_hover_text_binding": "#EnderNetCraft.output_hover_text",
+        "$item_id_aux_binding": "#EnderNetCraft.output_item_id_aux",
+        "$item_select_button": "#EnderNetCraft.take",
+        "$item_selected_binding": "#EnderNetCraft.output_selected",
+        "$item_visible_binding": "#EnderNetCraft.output_visible",
+        "$slot_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed",
+                "to_button_id": "$item_select_button"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetCraft.output_secondary"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetCraft.output_quick"
+            }
+        ]
+    },
+    "craft_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "crafting_grid",
+        "$item_count_binding": "#EnderNetCraft.grid_item_count",
+        "$item_hover_text_binding": "#EnderNetCraft.grid_hover_text",
+        "$item_id_aux_binding": "#EnderNetCraft.grid_item_id_aux",
+        "$item_select_button": "#EnderNetCraft.grid_click",
+        "$item_selected_binding": "#EnderNetCraft.grid_selected",
+        "$item_visible_binding": "#EnderNetCraft.grid_visible",
+        "$slot_mappings": [
+            {
+                "button_up_right_of_first_refusal": true,
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed",
+                "to_button_id": "$item_select_button"
+            },
+            {
+                "button_up_right_of_first_refusal": true,
+                "from_button_id": "button.menu_secondary_select",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetCraft.grid_secondary"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetCraft.grid_quick"
+            }
+        ]
+    },
+    "load_recipe_window": {
+        "type": "panel",
+        "size": [
+            132.0,
+            180.0
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "modal_backdrop@endernet_windows.modal_backdrop": {}
+            },
+            {
+                "bg": {
+                    "type": "image",
+                    "layer": 1,
+                    "texture": "textures/endernet/ui/background_panel_opaque"
+                }
+            },
+            {
+                "title": {
+                    "type": "image",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "size": [
+                        "default",
+                        16.0
+                    ],
+                    "layer": 1,
+                    "texture": "textures/endernet/ui/background_panel_2_flat",
+                    "controls": [
+                        {
+                            "device_status_tip": {
+                                "type": "label",
+                                "font_type": "default",
+                                "shadow": true,
+                                "text": "选择配方以导入",
+                                "text_alignment": "center"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "close@endernet_ui_common.close_btn": {
+                    "anchor_from": "top_right",
+                    "anchor_to": "top_right",
+                    "size": [
+                        16,
+                        16
+                    ]
+                }
+            },
+            {
+                "scroll_view@common.scrolling_panel": {
+                    "$background_nine_slice_buttom": 0,
+                    "$background_nine_slice_left": 0,
+                    "$background_nine_slice_right": 0,
+                    "$background_nine_slice_top": 0,
+                    "$background_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$box_nine_slice_buttom": 0,
+                    "$box_nine_slice_left": 0,
+                    "$box_nine_slice_right": 0,
+                    "$box_nine_slice_top": 0,
+                    "$box_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$is_background_nine_slice": false,
+                    "$is_box_nine_slice": false,
+                    "$is_track_nine_slice": false,
+                    "$scroll_background_image_control": "netease_editor_template_namespace.scroll_background_image",
+                    "$scroll_background_texture": "textures/endernet/ui/backgroud_without_frame",
+                    "$scroll_box_mouse_image_control": "netease_editor_template_namespace.scroll_box_image",
+                    "$scroll_box_texture": "textures/ui/newTouchScrollBox",
+                    "$scroll_box_touch_image_control": "netease_editor_template_namespace.scroll_box_image",
+                    "$scroll_track_image_control": "netease_editor_template_namespace.scroll_track_image",
+                    "$scroll_track_texture": "textures/ui/ScrollRail",
+                    "$scrolling_content": "endernet_crafting_terminal_panel.recipe_list",
+                    "$show_background": true,
+                    "$track_nine_slice_buttom": 0,
+                    "$track_nine_slice_left": 0,
+                    "$track_nine_slice_right": 0,
+                    "$track_nine_slice_top": 0,
+                    "$track_nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "layer": 9,
+                    "offset": [
+                        0,
+                        20
+                    ],
+                    "size": [
+                        124,
+                        "100%+-30px"
+                    ]
+                }
+            }
+        ]
+    },
+    "main@common.base_screen": {
+        "$screen_background_alpha": 0.4,
+        "$screen_bg_content": "common.screen_background",
+        "$screen_content": "endernet_ui_common.screen_root",
+        "$window_content": "endernet_crafting_terminal_panel.content",
+        "button_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetTerminal.drop_cursor_all"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetTerminal.drop_cursor_one"
+            }
+        ]
+    },
+    "namespace": "endernet_crafting_terminal_panel",
+    "recipe_entry": {
+        "type": "image",
+        "size": [
+            18.0,
+            18.0
+        ],
+        "layer": 1,
+        "texture": "textures/endernet/ui/container_item_slot_background",
+        "bindings": [
+            {
+                "binding_name_override": "#visible",
+                "binding_collection_name": "endernet_recipe_choices",
+                "binding_type": "collection",
+                "binding_name": "$entry_visible"
+            }
+        ],
+        "controls": [
+            {
+                "item_renderer": {
+                    "type": "custom",
+                    "renderer": "inventory_item_renderer",
+                    "size": [
+                        "100%+-2px",
+                        "100%+-2px"
+                    ],
+                    "property_bag": {
+                        "#item_id_aux": 131072
+                    },
+                    "bindings": [
+                        {
+                            "binding_name_override": "#item_id_aux",
+                            "binding_collection_name": "endernet_recipe_choices",
+                            "binding_type": "collection",
+                            "binding_name": "$entry_icon"
+                        }
+                    ]
+                }
+            },
+            {
+                "item_count": {
+                    "type": "label",
+                    "anchor_from": "bottom_right",
+                    "anchor_to": "bottom_right",
+                    "offset": [
+                        0.0,
+                        -1.0
+                    ],
+                    "font_scale_factor": 1.2,
+                    "font_size": "small",
+                    "font_type": "default",
+                    "shadow": true,
+                    "text": "#text",
+                    "bindings": [
+                        {
+                            "binding_name_override": "#text",
+                            "binding_collection_name": "endernet_recipe_choices",
+                            "binding_type": "collection",
+                            "binding_name": "$entry_count"
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "recipe_list": {
+        "type": "grid",
+        "anchor_from": "top_left",
+        "anchor_to": "top_left",
+        "size": [
+            "100%",
+            "default"
+        ],
+        "collection_name": "endernet_recipe_choices",
+        "grid_dimensions": [
+            1,
+            1
+        ],
+        "grid_item_template": "endernet_crafting_terminal_panel.recipe_section",
+        "grid_rescaling_type": "horizontal",
+        "maximum_grid_items": 1,
+        "property_bag": {
+            "#maximum_grid_items": 0
+        },
+        "bindings": [
+            {
+                "binding_type": "global",
+                "binding_name_override": "#maximum_grid_items",
+                "binding_name": "#EnderNetRecipe.count"
+            }
+        ]
+    },
+    "recipe_section": {
+        "type": "panel",
+        "size": [
+            116.0,
+            62.0
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "bg": {
+                    "type": "image",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "layer": 1,
+                    "texture": "textures/endernet/ui/background_panel_2_flat"
+                }
+            },
+            {
+                "input_slots": {
+                    "type": "panel",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        4.0,
+                        4.0
+                    ],
+                    "size": [
+                        54.0,
+                        54.0
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "slot0@endernet_crafting_terminal_panel.recipe_entry": {
+                                "$entry_count": "#EnderNetRecipe.count_0",
+                                "$entry_icon": "#EnderNetRecipe.icon_0",
+                                "$entry_visible": "#EnderNetRecipe.visible_0",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left"
+                            }
+                        },
+                        {
+                            "slot1@endernet_crafting_terminal_panel.recipe_entry": {
+                                "$entry_count": "#EnderNetRecipe.count_1",
+                                "$entry_icon": "#EnderNetRecipe.icon_1",
+                                "$entry_visible": "#EnderNetRecipe.visible_1",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    18,
+                                    0
+                                ]
+                            }
+                        },
+                        {
+                            "slot2@endernet_crafting_terminal_panel.recipe_entry": {
+                                "$entry_count": "#EnderNetRecipe.count_2",
+                                "$entry_icon": "#EnderNetRecipe.icon_2",
+                                "$entry_visible": "#EnderNetRecipe.visible_2",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    36,
+                                    0
+                                ]
+                            }
+                        },
+                        {
+                            "slot3@endernet_crafting_terminal_panel.recipe_entry": {
+                                "$entry_count": "#EnderNetRecipe.count_3",
+                                "$entry_icon": "#EnderNetRecipe.icon_3",
+                                "$entry_visible": "#EnderNetRecipe.visible_3",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    0,
+                                    18
+                                ]
+                            }
+                        },
+                        {
+                            "slot4@endernet_crafting_terminal_panel.recipe_entry": {
+                                "$entry_count": "#EnderNetRecipe.count_4",
+                                "$entry_icon": "#EnderNetRecipe.icon_4",
+                                "$entry_visible": "#EnderNetRecipe.visible_4",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    18,
+                                    18
+                                ]
+                            }
+                        },
+                        {
+                            "slot5@endernet_crafting_terminal_panel.recipe_entry": {
+                                "$entry_count": "#EnderNetRecipe.count_5",
+                                "$entry_icon": "#EnderNetRecipe.icon_5",
+                                "$entry_visible": "#EnderNetRecipe.visible_5",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    36,
+                                    18
+                                ]
+                            }
+                        },
+                        {
+                            "slot6@endernet_crafting_terminal_panel.recipe_entry": {
+                                "$entry_count": "#EnderNetRecipe.count_6",
+                                "$entry_icon": "#EnderNetRecipe.icon_6",
+                                "$entry_visible": "#EnderNetRecipe.visible_6",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    0,
+                                    36
+                                ]
+                            }
+                        },
+                        {
+                            "slot7@endernet_crafting_terminal_panel.recipe_entry": {
+                                "$entry_count": "#EnderNetRecipe.count_7",
+                                "$entry_icon": "#EnderNetRecipe.icon_7",
+                                "$entry_visible": "#EnderNetRecipe.visible_7",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    18,
+                                    36
+                                ]
+                            }
+                        },
+                        {
+                            "slot8@endernet_crafting_terminal_panel.recipe_entry": {
+                                "$entry_count": "#EnderNetRecipe.count_8",
+                                "$entry_icon": "#EnderNetRecipe.icon_8",
+                                "$entry_visible": "#EnderNetRecipe.visible_8",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    36,
+                                    36
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "arrow": {
+                    "type": "image",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        60.0,
+                        23.0
+                    ],
+                    "size": [
+                        28.0,
+                        18.0
+                    ],
+                    "layer": 1,
+                    "texture": "textures/ui/arrow_active"
+                }
+            },
+            {
+                "output_slot@endernet_crafting_terminal_panel.recipe_entry": {
+                    "$entry_count": "#EnderNetRecipe.count_9",
+                    "$entry_icon": "#EnderNetRecipe.icon_9",
+                    "$entry_visible": "#EnderNetRecipe.visible_9",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        90,
+                        23
+                    ]
+                }
+            },
+            {
+                "confirm_btn@common.button": {
+                    "type": "button",
+                    "$control_alpha": 1.0,
+                    "$default_texture": "textures/endernet/ui/button_light_default",
+                    "$hover_texture": "textures/endernet/ui/button_hovered",
+                    "$is_new_nine_slice": false,
+                    "$label_color": [
+                        0.2588235294117647,
+                        0.2588235294117647,
+                        0.2588235294117647
+                    ],
+                    "$label_font_scale_factor": 1.0,
+                    "$label_font_size": "normal",
+                    "$label_layer": 3,
+                    "$label_offset": [
+                        0.0,
+                        -1.0
+                    ],
+                    "$label_text": "导入",
+                    "$nine_slice_buttom": 0,
+                    "$nine_slice_left": 0,
+                    "$nine_slice_right": 0,
+                    "$nine_slice_top": 0,
+                    "$nineslice_size": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "$pressed_button_name": "#EnderNetRecipe.choose",
+                    "$pressed_texture": "textures/endernet/ui/button_pressed",
+                    "$texture_layer": 2,
+                    "anchor_from": "bottom_right",
+                    "anchor_to": "bottom_right",
+                    "size": [
+                        32.0,
+                        16.0
+                    ],
+                    "layer": 2,
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "is_handle_button_move_event": true,
+                    "pressed_control": "pressed",
+                    "bindings": [
+                        {
+                            "binding_type": "collection_details",
+                            "binding_collection_name": "endernet_recipe_choices"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default@netease_editor_template_namespace.default": {}
+                        },
+                        {
+                            "hover@netease_editor_template_namespace.hover": {}
+                        },
+                        {
+                            "pressed@netease_editor_template_namespace.pressed": {}
+                        },
+                        {
+                            "button_label@netease_editor_template_namespace.button_label": {}
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "terminal_items_grid@endernet_ui_common.terminal_items_grid": {
+        "grid_item_template": "endernet_crafting_terminal_panel.terminal_slot"
+    },
+    "terminal_scroll_background@endernet_ui_common.terminal_scroll_background": {},
+    "terminal_slot@endernet_ui_common.terminal_slot": {}
+}

@@ -211,28 +211,28 @@ TICKING = {
 #:   **这与上面两个流体口不矛盾**：那两台是 User 单独点名的占位，这台不是。
 #:   不要因为「都是流体」就顺手补齐。
 CONTAINERS = {
-    "endernet:storage_driver": ("storage_driver_ui.main", STORAGE_DRIVER_SLOT_COUNT),
-    "endernet:bus_item_io": ("bus_item_io_ui.main", PASSIVE_PORT_SLOT_COUNT),
-    "endernet:bus_template_io": ("bus_template_io_ui.main", TEMPLATE_CONTAINER_SLOT_COUNT),
+    "endernet:storage_driver": ("endernet_storage_driver.main", STORAGE_DRIVER_SLOT_COUNT),
+    "endernet:bus_item_io": ("endernet_bus_item_io.main", PASSIVE_PORT_SLOT_COUNT),
+    "endernet:bus_template_io": ("endernet_bus_template_io.main", TEMPLATE_CONTAINER_SLOT_COUNT),
     "endernet:assemble_chamber": (
-        "assemble_chamber_ui.main",
+        "endernet_assemble_chamber.main",
         ASSEMBLE_CHAMBER_SLOT_COUNT,
     ),
     "endernet:bus_item_input_io": (
-        "bus_item_input_io_ui.main",
+        "endernet_bus_item_input_io.main",
         ITEM_INTAKE_PORT_SLOT_COUNT,
     ),
     "endernet:bus_item_output_io": (
-        "bus_item_output_io_ui.main",
+        "endernet_bus_item_output_io.main",
         ITEM_OUTPUT_PORT_SLOT_COUNT,
     ),
-    "endernet:memory_slot": ("memory_slot_ui.main", MEMORY_SLOT_COUNT),
+    "endernet:memory_slot": ("endernet_memory_slot.main", MEMORY_SLOT_COUNT),
     "endernet:bus_fluid_input_io": (
-        "bus_fluid_input_io_ui.main",
+        "endernet_bus_fluid_input_io.main",
         FLUID_PORT_SLOT_COUNT,
     ),
     "endernet:bus_fluid_output_io": (
-        "bus_fluid_output_io_ui.main",
+        "endernet_bus_fluid_output_io.main",
         FLUID_PORT_SLOT_COUNT,
     ),
 }

@@ -410,7 +410,7 @@ class SelectorTests(unittest.TestCase):
         self.assertEqual(self.selected, [])
 
     def test_json_contract(self):
-        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet_windows.json"),
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common", "windows.json"),
                   encoding="utf-8") as handle:
             data = json.load(handle)
         controls = {key.split("@")[0]: value for entry in data["select_item_window"]["controls"]

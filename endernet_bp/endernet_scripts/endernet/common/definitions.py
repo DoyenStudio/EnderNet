@@ -824,10 +824,10 @@ def devices_for_mode(mode):
 #:
 #: 值必须与 `@RegistToolDeltaScreen(...)` 注册的键**逐字相同**。
 TERMINAL_SCREENS = {
-    "endernet:common_terminal_panel": "common_terminal_panel_ui.main",
-    "endernet:crafting_terminal_panel": "crafting_terminal_panel_ui.main",
-    "endernet:template_terminal_panel": "template_terminal_panel_ui.main",
-    "endernet:factoric_terminal_panel": "factoric_terminal_panel_ui.main",
+    "endernet:common_terminal_panel": "endernet_common_terminal_panel.main",
+    "endernet:crafting_terminal_panel": "endernet_crafting_terminal_panel.main",
+    "endernet:template_terminal_panel": "endernet_template_terminal_panel.main",
+    "endernet:factoric_terminal_panel": "endernet_factoric_terminal_panel.main",
 }
 
 #: 哪些容器类方块**有挂上去的脚本屏**（11-07）。键是方块 id，值是屏幕名。
@@ -849,20 +849,20 @@ TERMINAL_SCREENS = {
 #:
 #: 所有已有容器界面的设备都接入状态订阅；配置交互按各自交付范围接入。
 CONTAINER_SCREENS = {
-    "endernet:bus_item_io": "bus_item_io_ui.main",
-    "endernet:memory_slot": "memory_slot_ui.main",
-    "endernet:bus_fluid_input_io": "bus_fluid_input_io_ui.main",
-    "endernet:bus_fluid_output_io": "bus_fluid_output_io_ui.main",
-    "endernet:bus_item_output_io": "bus_item_output_io_ui.main",
-    "endernet:bus_item_input_io": "bus_item_input_io_ui.main",
-    "endernet:bus_template_io": "bus_template_io_ui.main",
-    "endernet:assemble_chamber": "assemble_chamber_ui.main",
+    "endernet:bus_item_io": "endernet_bus_item_io.main",
+    "endernet:memory_slot": "endernet_memory_slot.main",
+    "endernet:bus_fluid_input_io": "endernet_bus_fluid_input_io.main",
+    "endernet:bus_fluid_output_io": "endernet_bus_fluid_output_io.main",
+    "endernet:bus_item_output_io": "endernet_bus_item_output_io.main",
+    "endernet:bus_item_input_io": "endernet_bus_item_input_io.main",
+    "endernet:bus_template_io": "endernet_bus_template_io.main",
+    "endernet:assemble_chamber": "endernet_assemble_chamber.main",
     # 存储驱动器（11-07）。**屏幕是空的**——User 2026-10-03 裁定：介质的
     # 装卸与 Lore 刷新**暂不需要界面**，只保留服务端逻辑，因此本屏只有
     # 状态栏与详情弹窗（`ProxyPanelBase` 给的那两样），不接任何配置控件。
     # 它的 UI 文档 `plans/ui/storage_driver.md` 第 2～8 节仍是空模板，
     # 所以**不能**给它写配置面；这一行登记的是「引擎开着的那张屏由谁接管」。
-    "endernet:storage_driver": "storage_driver_ui.main",
+    "endernet:storage_driver": "endernet_storage_driver.main",
 }
 
 #: 同一个人两次打开终端界面的最小间隔（秒）。窗口内再右键**静默忽略**。

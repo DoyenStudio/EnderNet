@@ -208,8 +208,8 @@ class Screen(object):
         self.elements = {}
         self.scrolls = {}
         self.controls = {}
-        for name, definition in (("endernet_recipe_choice_window", "crafting_terminal_panel_ui.load_recipe_window"),
-                                 ("endernet_order_detail", "factoric_terminal_panel_ui.order_description_window"),
+        for name, definition in (("endernet_recipe_choice_window", "endernet_crafting_terminal_panel.load_recipe_window"),
+                                 ("endernet_order_detail", "endernet_factoric_terminal_panel.order_description_window"),
                                  ("endernet_item_list_window", "endernet_windows.item_list_window"),
                                  ("endernet_select_item_window", "endernet_windows.select_item_window")):
             path = slot_layout.full_path("/" + name)
@@ -1266,17 +1266,17 @@ class TestJsonContract(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "terminal",
                                "crafting_terminal_panel.json"),
                   encoding="utf-8") as handle:
             from ui_terminal_templates import inline_terminal_controls
             cls.panel = inline_terminal_controls(json.load(handle))
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "terminal",
                                "common_terminal_panel.json"),
                   encoding="utf-8") as handle:
             cls.common_panel = inline_terminal_controls(json.load(handle))
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
-                               "endernet_windows.json"),
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common",
+                               "windows.json"),
                   encoding="utf-8") as handle:
             cls.windows = json.load(handle)
 
@@ -1341,9 +1341,9 @@ class TestJsonContract(unittest.TestCase):
         self.assertEqual(panel["crafting_grid"]["collection_name"],
                          crafting_panel.GRID_COLLECTION)
         self.assertEqual(panel["crafting_grid"]["grid_item_template"],
-                         "crafting_terminal_panel_ui.craft_slot")
+                         "endernet_crafting_terminal_panel.craft_slot")
         self.assertEqual(panel["output_slot"]["grid_item_template"],
-                         "crafting_terminal_panel_ui.craft_output_slot")
+                         "endernet_crafting_terminal_panel.craft_output_slot")
         # 输出槽是 1×1 的 grid：集合绑定只在集合上下文里解析得到，单放一个
         # 实例在面板上，引擎查不到集合，那一格永远空白。
         self.assertEqual(panel["output_slot"]["grid_dimensions"], [1, 1])
@@ -1356,14 +1356,14 @@ class TestJsonContract(unittest.TestCase):
         scroll = content["terminal_items_scroll"]
         self.assertIs(scroll.get("visible", True), True)
         self.assertEqual(scroll["$scrolling_content"],
-                         "crafting_terminal_panel_ui.terminal_items_grid")
+                         "endernet_crafting_terminal_panel.terminal_items_grid")
         self.assertEqual(scroll["$scroll_background_image_control"],
-                         "crafting_terminal_panel_ui.terminal_scroll_background")
+                         "endernet_crafting_terminal_panel.terminal_scroll_background")
         self.assertTrue(scroll["$show_background"])
         grid = self.panel["terminal_items_grid"]
         self.assertEqual(grid["collection_name"], terminal_panel.COLLECTION)
         self.assertEqual(grid["grid_item_template"],
-                         "crafting_terminal_panel_ui.terminal_slot")
+                         "endernet_crafting_terminal_panel.terminal_slot")
         binding = grid["bindings"][0]
         self.assertEqual(binding["binding_name_override"], "#maximum_grid_items")
         self.assertEqual(binding["binding_type"], "global")
@@ -1465,11 +1465,11 @@ class TestJsonContract(unittest.TestCase):
         window = self.controls(self.panel["load_recipe_window"])
         scroll = window["scroll_view"]
         self.assertEqual(scroll["$scrolling_content"],
-                         "crafting_terminal_panel_ui.recipe_list")
+                         "endernet_crafting_terminal_panel.recipe_list")
         grid = self.panel["recipe_list"]
         self.assertEqual(grid["type"], "grid")
         self.assertEqual(grid["grid_dimensions"][0], 1)
-        self.assertEqual(grid["grid_item_template"], "crafting_terminal_panel_ui.recipe_section")
+        self.assertEqual(grid["grid_item_template"], "endernet_crafting_terminal_panel.recipe_section")
         card = self.panel["recipe_section"]
         self.assertEqual(card.get("anchor_from", "center"), "center")
         self.assertEqual(card.get("anchor_to", "center"), "center")

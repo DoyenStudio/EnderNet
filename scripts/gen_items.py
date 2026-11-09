@@ -24,7 +24,7 @@
 SkyblueTech 一致。本项目方块走的是原版 `blocks/`，但物品没有已验证的原版先例，
 因此不拿它当赌注。
 
-贴图本身由 `gen_placeholder_textures.py` 生成到 `textures/items/`。
+贴图本身由 `gen_placeholder_textures.py` 生成到 `textures/endernet/items/`。
 """
 
 import argparse
@@ -38,7 +38,7 @@ SCRIPTS_ROOT = os.path.join(REPO, "endernet_bp", "endernet_scripts")
 BP_ITEMS = os.path.join(REPO, "endernet_bp", "netease_items_beh")
 RP_ITEMS = os.path.join(REPO, "endernet_rp", "netease_items_res")
 RP_ITEM_TEXTURE = os.path.join(REPO, "endernet_rp", "textures", "item_texture.json")
-ITEM_TEXTURE_DIR = os.path.join(REPO, "endernet_rp", "textures", "items")
+ITEM_TEXTURE_DIR = os.path.join(REPO, "endernet_rp", "textures", "endernet", "items")
 
 if SCRIPTS_ROOT not in sys.path:
     sys.path.insert(0, SCRIPTS_ROOT)
@@ -90,8 +90,8 @@ def item_file_name(item_id):
 
 def item_texture_name(item_id):
     # type: (str) -> str
-    """贴图文件名（不含扩展名）。`gen_placeholder_textures.py` 也读它。"""
-    return "endernet_" + short_name(item_id)
+    """贴图文件名（不含扩展名）：短名。`gen_placeholder_textures.py` 也读它。"""
+    return short_name(item_id)
 
 
 def item_icon_key(item_id):
@@ -172,7 +172,7 @@ def build_item_texture(existing, definitions):
     texture_data.pop("endernet:crafting_template", None)
     for spec in definitions.item_specs():
         texture_data[item_icon_key(spec.id)] = {
-            "textures": "textures/items/" + item_texture_name(spec.id)
+            "textures": "textures/endernet/items/" + item_texture_name(spec.id)
         }
     payload = dict(existing)
     payload["resource_pack_name"] = existing.get("resource_pack_name", "vanilla")

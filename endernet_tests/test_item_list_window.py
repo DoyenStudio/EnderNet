@@ -260,7 +260,7 @@ class ItemListWindowTests(unittest.TestCase):
 
     def test_json_contract_matches_registered_binders(self):
         self.open()
-        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet_windows.json"),
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common", "windows.json"),
                   encoding="utf-8") as handle:
             data = json.load(handle)
 

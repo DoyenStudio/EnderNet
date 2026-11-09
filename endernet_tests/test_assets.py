@@ -27,8 +27,10 @@ TEXTURE_DIR = os.path.join(RP_ROOT, "textures", "endernet", "devices")
 BP_ITEMS = os.path.join(REPO, "endernet_bp", "netease_items_beh")
 RP_ITEMS = os.path.join(RP_ROOT, "netease_items_res")
 RP_ITEM_TEXTURE = os.path.join(RP_ROOT, "textures", "item_texture.json")
-ITEM_TEXTURE_DIR = os.path.join(RP_ROOT, "textures", "items")
+ITEM_TEXTURE_DIR = os.path.join(RP_ROOT, "textures", "endernet", "items")
 RP_UI = os.path.join(RP_ROOT, "ui")
+#: 本模组的界面都在 `ui/endernet/<分组>/` 下；`ui/` 根只留登记表 `_ui_defs.json`。
+RP_UI_ENDERNET = os.path.join(RP_UI, "endernet")
 DRIVER = "endernet:storage_driver"
 
 #: 运行时销毁流程依赖它；缺了引擎不会派发 BlockRemoveServerEvent。
@@ -38,6 +40,16 @@ REQUIRED_COMPONENTS = ("netease:block_entity", "netease:listen_block_remove")
 def read_json(path):
     with io.open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def iter_ui_files():
+    """`(相对 ui/ 的路径, 绝对路径)`：递归枚举 `ui/endernet/**/*.json`。"""
+    for directory, dirnames, filenames in os.walk(RP_UI_ENDERNET):
+        dirnames.sort()
+        for name in sorted(filenames):
+            if name.endswith(".json"):
+                full = os.path.join(directory, name)
+                yield os.path.relpath(full, RP_UI).replace(os.sep, "/"), full
 
 
 def short_name(device_id):
@@ -55,8 +67,8 @@ def item_file_name(item_id):
 
 
 def item_texture_name(item_id):
-    """与 scripts/gen_items.py 保持一致：`endernet_<短名>`。"""
-    return "endernet_" + item_id.split(":", 1)[1]
+    """与 scripts/gen_items.py 保持一致：`<短名>`（目录 `textures/endernet/items/` 已标明归属）。"""
+    return item_id.split(":", 1)[1]
 
 
 #: 界面 JSON 里引用本模组贴图的字符串
@@ -337,10 +349,8 @@ class TestResourcePackMapping(AssetFixture):
         原版贴图（`textures/ui/...`）不在本资源包里，不查。
         """
         missing = []
-        for name in sorted(os.listdir(RP_UI)):
-            if not name.endswith(".json"):
-                continue
-            with io.open(os.path.join(RP_UI, name), encoding="utf-8") as handle:
+        for name, full in iter_ui_files():
+            with io.open(full, encoding="utf-8") as handle:
                 text = handle.read()
             for path in sorted(set(UI_TEXTURE_PATTERN.findall(text))):
                 base = os.path.join(RP_ROOT, *path.split("/"))
@@ -456,7 +466,7 @@ def declared_containers():
 
 
 #: 引擎的容器集合名。**只写死在公共模板 `container_grid_items` 里**
-#: （`endernet_container_common.json:128`），各设备界面靠继承拿到它。
+#: （`container_common.json:128`），各设备界面靠继承拿到它。
 ENGINE_CONTAINER_COLLECTION = "netease_container"
 
 #: 渲染该集合的两种模板名：网格模板与逐槽模板。逐槽那种**连模板都不写集合名**，
@@ -496,7 +506,7 @@ def screens_rendering_the_engine_container():
     """`命名空间 -> 界面文件名`：哪些界面画了引擎的 `netease_container` 集合。
 
     **不能靠 grep `collection_name`。** 集合名全仓只出现在公共模板
-    `endernet_container_common.json:128` 一处，设备界面一律继承它；逐槽写法
+    `container_common.json:128` 一处，设备界面一律继承它；逐槽写法
     更是连模板都不写集合名。全仓只有 2 个界面自己写了 `collection_name`
     （`bus_item_io.json:146` 的编辑器残留 `test_grid` 与
     `assemble_chamber.json:108` 的 `source_items`），**两个都不是**这个集合——
@@ -505,10 +515,8 @@ def screens_rendering_the_engine_container():
     只算「界面」：公共模板文件没有 `main` 屏幕，不计入。
     """
     drawn = {}
-    for name in sorted(os.listdir(RP_UI)):
-        if not name.endswith(".json"):
-            continue
-        payload = read_json(os.path.join(RP_UI, name))
+    for name, full in iter_ui_files():
+        payload = read_json(full)
         namespace = payload.get("namespace")
         if not namespace:
             continue
@@ -634,9 +642,9 @@ class TestBlockContainers(AssetFixture):
 
         写错不会报错，只会让玩家右键时打开一个空界面。
 
-        **不能假设界面文件名等于命名空间**：`storage_driver.json` 的命名空间是
-        `storage_driver_ui`（原版同样如此，`NeteaseContainerUI.json` 的命名空间是
-        `netease_container`）。因此按 `_ui_defs.json` 登记的清单逐个找命名空间。
+        **不按文件名拼路径**：文件名虽是命名空间去掉 `endernet_`（`endernet_storage_driver`
+        → `storage_driver.json`），所在的分组目录（`ui/endernet/storage/`）却拼不出来。
+        因此按 `_ui_defs.json` 登记的清单逐个找命名空间。
         """
         registry = read_json(os.path.join(RP_UI, "_ui_defs.json"))
         screens = {}

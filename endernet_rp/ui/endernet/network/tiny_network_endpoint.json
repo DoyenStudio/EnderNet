@@ -1,0 +1,123 @@
+{
+    "content": {
+        "type": "panel",
+        "size": [
+            180.0,
+            200.0
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "bg@common.dialog_background_opaque": {
+                    "layer": 0,
+                    "texture": "textures/endernet/ui/background_panel_opaque"
+                }
+            },
+            {
+                "title": {
+                    "type": "image",
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "size": [
+                        74.0,
+                        16.0
+                    ],
+                    "layer": 1,
+                    "texture": "textures/endernet/ui/device_title_background",
+                    "controls": [
+                        {
+                            "title_text": {
+                                "type": "label",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    3.0,
+                                    3.0
+                                ],
+                                "color": [
+                                    0.3058823529411765,
+                                    0.2549019607843137,
+                                    0.3137254901960784
+                                ],
+                                "font_scale_factor": 1.2,
+                                "font_type": "default",
+                                "text": "tile.endernet:tiny_network_endpoint.name",
+                                "text_alignment": "center"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "close@endernet_ui_common.close_btn": {
+                    "anchor_from": "top_right",
+                    "anchor_to": "top_right",
+                    "offset": [
+                        -2,
+                        2
+                    ]
+                }
+            },
+            {
+                "stat_bar@endernet_ui_common.device_stat_bar": {
+                    "offset": [
+                        84,
+                        1
+                    ]
+                }
+            },
+            {
+                "network_data": {
+                    "type": "panel",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0.0,
+                        32.0
+                    ],
+                    "size": [
+                        "100%+-20px",
+                        100
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "image": {
+                                "type": "image",
+                                "layer": 1,
+                                "texture": "textures/endernet/ui/background_bottom_dark_edge"
+                            }
+                        },
+                        {
+                            "title": {
+                                "type": "label",
+                                "anchor_from": "top_left",
+                                "anchor_to": "bottom_left",
+                                "color": [
+                                    0.2588235294117647,
+                                    0.2588235294117647,
+                                    0.2588235294117647
+                                ],
+                                "font_type": "default",
+                                "text": "网络信息",
+                                "text_alignment": "center"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "endernet_importer_overlay@endernet_universal_importer.overlay_panel": {
+                    "visible": false
+                }
+            }
+        ]
+    },
+    "main@common.inventory_screen_common": {
+        "$screen_background_alpha": 0.4,
+        "$screen_bg_content": "common.screen_background",
+        "$screen_content": "endernet_ui_common.screen_root",
+        "$window_content": "endernet_tiny_network_endpoint.content"
+    },
+    "namespace": "endernet_tiny_network_endpoint"
+}

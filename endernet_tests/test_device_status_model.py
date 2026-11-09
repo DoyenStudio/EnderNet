@@ -24,7 +24,7 @@ from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.protocol import DeviceStatusMessage, Reason
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEXTURES = os.path.join(ROOT, "endernet_rp", "textures", "ui", "endernet")
+TEXTURES = os.path.join(ROOT, "endernet_rp", "textures", "endernet", "ui")
 
 REF = DeviceRef(NodeKey(0, 10, 64, 20), 3)
 
@@ -230,7 +230,7 @@ class TestTexturePaths(unittest.TestCase):
         """路径写错的表现是紫黑块，而它在离线与真机都不会报错。"""
         for path in (device_status.ICON_ONLINE, device_status.ICON_OFFLINE,
                      device_status.MASK_ONLINE, device_status.MASK_OFFLINE):
-            self.assertTrue(path.startswith("textures/ui/endernet/"), path)
+            self.assertTrue(path.startswith("textures/endernet/ui/"), path)
             name = path.rsplit("/", 1)[-1] + ".png"
             self.assertTrue(os.path.exists(os.path.join(TEXTURES, name)),
                             "缺少贴图 %s" % (name,))

@@ -64,10 +64,10 @@ CLOSE_BINDING = BINDING_PREFIX + "close"
 COLOR_ONLINE = [0.0, 1.0, 0.0]
 COLOR_OFFLINE = [1.0, 0.0, 0.0]
 
-ICON_ONLINE = "textures/ui/endernet/network_ok_icon"
-ICON_OFFLINE = "textures/ui/endernet/network_error_icon"
-MASK_ONLINE = "textures/ui/endernet/corner_ok_icon"
-MASK_OFFLINE = "textures/ui/endernet/corner_error_icon"
+ICON_ONLINE = "textures/endernet/ui/network_ok_icon"
+ICON_OFFLINE = "textures/endernet/ui/network_error_icon"
+MASK_ONLINE = "textures/endernet/ui/corner_ok_icon"
+MASK_OFFLINE = "textures/endernet/ui/corner_error_icon"
 
 #: 详情弹窗三行的兜底文案。**只在那一行确实没有原因时使用**；有原因时
 #: 显示的是服务端给的具体说明，不是这里这几句。

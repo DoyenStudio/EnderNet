@@ -219,7 +219,7 @@ class NumberSetWindowTests(unittest.TestCase):
         self.assertFalse(self.screen._vars)
 
     def test_json_control_paths_and_binding_do_not_collide_with_item_search(self):
-        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet_windows.json"),
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common", "windows.json"),
                   encoding="utf-8") as handle:
             data = json.load(handle)
         controls = {key.split("@")[0]: value

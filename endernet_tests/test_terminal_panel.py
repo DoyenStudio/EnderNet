@@ -3796,18 +3796,18 @@ class TestJsonContract(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "terminal",
                                "common_terminal_panel.json"), encoding="utf-8") as handle:
             from ui_terminal_templates import inline_terminal_controls
             cls.panel = inline_terminal_controls(json.load(handle))
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
-                               "endernet_windows.json"), encoding="utf-8") as handle:
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common",
+                               "windows.json"), encoding="utf-8") as handle:
             cls.windows = json.load(handle)
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
-                               "endernet_container_common.json"), encoding="utf-8") as handle:
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common",
+                               "container_common.json"), encoding="utf-8") as handle:
             cls.container = json.load(handle)
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
-                               "endernet_ui_common.json"), encoding="utf-8") as handle:
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common",
+                               "ui_common.json"), encoding="utf-8") as handle:
             cls.common = json.load(handle)
 
     def controls(self, node):
@@ -3856,7 +3856,7 @@ class TestJsonContract(unittest.TestCase):
         grid = self.panel["terminal_items_grid"]
         self.assertEqual(grid["collection_name"], terminal_panel.COLLECTION)
         self.assertEqual(grid["grid_item_template"],
-                         "common_terminal_panel_ui.terminal_slot")
+                         "endernet_common_terminal_panel.terminal_slot")
         binding = grid["bindings"][0]
         self.assertEqual(binding["binding_name_override"], "#maximum_grid_items")
         self.assertEqual(binding["binding_type"], "global")
@@ -3889,7 +3889,7 @@ class TestJsonContract(unittest.TestCase):
         content = self.controls(self.panel["content"])
         scroll = content["terminal_items_scroll"]
         self.assertEqual(scroll["$scroll_background_image_control"],
-                         "common_terminal_panel_ui.terminal_scroll_background")
+                         "endernet_common_terminal_panel.terminal_scroll_background")
         # 背景要显示出来，否则整块按钮根本不存在（`background` 挂着
         # `visible: $show_background`）。
         self.assertTrue(scroll["$show_background"])
@@ -3912,7 +3912,7 @@ class TestJsonContract(unittest.TestCase):
         for filename in ("common_terminal_panel.json", "crafting_terminal_panel.json",
                          "template_terminal_panel.json"):
             from ui_terminal_templates import inline_terminal_controls
-            with open(os.path.join(ROOT, "endernet_rp", "ui", filename),
+            with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "terminal", filename),
                       encoding="utf-8") as handle:
                 panel = inline_terminal_controls(json.load(handle))
             pool = flying_item.FlightPool(
@@ -4122,7 +4122,7 @@ class TestJsonContract(unittest.TestCase):
                 for key, value in entry.items()}
         energy = rows["energy_stat"]
         icon = energy["controls"][0]["icon"]["texture"]
-        self.assertEqual(icon, "textures/ui/endernet/energy_simple_icon")
+        self.assertEqual(icon, "textures/endernet/ui/energy_simple_icon")
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "endernet_rp", icon + ".png")))
         network = rows["network_conn_stat"]
         self.assertGreaterEqual(energy["offset"][1],
@@ -4147,10 +4147,12 @@ class TestPressedNamesAreActuallyClickable(unittest.TestCase):
     """
 
     def ui_files(self):
-        ui_dir = os.path.join(ROOT, "endernet_rp", "ui")
-        for name in sorted(os.listdir(ui_dir)):
-            if name.endswith(".json") and name != "_ui_defs.json":
-                yield name, os.path.join(ui_dir, name)
+        ui_dir = os.path.join(ROOT, "endernet_rp", "ui", "endernet")
+        for directory, dirnames, filenames in os.walk(ui_dir):
+            dirnames.sort()
+            for name in sorted(filenames):
+                if name.endswith(".json"):
+                    yield name, os.path.join(directory, name)
 
     def test_every_real_pressed_name_has_a_button_mapping(self):
         # 计数器与清单都放进列表：py2 没有 `nonlocal`，嵌套函数里 `+=` 会
@@ -4456,19 +4458,19 @@ class TestEscapeKey(PanelFixture):
         self.assertEqual([], self.removed)
 
 
-REPO_UI = os.path.join(testsupport.REPO_ROOT, "endernet_rp", "ui")
+REPO_UI = os.path.join(testsupport.REPO_ROOT, "endernet_rp", "ui", "endernet")
 
 
 class TestHoverJsonContract(unittest.TestCase):
     """每种格子的集合名与提示绑定名，JSON 与 `terminal_panel.SLOT_REGIONS` 一致。"""
 
-    FILES = ("endernet_terminal_inventory.json", "endernet_ui_common.json",
-             "crafting_terminal_panel.json", "template_terminal_panel.json")
+    FILES = ("common/terminal_inventory.json", "common/ui_common.json",
+             "terminal/crafting_terminal_panel.json", "terminal/template_terminal_panel.json")
 
     def wrappers(self):
         found = {}
         for name in self.FILES:
-            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
+            with open(os.path.join(REPO_UI, *name.split("/")), encoding="utf-8") as handle:
                 data = json.load(handle)
             for key, value in data.items():
                 if key.endswith("@endernet_windows.item_can_be_selected"):
@@ -4487,13 +4489,13 @@ class TestHoverJsonContract(unittest.TestCase):
 
     def test_count_labels_follow_vanilla(self):
         """格子数量照 `common.stack_count_label`，持物数量照 `inventory_selected_stack_size_text`。"""
-        with open(os.path.join(REPO_UI, "endernet_windows.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "windows.json"), encoding="utf-8") as handle:
             slot = json.load(handle)["item_can_be_selected"]
         label = [entry["item_count"] for entry in slot["controls"] if "item_count" in entry][0]
         self.assertNotIn("font_scale_factor", label)
         self.assertEqual((label["anchor_to"], label["offset"], label["shadow"]), ("bottom_right", [0, 1], True))
         self.assertEqual(slot["size"], [18.0, 18.0])
-        with open(os.path.join(REPO_UI, "endernet_container_common.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "container_common.json"), encoding="utf-8") as handle:
             host = json.load(handle)["cursor_host"]
         controls = dict((list(entry)[0].split("@")[0], list(entry.values())[0]) for entry in host["controls"])
         count = controls["cursor_count"]
@@ -4503,7 +4505,7 @@ class TestHoverJsonContract(unittest.TestCase):
         self.assertEqual((controls["cursor_item"]["size"], controls["cursor_item"]["offset"]), ([21, 21], [-1, -2]))
 
     def test_the_hover_state_carries_highlight_and_tooltip(self):
-        with open(os.path.join(REPO_UI, "endernet_windows.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "windows.json"), encoding="utf-8") as handle:
             slot = json.load(handle)["item_can_be_selected"]
         layers = dict((list(entry)[0], list(entry.values())[0].get("layer", 0)) for entry in slot["controls"])
         button = layers.pop("interact_btn@common.button")
@@ -4521,15 +4523,19 @@ class TestHoverJsonContract(unittest.TestCase):
 class TestFullScreenJsonContract(unittest.TestCase):
     """界面铺满屏幕（原版容器的暗底），三台有持物的终端在屏幕层接「点窗外丢出」。"""
 
-    DROPPING = ("common_terminal_panel.json", "crafting_terminal_panel.json", "template_terminal_panel.json")
+    DROPPING = ("terminal/common_terminal_panel.json", "terminal/crafting_terminal_panel.json",
+                "terminal/template_terminal_panel.json")
 
     def mains(self):
-        for name in sorted(os.listdir(REPO_UI)):
-            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
-                data = json.load(handle)
-            for key, value in data.items():
-                if key.startswith("main@common."):
-                    yield name, value
+        for directory, dirnames, filenames in os.walk(REPO_UI):
+            dirnames.sort()
+            for filename in sorted(filenames):
+                name = os.path.relpath(os.path.join(directory, filename), REPO_UI).replace(os.sep, "/")
+                with open(os.path.join(REPO_UI, *name.split("/")), encoding="utf-8") as handle:
+                    data = json.load(handle)
+                for key, value in data.items():
+                    if key.startswith("main@common."):
+                        yield name, value
 
     def test_every_screen_has_the_vanilla_backdrop(self):
         found = 0
@@ -4540,7 +4546,7 @@ class TestFullScreenJsonContract(unittest.TestCase):
         self.assertGreater(found, 4)
 
     def test_the_root_panel_fills_the_screen_and_holds_the_window(self):
-        with open(os.path.join(REPO_UI, "endernet_ui_common.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "ui_common.json"), encoding="utf-8") as handle:
             root = json.load(handle)["screen_root"]
         self.assertEqual(root["size"], ["100%", "100%"])
         names = [list(entry)[0].split("@")[0] for entry in root["controls"]]
@@ -4551,12 +4557,12 @@ class TestFullScreenJsonContract(unittest.TestCase):
             self.assertEqual(main["$screen_content"], "endernet_ui_common.screen_root", name)
             namespace, control = main["$window_content"].split(".")
             self.assertEqual(control, "content", name)
-            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
+            with open(os.path.join(REPO_UI, *name.split("/")), encoding="utf-8") as handle:
                 self.assertEqual(json.load(handle)["namespace"], namespace, name)
 
     def test_the_slot_durability_bar_does_not_need_an_ancestor_variable(self):
         """原版 `durability_bar` 的 `ignored` 只在祖先里找 `$durability_bar_required`，覆盖掉它。"""
-        with open(os.path.join(REPO_UI, "endernet_windows.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "windows.json"), encoding="utf-8") as handle:
             slot = json.load(handle)["item_can_be_selected"]
         bar = [entry["durability@common.durability_bar"] for entry in slot["controls"]
                if "durability@common.durability_bar" in entry][0]
@@ -4569,7 +4575,7 @@ class TestFullScreenJsonContract(unittest.TestCase):
 
     def test_progress_bars_inherit_vanilla_and_read_the_panel_bindings(self):
         """进度条继承原版控件，数据照原版走绑定（覆盖到 `#progress_bar_*`），名字与 `PROGRESS_BARS` 对上。"""
-        with open(os.path.join(REPO_UI, "endernet_container_common.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "container_common.json"), encoding="utf-8") as handle:
             common = json.load(handle)
         host = dict((list(entry)[0], list(entry.values())[0]) for entry in common["cursor_host"]["controls"])
         bars = {"take_bar": host["cursor_take_bar@common.inventory_hold_icon"],
@@ -4584,7 +4590,7 @@ class TestFullScreenJsonContract(unittest.TestCase):
             self.assertIn(visible["binding_name_override"], ("#progress_bar_visible", "#touch_progress_bar_visible"))
             self.assertNotIn("#progress_bar_total_amount", bar.get("property_bag", {}), "不再靠属性袋写数")
         for name in self.DROPPING:
-            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
+            with open(os.path.join(REPO_UI, *name.split("/")), encoding="utf-8") as handle:
                 content = json.load(handle)["content"]
             self.assertIn("split_bar@endernet_container_common.split_bar",
                           [list(entry)[0] for entry in content["controls"]], name)

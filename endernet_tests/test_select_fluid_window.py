@@ -246,7 +246,7 @@ class FluidWindowTests(unittest.TestCase):
         self.open()
 
     def test_json_fluid_bindings_are_separate_from_item_picker(self):
-        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet_windows.json"),
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common", "windows.json"),
                   encoding="utf-8") as handle:
             data = json.load(handle)
         controls = {key.split("@")[0]: value for entry in data["select_fluid_window"]["controls"]

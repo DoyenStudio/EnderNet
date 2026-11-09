@@ -939,7 +939,7 @@ class TemplateView(object):
         }
 
 
-@RegistToolDeltaScreen("template_terminal_panel_ui.main")
+@RegistToolDeltaScreen("endernet_template_terminal_panel.main")
 class TemplatePanel(RecipeChoiceBindings, ItemListWindowBindingsMixin, TerminalPanelBase):
     """样板终端：通用终端的一切 + 四个格子区。
 

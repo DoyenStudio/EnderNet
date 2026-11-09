@@ -128,7 +128,7 @@ def slot_binding(prefix, suffix):
     return BINDING_PREFIX + prefix + "_" + suffix
 
 
-#: 控件路径。`main` 下只有一个 `terminal@common_terminal_panel_ui.content`，
+#: 控件路径。`main` 下只有一个 `terminal@endernet_common_terminal_panel.content`，
 #: 因此 `/terminal/...` 就是内容面板的根。滚动区那条**定义在 `slot_layout`
 #: 里**（飞行动画的坐标也走它），这里重导出一次，免得同一条路径两个出处。
 SCROLL_PATH = slot_layout.SCROLL_PATH
@@ -989,7 +989,7 @@ for _name, _source in PROGRESS_BARS:
 
 
 class TerminalListView(object):
-    """把 `TerminalCache` 接成 `common_terminal_panel_ui` 上的一份可见列表。
+    """把 `TerminalCache` 接成 `endernet_common_terminal_panel` 上的一份可见列表。
 
     **本类一条绑定都不注册。** 引擎要的十条绑定写在 `TerminalPanelBase` 的
     类体里（`terminal_count` / `terminal_has_item` / …），由那边转发到这里；
@@ -2087,7 +2087,7 @@ class TerminalListView(object):
         self._scroll = None
 
 
-@RegistToolDeltaScreen("common_terminal_panel_ui.main")
+@RegistToolDeltaScreen("endernet_common_terminal_panel.main")
 class CommonTerminalPanel(TerminalPanelBase):
     """通用终端：上列表、下背包。
 

@@ -52,7 +52,7 @@
             },
             "netease:block_container": {
                 "custom_description": "内存槽",
-                "screen_name": "memory_slot_ui.main",
+                "screen_name": "endernet_memory_slot.main",
                 "container_size": 10
             },
             "netease:custom_tips": {

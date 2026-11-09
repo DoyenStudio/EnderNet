@@ -192,7 +192,7 @@ class BlockUseFixture(unittest.TestCase, _FakeClockFixture):
     def test_a_single_click_pushes_the_ui(self):
         self.click()
         self.assertEqual(len(self.pushed), 1)
-        self.assertEqual(self.pushed[0], ("p1", "common_terminal_panel_ui.main"))
+        self.assertEqual(self.pushed[0], ("p1", "endernet_common_terminal_panel.main"))
         self.assertEqual(self.binder.counts["block_use_opened"], 1)
 
     def test_a_burst_of_clicks_pushes_only_once(self):

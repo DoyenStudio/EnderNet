@@ -120,7 +120,7 @@ STATUS_TEXTS = {
 STATUS_RUNNING = "running"
 
 # 宿主 JSON 中预制的订单详情。
-DETAIL_DEFINITION = "factoric_terminal_panel_ui.order_description_window"
+DETAIL_DEFINITION = "endernet_factoric_terminal_panel.order_description_window"
 DETAIL_NAME = "endernet_order_detail"
 #: 与 `select_item_window` 同一个层：盖住主面板，又不遮住设备状态弹窗（40）。
 DETAIL_LAYER = 50
@@ -800,7 +800,7 @@ def _item_id_aux(name, aux):
         return 0
 
 
-@RegistToolDeltaScreen("factoric_terminal_panel_ui.main")
+@RegistToolDeltaScreen("endernet_factoric_terminal_panel.main")
 class FactoricPanel(TerminalPanelBase):
     """工厂终端：一条网络的订单列表、剩余内存与订单详情。
 

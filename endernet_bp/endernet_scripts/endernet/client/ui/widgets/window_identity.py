@@ -16,7 +16,7 @@
 
 #: 物品名单编辑器的 `screen._vars` 键、collection 与绑定名前缀。
 #: 三者一起改：`_vars` 键是「窗口开没开」的唯一判据（`show_*` 拒绝第二次
-#: 打开就查它），collection 与前缀必须与 `endernet_windows.json` 逐字相同。
+#: 打开就查它），collection 与前缀必须与 `windows.json` 逐字相同。
 ITEM_LIST_WINDOW_ATTRIBUTE = "_endernet_item_list_window"
 ITEM_LIST_COLLECTION = "endernet_item_list"
 ITEM_LIST_BINDING_PREFIX = "#EnderNetItemList."

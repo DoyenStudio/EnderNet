@@ -51,7 +51,7 @@
             },
             "netease:block_container": {
                 "custom_description": "装配仓",
-                "screen_name": "assemble_chamber_ui.main",
+                "screen_name": "endernet_assemble_chamber.main",
                 "container_size": 19
             },
             "netease:custom_tips": {

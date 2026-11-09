@@ -460,7 +460,7 @@ def ui(name):
     import json
     import os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(root, "endernet_rp", "ui", name)
+    path = os.path.join(root, "endernet_rp", "ui", "endernet", *name.split("/"))
     from ui_terminal_templates import inline_terminal_controls
     with _io.open(path, encoding="utf-8") as handle:
         return inline_terminal_controls(json.load(handle))
@@ -491,7 +491,7 @@ class TestWindowJson(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.windows = ui("endernet_windows.json")
+        cls.windows = ui("common/windows.json")
 
     def test_the_binding_names_match_the_python_constants(self):
         row = bindings_of(self.windows["order_preview_src_item"])
@@ -593,8 +593,8 @@ class TestWindowJson(unittest.TestCase):
 class TestPanelInstances(unittest.TestCase):
     """三块终端屏都实例化了预览窗。**只实例化，不新建模板**（同 11-07）。"""
 
-    PANELS = ("common_terminal_panel.json", "crafting_terminal_panel.json",
-              "template_terminal_panel.json")
+    PANELS = ("terminal/common_terminal_panel.json", "terminal/crafting_terminal_panel.json",
+              "terminal/template_terminal_panel.json")
 
     #: 控件实例名。与 `plate` 一起进 JSON —— 模板仍然只有
     #: `endernet_windows` 里那一份。
