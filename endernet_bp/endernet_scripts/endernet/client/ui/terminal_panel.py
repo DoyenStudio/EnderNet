@@ -574,7 +574,8 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         # type: (tuple, object) -> int
         preview = self.slot_input.preview_cell("bag", self._slot_index(segment, index))
         if preview:
-            return stack_size.id_aux(preview["name"], preview["aux"])
+            # 触屏平分时来源格可能被分空。
+            return stack_size.id_aux(preview["name"], preview["aux"]) if preview["count"] else 0
         entry = self._slot_entry(segment, index)
         if entry is None:
             return 0

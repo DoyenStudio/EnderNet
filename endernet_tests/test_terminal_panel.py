@@ -2246,6 +2246,91 @@ class TestQuietSlotNotices(PanelFixture):
         self.assertEqual(self.client.action_of(request_id), "slot_click")
 
 
+class TestTouchSpread(PanelFixture):
+    """触屏选中之后滑动：拖过的几格按格数整除平分，余数留在原格（User 2026-11-09）。
+
+    规则与键鼠左键拖动是同一份（`plan_distribution`）；松手先 `take` 正好分出去的
+    数量，再发同一条 `slot_batch`。
+    """
+
+    def setUp(self):
+        super().setUp()
+        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        self.engine_backpack((9, STONE.name, 63))
+        self.router = self.panel.slot_input
+        self.client.cursor = {"key": None, "count": 0, "revision": 4}
+        input_patch = patch.object(terminal_input, "input_api")
+        self.addCleanup(input_patch.stop)
+        input_patch.start().return_value.GetToggleMode.return_value = 1
+        # 手指每 20 像素一格：x=10 在第 0 格，30 在第 1 格，50 在第 2 格。
+        hit = patch.object(slot_layout, "slot_at",
+                           side_effect=lambda screen, point: ("bag", int(point[0]) // 20))
+        self.addCleanup(hit.stop)
+        hit.start()
+        self.finger = [(10.0, 10.0)]
+        finger = patch.object(self.router.touch, "finger", side_effect=lambda: self.finger[0])
+        self.addCleanup(finger.stop)
+        finger.start()
+        self.panel.fly = RecordingAnimator()
+        self.router.details = Mock()
+
+    def swipe(self, *xs):
+        """在第 0 格按下，手指依次挪到这些 x 上，最后在原处松手。"""
+        params = {"#collection_index": 0, "TouchPosX": 10.0, "TouchPosY": 10.0}
+        self.bind(BinderStub.BF_ButtonClickDown, "backpack_click", params)
+        self.router.tick()
+        for x in xs:
+            self.finger[0] = (float(x), 10.0)
+            self.router.tick()
+
+    def release(self):
+        self.bind(BinderStub.BF_ButtonClickCancel, "backpack_click",
+                  {"#collection_index": 0, "TouchPosX": self.finger[0][0], "TouchPosY": 10.0})
+
+    def take_receipt(self, count):
+        command = self.take_command()
+        self.assertEqual((command["config"]["gesture"], command["count"], command["slot"]), ("take", count, 9))
+        result = self.result(command["request_id"])
+        result["payload"] = {"cursor": {"key": STONE.to_dict(), "count": count, "revision": 5}}
+        self.router.settle(result)
+        self.router.tick()
+        return self.take_command()
+
+    def test_two_slots_get_the_quotient_and_the_remainder_stays(self):
+        self.backpack.select(0)
+        self.swipe(30, 50)
+        self.assertEqual((self.router.preview_cell("bag", 1)["count"], self.router.preview_cell("bag", 2)["count"],
+                          self.router.preview_cell("bag", 0)["count"]), (31, 31, 1))
+        self.release()
+        batch = self.take_receipt(62)
+        self.assertEqual(batch["action"], "slot_batch")
+        self.assertEqual(batch["config"]["revision"], 5, "批量用拿到光标之后的修订")
+        self.assertEqual([(p["cell"], p["count"]) for p in batch["config"]["placements"]], [(10, 31), (11, 31)])
+
+    def test_a_split_selection_spreads_only_its_part(self):
+        self.backpack.select_partial(0, 10)
+        self.swipe(30, 50)
+        self.release()
+        batch = self.take_receipt(10)
+        self.assertEqual([p["count"] for p in batch["config"]["placements"]], [5, 5])
+
+    def test_a_failed_batch_returns_the_cursor(self):
+        self.backpack.select(0)
+        self.swipe(30, 50)
+        self.release()
+        batch = self.take_receipt(62)
+        self.router.settle(self.rejected(batch["request_id"]))
+        self.assertEqual(self.take_command()["action"], "cursor_return")
+
+    def test_without_a_selection_a_swipe_is_a_plain_drag(self):
+        with patch.object(self.router.touch, "_show_drag") as icon:
+            self.swipe(30, 50)
+        self.assertEqual(icon.call_args.args[0], STONE, "拖整格时手指下是那一叠的图标")
+        self.assertIsNone(self.router.preview_cell("bag", 1))
+        self.release()
+        self.assertEqual(self.take_command()["action"], "inv_swap", "没选中时仍是拖到松手处")
+
+
 class TestDesktopDistribution(PanelFixture):
     def test_native_cursor_host_tracks_even_with_an_empty_hand(self):
         from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input

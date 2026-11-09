@@ -6,7 +6,9 @@
   左滑减，滑过进度条的宽度正好是整叠，最少 1 个。松手（在哪松都一样）后大进度条
   消失，这一格以拆出的数量选中，格子上出现原版灰底绿色小进度条（`split_bar`，原版
   `inventory_hold_icon_release`，拆出数量 / 整叠），一直显示到取消选中或放下。
-- **拖动**：没到长按门槛就挪动 = 拖整格，在别处松手放下。背包格 → 背包格（合并、
+- **滑动平分**：已经选中了背包格时，按住格子滑过去 = 沿手指经过的格子平分选中的那一叠，
+  规则与键鼠左键拖动相同（`TerminalInput.begin_spread`），松手才落（User 2026-11-09）。
+- **拖动**：没有选中时，没到长按门槛就挪动 = 拖整格，在别处松手放下。背包格 → 背包格（合并、
   移到空格、整格交换）、网络区（存入）、合成格（整格放入）；网络行 → 背包格（取一组）。
   拖出窗口松手 = 取消。
 
@@ -92,9 +94,10 @@ class TouchGesture(object):
         view = screen.list_view
         if area == "bag":
             entry = screen.backpack.entry(index)
-            if entry is None:
+            if entry is None and screen.backpack.selected is None:
                 return
-            key, total = entry.key, entry.count()
+            # 空格只在已有选中时记下：那是滑动平分的起点。
+            key, total = (entry.key, entry.count()) if entry is not None else (None, 0)
         elif view is not None and view.has_item(index):
             key, total = view.rows[index].key, 0
         else:
@@ -117,13 +120,16 @@ class TouchGesture(object):
         finger = self.finger()
         if finger is not None and source["origin"] is None:
             source["origin"] = finger
-        if (source["split"] is None and not source["moved"] and source["area"] == "bag"
-                and self.screen._clock() - source["at"] >= self.hold_seconds):
+        if (source["split"] is None and not source["moved"] and source["key"] is not None
+                and source["area"] == "bag" and self.screen._clock() - source["at"] >= self.hold_seconds):
             source["split"] = {"anchor": finger, "count": half_up(source["total"])}
         split = source["split"]
         if split is None:
             if finger is not None and _far(finger, source["origin"]):
                 source["moved"] = True
+            if source["moved"] and source["area"] == "bag" and self.screen.backpack.selected is not None:
+                self._spread(finger)
+                return
             self._show_drag(source["key"] if source["moved"] else None, source["total"])
             return
         if finger is not None:
@@ -141,6 +147,9 @@ class TouchGesture(object):
         self._show_split(None)
         if source is None:
             return False
+        if source.get("spread"):
+            self.screen.slot_input.finish_spread()
+            return True
         split = source["split"]
         if split is not None:
             self._select(source["index"], split["count"])
@@ -154,6 +163,16 @@ class TouchGesture(object):
         if target is not None:
             self._drop(source, target)
         return True
+
+    def _spread(self, finger):
+        # type: (object) -> None
+        """选中之后滑动：交给路由按键鼠左键拖动的规则平分（`begin_spread` / `visit`）。"""
+        source = self.source
+        router = self.screen.slot_input
+        if "spread" not in source:
+            source["spread"] = router.begin_spread((source["area"], source["index"]))
+        if source["spread"] and finger is not None:
+            router.visit(slot_layout.slot_at(self.screen, finger))
 
     # -- 落点 ----------------------------------------------------------
 

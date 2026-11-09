@@ -163,7 +163,8 @@ class TerminalInput(object):
         self.details.tick(*self.selected_target(view))
         if not desktop:
             self.touch.tick()
-            # 队列两种输入共用：触屏点窗外是「拿到光标上」再「丢出」两条，第二条要在这里发。
+            self.retire_distribution()
+            # 队列两种输入共用：触屏的丢出与滑动平分都是「拿到光标上」再发第二条，要在这里发。
             self.dispatch()
             return
         hand = getattr(view.cache.client, "cursor", None)
@@ -312,14 +313,23 @@ class TerminalInput(object):
         drag = self.drag
         drag["placements"], drag["preview"] = [], {}
         hand = self.screen.list_view.cache.client.cursor
-        if (len(drag["slots"]) < 2 or not hand or not hand["key"]
-                or drag["revision"] != hand["revision"] or self.active or self.pending):
+        source = drag.get("source")
+        if len(drag["slots"]) < 2 or self.active or self.pending:
             return
-        key = ResourceKey.from_dict(hand["key"])
+        if source is not None:
+            key, total = source["key"], source["count"]
+        elif not hand or not hand["key"] or drag["revision"] != hand["revision"]:
+            return
+        else:
+            key, total = ResourceKey.from_dict(hand["key"]), hand["count"]
         limit = self.screen.list_view._stack_limit(key.name)
         eligible = []
         physical = 0
         for area, index in drag["slots"]:
+            # 触屏平分：来源是选中的那一格，它自己不算目标；只分到实物格。
+            if source is not None and (area not in ("bag", "grid")
+                                       or (area == "bag" and index == source["index"])):
+                continue
             existing = 0
             if area == "bag":
                 entry = self.screen.backpack.entry(index)
@@ -339,7 +349,7 @@ class TerminalInput(object):
                 physical += 1
             eligible.append((area, index, existing))
 
-        remaining = hand["count"]
+        remaining = total
         share = 1 if drag["button"] == "right" else max(1, remaining // max(1, physical))
         for area, index, existing in eligible:
             if area in ("bag", "grid"):
@@ -347,13 +357,57 @@ class TerminalInput(object):
                 remaining -= amount
             else:
                 # Template cells copy the configuration without consuming the cursor.
-                amount = 1 if drag["button"] == "right" else hand["count"]
+                amount = 1 if drag["button"] == "right" else total
             if amount:
                 target = (area, index)
                 drag["placements"].append((area, index, amount))
                 drag["preview"][target] = {"name": key.name, "aux": key.aux,
                                            "count": existing + amount}
         drag["remainder"] = remaining
+        if source is not None and remaining < total:
+            drag["preview"][("bag", source["index"])] = {
+                "name": key.name, "aux": key.aux, "count": source["stack"] - (total - remaining)}
+
+    def begin_spread(self, start):
+        # type: (tuple) -> bool
+        """触屏：选中之后滑动，沿手指经过的格子平分选中的那一叠（User 2026-11-09）。
+
+        平分的规则与键鼠左键拖动是同一份（`plan_distribution`），差别只在来源：
+        键鼠分的是光标上的那一叠，这里分的是选中的那一格（长按拆出的就只分那些）。
+        """
+        backpack = self.screen.backpack
+        hand = self.screen.list_view.cache.client.cursor
+        entry = backpack.entry(backpack.selected) if backpack.selected is not None else None
+        if (entry is None or not hand or hand["key"] or self.active or self.pending
+                or self.screen.top_modal()):
+            return False
+        count = min(backpack.selected_count or entry.count(), entry.count())
+        self.drag = {"slots": [], "button": "left", "point": None, "start_point": None,
+                     "target": start, "row_key": None, "shift": False, "space": False,
+                     "preview": {}, "placements": [], "revision": hand["revision"], "remainder": 0,
+                     "source": {"index": backpack.selected, "key": entry.key, "count": count,
+                                "stack": entry.count()}}
+        self.visit(start)
+        return True
+
+    def finish_spread(self):
+        # type: () -> None
+        """松手：先把要分出去的数量 `take` 到光标上，再发与键鼠拖动同一条 `slot_batch`。
+
+        只拿正好分出去的那么多，没分完的留在原格；批量没落完时把光标还回背包（`settle`）。
+        """
+        drag, self.drag = self.drag, None
+        if not drag or not drag["placements"]:
+            return
+        source = drag["source"]
+        self.screen.backpack.clear_selection()
+        self.settling_drag = drag
+        queued = len(self.pending) + (self.active is not None)
+        self.click("bag", source["index"], "take", sum(amount for _, _, amount in drag["placements"]))
+        if len(self.pending) + (self.active is not None) > queued:
+            self.submit_distribution(drag)
+        else:
+            self.settling_drag = None
 
     def preview_cell(self, area, index):
         # type: (str, object) -> object
@@ -474,8 +528,10 @@ class TerminalInput(object):
                 model = self.screen.craft if area == "grid" else self.screen.template
                 entry["slot_version"] = model.revision
             placements.append(entry)
-        fields = {"config": {"revision": drag["revision"], "placements": placements}}
-        self.pending.append((fields, "batch", None, None))
+        source = drag.get("source")
+        # 触屏的批量排在 `take` 后面，持物修订到发出时才知道（见 `dispatch`）。
+        fields = {"config": {"revision": None if source else drag["revision"], "placements": placements}}
+        self.pending.append((fields, "batch", source["index"] if source else None, None))
         self.dispatch()
 
     def quick_region(self, area, index, matching=None):
@@ -647,7 +703,7 @@ class TerminalInput(object):
         fields, area, index, key = self.pending.popleft()
         if area == "drop" and not hand["key"]:
             return self.dispatch()
-        if area != "batch":
+        if area != "batch" or fields["config"]["revision"] is None:
             fields["config"]["revision"] = hand["revision"]
         action = {"batch": "slot_batch", "drop": "cursor_drop"}.get(area, "slot_click")
         request = client.send_command(action, **fields)
@@ -677,6 +733,9 @@ class TerminalInput(object):
             if result.get("status") != "ok":
                 self.pending.clear()
                 self.settling_drag = None
+                if index is not None:
+                    # 触屏平分是先拿到光标上再落；没落完的还回背包，触屏看不见光标。
+                    client.send_command("cursor_return")
             elif self.settling_drag:
                 for name in ("grid_revision", "template_revision"):
                     if name in payload:
