@@ -161,7 +161,10 @@ class NetworkService(object):
 
     def note_domain_change(self, node, from_domain_ids, to_domain_ids):
         # type: (object, tuple, tuple) -> bool
-        """负载域归属变了，但分量没变（迁移通知的 `DOMAIN` 种类）。
+        """带宽域归属变了，但分量没变（迁移通知的 `DOMAIN` 种类）。
+
+        2026-11-09 网络改版后「带宽域」就是设备所在的线路（基带外露面为根，
+        见 `topology.LineTree`），接口名沿用旧称。
 
         单独一个入口而不是复用 `add_node`：域变了不等于设备换了，
         服务可能要迁移的是「这个节点占用了哪个域的多少槽位/容量」，

@@ -1,5 +1,5 @@
 # coding=utf-8
-"""由定义表生成物品 JSON 与物品图集（存储介质 + 工厂样板 + 内存条）。
+"""由定义表生成物品 JSON 与物品图集（存储介质 + 工厂样板 + 内存条 + 工具）。
 
     python scripts/gen_items.py          # 生成
     python scripts/gen_items.py --check  # 只检查是否与当前文件一致（CI 用）
@@ -11,7 +11,11 @@
 - 介质的容量、类型数、读写速度从各自的 `MediumSpec` 读出，
   因此游戏内提示里的数字不可能与领域层的规格分叉；
 - 样板的用途说明从 `TemplateSpec.usage` 读出（items.md 的原文）；
-- 内存条的容量从 `MemorySpec.capacity_bytes` 读出，同理不会分叉。
+- 内存条的容量从 `MemorySpec.capacity_bytes` 读出，同理不会分叉；
+- 工具（网络扳手）由 `ITEM_TOOLS` 决定，说明写在本文件的 `TOOL_TIPS`；
+- 四种终端面板（定义表的 `parts`，`*_terminal_part`）**不在这里**：2026-11-10 作者定方案 B，
+  它们注册成同名的展示方块（`gen_blocks.py` 的 `build_part_item_json`），物品栏里显示 3D 面板，
+  物品形态是方块物品，不占物品 JSON 与物品图集。
 
 产物三份：
 
@@ -24,7 +28,8 @@
 SkyblueTech 一致。本项目方块走的是原版 `blocks/`，但物品没有已验证的原版先例，
 因此不拿它当赌注。
 
-贴图本身由 `gen_placeholder_textures.py` 生成到 `textures/endernet/items/`。
+贴图本身由 `gen_placeholder_textures.py` 生成到 `textures/endernet/items/`；扳手的
+占位图标由 `gen_cable_models.py --icons` 补（先跑本脚本登记图集，它只补登记了的）。
 """
 
 import argparse
@@ -69,6 +74,12 @@ ITEM_FORMAT_VERSION = "1.10"
 #: 一叠，两块不同配置的样板会互相覆盖。安全的机制是「引擎本就按 `userData`
 #: 分堆」。见 `plans/items.md` 的样板一节与 `plans/tasks/11-交付说明.md`。
 ITEM_MAX_STACK_SIZE = 1
+
+#: 工具的物品说明。每件登记为物品的工具都要有一条，缺了生成时报错（不写一条
+#: 空说明了事）。扳手这条是作者 2026-11-10 在物品 JSON 里定的原文。
+TOOL_TIPS = {
+    "endernet:network_wrench": "用于对终界网络设备进行维护",
+}
 
 
 def max_stack_size_of(spec):
@@ -138,15 +149,24 @@ def memory_tip(spec):
     return "\n§7内存容量 %d 字节" % (spec.capacity_bytes,)
 
 
+def tool_tip(spec):
+    # type: (object) -> str
+    """工具说明：取 `TOOL_TIPS`，没写的工具直接报错。"""
+    if spec.id not in TOOL_TIPS:
+        raise KeyError("工具 %s 没有在 TOOL_TIPS 里写说明" % (spec.id,))
+    return "\n§7" + TOOL_TIPS[spec.id]
+
+
 def build_behavior_json(spec, tip):
-    """行为包物品定义。`tip` 由调用方按物品类型给出。"""
+    """行为包物品定义。`tip` 由调用方按物品类型给出（`item_tips`）。"""
+    components = {
+        "minecraft:max_stack_size": max_stack_size_of(spec),
+        "netease:customtips": {"value": tip},
+    }
     return {
         "format_version": ITEM_FORMAT_VERSION,
         "minecraft:item": {
-            "components": {
-                "minecraft:max_stack_size": max_stack_size_of(spec),
-                "netease:customtips": {"value": tip},
-            },
+            "components": components,
             "description": {
                 "category": CREATIVE_CATEGORY,
                 "identifier": spec.id,
@@ -167,10 +187,13 @@ def build_resource_json(spec):
 
 
 def build_item_texture(existing, definitions):
-    """物品图集。保留已有条目，只补本模组自己的物品（介质与样板）。"""
+    """物品图集。保留已有条目，只补本模组自己的物品（`item_tips` 列出的全部）。"""
     texture_data = dict(existing.get("texture_data", {}))
     texture_data.pop("endernet:crafting_template", None)
-    for spec in definitions.item_specs():
+    # 终端面板 2026-11-10 起是方块物品（同名展示方块），物品栏画方块几何，不再占物品图集
+    for part_id in definitions.parts:
+        texture_data.pop(item_icon_key(part_id), None)
+    for spec, _tip in item_tips(definitions):
         texture_data[item_icon_key(spec.id)] = {
             "textures": "textures/endernet/items/" + item_texture_name(spec.id)
         }
@@ -206,7 +229,7 @@ def write_json(path, payload, check_only):
 def missing_textures(definitions):
     """列出还没有贴图文件的物品。"""
     out = []
-    for spec in definitions.item_specs():
+    for spec, _tip in item_tips(definitions):
         path = os.path.join(ITEM_TEXTURE_DIR, item_texture_name(spec.id) + ".png")
         if not os.path.isfile(path):
             out.append((spec.id, path))
@@ -215,8 +238,9 @@ def missing_textures(definitions):
 
 def item_tips(definitions):
     # type: (object) -> list
-    """`(规格, 提示文本)` 清单。**三类物品的提示规则不同，但只有这一处分派**：
-    介质给容量与读写速度，样板给用途与「放进哪台设备」，内存条给字节容量。"""
+    """`(规格, 提示文本)` 清单：**本脚本生成的全部物品**。各类的提示规则不同，但只有
+    这一处分派：介质给容量与读写速度，样板给用途与「放进哪台设备」，内存条给字节容量，
+    工具给 `TOOL_TIPS`。终端面板不在这里（2026-11-10 起是同名展示方块，见模块说明）。"""
     out = []
     for spec in definitions.item_medium_specs():
         out.append((spec, medium_tip(spec)))
@@ -224,6 +248,8 @@ def item_tips(definitions):
         out.append((spec, template_tip(spec, definitions)))
     for spec in definitions.item_memory_specs():
         out.append((spec, memory_tip(spec)))
+    for spec in definitions.item_tool_specs():
+        out.append((spec, tool_tip(spec)))
     return out
 
 
@@ -250,9 +276,9 @@ def main(argv=None):
         changed.append(os.path.relpath(RP_ITEM_TEXTURE, REPO))
 
     missing = missing_textures(definitions)
-    # **总数从 `item_keys()` 派生**，不在这里把三类再数一遍：数漏一类的话
-    # `--check` 照旧报「已是最新」，而那正是「新物品没生成」最难发现的一处。
-    total = len(definitions.item_keys())
+    # **总数从 `item_tips()` 派生**（它就是上面逐个写出的那份清单），不在这里把各类再数
+    # 一遍：数漏一类的话 `--check` 照旧报「已是最新」，而那正是「新物品没生成」最难发现的一处。
+    total = len(item_tips(definitions))
 
     if args.check:
         if changed:

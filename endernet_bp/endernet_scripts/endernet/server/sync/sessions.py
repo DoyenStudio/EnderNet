@@ -15,6 +15,11 @@
 的一次性探针（`callable(source) -> bool`），本模块提供 `accepts()` 去回答它；
 判定依据仍是同一张会话表，但**无会话的命令必须继续放行**——05/08 的既有
 调用方不带会话，把它们一并拒掉等于凭空加了一道门禁。
+
+**面板（阶段 D，13 §7）也是一台设备。** 会话的 `device_ref` 可以是面板引用（宿主光缆的
+位置与代次 + 面名，`DeviceRef.slot`），判据一条不改：`matches` 连槽一起比，距离与维度
+按宿主那一格算——与整方块终端同一口径。拆下一块面板只关指着它的会话
+（`close_for_part`），同一格别的面板不受影响；整格光缆没了按位置全关（`close_for_device`）。
 """
 
 import random
@@ -170,6 +175,7 @@ class SessionContext(object):
         "network_workable",
         "player_dimension",
         "player_position",
+        "blocker",
     )
 
     def __init__(
@@ -182,6 +188,7 @@ class SessionContext(object):
         network_workable=True,
         player_dimension=None,
         player_position=None,
+        blocker=None,
     ):
         self.player_id = player_id
         #: 该位置上**当前**存在的那一次实例；设备已不在时为 None。
@@ -192,6 +199,10 @@ class SessionContext(object):
         self.network_workable = bool(network_workable)
         self.player_dimension = player_dimension
         self.player_position = player_position
+        #: 设备自己说明的「为什么不在网络里」`(原因码, 玩家话)`，先于网络各项判据报出；
+        #: 没有为 None。例如挂在面板底座上的面板（2026-11-10）：「面板没有接在光缆上」，
+        #: 而不是由它推出来的「网络中没有可用的控制器」。
+        self.blocker = blocker
 
 
 def within_reach(anchor, position, policy):
@@ -512,6 +523,9 @@ class SessionRegistry(object):
                 "距离设备太远 (最远 %g 格)" % (self.policy.max_interaction_distance,),
             )
 
+        if context.blocker is not None:
+            code, detail = context.blocker
+            return SessionCheckResult.refused(code, detail)
         if context.network_id is None:
             return SessionCheckResult.refused(
                 Reason.WRONG_NETWORK, "该设备未连接到网络"
@@ -612,6 +626,17 @@ class SessionRegistry(object):
         return self._close_matching(
             lambda session: session.device_ref is not None
             and session.device_ref.node_key.as_key() == ref.node_key.as_key(),
+            reason,
+        )
+
+    def close_for_part(self, part_key, reason="device_replaced"):
+        # type: (object, str) -> list
+        """一块面板被拆下（阶段 D）：只关指着这一块的会话。**按位置与面比对**，代次不比——
+        面板已经不在了，哪一代的会话都不该再开着。center 槽的 `PartKey` 等于 `NodeKey`，
+        因此传整方块设备的位置也行（只关 center 槽那台，不关同格的面板）。"""
+        return self._close_matching(
+            lambda session: session.device_ref is not None
+            and getattr(session.device_ref, "part_key", session.device_ref.node_key) == part_key,
             reason,
         )
 

@@ -36,21 +36,46 @@
   回答请求时**单发**。客户端只对自己已加载的位置生效。
 
 无会话、无身份：读数本来就是任何看得见这台方块的人都看得见的东西。
+
+## 光缆面板（阶段 D，`.claude/13` §7、12 §3.3）
+
+能挂面板的两种光缆（玻璃、普通）走**同一条通道、同一套取值**，种类是 `PANEL`：
+
+- 方块实体外观是 `cable_shapes.PANEL_ENTITY_ID`，「槽」是六个面，顺序 = `FACING_NAMES`；
+- 变量是 `variable.p<面序号>`（`variable_of`），不是 `variable.s<槽号>`；没有朝向角
+  （面板贴的是世界方位，`has_facing` 为假，客户端不写 `facing_yaw`）；
+- 取值照上表：`0` 这一面没有面板，`2 + i` = `cable_shapes.PANEL_KINDS` 第 `i` 种
+  （`model_items` 给的就是 `PANEL_PART_IDS`，与 `gen_cable_models.py` 的骨骼同源）。
+
+读数来自宿主光缆记录的 `config["parts"]`（经 `DeviceCatalog.parts_of`），服务端在
+面板增减、方块实体重读时广播，回答请求时单发；一面都没挂的光缆不回答（外观初值就是 0）。
 """
 
-from ..definitions import MEMORY_SLOT_COUNT, STORAGE_DRIVER_SLOT_COUNT
-from ..identity import NodeKey
+from ..cable_shapes import PANEL_ENTITY_ID, PANEL_PART_IDS
+from ..definitions import CABLES, MEMORY_SLOT_COUNT, PART_HOLDERS, STORAGE_DRIVER_SLOT_COUNT
+from ..identity import FACING_NAMES, NodeKey
 from ..protocol import _require_fields
 
 #: 模块种类
 DISK = "disk"
 MEMORY = "memory"
+#: 光缆面板（阶段 D）：六个面各一块
+PANEL = "panel"
 
 #: 设备 -> (模块种类, 方块实体外观的实体标识)。生成器与 `gen_blocks.py` 也读这张表。
 DISPLAY_DEVICES = {
     "endernet:storage_driver": (DISK, "endernet:storage_driver_modules"),
     "endernet:memory_slot": (MEMORY, "endernet:memory_slot_modules"),
 }
+
+#: 显示面板的方块（能挂面板的光缆与面板底座）-> (PANEL, 方块实体外观)。**与 `DISPLAY_DEVICES`
+#: 分开**：那张表是 `gen_slot_models.py` 的输入（槽位模块的几何体、动画），面板外观由
+#: `gen_cable_models.py` 生成。面板底座的外观全靠这个实体（2026-11-10）。
+PANEL_DEVICES = dict(
+    (definition.id, (PANEL, PANEL_ENTITY_ID))
+    for definition in CABLES + PART_HOLDERS
+    if definition.accepts_parts
+)
 
 #: 变量取值，见模块 docstring
 EMPTY = 0
@@ -86,21 +111,39 @@ def slot_variable(slot):
 
 def kind_of(device_id):
     # type: (str) -> str
-    """设备的模块种类；不显示槽位模块的设备返回 None。"""
-    spec = DISPLAY_DEVICES.get(device_id)
+    """设备的模块种类；不显示槽位模块（也不显示面板）的设备返回 None。"""
+    spec = DISPLAY_DEVICES.get(device_id) or PANEL_DEVICES.get(device_id)
     return spec[0] if spec is not None else None
 
 
 def slot_count(kind):
     # type: (str) -> int
-    """这一种设备显示几个槽。与方块容器格数读同一条定义值。"""
+    """这一种设备显示几个槽。与方块容器格数读同一条定义值；面板是六个面。"""
+    if kind == PANEL:
+        return len(FACING_NAMES)
     value = STORAGE_DRIVER_SLOT_COUNT.value if kind == DISK else MEMORY_SLOT_COUNT.value
     return int(value)
 
 
+def variable_of(kind, slot):
+    # type: (str, int) -> str
+    """第 `slot` 个槽的 molang 变量名：面板是 `variable.p<面序号>`，其余是 `slot_variable`。"""
+    if kind == PANEL:
+        return "variable.p%d" % (slot,)
+    return slot_variable(slot)
+
+
+def has_facing(kind):
+    # type: (str) -> bool
+    """这一种外观要不要写朝向角。面板贴的是世界方位，不转。"""
+    return kind != PANEL
+
+
 def model_items(definitions, kind):
     # type: (object, str) -> tuple
-    """这一种模块对应的物品表（顺序即取值顺序）。"""
+    """这一种模块对应的物品表（顺序即取值顺序）。面板是 `cable_shapes.PANEL_PART_IDS`。"""
+    if kind == PANEL:
+        return PANEL_PART_IDS
     if kind == DISK:
         return tuple(definitions.item_mediums)
     return tuple(definitions.item_memories)

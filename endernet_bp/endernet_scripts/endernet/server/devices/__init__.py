@@ -1,5 +1,5 @@
 # coding=utf-8
-"""设备注册、能力契约与各设备的状态集合（驱动器、内存槽、总线接口、槽位显示）。
+"""设备注册、能力契约与各设备的状态集合（驱动器、内存槽、总线接口、槽位显示、光缆与面板）。
 
 门面：只导出包外生产代码在用的名字（见 `__all__`）；包内模块之间写模块路径，不经本门面（`test_package_layout` 守着）。
 """
@@ -25,7 +25,10 @@ from .bus_io import (
     role_of,
 )
 from .catalog import DeviceCatalog
+from .cable_intents import CableIntentService
+from .cables import CableStateKeeper
 from .memory_slot import MemorySlotStore
+from .panels import PanelService
 from .registry import DeviceRegistry
 from .slot_display import SlotDisplayTracker
 from .storage_driver import DRIVER_DEVICE_ID, DriverPolicy, StorageDriverStore, is_storage_driver
@@ -52,7 +55,10 @@ __all__ = [
     "port_blocker",
     "role_of",
     "DeviceCatalog",
+    "CableIntentService",
+    "CableStateKeeper",
     "MemorySlotStore",
+    "PanelService",
     "DeviceRegistry",
     "SlotDisplayTracker",
     "DRIVER_DEVICE_ID",

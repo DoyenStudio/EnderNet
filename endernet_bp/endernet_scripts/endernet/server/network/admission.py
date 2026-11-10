@@ -1,36 +1,49 @@
 # coding=utf-8
-"""带宽负载准入：负载域容量、设备获准与 `bandwidth_ok`。
+"""带宽准入：外露面为根的线路、逐段核容量、设备获准与 `bandwidth_ok`。
 
-对应任务 02-05 与 02-08。拓扑（`topology.py`）给出**结构**——谁和谁相连、
-哪些基带属于同一个负载域；本模块给出**数值与资格**——某个域能承载多少、
-每台设备的需求是否获准。
+对应任务 02-05 与 02-08，2026-11-09 按网络改版（`.claude/13` §4）重写，取代
+R02 的「基带负载域」。拓扑（`topology.py`）给出**结构**——分量、基带核心、
+线路树（每个外露面是一棵树的根，分层 BFS 定下每个节点的父节点与访问顺序）；
+本模块给出**数值与资格**——每条线路上各段用了多少、每台设备（含面板）
+获准没有。
 
-三条纪律：
+规则（13 §4）：
 
-1. **业务网络与基带负载域分开算。** 域是基带子图的连通分量，
-   控制器分别连接的互不相连基带各算各的。一个域满载**不会**误报
-   同一控制器另一独立域上的设备（02 验收单列的一条）。
-2. **带宽与能源分别判定。** 本模块不读取任何能源状态，
-   因此断电既不会把 `bandwidth_ok` 变成 False，也不会抹掉已经生效的
-   判定（02-08「断电不抹除仍有效的负载判定」由构造保证）。
-3. **未定玩法不悄悄定案。** 混合 8/16/32 位基带的容量合成、环路、
-   多接入、负载取整（R02）与恰好满载的显示口径（R13）都还没有定稿。
-   它们在这里是 `BandwidthPolicy` 的**具名配置点**，默认值一律标注为
-   开发测试替身（`unresolved_report()` 会逐条列出），
-   正式验收前必须用 `assert_settled()` 挡住。
+1. **根**是基带的外露面，容量 = 该基带的档位（8/16/32u）。一块基带的几个
+   外露面各是一条线路，不合成一个池。
+2. **准入**：消费者（设备、面板）按建树时的访问顺序逐个处理，沿父链核对每一段：
+   光缆用本档容量，设备用透传容量（R14-a，8u），根用档位。路径上**每一段**都满足
+   「已用 + 需求 ≤ 容量」才准入并逐段累加；否则拒绝，原因「所在线路已满」，
+   详情点名瓶颈是哪一段（如「末影玻璃光缆 8/8 u」）。
+3. **重算时机**：拓扑发布时按线路比对结构指纹——结构没变的线路原样保留；
+   只是叶子设备（含面板）增减、或设备需求变化（插拔介质）时，沿该设备的路径
+   增量更新（几条能证明与整条重算结果一致的快路径，见 `_apply_demand_change` /
+   `_apply_leaf_changes`）；其余整条线路重算，超出预算按 `step_budget` 分帧
+   （`advance`）。分帧期间那条线路上的设备报「带宽计算中」。
+4. R02 的 `CapacityMode` / `loop_mode` / `multi_access` / `rounding` / `priorities`
+   随负载域一起退役；R13（恰好满载的显示口径）保留为具名替身。
+5. **处理器组整组只算一次**（2026-11-09 作者定案，同 AE2 合成 CPU）：经连接器连成的
+   一组处理器按一个消费者计带宽，需求取定义表里一台并行处理器的 4u，由组里最先被
+   访问到的那台代表；其余几台不计，结论随代表；组内连接不受透传容量限制。
 
-读取不产生副作用：`status_of()` 只查拓扑快照与设备记录，
-不预留、不消耗、不改变任何资格。
+三条纪律保留：
+
+- **带宽与能源分别判定。** 本模块不读取任何能源状态，断电既不会把
+  `bandwidth_ok` 变成 False，也不会抹掉已经生效的判定。
+- **未知不等于 0。** 需求未配置（R10）的设备不计入、报待确认；路径上有一段
+  容量未配置时整台报待确认。
+- **读取不产生副作用。** `status_of()` 只查快照与已算好的线路。
 """
 
 from ...common.definitions import (
     CATEGORY_BASEBAND,
+    CATEGORY_CABLE,
     CATEGORY_CONTROLLER,
-    QUARTERS_PER_UNIT,
     UNCONFIGURED,
-    BandwidthRounding,
 )
+from ...common.identity import PartKey, is_part_ref
 from ...common.protocol import BlockReason, DeviceStatusChanged, Reason
+from .topology import LineKind
 
 
 def _u_text(quarters):
@@ -39,13 +52,29 @@ def _u_text(quarters):
     return ("%.2f" % (quarters / 4.0)).rstrip("0").rstrip(".")
 
 
+def _sort_key(key):
+    # type: (object) -> tuple
+    return key.as_key()
+
+
+def _is_part(key):
+    # type: (object) -> bool
+    """面板槽的键（center 槽的 `PartKey` 就是那一格本身，不算面板）。"""
+    return isinstance(key, PartKey) and not key.is_center()
+
+
+def _host_of(key):
+    # type: (object) -> object
+    return key.node_key if isinstance(key, PartKey) else key
+
+
 # -- 设备在带宽上的角色 ----------------------------------------------------
 
 
 class BandwidthRole(object):
     """设备在带宽体系里的角色。"""
 
-    #: 载体：提供容量，自身不消耗（网络基带）。
+    #: 载体：提供容量，自身不消耗（网络基带、末影光缆）。
     CARRIER = "carrier"
     #: 核心：网络本身，不参与准入（网络控制器）。
     CORE = "core"
@@ -56,11 +85,12 @@ class BandwidthRole(object):
     UNKNOWN = "unknown"
 
 
-#: 不参与准入的两个分类。显式列出，不从「有没有写带宽」反推——
+#: 不参与准入的三个分类。显式列出，不从「有没有写带宽」反推——
 #: 控制器与基带的 `base_quarters` 是 UNCONFIGURED（未列出），
 #: 与「未列出所以是 0」是两回事，这里必须自己声明。
 NON_CONSUMER_ROLES = {
     CATEGORY_BASEBAND: BandwidthRole.CARRIER,
+    CATEGORY_CABLE: BandwidthRole.CARRIER,
     CATEGORY_CONTROLLER: BandwidthRole.CORE,
 }
 
@@ -85,136 +115,59 @@ class BandwidthState(object):
 
     #: 已获额度。恰好满载时仍是它（R13 的建议口径）。
     GRANTED = "granted"
-    #: 未获额度：容量不够，或根本没有所属负载域。
+    #: 未获额度：所在线路某一段不够，或根本不在任何线路上。
     DENIED = "denied"
-    #: 结果待确认：拓扑重建中、定义缺项、多接入归属未定。
+    #: 结果待确认：拓扑重建中、线路计算中、定义缺项。
     #: 界面此时显示「—/待确认」，它不是第三个业务检查项。
     UNKNOWN = "unknown"
-
-
-class CapacityMode(object):
-    """一个域里多段基带的容量如何合成（R02）。"""
-
-    #: 各段容量相加。**测试默认值，尚未定案。**
-    SUM = "sum_of_segments"
-    #: 取最窄的一段。
-    MIN = "narrowest_segment"
-    #: 取最宽的一段。
-    MAX = "widest_segment"
-
-
-class LoopMode(object):
-    """环路如何计容量（R02）。"""
-
-    #: 环上的每一段都计入。**测试默认值，尚未定案。**
-    COUNT_EVERY_SEGMENT = "count_every_segment"
-    #: 环路额外容量不计。
-    IGNORE_LOOP_GAIN = "ignore_loop_gain"
 
 
 class SaturationMode(object):
     """恰好满载时的显示口径（R13）。"""
 
-    #: 已获准即为 OK，即使域已经一点余量都没有。
+    #: 已获准即为 OK，即使所在线路一点余量都没有。
     #: 这是 blocks.md 第 7 行的**建议**口径，尚未定稿。
     GRANTED_IS_OK = "granted_is_ok"
-    #: 需要有余量才算 OK。
+    #: 需要所在线路每一段都还有余量才算 OK。
     REQUIRE_HEADROOM = "require_headroom"
 
 
 #: 策略字段到待定规则编号的映射。每一项都是配置点，不是已确认玩法。
+#: 2026-11-09 起只剩 R13：R02 的五项随负载域退役（见模块说明第 4 条）。
 UNRESOLVED_FIELDS = (
-    ("capacity_mode", "R02", "混合 8/16/32 位基带的容量合成"),
-    ("loop_mode", "R02", "环路是否带来额外容量"),
-    ("multi_access", "R02", "同一设备落在多个互不相连的域时的归属"),
-    ("rounding", "R02", "负载取整"),
     ("saturation", "R13", "恰好满载时的带宽显示口径"),
-    ("priority", "R02", "容量不足时的设备优先级"),
 )
 
 
 class BandwidthPolicy(object):
-    """负载准入的策略配置点。
+    """准入的策略配置点。
 
     默认值全部是**开发测试替身**，`unresolved_report()` 会逐条列出。
     `assert_settled()` 供正式验收使用：规则没有定稿就不能宣布带宽数值已验收
     （对应 02 文档「这些规则未定时不能宣布带宽数值…已验收」）。
+
+    2026-11-09 网络改版后只剩 R13 一项。容量由外露面档位与逐段核算决定，
+    取整由作者定为「1/4u 精度、不取整」，谁先获准由线路树的访问顺序决定，
+    这几件都不再是策略字段。
     """
 
-    def __init__(
-        self,
-        capacity_mode=CapacityMode.SUM,
-        loop_mode=LoopMode.COUNT_EVERY_SEGMENT,
-        multi_access=None,
-        rounding=None,
-        saturation=SaturationMode.GRANTED_IS_OK,
-        priorities=None,
-    ):
-        # type: (str, str, object, object, str, dict) -> None
-        self.capacity_mode = capacity_mode
-        self.loop_mode = loop_mode
-        #: None 表示多接入归属未定（R02）：报「待确认」而不是选一个域。
-        self.multi_access = multi_access
-        #: None 表示沿用每个设备定义自己的取整设置。
-        self.rounding = rounding
+    def __init__(self, saturation=SaturationMode.GRANTED_IS_OK):
+        # type: (str) -> None
+        if saturation not in (SaturationMode.GRANTED_IS_OK, SaturationMode.REQUIRE_HEADROOM):
+            raise ValueError("未知的满载口径: %r" % (saturation,))
         self.saturation = saturation
-        #: 设备标识 -> 优先级整数（小的先获准）。空表示按到达顺序（先到先得）。
-        self.priorities = dict(priorities or {})
-
-    # -- 取值 ----------------------------------------------------------
-
-    def capacity_quarters(self, segments):
-        # type: (list) -> object
-        """由各段基带的容量算出域容量。返回 int 或 UNCONFIGURED。
-
-        `segments` 是各段基带的 `BandwidthSpec`。任意一段的容量未配置，
-        整个域的容量就**未知**——不能把未知当成 0，也不能把已知的几段
-        先加起来当结论。
-        """
-        if not segments:
-            return UNCONFIGURED
-        values = []
-        for spec in segments:
-            capacity = getattr(spec, "capacity_quarters", None)
-            if capacity is None or capacity is UNCONFIGURED:
-                return UNCONFIGURED
-            values.append(int(capacity))
-        if self.capacity_mode == CapacityMode.MIN:
-            return min(values)
-        if self.capacity_mode == CapacityMode.MAX:
-            return max(values)
-        if self.capacity_mode == CapacityMode.SUM:
-            return sum(values)
-        raise ValueError("未知的容量合成方式: %r" % (self.capacity_mode,))
-
-    def round_demand(self, quarters, definition_rounding=None):
-        # type: (int, object) -> int
-        """按 R02 的取整口径折算需求。默认不取整（以 1/4u 整数记账）。"""
-        mode = self.rounding if self.rounding is not None else definition_rounding
-        if mode in (None, BandwidthRounding.EXACT_QUARTERS):
-            return int(quarters)
-        if mode == BandwidthRounding.CEIL_TO_U:
-            return -(-int(quarters) // QUARTERS_PER_UNIT) * QUARTERS_PER_UNIT
-        if mode == BandwidthRounding.FLOOR_TO_U:
-            return int(quarters) // QUARTERS_PER_UNIT * QUARTERS_PER_UNIT
-        raise ValueError("未知的取整方式: %r" % (mode,))
 
     def saturation_ok(self, granted, used, capacity):
         # type: (bool, int, int) -> bool
-        """已获准/已拒绝的设备，其 `bandwidth_ok` 应该是什么。"""
+        """已获准/已拒绝的设备，其 `bandwidth_ok` 应该是什么。
+
+        `used` / `capacity` 是这台设备路径上**余量最小的那一段**的读数。
+        """
         if not granted:
             return False
         if self.saturation == SaturationMode.REQUIRE_HEADROOM:
             return used < capacity
         return True
-
-    def priority_of(self, device_id):
-        # type: (str) -> int
-        return int(self.priorities.get(device_id, 0))
-
-    def has_priorities(self):
-        # type: () -> bool
-        return bool(self.priorities)
 
     # -- 守卫与诊断 ----------------------------------------------------
 
@@ -239,7 +192,7 @@ class BandwidthPolicy(object):
         开发与离线集成测试**不应**调用它。
         """
         raise AssertionError(
-            "带宽负载策略尚未定案，不能宣布数值已验收。待定项：\n  "
+            "带宽准入策略尚未定案，不能宣布数值已验收。待定项：\n  "
             + "\n  ".join(
                 "%s（%s）：%s" % (field, rule, note)
                 for field, rule, note in UNRESOLVED_FIELDS
@@ -249,12 +202,7 @@ class BandwidthPolicy(object):
     def describe(self):
         # type: () -> dict
         return {
-            "capacity_mode": self.capacity_mode,
-            "loop_mode": self.loop_mode,
-            "multi_access": self.multi_access,
-            "rounding": self.rounding,
             "saturation": self.saturation,
-            "priorities": dict(self.priorities),
             "unresolved": self.unresolved_report(),
         }
 
@@ -262,86 +210,186 @@ class BandwidthPolicy(object):
 # -- 结果对象 --------------------------------------------------------------
 
 
-class DomainAdmission(object):
-    """一个负载域的整体判定。"""
+def _segment_text(segment_id):
+    # type: (object) -> object
+    """根的编号原样给出；节点给出位置（面板多一个面名）。"""
+    as_key = getattr(segment_id, "as_key", None)
+    return segment_id if as_key is None else list(as_key())
 
-    __slots__ = (
-        "domain_id",
-        "version",
-        "capacity_quarters",
-        "used_quarters",
-        "granted",
-        "denied",
-        "unconfigured",
-        "unresolved",
-        "consumers",
-    )
 
-    def __init__(
-        self,
-        domain_id,
-        version,
-        capacity_quarters,
-        used_quarters,
-        granted,
-        denied,
-        unconfigured,
-        consumers,
-        unresolved=(),
-    ):
-        self.domain_id = domain_id
-        self.version = version
-        self.capacity_quarters = capacity_quarters
+class Segment(object):
+    """线路上的一段：根（外露面）、光缆或透传设备的一份读数。显示与诊断用。"""
+
+    __slots__ = ("segment_id", "label", "used_quarters", "capacity_quarters")
+
+    def __init__(self, segment_id, label, used_quarters, capacity_quarters):
+        # type: (object, str, int, int) -> None
+        self.segment_id = segment_id
+        self.label = label
         self.used_quarters = used_quarters
-        self.granted = tuple(granted)
-        self.denied = tuple(denied)
-        #: 定义缺项（R10）因而无法计入的设备，按位置排序。
-        self.unconfigured = tuple(unconfigured)
-        #: 归属未定（R02 多接入）因而**不占用任何域额度**的设备。
-        #: 把它们算进任何一个域，都等于替设备选了一个域。
-        self.unresolved = tuple(unresolved)
-        self.consumers = tuple(consumers)
+        self.capacity_quarters = capacity_quarters
 
-    @property
-    def free_quarters(self):
-        # type: () -> object
-        if self.capacity_quarters is UNCONFIGURED:
-            return UNCONFIGURED
-        return self.capacity_quarters - self.used_quarters
+    def text(self):
+        # type: () -> str
+        """玩家话：「末影玻璃光缆 8/8 u」。"""
+        return "%s %s/%s u" % (
+            self.label,
+            _u_text(self.used_quarters),
+            _u_text(self.capacity_quarters),
+        )
 
-    def is_overloaded(self):
+    def is_full(self):
         # type: () -> bool
-        """本域是否存在**未获额度**的设备。
+        return self.used_quarters >= self.capacity_quarters
 
-        **不等于「域已满」。** 单台设备需求超过域总容量时，域可能还空着
-        （`used_quarters == 0`）却已经有 `denied`。判断「是否真的满了」
-        看 `used_quarters >= capacity_quarters`，不要用这个方法——
-        文案「负载域已满载」曾经由它推出，那是错的（见
-        `Reason.BANDWIDTH_DEMAND_EXCEEDS_DOMAIN`）。
-        """
-        return bool(self.denied)
+    def as_tuple(self):
+        # type: () -> tuple
+        return (self.label, self.used_quarters, self.capacity_quarters)
 
     def to_dict(self):
         # type: () -> dict
         return {
-            "domain_id": self.domain_id,
-            "version": self.version,
-            "capacity_quarters": (
-                None if self.capacity_quarters is UNCONFIGURED else self.capacity_quarters
-            ),
+            "segment": _segment_text(self.segment_id),
+            "label": self.label,
             "used_quarters": self.used_quarters,
-            "free_quarters": (
-                None if self.capacity_quarters is UNCONFIGURED else self.free_quarters
-            ),
-            "granted": [key.as_key() for key in self.granted],
-            "denied": [key.as_key() for key in self.denied],
-            "unconfigured": [key.as_key() for key in self.unconfigured],
-            "unresolved": [key.as_key() for key in self.unresolved],
+            "capacity_quarters": self.capacity_quarters,
         }
 
     def __repr__(self):
-        return "DomainAdmission(%s, %s/%s)" % (
-            self.domain_id,
+        return "Segment(%s)" % (self.text(),)
+
+
+#: 一台消费者在线路上的判定。
+_GRANTED = "granted"
+_DENIED = "denied"
+#: 需求未配置（R10）：不计入，报待确认。
+_UNCONFIGURED = "unconfigured"
+#: 路径上有一段容量未配置：算不出，报待确认。
+_UNKNOWN = "unknown"
+
+
+class LineAdmission(object):
+    """一条线路（外露面为根的子树）的准入结果。
+
+    `used` 是**最终**读数（全部消费者处理完之后每一段的占用）；被拒设备的
+    瓶颈段记的是**判定那一刻**的读数——玩家要看的是「我被谁挡住了」。
+    """
+
+    __slots__ = (
+        "root_id",
+        "version",
+        "signature",
+        "consumers",
+        "position",
+        "demand",
+        "paths",
+        "granted",
+        "denied",
+        "unconfigured",
+        "unknown",
+        "used",
+        "capacity",
+        "labels",
+        "refs",
+    )
+
+    def __init__(self, root_id, signature):
+        # type: (str, tuple) -> None
+        self.root_id = root_id
+        self.version = 0
+        #: 算这份结果时线路的结构指纹（`LineTree.signature_of`）。
+        self.signature = signature
+        #: 消费者，按访问顺序。
+        self.consumers = []
+        #: 消费者 -> 在 `consumers` 里的下标。
+        self.position = {}
+        #: 消费者 -> 判定时的需求（四分之一 u 或 UNCONFIGURED）。
+        self.demand = {}
+        #: 消费者 -> 父链上的各段（不含它自己，最后一个是根）。
+        self.paths = {}
+        self.granted = set()
+        #: 被拒的消费者 -> 瓶颈段（判定那一刻的读数）。
+        self.denied = {}
+        self.unconfigured = set()
+        self.unknown = set()
+        #: 段 -> 已用（最终读数）。
+        self.used = {}
+        #: 段 -> 容量。
+        self.capacity = {}
+        #: 段 -> 显示名（根取基带名，其余取设备名）。
+        self.labels = {}
+        #: 消费者 -> 判定时的实例（面板取宿主光缆的实例）。实例换了而线路还没
+        #: 重算时，旧判定不能拿来回答新实例。
+        self.refs = {}
+
+    def decision_of(self, key):
+        # type: (object) -> object
+        if key in self.granted:
+            return _GRANTED
+        if key in self.denied:
+            return _DENIED
+        if key in self.unconfigured:
+            return _UNCONFIGURED
+        if key in self.unknown:
+            return _UNKNOWN
+        return None
+
+    def segment(self, segment_id):
+        # type: (object) -> Segment
+        return Segment(
+            segment_id,
+            self.labels.get(segment_id, ""),
+            self.used.get(segment_id, 0),
+            self.capacity.get(segment_id, UNCONFIGURED),
+        )
+
+    def tightest(self, key):
+        # type: (object) -> Segment
+        """这台设备路径上余量最小的一段（同等余量取离设备近的）。"""
+        best = None
+        for segment_id in self.paths.get(key, ()):
+            capacity = self.capacity.get(segment_id, UNCONFIGURED)
+            if capacity is UNCONFIGURED:
+                continue
+            headroom = capacity - self.used.get(segment_id, 0)
+            if best is None or headroom < best[0]:
+                best = (headroom, segment_id)
+        return self.segment(best[1]) if best is not None else None
+
+    @property
+    def used_quarters(self):
+        # type: () -> int
+        """根这一段的占用：这条线路一共放出去多少。"""
+        return self.used.get(self.root_id, 0)
+
+    @property
+    def capacity_quarters(self):
+        # type: () -> object
+        return self.capacity.get(self.root_id, UNCONFIGURED)
+
+    def to_dict(self):
+        # type: () -> dict
+        capacity = self.capacity_quarters
+        return {
+            "root_id": self.root_id,
+            "version": self.version,
+            "capacity_quarters": None if capacity is UNCONFIGURED else capacity,
+            "used_quarters": self.used_quarters,
+            "consumers": len(self.consumers),
+            "granted": [list(key.as_key()) for key in sorted(self.granted, key=_sort_key)],
+            "denied": [
+                {"node_key": list(key.as_key()), "bottleneck": self.denied[key].to_dict()}
+                for key in sorted(self.denied, key=_sort_key)
+            ],
+            "unconfigured": [
+                list(key.as_key()) for key in sorted(self.unconfigured, key=_sort_key)
+            ],
+            "unknown": [list(key.as_key()) for key in sorted(self.unknown, key=_sort_key)],
+        }
+
+    def __repr__(self):
+        return "LineAdmission(%s, %s/%s)" % (
+            self.root_id,
             self.used_quarters,
             self.capacity_quarters,
         )
@@ -350,9 +398,10 @@ class DomainAdmission(object):
 class AdmissionResult(object):
     """一台设备的带宽判定（02-08 的对外结构）。
 
-    界面要的字段都在这里：设备代次、`bandwidth_domain_id`、需求量、
-    分配量、域容量与占用、判定版本，以及「未获额度 / 已获额度 / 待确认」
-    三态和可定位原因。
+    界面要的字段都在这里：设备代次、`bandwidth_domain_id`（所在线路）、需求量、
+    分配量、路径上关键的那一段（被拒时是瓶颈段，获准时是余量最小的一段）、
+    判定版本，以及「未获额度 / 已获额度 / 待确认」三态和可定位原因。
+    面板的 `node_key` 是 `PartKey`，`ref` 是宿主光缆的实例。
     """
 
     __slots__ = (
@@ -365,8 +414,7 @@ class AdmissionResult(object):
         "demand_quarters",
         "allocated_quarters",
         "domain_ids",
-        "domain_capacity_quarters",
-        "domain_used_quarters",
+        "segment",
         "version",
         "reasons",
         "notes",
@@ -383,8 +431,7 @@ class AdmissionResult(object):
         demand_quarters,
         allocated_quarters,
         domain_ids=(),
-        domain_capacity_quarters=UNCONFIGURED,
-        domain_used_quarters=0,
+        segment=None,
         version=0,
         reasons=(),
         notes=(),
@@ -399,8 +446,8 @@ class AdmissionResult(object):
         self.demand_quarters = demand_quarters
         self.allocated_quarters = allocated_quarters
         self.domain_ids = tuple(domain_ids)
-        self.domain_capacity_quarters = domain_capacity_quarters
-        self.domain_used_quarters = domain_used_quarters
+        #: `Segment` 或 None。
+        self.segment = segment
         self.version = version
         self.reasons = tuple(reasons)
         self.notes = tuple(notes)
@@ -408,7 +455,7 @@ class AdmissionResult(object):
     @property
     def bandwidth_domain_id(self):
         # type: () -> object
-        """本设备的负载域编号。无域或多域（待定）时为 None。"""
+        """本设备所在的线路编号。不在线路上（或载体跨几条线路）时为 None。"""
         if len(self.domain_ids) == 1:
             return self.domain_ids[0]
         return None
@@ -433,8 +480,7 @@ class AdmissionResult(object):
             self.demand_quarters,
             self.allocated_quarters,
             self.domain_ids,
-            self.domain_capacity_quarters,
-            self.domain_used_quarters,
+            self.segment.as_tuple() if self.segment is not None else None,
             self.reason_codes(),
         )
 
@@ -454,12 +500,7 @@ class AdmissionResult(object):
                 None if self.demand_quarters is UNCONFIGURED else self.demand_quarters
             ),
             "allocated_quarters": self.allocated_quarters,
-            "domain_capacity_quarters": (
-                None
-                if self.domain_capacity_quarters is UNCONFIGURED
-                else self.domain_capacity_quarters
-            ),
-            "domain_used_quarters": self.domain_used_quarters,
+            "segment": self.segment.to_dict() if self.segment is not None else None,
             "version": self.version,
             "reasons": [
                 reason.to_dict() if isinstance(reason, BlockReason) else reason
@@ -490,78 +531,103 @@ class BandwidthChange(object):
         # type: () -> dict
         return {
             "before": self.before.to_dict() if self.before is not None else None,
-            "after": self.after.to_dict(),
+            "after": self.after.to_dict() if self.after is not None else None,
         }
 
     def __repr__(self):
         return "BandwidthChange(%s -> %s)" % (
             self.before.state if self.before is not None else None,
-            self.after.state,
+            self.after.state if self.after is not None else None,
         )
+
+
+class _LineJob(object):
+    """一条线路的整条重算，可跨帧续跑。"""
+
+    __slots__ = ("root_id", "tree", "state", "consumers", "index")
+
+    def __init__(self, root_id, tree, state, consumers):
+        self.root_id = root_id
+        self.tree = tree
+        self.state = state
+        self.consumers = list(consumers)
+        self.index = 0
 
 
 # -- 服务 ------------------------------------------------------------------
 
 
 class AdmissionService(object):
-    """负载域容量与设备准入。
+    """线路容量与设备准入。
 
-    `topology` 是 `TopologyService`：本服务订阅它的发布，只重算受影响的域。
+    `topology` 是 `TopologyService`：本服务订阅它的发布，只重算结构变了的线路。
+    `step_budget` 是一次推进最多核对多少段（整条线路重算的分帧单位）。
     """
 
-    def __init__(self, definitions, registry, topology, policy=None):
-        # type: (object, object, object, BandwidthPolicy) -> None
+    def __init__(self, definitions, registry, topology, policy=None, step_budget=4096):
+        # type: (object, object, object, BandwidthPolicy, int) -> None
         self.definitions = definitions
         self.registry = registry
         self.topology = topology
         self.policy = policy if policy is not None else BandwidthPolicy()
+        self.step_budget = int(step_budget)
 
-        #: 判定版本。每次重算加一。
+        #: 判定版本。每次刷新加一。
         self.version = 0
-        #: domain_id -> DomainAdmission
-        self._domains = {}
-        #: NodeKey -> 到达顺序（决定容量不足时谁先获准）。
-        #: **按位置而不是按域保存**：域编号会随基带位置变化而改变，
-        #: 按域保存会让整网的先后顺序在一次改名中丢失。
-        self._arrival = {}
-        self._next_arrival = 0
-        #: NodeKey -> AdmissionResult（只覆盖已计算的域）
+        #: root_id -> LineAdmission（已算完的线路）
+        self._lines = {}
+        #: root_id -> _LineJob（排队或算到一半的整条重算）
+        self._jobs = {}
+        self._job_order = []
+        #: 键（`NodeKey` / `PartKey`）-> AdmissionResult（只缓存消费者）
         self._results = {}
+        #: 判定可能变了、下次刷新要重算结果的消费者。
+        self._dirty = set()
         self._listeners = []
         self.stats = {
             "refreshes": 0,
-            "domains_recomputed": 0,
+            #: 结构没变、原样保留的线路次数。
+            "lines_kept": 0,
+            #: 整条重算完成的线路次数。
+            "lines_recomputed": 0,
+            #: 沿单台设备路径做的增量更新次数。
+            "path_updates": 0,
+            #: 整条重算核对过的段数（分帧预算的计量单位）。
+            "segments_checked": 0,
+            #: 因超出预算留到下一帧的推进次数。
+            "deferred": 0,
             "changes_emitted": 0,
         }
         topology.add_listener(self._on_topology_published)
         # 订阅时拓扑可能已经有快照（服务装配顺序不固定），先补算一次，
         # 否则第一次查询会落到「未知」。
-        self.refresh()
+        snapshot = topology.snapshot()
+        self._sync(snapshot, sorted(snapshot.line_trees))
 
     # -- 订阅拓扑 ------------------------------------------------------
 
     def _on_topology_published(self, publication):
         # type: (object) -> None
-        """只重算受影响的域，避免每次发布都全量扫描（04 的预算要求）。
+        """只处理被重建过的分量：它们的线路逐条比对结构指纹。
 
-        **不能只看迁移通知。** 归属通知是按「位置 → 分量/域编号」的差异产生的，
-        而域编号由基带位置推导：同一个位置把 8u 基带换成 16u 基带时，
-        编号没变、成员没变，却必须重算容量。因此凡是**被重建过的分量**
-        所属的域，一律重算。
+        没被重建的分量，线路树就是上一份，判定原样有效；进入「重建中」的
+        分量由结果刷新时的扫描改报待确认。
         """
-        snapshot = publication.snapshot
-        affected = set()
-        rebuilt = set(publication.rebuilt_components)
-        if rebuilt:
-            for domain_id, domain in snapshot.domains.items():
-                if domain.component_id in rebuilt:
-                    affected.add(domain_id)
-        for notice in publication.migrations:
-            affected.update(notice.from_domain_ids)
-            affected.update(notice.to_domain_ids)
-        if not self._domains:
-            affected.update(snapshot.domains.keys())
-        self.refresh(affected_domains=affected)
+        self._sync(publication.snapshot, publication.rebuilt_components)
+
+    def _sync(self, snapshot, component_ids):
+        # type: (object, object) -> int
+        touched = set()
+        for component_id in sorted(component_ids):
+            tree = snapshot.line_trees.get(component_id)
+            if tree is None:
+                continue
+            for root_id in tree.root_ids():
+                self._reconcile_line(tree, root_id)
+                touched.update(tree.reported_of(root_id))
+        self._prune(snapshot)
+        self._run_jobs(self.step_budget)
+        return self._refresh(snapshot, touched)
 
     def add_listener(self, listener):
         # type: (object) -> None
@@ -578,421 +644,512 @@ class AdmissionService(object):
         # type: (object) -> int
         """插拔介质等改变设备需求的事件入口（05 调用）。
 
-        只重算该设备所属的域，不重算全网：一次拔盘不该让别的分支重新分配名额。
-        """
-        affected = set(self.topology.snapshot().domain_ids_of(node_key))
-        if not affected:
-            return 0
-        return self.refresh(affected_domains=affected)
-
-    # -- 重算 ----------------------------------------------------------
-
-    def refresh(self, affected_domains=None):
-        # type: (object) -> int
-        """重算指定域（None 表示全部），并刷新这些域上设备的判定。
-
-        代价是 O(受影响设备 + 已缓存设备)：缓存里只有消费者设备
-        （载体与核心按需即时计算），且这一步不做任何图遍历。
-        返回判定发生变化的设备数。
+        只动这台设备所在的那一条线路；能证明结果不变的情形沿它自己的路径
+        增量更新，否则整条线路重算。返回判定发生变化的设备数。
         """
         snapshot = self.topology.snapshot()
-        if affected_domains is None:
-            affected = set(snapshot.domains)
-        else:
-            affected = set(affected_domains)
+        tree = snapshot.line_tree_of(node_key)
+        root_id = tree.line_of(node_key) if tree is not None else None
+        if root_id is None:
+            return 0
+        state = self._lines.get(root_id)
+        if state is None or root_id in self._jobs or not self._apply_demand_change(
+            state, tree, node_key, self.demand_of(node_key)
+        ):
+            self._enqueue(tree, root_id)
+            self._run_jobs(self.step_budget)
+        return self._refresh(snapshot, set(tree.reported_of(root_id)))
 
-        # 快照里有、缓存里没有的域要补算；已经消失的域要清掉。
-        for domain_id in snapshot.domains:
-            if domain_id not in self._domains:
-                affected.add(domain_id)
-        vanished = [
-            domain_id for domain_id in self._domains if domain_id not in snapshot.domains
-        ]
-        for domain_id in vanished:
-            del self._domains[domain_id]
+    # -- 分帧推进 ------------------------------------------------------
 
-        touched = set()
-        for domain_id in sorted(affected):
-            if domain_id not in snapshot.domains:
-                continue
-            self._recompute_domain(snapshot, domain_id)
-            touched |= snapshot.domains[domain_id].device_keys
+    def advance(self, step_budget=None):
+        # type: (int) -> int
+        """继续上一帧没算完的线路。没有待算的线路时什么都不做。
 
-        self.version += 1
-        changes = []
-        for key in sorted(touched, key=lambda item: item.as_key()):
-            record = self.registry.get(key)
-            if record is None:
-                changes.extend(self._drop(key))
-                continue
-            # 载体与核心不缓存：它们的判定不消耗容量，按需即时计算即可。
-            if role_of(self.definitions, record.device_id) in (
-                BandwidthRole.CARRIER,
-                BandwidthRole.CORE,
+        由运行时管理器每帧调用一次（`RuntimeManager.tick`）。返回核对的段数。
+        """
+        if not self._jobs:
+            return 0
+        used = self._run_jobs(self.step_budget if step_budget is None else step_budget)
+        self._refresh(self.topology.snapshot(), set())
+        return used
+
+    def is_idle(self):
+        # type: () -> bool
+        """是否没有待算的线路。"""
+        return not self._jobs
+
+    # -- 线路比对 ------------------------------------------------------
+
+    def _reconcile_line(self, tree, root_id):
+        # type: (object, str) -> None
+        """一条线路在新树里的处置：原样保留、沿路径增量更新，或整条重算。"""
+        signature = tree.signature_of(root_id)
+        job = self._jobs.get(root_id)
+        if job is not None:
+            if job.state.signature == signature:
+                # 形状没变：已算的部分仍然有效，换上新树接着算。
+                job.tree = tree
+                return
+            self._enqueue(tree, root_id)
+            return
+        state = self._lines.get(root_id)
+        if state is not None:
+            unchanged = state.signature == signature
+            if unchanged or self._apply_leaf_changes(state, tree, root_id):
+                if self._refresh_demands(state, tree):
+                    if unchanged:
+                        self.stats["lines_kept"] += 1
+                    return
+        self._enqueue(tree, root_id)
+
+    def _refresh_demands(self, state, tree):
+        # type: (LineAdmission, object) -> bool
+        """结构没变时，逐台核对需求；变了的按增量规则改。改不了返回 False。"""
+        for key in list(state.consumers):
+            demand, ref = self._judged(key, tree)
+            if state.refs.get(key) != ref:
+                # 同型号原位顶替：判定只取决于先后、需求与路径，换实例本身不改判定。
+                state.refs[key] = ref
+                self._dirty.add(key)
+            if not _same_value(demand, state.demand.get(key)):
+                if not self._apply_demand_change(state, tree, key, demand):
+                    return False
+        return True
+
+    def _apply_demand_change(self, state, tree, key, demand):
+        # type: (LineAdmission, object, object, object) -> bool
+        """一台设备的需求变了：能证明与整条重算结果一致时沿它的路径更新。
+
+        四条快路径（按「先到先得」逐条推出来的，不是近似）：
+
+        1. 它是这条线路上**最后**一台：只影响它自己，撤掉后按最终读数重判；
+        2. 它已获准、需求**变小**，且它后面没有被拒的设备：后面的照样放得下，
+           没有人等着补位，路径上逐段扣回差额即可；
+        3. 它已获准、需求**变大**，且路径上每一段加上差额后都不超：它自己与后面
+           已获准的设备照样放得下，被拒的照样被拒，逐段加上差额即可；
+        4. 它被拒、需求不变小：照样被拒，瓶颈段不变。
+
+        其余情形（被拒的需求变小、变大后放不下、未配置与已配置互换……）可能
+        牵动后面的设备，返回 False 交给整条重算。
+        """
+        old = state.demand.get(key)
+        if _same_value(demand, old):
+            return True
+        position = state.position.get(key)
+        if position is None:
+            return False
+        path = state.paths.get(key, ())
+        decision = state.decision_of(key)
+        if position == len(state.consumers) - 1:
+            ref = state.refs.get(key)
+            _withdraw(state, key)
+            _decide(state, key, demand, path, ref)
+            return self._noted(key)
+        known = demand is not UNCONFIGURED and old is not None and old is not UNCONFIGURED
+        if decision == _GRANTED and known:
+            delta = demand - old
+            if delta < 0 and not _denied_after(state, position):
+                for segment_id in path:
+                    state.used[segment_id] += delta
+                state.demand[key] = demand
+                return self._noted(key)
+            if delta > 0 and all(
+                state.used.get(segment_id, 0) + delta <= state.capacity[segment_id]
+                for segment_id in path
             ):
+                for segment_id in path:
+                    state.used[segment_id] = state.used.get(segment_id, 0) + delta
+                state.demand[key] = demand
+                return self._noted(key)
+            return False
+        if decision == _DENIED and known:
+            if demand >= old:
+                state.demand[key] = demand
+                return self._noted(key)
+        return False
+
+    def _apply_leaf_changes(self, state, tree, root_id):
+        # type: (LineAdmission, object, str) -> bool
+        """只是叶子节点增减（放下或拆掉一台末端设备、挂上或拆下一块面板）。
+
+        判据：去掉新增与删除的节点之后，新旧两份指纹逐项相同——其余节点的
+        父节点、种类、容量与先后顺序都没变。在此之上：
+
+        - 拆掉的消费者若已获准，它后面不能有被拒的设备（否则有人该补位）；
+        - 新增的消费者必须都排在这条线路的最后（否则它会抢在已有设备前面）。
+
+        满足就逐台沿路径扣回 / 判定，否则返回 False 交给整条重算。
+        """
+        old_signature = state.signature
+        new_signature = tree.signature_of(root_id)
+        if old_signature[0] != new_signature[0]:
+            return False
+        old_entries = old_signature[1:]
+        new_entries = new_signature[1:]
+        old_marks = set(entry[0] for entry in old_entries)
+        new_marks = set(entry[0] for entry in new_entries)
+        removed = old_marks - new_marks
+        added = new_marks - old_marks
+        if not removed and not added:
+            return False
+        if [entry for entry in old_entries if entry[0] not in removed] != [
+            entry for entry in new_entries if entry[0] not in added
+        ]:
+            return False
+
+        gone = [key for key in state.consumers if key.as_key() in removed]
+        for key in gone:
+            if key in state.granted and _denied_after(state, state.position[key]):
+                return False
+        consumers = tree.consumers_of(root_id)
+        survivors = [key for key in consumers if key.as_key() not in added]
+        newcomers = [key for key in consumers if key.as_key() in added]
+        if consumers != survivors + newcomers:
+            return False
+
+        for key in gone:
+            _withdraw(state, key)
+            self._noted(key)
+        for segment_id in list(state.capacity):
+            if hasattr(segment_id, "as_key") and segment_id.as_key() in removed:
+                state.capacity.pop(segment_id, None)
+                state.used.pop(segment_id, None)
+                state.labels.pop(segment_id, None)
+        for key in tree.keys_of(root_id):
+            if key.as_key() in added and tree.node(key).kind not in _UNBOUNDED_KINDS:
+                state.capacity[key] = tree.capacity_of(key)
+                state.labels[key] = self._label_of(tree.device_id_of(key))
+        state.consumers = list(consumers)
+        state.position = dict((key, index) for index, key in enumerate(consumers))
+        for key in newcomers:
+            demand, ref = self._judged(key, tree)
+            _decide(state, key, demand, tree.path_of(key), ref)
+            self._noted(key)
+        state.signature = new_signature
+        state.version = self.version + 1
+        return True
+
+    def _noted(self, key):
+        # type: (object) -> bool
+        self.stats["path_updates"] += 1
+        self._dirty.add(key)
+        return True
+
+    def _enqueue(self, tree, root_id):
+        # type: (object, str) -> None
+        """把一条线路排进整条重算（已在排队的从头再来）。"""
+        state = LineAdmission(root_id, tree.signature_of(root_id))
+        state.capacity[root_id] = tree.capacity_of(root_id)
+        state.labels[root_id] = self._label_of(tree.device_id_of(root_id))
+        for key in tree.keys_of(root_id):
+            node = tree.node(key)
+            if node.kind in _UNBOUNDED_KINDS:
+                continue
+            state.capacity[key] = node.capacity_quarters
+            state.labels[key] = self._label_of(node.device_id)
+        consumers = tree.consumers_of(root_id)
+        state.consumers = list(consumers)
+        state.position = dict((key, index) for index, key in enumerate(consumers))
+        if root_id not in self._jobs:
+            self._job_order.append(root_id)
+        self._jobs[root_id] = _LineJob(root_id, tree, state, consumers)
+
+    def _run_jobs(self, budget):
+        # type: (int) -> int
+        """按排队顺序整条重算，核对的段数到预算就停在原处，下一帧接着算。"""
+        used = 0
+        while self._job_order and used < budget:
+            root_id = self._job_order[0]
+            job = self._jobs[root_id]
+            while job.index < len(job.consumers) and used < budget:
+                key = job.consumers[job.index]
+                job.index += 1
+                demand, ref = self._judged(key, job.tree)
+                used += _decide(job.state, key, demand, job.tree.path_of(key), ref)
+            if job.index < len(job.consumers):
+                break
+            self._job_order.pop(0)
+            del self._jobs[root_id]
+            previous = self._lines.get(root_id)
+            if previous is not None:
+                self._dirty.update(previous.consumers)
+            job.state.version = self.version + 1
+            self._lines[root_id] = job.state
+            # 处理器组的其余几台不在消费者里，但结论随代表，一起刷新。
+            self._dirty.update(job.tree.reported_of(root_id))
+            self.stats["lines_recomputed"] += 1
+        self.stats["segments_checked"] += used
+        if self._jobs:
+            self.stats["deferred"] += 1
+        return used
+
+    def _prune(self, snapshot):
+        # type: (object) -> None
+        """丢掉已经不存在的线路（根所在的基带被拆、外露面被盖住……）。
+
+        **只在图稳定时清。** 跨帧重建期间，被拆开重扫的分量会暂时没有线路树，
+        这时清掉的话，重建完成后每条线路都只能整条重算，增量更新就落空了；
+        那段时间里这些设备本来就报「网络正在刷新」，留着旧结果不会被读到。
+        """
+        if snapshot.pending_keys or any(
+            component.pending for component in snapshot.components.values()
+        ):
+            return
+        live = set()
+        for tree in snapshot.line_trees.values():
+            live.update(tree.root_ids())
+        for root_id in [root_id for root_id in self._lines if root_id not in live]:
+            self._dirty.update(self._lines.pop(root_id).consumers)
+        for root_id in [root_id for root_id in self._jobs if root_id not in live]:
+            del self._jobs[root_id]
+            self._job_order.remove(root_id)
+
+    # -- 结果 ----------------------------------------------------------
+
+    def _refresh(self, snapshot, touched):
+        # type: (object, set) -> int
+        """重算受影响设备的判定，发出变化。
+
+        受影响 = 本次比对过的线路上的消费者 + 增量更新或重算碰到的 + 缓存里
+        已经不在线路上、进入重建中或线路还在算的。其余缓存原样保留。
+        """
+        self.version += 1
+        keys = set(touched) | self._dirty
+        self._dirty = set()
+        for key in self._results:
+            if key in keys:
+                continue
+            root_id = snapshot.line_of(key)
+            if (
+                root_id is None
+                or snapshot.is_pending(key)
+                or root_id in self._jobs
+                or self.registry.get(_host_of(key)) is None
+            ):
+                keys.add(key)
+        changes = []
+        for key in sorted(keys, key=_sort_key):
+            if not self._cacheable(snapshot, key):
                 changes.extend(self._drop(key))
                 continue
             changes.extend(self._store(key, self._device_result(snapshot, key)))
-
-        changes.extend(self._sweep(snapshot, touched))
-
         self.stats["refreshes"] += 1
         if changes:
             self.stats["changes_emitted"] += len(changes)
             self._emit(changes)
         return len(changes)
 
-    def _sweep(self, snapshot, touched):
-        # type: (object, set) -> list
-        """对缓存中的设备做一次廉价复核。
+    def _cacheable(self, snapshot, key):
+        # type: (object, object) -> bool
+        """只缓存消费者，而且只缓存在线路上的（或正在重建、结论待定的）。
 
-        两件事只有这一步能发现：设备所在的域消失了（要撤回旧判定），
-        以及分量进入重建中（旧判定必须立刻变成「待确认」，
-        不能因为是「这一帧还没轮到算」就继续显示绿色）。
+        载体、核心与不在任何线路上的设备按需现算（`status_of`），它们的结论不随
+        别的设备变化。
         """
-        self._prune_arrival()
-        changes = []
-        for key in list(self._results):
-            if key in touched:
-                continue
-            record = self.registry.get(key)
-            if record is None or not snapshot.domain_ids_of(key):
-                changes.extend(self._drop(key))
-                continue
-            if snapshot.is_pending(key):
-                changes.extend(self._store(key, self._device_result(snapshot, key)))
-        return changes
+        record = self.registry.get(_host_of(key))
+        if record is None:
+            return False
+        device_id = self._device_id_of(snapshot, key, record)
+        if device_id is None:
+            return False
+        if role_of(self.definitions, device_id) in (BandwidthRole.CARRIER, BandwidthRole.CORE):
+            return False
+        return snapshot.line_of(key) is not None or snapshot.is_pending(key)
 
-    def _recompute_domain(self, snapshot, domain_id):
-        # type: (object, str) -> None
-        """只更新域本身的容量与获准集合；设备判定由 `_device_result` 负责。"""
-        domain = snapshot.domains[domain_id]
-        self.stats["domains_recomputed"] += 1
-
-        consumers = []
-        unresolved = []
-        segments = []
-        for key in sorted(domain.device_keys, key=lambda item: item.as_key()):
-            record = self.registry.get(key)
-            if record is None:
-                continue
-            role = role_of(self.definitions, record.device_id)
-            if role == BandwidthRole.CARRIER:
-                segments.append(self.definitions.get(record.device_id).bandwidth)
-            elif role in (BandwidthRole.CONSUMER, BandwidthRole.UNKNOWN):
-                # 定义缺项（R10）的设备也要有判定结果——它的结果是
-                # 「未配置，因此未计入」，与「没有结果」不是一回事。
-                if not self._chargeable(snapshot, key, domain_id):
-                    unresolved.append(key)
-                    continue
-                consumers.append(key)
-
-        capacity = self.policy.capacity_quarters(segments)
-        order = self._order_of(domain_id, consumers)
-        used = 0
-        granted = []
-        denied = []
-        unconfigured = []
-        for key in order:
-            demand = self.demand_of(key)
-            if demand is UNCONFIGURED:
-                unconfigured.append(key)
-                continue
-            if capacity is UNCONFIGURED:
-                denied.append(key)
-                continue
-            if used + demand <= capacity:
-                used += demand
-                granted.append(key)
-            else:
-                denied.append(key)
-
-        self._domains[domain_id] = DomainAdmission(
-            domain_id,
-            self.version + 1,
-            capacity,
-            used,
-            granted,
-            denied,
-            unconfigured,
-            order,
-            unresolved,
-        )
-
-    def _chargeable(self, snapshot, key, domain_id):
-        # type: (object, object, str) -> bool
-        """这台设备是否应当占用**本域**的额度。
-
-        多接入（R02）未定时归属未定，因此不占任何域的额度：
-        随便算进一个域等于替设备选了域，而且会连累那个域上本来能工作的设备。
-        """
-        domain_ids = snapshot.domain_ids_of(key)
-        if len(domain_ids) <= 1:
-            return True
-        return self._resolve_multi_domain(key, domain_ids) == domain_id
-
-    def _order_of(self, domain_id, consumers):
-        # type: (str, list) -> list
-        """容量不足时谁先获准。
-
-        先到先得：**已获准的设备保持在前面**，新设备排在其后。
-        这样插拔介质或新增设备都不会让既有设备忽然丢失额度
-        （02-08「断电不抹除仍有效的负载判定」的同类要求：
-        判定不应因为一次无关的重建而翻面）。设备优先级（R02）未定，
-        需要时由 `BandwidthPolicy.priorities` 注入。
-
-        顺序号保存在**服务级**的一张表里，而不是按域保存：负载域编号由
-        基带位置推导，往更低坐标加一段基带就会让整个域改名，
-        按域保存会把全网设备的先后顺序一起清空，新设备就能挤掉老设备。
-        """
-        for key in sorted(consumers, key=lambda item: item.as_key()):
-            if key not in self._arrival:
-                self._arrival[key] = self._next_arrival
-                self._next_arrival += 1
-        ordered = sorted(consumers, key=lambda key: (self._arrival.get(key, 0), key.as_key()))
-        if self.policy.has_priorities():
-            ordered.sort(
-                key=lambda key: (
-                    self.policy.priority_of(self.registry.get(key).device_id),
-                    self._arrival.get(key, 0),
-                )
-            )
-        return ordered
-
-    def _prune_arrival(self):
-        # type: () -> None
-        """丢掉已经不在注册表里的位置的顺序号。"""
-        for key in list(self._arrival):
-            if self.registry.get(key) is None:
-                del self._arrival[key]
+    def _device_id_of(self, snapshot, key, record):
+        # type: (object, object, object) -> object
+        """面板的型号来自宿主光缆上挂着的那一块；整方块设备取记录。"""
+        if not _is_part(key):
+            return record.device_id
+        tree = snapshot.line_tree_of(key)
+        if tree is None:
+            return None
+        return tree.hosted.get(key)
 
     def _device_result(self, snapshot, key):
         # type: (object, object) -> AdmissionResult
-        """一台设备的带宽判定。**纯函数**：只读快照、注册表与已算好的域。
-
-        多接入（R02）在这里统一处理：一台设备可能同时落在多个域上，
-        因此判定必须按「设备的全部域」来做，而不是按某一个域做——
-        否则两个域各算一次会互相覆盖。
-        """
-        record = self.registry.get(key)
+        """一台设备（或一块面板）的带宽判定。**纯函数**：只读快照、注册表与已算好的线路。"""
+        record = self.registry.get(_host_of(key))
         if record is None:
             return self._unknown(
-                key, None, None, BandwidthRole.UNKNOWN,
+                key, None, BandwidthRole.UNKNOWN,
                 [BlockReason(Reason.DEVICE_GONE, "设备已被拆除，请重新打开界面")],
             )
+        device_id = self._device_id_of(snapshot, key, record)
+        if device_id is None:
+            if snapshot.is_pending(key):
+                return self._unknown(
+                    key, record, BandwidthRole.UNKNOWN,
+                    [BlockReason(Reason.REBUILDING, "网络正在刷新，请稍候")],
+                )
+            return self._unknown(
+                key, record, BandwidthRole.UNKNOWN,
+                [BlockReason(Reason.DEVICE_GONE, "面板已被拆下，请重新打开界面")],
+            )
 
-        role = role_of(self.definitions, record.device_id)
-        demand = self.demand_of(key)
+        role = role_of(self.definitions, device_id)
         domain_ids = snapshot.domain_ids_of(key)
-
         if role in (BandwidthRole.CARRIER, BandwidthRole.CORE):
-            # 载体与核心不参与准入，也不缓存（见 `refresh`）。
-            return self._carrier_or_core_result(record, role, domain_ids)
+            return self._carrier_or_core_result(key, record, device_id, role, domain_ids)
 
+        demand = self._demand_of_record(key, device_id, record)
         if snapshot.is_pending(key):
             return self._unknown(
                 key, record, role,
                 [BlockReason(Reason.REBUILDING, "网络正在刷新，请稍候")],
-                domain_ids=domain_ids, demand=demand,
+                device_id=device_id, domain_ids=domain_ids, demand=demand,
             )
 
-        if not domain_ids:
+        root_id = snapshot.line_of(key)
+        if root_id is None:
             return AdmissionResult(
-                key, record.ref, record.device_id, role,
+                key, record.ref, device_id, role,
                 BandwidthState.DENIED, False, demand, 0,
                 version=self.version,
                 reasons=[
                     BlockReason(
-                        Reason.NO_BANDWIDTH_DOMAIN,
-                        "该设备没有连接到网络基带",
+                        Reason.NO_BANDWIDTH_PATH,
+                        "该设备没有经光缆或其他设备连到网络基带",
                     )
                 ],
             )
 
-        if len(domain_ids) > 1:
-            chosen = self._resolve_multi_domain(key, domain_ids)
-            if chosen is None:
-                # R02 未定：不擅自替设备选一个域。
-                return self._unknown(
-                    key, record, role,
-                    [
-                        BlockReason(
-                            Reason.MULTI_DOMAIN_DEVICE,
-                            "该设备连在多段不相连的基带上，请只连一段",
-                        )
-                    ],
-                    domain_ids=domain_ids, demand=demand,
-                )
-            domain_ids = (chosen,)
+        tree = snapshot.line_tree_of(key)
+        node = tree.node(key) if tree is not None else None
+        if node is not None and node.is_group_member():
+            return self._group_member_result(snapshot, key, record, device_id, node)
+        group_size = tree.group_size(key) if tree is not None else 0
+        group_notes = (
+            ["处理器组共 %d 台，整组只算一次带宽（同 AE2 合成 CPU）" % (group_size,)]
+            if group_size > 1
+            else []
+        )
 
-        admission = self._domains.get(domain_ids[0])
-        if admission is None:
+        state = self._lines.get(root_id)
+        decision = state.decision_of(key) if state is not None else None
+        if root_id in self._jobs or decision is None or state.refs.get(key) != record.ref:
             return self._unknown(
                 key, record, role,
                 [BlockReason(Reason.BANDWIDTH_UNKNOWN, "带宽计算中，请稍候")],
-                domain_ids=domain_ids, demand=demand,
-            )
-        if admission.capacity_quarters is UNCONFIGURED:
-            return self._unknown(
-                key, record, role,
-                [BlockReason(Reason.BANDWIDTH_UNCONFIGURED, "带宽状态未知")],
-                domain_ids=domain_ids, demand=demand, admission=admission,
+                device_id=device_id, domain_ids=(root_id,), demand=demand,
             )
 
-        if role == BandwidthRole.UNKNOWN or demand is UNCONFIGURED:
+        if role == BandwidthRole.UNKNOWN or decision == _UNCONFIGURED:
             # R10：blocks.md 没给这个型号的带宽占用。未知不等于 0，
             # 因此不把它算进占用，也不假装它获准了。
             return AdmissionResult(
-                key, record.ref, record.device_id, BandwidthRole.UNKNOWN,
+                key, record.ref, device_id, BandwidthRole.UNKNOWN,
                 BandwidthState.UNKNOWN, None, UNCONFIGURED, 0,
-                domain_ids=domain_ids,
-                domain_capacity_quarters=admission.capacity_quarters,
-                domain_used_quarters=admission.used_quarters,
+                domain_ids=(root_id,),
+                segment=state.tightest(key),
                 version=self.version,
-                reasons=[
-                    BlockReason(
-                        Reason.DEFINITION_UNCONFIGURED,
-                        "带宽状态未知",
-                    )
-                ],
-                notes=["该设备的占用未计入域负载，域占用是已知部分的下界"],
+                reasons=[BlockReason(Reason.DEFINITION_UNCONFIGURED, "带宽状态未知")],
+                notes=["该设备的占用未计入线路负载，线路占用是已知部分的下界"] + group_notes,
+            )
+        if decision == _UNKNOWN:
+            return self._unknown(
+                key, record, role,
+                [BlockReason(Reason.BANDWIDTH_UNCONFIGURED, "带宽状态未知")],
+                device_id=device_id, domain_ids=(root_id,), demand=demand,
             )
 
-        granted = key in admission.granted
-        allocated = demand if granted else 0
-        ok = self.policy.saturation_ok(
-            granted, admission.used_quarters, admission.capacity_quarters
-        )
-        reasons = []
-        notes = []
-        if not granted:
-            # 第一条始终给出「本设备要多少 · 域已经用了多少」这两个数，
-            # 让玩家自己也能算出结论；具体归属哪一种原因另说。
-            reasons.append(
+        if decision == _GRANTED:
+            tight = state.tightest(key)
+            granted_demand = state.demand.get(key, demand)
+            notes = list(group_notes)
+            ok = True
+            if tight is not None:
+                ok = self.policy.saturation_ok(True, tight.used_quarters, tight.capacity_quarters)
+                if tight.is_full():
+                    # 恰好满载：按 R13 的建议口径仍然是 OK，这里只做辅助说明。
+                    notes.append("所在线路已满载（%s），本设备为已获准设备" % (tight.text(),))
+            return AdmissionResult(
+                key, record.ref, device_id, BandwidthRole.CONSUMER,
+                BandwidthState.GRANTED, ok, granted_demand, granted_demand,
+                domain_ids=(root_id,),
+                segment=tight,
+                version=self.version,
+                notes=notes,
+            )
+
+        bottleneck = state.denied[key]
+        denied_demand = state.demand.get(key, demand)
+        if denied_demand > bottleneck.capacity_quarters:
+            # 那一段还空着也放不下：不是「被别的设备挤掉」，而是单机需求超过了
+            # 这一段的容量。两种情形都拒绝，但原因必须分开报。
+            reasons = [
                 BlockReason(
-                    Reason.BANDWIDTH_DENIED,
-                    "网络带宽不足：本设备需要 %s，已用 %s / %s u"
-                    % (
-                        "未知" if demand is UNCONFIGURED else "%s u" % (_u_text(demand),),
-                        _u_text(admission.used_quarters),
-                        _u_text(admission.capacity_quarters),
-                    ),
+                    Reason.BANDWIDTH_DEMAND_EXCEEDS_LINE,
+                    "这台设备需要 %s u，超过所在线路一段的容量：%s"
+                    % (_u_text(denied_demand), bottleneck.text()),
                 )
-            )
-            if demand is not UNCONFIGURED and demand > admission.capacity_quarters:
-                # 域还空着也放不下：这不是「被别的设备挤掉」，而是单机需求
-                # 超过整个域的承载上限。两种情形都拒绝，但原因必须分开报——
-                # 否则界面会告诉玩家「负载域已满载」，而他看到一个 0/N 的空域。
-                reasons.append(
-                    BlockReason(
-                        Reason.BANDWIDTH_DEMAND_EXCEEDS_DOMAIN,
-                        "这台设备需要的带宽超过网络总带宽",
-                    )
-                )
-            elif admission.used_quarters >= admission.capacity_quarters:
-                # 真的满了：额度全部分配出去，被拒是「挤不进来」。
-                reasons.append(BlockReason(Reason.BANDWIDTH_OVERLOADED, "网络带宽已满"))
-            # 剩下的情形是「域没满，但剩余额度不够本设备用」——第一条原因里
-            # 已经给了需求与占用的两个数，结论由玩家自己算得出，这里不再补
-            # 一句会误导的「满载」。三种情形都拒绝，区别只在解释。
-        elif admission.used_quarters >= admission.capacity_quarters:
-            # 恰好满载：按 R13 的建议口径仍然是 OK，这里只做辅助说明。
-            notes.append("负载域已满载，本设备为已获准设备")
-
+            ]
+        else:
+            detail = "所在线路已满：%s" % (bottleneck.text(),)
+            if not bottleneck.is_full():
+                detail += "，本设备需要 %s u" % (_u_text(denied_demand),)
+            reasons = [BlockReason(Reason.BANDWIDTH_LINE_FULL, detail)]
         return AdmissionResult(
-            key,
-            record.ref,
-            record.device_id,
-            BandwidthRole.CONSUMER,
-            BandwidthState.GRANTED if granted else BandwidthState.DENIED,
-            ok,
-            demand,
-            allocated,
-            domain_ids=domain_ids,
-            domain_capacity_quarters=admission.capacity_quarters,
-            domain_used_quarters=admission.used_quarters,
+            key, record.ref, device_id, BandwidthRole.CONSUMER,
+            BandwidthState.DENIED, False, denied_demand, 0,
+            domain_ids=(root_id,),
+            segment=bottleneck,
             version=self.version,
             reasons=reasons,
-            notes=notes,
+            notes=group_notes,
         )
 
-    def _carrier_or_core_result(self, record, role, domain_ids):
-        # type: (object, str, tuple) -> AdmissionResult
+    def _group_member_result(self, snapshot, key, record, device_id, node):
+        # type: (object, object, object, str, object) -> AdmissionResult
+        """处理器组里不是代表的那几台：自己不计带宽，结论随代表（整组只算一次）。"""
+        lead = self._device_result(snapshot, node.group)
+        return AdmissionResult(
+            key, record.ref, device_id, lead.role,
+            lead.state, lead.ok, 0, 0,
+            domain_ids=lead.domain_ids,
+            segment=lead.segment,
+            version=self.version,
+            reasons=lead.reasons,
+            notes=[
+                "处理器组整组只算一次带宽（同 AE2 合成 CPU），由 (%d, %d, %d) 那台代表计入"
+                % (node.group.x, node.group.y, node.group.z)
+            ],
+        )
+
+    def _carrier_or_core_result(self, key, record, device_id, role, domain_ids):
+        # type: (object, object, str, str, tuple) -> AdmissionResult
+        """载体与核心不需要带宽，结论恒为满足。"""
         note = (
-            "网络基带是负载载体，不参与带宽准入"
+            "%s是载体，不参与带宽准入" % (self._label_of(device_id),)
             if role == BandwidthRole.CARRIER
             else "控制器是网络核心，不占用带宽"
         )
-        if len(domain_ids) == 1:
-            return AdmissionResult(
-                record.node_key, record.ref, record.device_id, role,
-                BandwidthState.GRANTED, True, 0, 0,
-                domain_ids=domain_ids,
-                domain_capacity_quarters=self._capacity_of(domain_ids),
-                domain_used_quarters=self._used_of(domain_ids),
-                version=self.version,
-                notes=[note],
-            )
-        if not domain_ids:
-            # 载体/核心不需要带宽，但也没接在任何基带上：
-            # 既不能说 OK，也不是它的带宽不够，因此报「待确认」。
-            return AdmissionResult(
-                record.node_key, record.ref, record.device_id, role,
-                BandwidthState.UNKNOWN, None, 0, 0,
-                version=self.version,
-                reasons=[
-                    BlockReason(
-                        Reason.NO_BANDWIDTH_DOMAIN,
-                        "该设备没有连接到网络基带",
-                    )
-                ],
-            )
-        # 控制器分别连接两条互不相连的基带是 blocks.md 规定的正常形态，
-        # 但**各域的预算不合并**：这里不给出一个加总后的容量数字。
         return AdmissionResult(
-            record.node_key, record.ref, record.device_id, role,
+            key, record.ref, device_id, role,
             BandwidthState.GRANTED, True, 0, 0,
             domain_ids=domain_ids,
             version=self.version,
-            notes=[note, "该设备同时属于多个负载域，各域预算不合并计算"],
+            notes=[note],
         )
 
-    def _unknown(self, key, record, role, reasons, domain_ids=(), demand=0, admission=None):
+    def _unknown(self, key, record, role, reasons, device_id=None, domain_ids=(), demand=0):
         # type: (...) -> AdmissionResult
         return AdmissionResult(
             key,
             record.ref if record is not None else None,
-            record.device_id if record is not None else None,
+            device_id if device_id is not None else (
+                record.device_id if record is not None and not _is_part(key) else None
+            ),
             role,
             BandwidthState.UNKNOWN,
             None,
             demand,
             0,
             domain_ids=domain_ids,
-            domain_capacity_quarters=(
-                admission.capacity_quarters if admission is not None else UNCONFIGURED
-            ),
-            domain_used_quarters=admission.used_quarters if admission is not None else 0,
             version=self.version,
             reasons=reasons,
         )
-
-    def _resolve_multi_domain(self, key, domain_ids):
-        # type: (object, tuple) -> object
-        """多接入归属（R02）。未配置策略时返回 None：不擅自选一个域。"""
-        resolver = self.policy.multi_access
-        if resolver is None:
-            return None
-        if callable(resolver):
-            chosen = resolver(key, domain_ids)
-        else:
-            chosen = resolver
-        if chosen not in domain_ids:
-            raise ValueError(
-                "多接入策略返回的域 %r 不在该设备的域集合 %r 中"
-                % (chosen, domain_ids)
-            )
-        return chosen
 
     def _store(self, key, result):
         # type: (object, AdmissionResult) -> list
@@ -1014,26 +1171,52 @@ class AdmissionService(object):
         for listener in list(self._listeners):
             listener(changes)
 
-    # -- 查询 ----------------------------------------------------------
+    # -- 需求 ----------------------------------------------------------
 
-    def demand_of(self, node_key):
+    def _label_of(self, device_id):
+        # type: (str) -> str
+        if device_id is None or not self.definitions.has(device_id):
+            return str(device_id)
+        return self.definitions.get(device_id).label
+
+    def _demand_of_record(self, key, device_id, record):
+        # type: (object, str, object) -> object
+        """需求（四分之一 u 或 UNCONFIGURED）。面板没有装置，只有固定需求。"""
+        spec = self.definitions.get(device_id).bandwidth
+        if _is_part(key):
+            return spec.demand_quarters()
+        disks = int(record.config.get("disk_count", 0) or 0)
+        memories = int(record.config.get("memory_count", 0) or 0)
+        return spec.demand_quarters(disks, memories)
+
+    def _judged(self, key, tree):
+        # type: (object, object) -> tuple
+        """判定一台消费者要用的 `(需求, 实例)`：型号取建树时那一份。
+
+        记录已经没了就按「需求未配置、没有实例」处理（重建马上会来）。
+        """
+        record = self.registry.get(_host_of(key))
+        if record is None:
+            return UNCONFIGURED, None
+        return self._demand_of_record(key, tree.node(key).device_id, record), record.ref
+
+    def demand_of(self, key):
         # type: (object) -> object
-        """本设备的带宽需求。返回四分之一 u 的整数，或 UNCONFIGURED。
+        """本设备（或面板）的带宽需求。返回四分之一 u 的整数，或 UNCONFIGURED。
 
         存储驱动器与内存槽的需求随所装介质变化，因此按**当前**记录读取，
         拔盘之后重算就会变小。介质数量放在 `DeviceRecord.config` 里，
         由任务 05 在插拔时写入。
         """
-        record = self.registry.get(node_key)
+        record = self.registry.get(_host_of(key))
         if record is None:
             return UNCONFIGURED
-        spec = self.definitions.get(record.device_id).bandwidth
-        disks = int(record.config.get("disk_count", 0) or 0)
-        memories = int(record.config.get("memory_count", 0) or 0)
-        quarters = spec.demand_quarters(disks, memories)
-        if quarters is UNCONFIGURED:
+        device_id = self._device_id_of(self.topology.snapshot(), key, record)
+        if device_id is None:
             return UNCONFIGURED
-        return self.policy.round_demand(quarters, spec.rounding)
+        return self._demand_of_record(key, device_id, record)
+
+    # -- 查询 ----------------------------------------------------------
 
     def status_of(self, ref):
         # type: (object) -> AdmissionResult
@@ -1041,8 +1224,18 @@ class AdmissionService(object):
 
         消费者设备的判定在每次发布与每次负载变化时算好并缓存，
         因此这里通常只是查一次表。缓存没有的分支（载体、核心、
-        无域、代次过期）按需现算，同样不改动任何状态。
+        不在线路上、代次过期）按需现算，同样不改动任何状态。
+
+        面板引用（阶段 D）转给 `status_of_part`：宿主的位置与代次对得上才查。
         """
+        if is_part_ref(ref):
+            if self.registry.get_by_ref(ref.host()) is None:
+                return AdmissionResult(
+                    ref.part_key, ref, None, BandwidthRole.UNKNOWN, BandwidthState.UNKNOWN,
+                    None, UNCONFIGURED, 0, version=self.version,
+                    reasons=[BlockReason(Reason.DEVICE_GONE, "实例已不存在或代次过期")],
+                )
+            return self.status_of_part(ref.part_key)
         node_key = ref.node_key
         record = self.registry.get_by_ref(ref)
         if record is None:
@@ -1052,7 +1245,7 @@ class AdmissionService(object):
                 reasons=[BlockReason(Reason.DEVICE_GONE, "实例已不存在或代次过期")],
             )
         cached = self._results.get(node_key)
-        if cached is not None and cached.ref == ref:
+        if cached is not None and cached.ref == ref and not _is_part(cached.node_key):
             return cached
         # 缓存是按**位置**存的，而位置可以被顶替：同一个坐标先放终端、
         # 再换成内存槽，缓存里那条判定属于已经不存在的那个实例。
@@ -1060,28 +1253,30 @@ class AdmissionService(object):
         # 一起发给调用方——而调用方正好是在 `tick()` 里消费设备变化的那些服务。
         return self._device_result(self.topology.snapshot(), node_key)
 
-    def _capacity_of(self, domain_ids):
-        for domain_id in domain_ids:
-            admission = self._domains.get(domain_id)
-            if admission is not None:
-                return admission.capacity_quarters
-        return UNCONFIGURED
+    def status_of_part(self, part_key):
+        # type: (PartKey) -> AdmissionResult
+        """**只读**查询：一块面板的带宽判定（13 §7）。会话、设备状态与命令准入经
+        `status_of(面板引用)` 走到这里（阶段 D）。"""
+        cached = self._results.get(part_key)
+        record = self.registry.get(_host_of(part_key))
+        if cached is not None and record is not None and cached.ref == record.ref:
+            return cached
+        return self._device_result(self.topology.snapshot(), part_key)
 
-    def _used_of(self, domain_ids):
-        total = 0
-        for domain_id in domain_ids:
-            admission = self._domains.get(domain_id)
-            if admission is not None:
-                total += admission.used_quarters
-        return total
+    def line(self, root_id):
+        # type: (str) -> LineAdmission
+        """一条已算完的线路；还在算或不存在时为 None。"""
+        if root_id in self._jobs:
+            return None
+        return self._lines.get(root_id)
 
-    def domain(self, domain_id):
-        # type: (str) -> DomainAdmission
-        return self._domains.get(domain_id)
-
-    def domains(self):
+    def lines(self):
         # type: () -> dict
-        return dict(self._domains)
+        return dict(
+            (root_id, state)
+            for root_id, state in self._lines.items()
+            if root_id not in self._jobs
+        )
 
     # -- 诊断 ----------------------------------------------------------
 
@@ -1091,13 +1286,76 @@ class AdmissionService(object):
         report.update(
             {
                 "version": self.version,
-                "domains": dict(
-                    (domain_id, admission.to_dict())
-                    for domain_id, admission in self._domains.items()
+                "lines": dict(
+                    (root_id, state.to_dict()) for root_id, state in self.lines().items()
                 ),
+                "pending_lines": list(self._job_order),
                 "tracked_devices": len(self._results),
                 "policy": self.policy.describe(),
                 "energy_independent": True,
             }
         )
         return report
+
+
+# -- 线路内的纯计算 --------------------------------------------------------
+
+#: 不设容量的节点：面板（叶子，不让线路经过）与处理器（组内连接不受透传限制，
+#: 线路也不经处理器往外走）。它们不会出现在任何一台消费者的计费路径上。
+_UNBOUNDED_KINDS = frozenset([LineKind.PART, LineKind.PROCESSOR])
+
+
+def _same_value(first, second):
+    # type: (object, object) -> bool
+    """需求比较：`UNCONFIGURED` 只等于它自己（它不能当布尔值用）。"""
+    if first is UNCONFIGURED or second is UNCONFIGURED:
+        return first is second
+    return first == second
+
+
+def _decide(state, key, demand, path, ref):
+    # type: (LineAdmission, object, object, tuple, object) -> int
+    """按「先到先得」判一台消费者，返回核对过的段数（分帧预算的计量单位）。"""
+    state.demand[key] = demand
+    state.paths[key] = path
+    state.refs[key] = ref
+    if demand is UNCONFIGURED:
+        state.unconfigured.add(key)
+        return 1
+    for segment_id in path:
+        if state.capacity.get(segment_id, UNCONFIGURED) is UNCONFIGURED:
+            state.unknown.add(key)
+            return max(1, len(path))
+    for segment_id in path:
+        if state.used.get(segment_id, 0) + demand > state.capacity[segment_id]:
+            state.denied[key] = state.segment(segment_id)
+            return max(1, len(path))
+    for segment_id in path:
+        state.used[segment_id] = state.used.get(segment_id, 0) + demand
+    state.granted.add(key)
+    return max(1, len(path))
+
+
+def _withdraw(state, key):
+    # type: (LineAdmission, object) -> None
+    """撤掉一台消费者的判定；已获准的沿路径扣回。"""
+    if key in state.granted:
+        demand = state.demand[key]
+        for segment_id in state.paths.get(key, ()):
+            state.used[segment_id] = state.used.get(segment_id, 0) - demand
+        state.granted.discard(key)
+    state.denied.pop(key, None)
+    state.unconfigured.discard(key)
+    state.unknown.discard(key)
+    state.demand.pop(key, None)
+    state.paths.pop(key, None)
+    state.refs.pop(key, None)
+
+
+def _denied_after(state, position):
+    # type: (LineAdmission, int) -> bool
+    """这条线路上，排在 `position` 之后有没有被拒的设备。"""
+    for key in state.denied:
+        if state.position.get(key, -1) > position:
+            return True
+    return False

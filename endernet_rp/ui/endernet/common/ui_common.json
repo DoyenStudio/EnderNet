@@ -496,6 +496,46 @@
             }
         ]
     },
+    "item_details": {
+        "type": "panel",
+        "anchor_from": "bottom_middle",
+        "anchor_to": "bottom_middle",
+        "offset": [
+            0,
+            "-16px"
+        ],
+        "size": [
+            "100%c",
+            "100%c"
+        ],
+        "layer": 30,
+        "visible": false,
+        "controls": [
+            {
+                "item_panel_image": {
+                    "type": "image",
+                    "size": [
+                        "100%c + 8px",
+                        "100%c + 8px"
+                    ],
+                    "layer": 30,
+                    "texture": "textures/ui/purpleBorder",
+                    "controls": [
+                        {
+                            "item_text_label": {
+                                "type": "label",
+                                "layer": 1,
+                                "color": "$item_hover_text_color",
+                                "enable_profanity_filter": false,
+                                "localize": false,
+                                "text": ""
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    },
     "namespace": "endernet_ui_common",
     "screen": {
         "type": "screen"
@@ -515,123 +555,6 @@
             },
             {
                 "item_details@endernet_ui_common.item_details": {}
-            }
-        ]
-    },
-    "split_overlay": {
-        "type": "panel",
-        "size": [
-            18,
-            18
-        ],
-        "anchor_from": "top_left",
-        "anchor_to": "top_left",
-        "layer": 70,
-        "visible": false,
-        "controls": [
-            {
-                "split_up@endernet_ui_common.split_progress": {
-                    "anchor_from": "top_middle",
-                    "anchor_to": "bottom_middle",
-                    "offset": [
-                        0,
-                        -7
-                    ],
-                    "$split_texture": "textures/ui/stack_progress_bar_up_arrow",
-                    "$split_fill_offset": [
-                        0,
-                        -0.5
-                    ]
-                }
-            },
-            {
-                "split_down@endernet_ui_common.split_progress": {
-                    "anchor_from": "bottom_middle",
-                    "anchor_to": "top_middle",
-                    "offset": [
-                        0,
-                        4
-                    ],
-                    "$split_texture": "textures/ui/stack_progress_bar_down_arrow",
-                    "$split_fill_offset": [
-                        0,
-                        0.5
-                    ]
-                }
-            }
-        ]
-    },
-    "split_progress": {
-        "type": "image",
-        "texture": "$split_texture",
-        "size": [
-            80,
-            26
-        ],
-        "visible": false,
-        "controls": [
-            {
-                "split_fill": {
-                    "type": "image",
-                    "texture": "textures/ui/stack_progress_bar_fill",
-                    "size": [
-                        64,
-                        10
-                    ],
-                    "offset": "$split_fill_offset",
-                    "layer": 1,
-                    "clip_direction": "left",
-                    "clip_pixelperfect": false
-                }
-            },
-            {
-                "split_count": {
-                    "type": "label",
-                    "text": "",
-                    "offset": "$split_fill_offset",
-                    "layer": 2,
-                    "color": "$item_stack_count_color"
-                }
-            }
-        ]
-    },
-    "item_details": {
-        "type": "panel",
-        "anchor_from": "bottom_middle",
-        "anchor_to": "bottom_middle",
-        "size": [
-            "100%c",
-            "100%c"
-        ],
-        "offset": [
-            0,
-            "-16px"
-        ],
-        "layer": 30,
-        "visible": false,
-        "controls": [
-            {
-                "item_panel_image": {
-                    "type": "image",
-                    "size": [
-                        "100%c + 8px",
-                        "100%c + 8px"
-                    ],
-                    "layer": 30,
-                    "texture": "textures/ui/purpleBorder",
-                    "controls": [
-                        {
-                            "item_text_label": {
-                                "type": "label",
-                                "layer": 1,
-                                "text": "",
-                                "color": "$item_hover_text_color",
-                                "localize": false,
-                                "enable_profanity_filter": false
-                            }
-                        }
-                    ]
-                }
             }
         ]
     },
@@ -735,64 +658,82 @@
             }
         ]
     },
-    "terminal_title_text": {
-        "type": "label",
-        "anchor_from": "top_left",
-        "anchor_to": "top_left",
-        "offset": [
-            4.0,
-            4.0
-        ],
-        "color": [
-            1.0,
-            1.0,
-            1.0
-        ],
-        "font_scale_factor": 1.1,
-        "font_type": "default",
-        "text_alignment": "center"
-    },
-    "terminal_mask_image": {
-        "type": "image",
+    "split_overlay": {
+        "type": "panel",
         "anchor_from": "top_left",
         "anchor_to": "top_left",
         "size": [
-            "100%+0px",
-            "100%+0px"
+            18,
+            18
         ],
-        "alpha": 0.5,
-        "color": [
-            0.0,
-            0.0,
-            0.0
-        ],
-        "texture": "textures/ui/white_background",
-        "tiled": true
-    },
-    "terminal_sort_icon": {
-        "type": "image",
-        "anchor_from": "top_middle",
-        "anchor_to": "top_middle",
-        "size": [
-            "100%+-2px",
-            "100%+-2px"
-        ],
-        "layer": 4,
-        "uv_size": [
-            16.0,
-            16.0
+        "layer": 70,
+        "visible": false,
+        "controls": [
+            {
+                "split_up@endernet_ui_common.split_progress": {
+                    "$split_fill_offset": [
+                        0,
+                        -0.5
+                    ],
+                    "$split_texture": "textures/ui/stack_progress_bar_up_arrow",
+                    "anchor_from": "top_middle",
+                    "anchor_to": "bottom_middle",
+                    "offset": [
+                        0,
+                        -7
+                    ]
+                }
+            },
+            {
+                "split_down@endernet_ui_common.split_progress": {
+                    "$split_fill_offset": [
+                        0,
+                        0.5
+                    ],
+                    "$split_texture": "textures/ui/stack_progress_bar_down_arrow",
+                    "anchor_from": "bottom_middle",
+                    "anchor_to": "top_middle",
+                    "offset": [
+                        0,
+                        4
+                    ]
+                }
+            }
         ]
     },
-    "terminal_title": {
+    "split_progress": {
         "type": "image",
-        "anchor_from": "top_left",
-        "anchor_to": "top_left",
         "size": [
-            72.0,
-            16.0
+            80,
+            26
         ],
-        "layer": 1,
-        "texture": "textures/endernet/ui/device_title_background_darker"
+        "visible": false,
+        "texture": "$split_texture",
+        "controls": [
+            {
+                "split_fill": {
+                    "type": "image",
+                    "offset": "$split_fill_offset",
+                    "size": [
+                        64,
+                        10
+                    ],
+                    "layer": 1,
+                    "clip_direction": "left",
+                    "clip_pixelperfect": false,
+                    "texture": "textures/ui/stack_progress_bar_fill"
+                }
+            },
+            {
+                "split_count": {
+                    "type": "label",
+                    "offset": "$split_fill_offset",
+                    "layer": 2,
+                    "color": "$item_stack_count_color",
+                    "text": ""
+                }
+            }
+        ]
     },
     "terminal_close_button@endernet_ui_common.close_btn": {
         "$pressed_button_name": "#EnderNetTerminal.close",
@@ -807,6 +748,50 @@
             }
         ],
         "layer": 30
+    },
+    "terminal_device_status_popup@endernet_windows.device_status_window_basic": {
+        "anchor_from": "center",
+        "anchor_to": "center",
+        "bindings": [
+            {
+                "binding_condition": "always",
+                "binding_name": "#EnderNetDeviceStatus.popup_visible",
+                "binding_name_override": "#visible",
+                "binding_type": "global"
+            }
+        ],
+        "layer": 40
+    },
+    "terminal_flying_item@endernet_container_common.flying_item_renderer": {
+        "anchor_from": "top_left",
+        "anchor_to": "top_left",
+        "visible": false
+    },
+    "terminal_items_grid": {
+        "type": "grid",
+        "size": [
+            162.0,
+            "default"
+        ],
+        "collection_name": "terminal_slots",
+        "grid_dimensions": [
+            9,
+            2
+        ],
+        "grid_item_template": "endernet_ui_common.terminal_slot",
+        "grid_rescaling_type": "horizontal",
+        "maximum_grid_items": 30,
+        "property_bag": {
+            "#maximum_grid_items": 0
+        },
+        "bindings": [
+            {
+                "binding_type": "global",
+                "binding_name_override": "#maximum_grid_items",
+                "binding_condition": "always",
+                "binding_name": "#EnderNetTerminal.count"
+            }
+        ]
     },
     "terminal_items_scroll@common.scrolling_panel": {
         "$background_nine_slice_buttom": 0,
@@ -832,11 +817,13 @@
         "$is_background_nine_slice": false,
         "$is_box_nine_slice": false,
         "$is_track_nine_slice": false,
+        "$scroll_background_image_control": "endernet_ui_common.terminal_scroll_background",
         "$scroll_box_mouse_image_control": "netease_editor_template_namespace.scroll_box_image",
         "$scroll_box_texture": "textures/ui/newTouchScrollBox",
         "$scroll_box_touch_image_control": "netease_editor_template_namespace.scroll_box_image",
         "$scroll_track_image_control": "netease_editor_template_namespace.scroll_track_image",
         "$scroll_track_texture": "textures/ui/ScrollRail",
+        "$scrolling_content": "endernet_ui_common.terminal_items_grid",
         "$show_background": true,
         "$track_nine_slice_buttom": 0,
         "$track_nine_slice_left": 0,
@@ -849,9 +836,50 @@
             0
         ],
         "anchor_from": "top_middle",
-        "anchor_to": "top_middle",
-        "$scrolling_content": "endernet_ui_common.terminal_items_grid",
-        "$scroll_background_image_control": "endernet_ui_common.terminal_scroll_background"
+        "anchor_to": "top_middle"
+    },
+    "terminal_mask_image": {
+        "type": "image",
+        "anchor_from": "top_left",
+        "anchor_to": "top_left",
+        "size": [
+            "100%+0px",
+            "100%+0px"
+        ],
+        "alpha": 0.5,
+        "color": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "texture": "textures/ui/white_background",
+        "tiled": true
+    },
+    "terminal_order_preview@endernet_windows.order_preview_window": {
+        "anchor_from": "center",
+        "anchor_to": "center",
+        "bindings": [
+            {
+                "binding_condition": "always",
+                "binding_name": "#EnderNetPreview.visible",
+                "binding_name_override": "#visible",
+                "binding_type": "global"
+            }
+        ],
+        "layer": 45
+    },
+    "terminal_scroll_background@endernet_ui_common.simple_invisible_button": {
+        "$default_texture": "textures/endernet/ui/backgroud_without_frame",
+        "$hover_texture": "textures/endernet/ui/backgroud_without_frame",
+        "$pressed_button_name": "#EnderNetTerminal.quick_store",
+        "$pressed_texture": "textures/endernet/ui/backgroud_without_frame",
+        "button_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed",
+                "to_button_id": "$pressed_button_name"
+            }
+        ]
     },
     "terminal_search_editor@common.text_edit_box": {
         "type": "edit_box",
@@ -884,6 +912,8 @@
             1,
             1
         ],
+        "$text_edit_box_clear_from_button_id": "button.menu_secondary_select",
+        "$text_edit_box_clear_scope": "view",
         "$text_edit_box_content_binding_name": "#EnderNetTerminal.search_content",
         "$text_edit_box_label_anchor_point": "right_middle",
         "$text_edit_box_label_min_size": [
@@ -905,29 +935,46 @@
             14.0
         ],
         "layer": 1,
-        "max_length": 512,
-        "$text_edit_box_clear_from_button_id": "button.menu_secondary_select",
-        "$text_edit_box_clear_scope": "view"
+        "max_length": 512
     },
-    "terminal_unavailable_mask": {
-        "type": "input_panel",
-        "anchor_from": "bottom_middle",
-        "anchor_to": "bottom_middle",
-        "size": [
-            "100%+0px",
-            "100%+-20px"
-        ],
-        "layer": 20,
-        "property_bag": {
-            "#EnderNetTerminal.unavailable": false
-        },
-        "bindings": [
+    "terminal_slot@endernet_windows.item_can_be_selected": {
+        "$item_collection_name": "terminal_slots",
+        "$item_count_binding": "#EnderNetTerminal.item_count",
+        "$item_hover_text_binding": "#EnderNetTerminal.network_hover_text",
+        "$item_id_aux_binding": "#EnderNetTerminal.item_id_aux",
+        "$item_select_button": "#EnderNetTerminal.select",
+        "$item_selected_binding": "#EnderNetTerminal.selected",
+        "$item_visible_binding": "#EnderNetTerminal.has_item",
+        "$slot_mappings": [
             {
-                "binding_type": "global",
-                "binding_name_override": "#visible",
-                "binding_condition": "always",
-                "binding_name": "#EnderNetTerminal.unavailable"
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed",
+                "to_button_id": "$item_select_button"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetTerminal.network_secondary"
+            },
+            {
+                "from_button_id": "button.menu_auto_place",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetTerminal.network_quick"
             }
+        ]
+    },
+    "terminal_sort_icon": {
+        "type": "image",
+        "anchor_from": "top_middle",
+        "anchor_to": "top_middle",
+        "size": [
+            "100%+-2px",
+            "100%+-2px"
+        ],
+        "layer": 4,
+        "uv_size": [
+            16.0,
+            16.0
         ]
     },
     "terminal_sort_method_button@common.button": {
@@ -1053,106 +1100,59 @@
                 "icon@endernet_ui_common.terminal_sort_icon": {
                     "texture": "textures/endernet/ui/sort_order_icon",
                     "uv": [
-                        16.0,
-                        0.0
+                        16,
+                        0
                     ]
                 }
             }
         ]
     },
-    "terminal_device_status_popup@endernet_windows.device_status_window_basic": {
-        "anchor_from": "center",
-        "anchor_to": "center",
-        "bindings": [
-            {
-                "binding_condition": "always",
-                "binding_name": "#EnderNetDeviceStatus.popup_visible",
-                "binding_name_override": "#visible",
-                "binding_type": "global"
-            }
-        ],
-        "layer": 40
-    },
-    "terminal_order_preview@endernet_windows.order_preview_window": {
-        "anchor_from": "center",
-        "anchor_to": "center",
-        "bindings": [
-            {
-                "binding_condition": "always",
-                "binding_name": "#EnderNetPreview.visible",
-                "binding_name_override": "#visible",
-                "binding_type": "global"
-            }
-        ],
-        "layer": 45
-    },
-    "terminal_flying_item@endernet_container_common.flying_item_renderer": {
+    "terminal_title": {
+        "type": "image",
         "anchor_from": "top_left",
         "anchor_to": "top_left",
-        "visible": false
-    },
-    "terminal_items_grid": {
-        "type": "grid",
         "size": [
-            162.0,
-            "default"
+            72.0,
+            16.0
         ],
-        "collection_name": "terminal_slots",
-        "grid_dimensions": [
-            9,
-            2
+        "layer": 1,
+        "texture": "textures/endernet/ui/device_title_background_darker"
+    },
+    "terminal_title_text": {
+        "type": "label",
+        "anchor_from": "top_left",
+        "anchor_to": "top_left",
+        "offset": [
+            4.0,
+            4.0
         ],
-        "grid_rescaling_type": "horizontal",
-        "maximum_grid_items": 30,
+        "color": [
+            1.0,
+            1.0,
+            1.0
+        ],
+        "font_scale_factor": 1.1,
+        "font_type": "default",
+        "text_alignment": "center"
+    },
+    "terminal_unavailable_mask": {
+        "type": "input_panel",
+        "anchor_from": "bottom_middle",
+        "anchor_to": "bottom_middle",
+        "size": [
+            "100%+0px",
+            "100%+-20px"
+        ],
+        "layer": 20,
         "property_bag": {
-            "#maximum_grid_items": 0
+            "#EnderNetTerminal.unavailable": false
         },
         "bindings": [
             {
                 "binding_type": "global",
-                "binding_name_override": "#maximum_grid_items",
+                "binding_name_override": "#visible",
                 "binding_condition": "always",
-                "binding_name": "#EnderNetTerminal.count"
-            }
-        ],
-        "grid_item_template": "endernet_ui_common.terminal_slot"
-    },
-    "terminal_scroll_background@endernet_ui_common.simple_invisible_button": {
-        "$default_texture": "textures/endernet/ui/backgroud_without_frame",
-        "$hover_texture": "textures/endernet/ui/backgroud_without_frame",
-        "$pressed_button_name": "#EnderNetTerminal.quick_store",
-        "$pressed_texture": "textures/endernet/ui/backgroud_without_frame",
-        "button_mappings": [
-            {
-                "from_button_id": "button.menu_select",
-                "mapping_type": "pressed",
-                "to_button_id": "$pressed_button_name"
-            }
-        ]
-    },
-    "terminal_slot@endernet_windows.item_can_be_selected": {
-        "$item_collection_name": "terminal_slots",
-        "$item_count_binding": "#EnderNetTerminal.item_count",
-        "$item_hover_text_binding": "#EnderNetTerminal.network_hover_text",
-        "$item_id_aux_binding": "#EnderNetTerminal.item_id_aux",
-        "$item_select_button": "#EnderNetTerminal.select",
-        "$item_selected_binding": "#EnderNetTerminal.selected",
-        "$item_visible_binding": "#EnderNetTerminal.has_item",
-        "$slot_mappings": [
-            {
-                "from_button_id": "button.menu_select",
-                "to_button_id": "$item_select_button",
-                "mapping_type": "pressed"
-            },
-            {
-                "from_button_id": "button.menu_secondary_select",
-                "to_button_id": "#EnderNetTerminal.network_secondary",
-                "mapping_type": "pressed"
-            },
-            {
-                "from_button_id": "button.menu_auto_place",
-                "to_button_id": "#EnderNetTerminal.network_quick",
-                "mapping_type": "pressed"
+                "binding_name": "#EnderNetTerminal.unavailable"
             }
         ]
     }

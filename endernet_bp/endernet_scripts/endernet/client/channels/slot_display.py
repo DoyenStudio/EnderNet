@@ -10,6 +10,9 @@
    每槽一个；没加载就丢掉——下次加载时会重新要，不缓存。
 3. 方块实体外观卸载（`ModBlockEntityRemoveClientEvent`）→ 忘掉这个位置。
 
+能挂面板的两种光缆（阶段 D）走同一条路：种类是 `PANEL`，写的是 `variable.p0`～`p5`
+（`variable_of`），不写朝向角（`has_facing`）。
+
 **不持有权威状态**：只是把服务端说的数转交给渲染。坏包只计数、永不抛出
 （同 `DeviceIdentityLatch.offer`：总线回调里抛出去会打断同一批派发）。
 """
@@ -19,11 +22,12 @@ from ...common.channels.slot_display import (
     FACING_VARIABLE,
     build_event_classes,
     facing_yaw,
+    has_facing,
     kind_of,
     parse_update,
     request_payload,
     slot_count,
-    slot_variable,
+    variable_of,
 )
 
 _SERVICE = None
@@ -124,9 +128,9 @@ class SlotDisplayClient(object):
     def apply(self, node_key, kind, facing, slots):
         # type: (NodeKey, str, str, tuple) -> None
         pos = node_key.as_tuple()
-        writes = [(FACING_VARIABLE, facing_yaw(facing))]
+        writes = [(FACING_VARIABLE, facing_yaw(facing))] if has_facing(kind) else []
         for slot in range(min(len(slots), slot_count(kind))):
-            writes.append((slot_variable(slot), slots[slot]))
+            writes.append((variable_of(kind, slot), slots[slot]))
         for name, value in writes:
             try:
                 ok = self.set_variable(pos, name, float(value))

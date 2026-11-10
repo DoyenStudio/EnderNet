@@ -1,0 +1,334 @@
+{
+    "format_version": "1.12.0",
+    "minecraft:geometry": [
+        {
+            "description": {
+                "identifier": "geometry.endernet.ender_cable_panel",
+                "texture_width": 64,
+                "texture_height": 32,
+                "visible_bounds_width": 3,
+                "visible_bounds_height": 2.5,
+                "visible_bounds_offset": [
+                    0,
+                    0.75,
+                    0
+                ]
+            },
+            "bones": [
+                {
+                    "name": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                2
+                            ],
+                            "uv": {
+                                "east": {
+                                    "uv": [
+                                        24,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        2,
+                                        12
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        0,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        26,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        -2,
+                                        12
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        24,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        2
+                                    ]
+                                },
+                                "down": {
+                                    "uv": [
+                                        24,
+                                        14
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -2
+                                    ]
+                                }
+                            }
+                        },
+                        {
+                            "origin": [
+                                -12,
+                                4,
+                                2
+                            ],
+                            "size": [
+                                8,
+                                8,
+                                1
+                            ],
+                            "uv": {
+                                "east": {
+                                    "uv": [
+                                        42,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        1,
+                                        8
+                                    ]
+                                },
+                                "south": {
+                                    "uv": [
+                                        26,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        8,
+                                        8
+                                    ]
+                                },
+                                "west": {
+                                    "uv": [
+                                        42,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        1,
+                                        8
+                                    ]
+                                },
+                                "up": {
+                                    "uv": [
+                                        42,
+                                        13
+                                    ],
+                                    "uv_size": [
+                                        -8,
+                                        -1
+                                    ]
+                                },
+                                "down": {
+                                    "uv": [
+                                        42,
+                                        13
+                                    ],
+                                    "uv_size": [
+                                        -8,
+                                        -1
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_default",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        0
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_common",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        12,
+                                        0
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_crafting",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        24,
+                                        0
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_template",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        36,
+                                        0
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_factoric",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        48,
+                                        0
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,30 @@
+{
+    "format_version": "1.10.0",
+    "minecraft:client_entity": {
+        "description": {
+            "identifier": "endernet:ender_cable_panels",
+            "materials": {
+                "default": "entity_alphatest"
+            },
+            "textures": {
+                "default": "textures/endernet/entity/ender_cable_panels"
+            },
+            "geometry": {
+                "default": "geometry.endernet.ender_cable_panels"
+            },
+            "scripts": {
+                "initialize": [
+                    "variable.p0 = 0;",
+                    "variable.p1 = 0;",
+                    "variable.p2 = 0;",
+                    "variable.p3 = 0;",
+                    "variable.p4 = 0;",
+                    "variable.p5 = 0;"
+                ]
+            },
+            "render_controllers": [
+                "controller.render.endernet.ender_cable_panels"
+            ]
+        }
+    }
+}

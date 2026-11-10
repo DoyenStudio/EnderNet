@@ -1,6 +1,5 @@
 {
     "ui_defs": [
-        "ui/endernet/crafting/assemble_chamber.json",
         "ui/endernet/bus/bus_fluid_input_io.json",
         "ui/endernet/bus/bus_fluid_io.json",
         "ui/endernet/bus/bus_fluid_output_io.json",
@@ -8,23 +7,24 @@
         "ui/endernet/bus/bus_item_io.json",
         "ui/endernet/bus/bus_item_output_io.json",
         "ui/endernet/bus/bus_template_io.json",
-        "ui/endernet/terminal/common_terminal_panel.json",
-        "ui/endernet/terminal/crafting_terminal_panel.json",
-        "ui/endernet/energy/creative_energy_source.json",
-        "ui/endernet/network/dos_network_endpoint.json",
         "ui/endernet/common/container_common.json",
+        "ui/endernet/common/netease_container.json",
         "ui/endernet/common/terminal_inventory.json",
         "ui/endernet/common/ui_common.json",
-        "ui/endernet/terminal/universal_importer.json",
         "ui/endernet/common/windows.json",
-        "ui/endernet/energy/energy_input_interface.json",
-        "ui/endernet/terminal/factoric_terminal_panel.json",
-        "ui/endernet/storage/memory_slot.json",
-        "ui/endernet/common/netease_container.json",
+        "ui/endernet/crafting/assemble_chamber.json",
         "ui/endernet/crafting/parallel_processor.json",
         "ui/endernet/crafting/parallel_processor_connector.json",
+        "ui/endernet/energy/creative_energy_source.json",
+        "ui/endernet/energy/energy_input_interface.json",
+        "ui/endernet/network/dos_network_endpoint.json",
+        "ui/endernet/network/tiny_network_endpoint.json",
+        "ui/endernet/storage/memory_slot.json",
         "ui/endernet/storage/storage_driver.json",
+        "ui/endernet/terminal/common_terminal_panel.json",
+        "ui/endernet/terminal/crafting_terminal_panel.json",
+        "ui/endernet/terminal/factoric_terminal_panel.json",
         "ui/endernet/terminal/template_terminal_panel.json",
-        "ui/endernet/network/tiny_network_endpoint.json"
+        "ui/endernet/terminal/universal_importer.json"
     ]
 }

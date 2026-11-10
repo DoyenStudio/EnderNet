@@ -28,7 +28,7 @@
 依赖方向只有「运行时 → 主控」一条。
 """
 
-from ...common.identity import DeviceRef, NodeKey  # noqa: F401（供 # type: 注释）
+from ...common.identity import DeviceRef, NodeKey, ref_key  # noqa: F401（供 # type: 注释）
 from ...common.protocol import (
     BlockReason,
     CommandKind,
@@ -67,6 +67,10 @@ class RunState(object):
     REBUILDING = "rebuilding"
     #: 分量里有多个控制器实例，非法连接。
     CONTROLLER_CONFLICT = "controller_conflict"
+    #: 网络基带核心违规：没有基带、超出 7×7×7、多组、十字（13 §3）。整网离线。
+    BASEBAND_INVALID = "baseband_invalid"
+    #: 唯一的控制器没有贴着网络基带（13 §3）。整网离线。
+    CONTROLLER_DETACHED = "controller_detached"
     #: 边界未确认（还有未加载成员），控制器数量未知。
     TOPOLOGY_UNKNOWN = "topology_unknown"
     #: 能源不可用或待确认。
@@ -84,6 +88,8 @@ class RunState(object):
             MASTER_RECOVERING,
             REBUILDING,
             CONTROLLER_CONFLICT,
+            BASEBAND_INVALID,
+            CONTROLLER_DETACHED,
             TOPOLOGY_UNKNOWN,
             NO_POWER,
             SERVICE_ABSENT,
@@ -98,6 +104,8 @@ class RunState(object):
         MASTER_RECOVERING: "主控恢复中",
         REBUILDING: "网络重建中",
         CONTROLLER_CONFLICT: "控制器冲突",
+        BASEBAND_INVALID: "网络基带无效",
+        CONTROLLER_DETACHED: "控制器未接基带",
         TOPOLOGY_UNKNOWN: "网络状态未知",
         NO_POWER: "能源不可用",
         SERVICE_ABSENT: "服务未就绪",
@@ -118,6 +126,13 @@ _BLOCKER_STATES = (
     (Reason.CONTROLLER_CONFLICT, RunState.CONTROLLER_CONFLICT),
     (Reason.TOPOLOGY_UNKNOWN, RunState.TOPOLOGY_UNKNOWN),
     (Reason.NO_CONTROLLER, RunState.NO_CONTROLLER),
+    # 网络改版（2026-11-09）的两类结构违规。排在「没有控制器」之后：
+    # 两条同时成立时（例如一台孤零零的设备），先说控制器——那是 03 以来的口径。
+    (Reason.BASEBAND_NONE, RunState.BASEBAND_INVALID),
+    (Reason.BASEBAND_TOO_LARGE, RunState.BASEBAND_INVALID),
+    (Reason.BASEBAND_SPLIT, RunState.BASEBAND_INVALID),
+    (Reason.BASEBAND_CROSS, RunState.BASEBAND_INVALID),
+    (Reason.CONTROLLER_DETACHED, RunState.CONTROLLER_DETACHED),
     (Reason.MASTER_ABSENT, RunState.MASTER_ABSENT),
     (Reason.MASTER_UNLOADED, RunState.MASTER_UNLOADED),
     (Reason.MASTER_RECOVERING, RunState.MASTER_RECOVERING),
@@ -183,7 +198,8 @@ def component_blockers_by_id(topology, component_id):
 
 def component_blockers(topology, node_key):
     # type: (object, object) -> list
-    """分量层面的阻塞原因（重建中 / 无控制器 / 冲突 / 未知）。
+    """分量层面的阻塞原因（重建中 / 无控制器 / 冲突 / 未知 / 基带核心违规 /
+    控制器没贴基带）。
 
     **不判断「能否运行」**——`ComponentInfo.is_runnable()` 只答拓扑条件，
     这里也一样：能源、带宽、服务都在这条清单之外，由调用方追加。
@@ -758,14 +774,19 @@ def compose_device_status(
 
     写成模块级函数而不是主控的方法，是为了让「分量不存在」也有答案：
     那时没有运行时，也就没有主控，但注册表、拓扑与带宽判定依然可读。
+
+    面板引用（阶段 D，13 §7）走同一套判据：型号是那块面板（`catalog.resolve`），分量与
+    运行状态随宿主光缆，带宽、能源按面板自己的 `PartKey` 查，控制器支持范围按对应的
+    整方块终端——与整方块终端完全相同（全局约束 9）。结论里的 `node_key` 是 `PartKey`。
     """
     snapshot = topology.snapshot()
-    record = registry.get_by_ref(ref)
+    record, device_id = catalog.resolve(registry, ref)
     version = topology.version
+    key = ref_key(ref)
 
     if record is None:
         return DeviceNetworkStatus(
-            ref.node_key,
+            key,
             ref.generation if ref is not None else None,
             None,
             False,
@@ -776,6 +797,24 @@ def compose_device_status(
             None,
             version=version,
             reasons=[BlockReason(Reason.DEVICE_GONE, "设备已被拆除或替换，请重新打开界面")],
+        )
+
+    if definitions.is_part_holder(record.device_id):
+        # 面板挂在面板底座上（2026-11-10）：底座不与任何设备相连，这块面板不在任何网络里。
+        # 只报这一条：「没有控制器」「不在线路上」之类都是它的推论，列出来只会让人去查网络。
+        return DeviceNetworkStatus(
+            key,
+            ref.generation,
+            device_id,
+            False,
+            "ok",
+            None,
+            RunState.NO_CONTROLLER,
+            None,
+            None,
+            version=version,
+            ui_applicable=not catalog.is_controller(device_id),
+            reasons=[BlockReason(Reason.PART_NOT_ON_CABLE, "面板没有接在光缆上")],
         )
 
     reasons = []
@@ -803,12 +842,12 @@ def compose_device_status(
             reasons.append(BlockReason(Reason.BANDWIDTH_UNKNOWN, "网络带宽确认中，请稍候"))
     notes.extend(bandwidth.notes)
 
-    power_ok = power_state_of(services, node_key)
+    power_ok = power_state_of(services, key)
     served = True
     if master_device_id is None:
         served = False
     else:
-        verdict = catalog.controller_serves(master_device_id, record.device_id)
+        verdict = catalog.controller_serves(master_device_id, device_id)
         if not verdict.allowed:
             served = False
             reasons.append(
@@ -829,9 +868,9 @@ def compose_device_status(
     validity = "pending" if (codes & PENDING_CODES) or bandwidth.ok is None else "ok"
 
     return DeviceNetworkStatus(
-        node_key,
+        key,
         ref.generation,
-        record.device_id,
+        device_id,
         is_online,
         validity,
         master_instance_id,
@@ -839,8 +878,8 @@ def compose_device_status(
         bandwidth.ok,
         power_ok,
         bandwidth.bandwidth_domain_id,
-        snapshot.domain_ids_of(node_key),
-        ui_applicable=not catalog.is_controller(record.device_id),
+        snapshot.domain_ids_of(key),
+        ui_applicable=not catalog.is_controller(device_id),
         version=version,
         reasons=reasons,
         notes=notes,
@@ -1144,14 +1183,15 @@ class MasterController(object):
 
         # 9 型号支持。「拥有主控」不等于「支持全部功能」：
         #   DOS 控制器不认总线，那台设备连得上但用不了。
-        target = self.registry.get_by_ref(ref)
+        #   面板（阶段 D）按它自己的型号判，与对应整方块终端同一口径。
+        target, target_id = self.catalog.resolve(self.registry, ref)
         if target is None:
             return None, CommandResult.stale(
                 request_id,
                 [BlockReason(Reason.DEVICE_GONE, "设备已被拆除或替换，请重新打开界面")],
                 version,
             )
-        served = self.catalog.controller_serves(record.device_id, target.device_id)
+        served = self.catalog.controller_serves(record.device_id, target_id)
         if not served.allowed:
             return None, CommandResult.rejected(
                 request_id,

@@ -6,6 +6,7 @@
 """
 
 from .events import ServerEventBinder
+from .interaction import engine_play_sound
 from .messages import AdapterSyncPort
 from .order_notifications import notify_order_completed
 from .persistence_engine import EngineExtraDataBackend
@@ -15,6 +16,7 @@ from .world import ToolDeltaWorldAdapter
 
 __all__ = [
     "ServerEventBinder",
+    "engine_play_sound",
     "AdapterSyncPort",
     "notify_order_completed",
     "EngineExtraDataBackend",

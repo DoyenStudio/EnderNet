@@ -432,13 +432,20 @@ def outputs(definitions, probe=False):
 
 
 def same_content(path, payload):
-    """磁盘上的文件是否已是这份内容。文本文件忽略换行差异（Windows 检出会转成 CRLF）。"""
+    """磁盘上的文件是否已是这份内容。PNG 逐字节比；JSON 比解析后的内容——作者在 Blockbench 里
+    另存过的几何只是缩进、换行不同，不算变了，也就不会被改回脚本的排版（2026-11-10）；其余文本
+    忽略换行差异（Windows 检出会转成 CRLF）。"""
     if not os.path.isfile(path):
         return False
     with open(path, "rb") as handle:
         existing = handle.read()
     if path.endswith(".png"):
         return existing == payload
+    if path.endswith(".json"):
+        try:
+            return json.loads(existing.decode("utf-8-sig")) == json.loads(payload.decode("utf-8"))
+        except ValueError:
+            return False
     return existing.replace(b"\r\n", b"\n") == payload.replace(b"\r\n", b"\n")
 
 

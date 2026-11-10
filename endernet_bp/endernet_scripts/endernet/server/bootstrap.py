@@ -35,11 +35,12 @@
 """
 
 from ..common.crafting_recipe import SLOT_COUNT
-from ..common.identity import node_key_text
+from ..common.identity import DeviceRef, PartKey, is_part_ref, node_key_text
 from ..common.definitions import (
     CATEGORY_ASSEMBLY,
     CATEGORY_MEMORY,
     CATEGORY_PROCESSOR,
+    PART_KIND_TERMINAL,
     PATTERN_MODE_CRAFTING,
     DefinitionSet,
 )
@@ -62,18 +63,20 @@ from .adapters.containers import (
     build_stack_limit,
 )
 from .adapters import ServerEventBinder
+from .adapters import engine_play_sound
 from ..common.definitions import ENERGY_INPUT_ID
 from .adapters.compat import EnergyInputs
 from .adapters.compat import RadiumFluidProvider
 from .adapters import AdapterSyncPort
 from .adapters import notify_order_completed
-from .adapters.channels import publish_slot_display
+from .adapters.channels import CableIntentPort, publish_slot_display
 from .adapters import resource_display_name as template_resource_name
 from .adapters import EngineExtraDataBackend
 from .adapters import EngineRecipeSource
 from .adapters import ToolDeltaWorldAdapter
 from .application import ApplicationService
-from .devices import DeviceCatalog
+from .devices import CableIntentService, CableStateKeeper, DeviceCatalog, PanelService
+from .interaction import ItemExchange, PlaceFeedback
 from .crafting.orders import OrderPolicy
 from .crafting.orders import AbsentReturns, FactoryService
 from .crafting.orders import StepStatus
@@ -142,6 +145,7 @@ from .storage.service import (
 )
 from .storage import TransferPolicy
 from .sync import SessionContext, SessionPolicy, SessionRegistry
+from .sync.sessions import within_reach
 from .sync import SyncPolicy, TerminalSyncHub
 
 
@@ -635,6 +639,18 @@ class ServerBootstrap(object):
         self.topology = TopologyService(
             self.definitions, self.registry, self.catalog
         )
+        #: 末影光缆的按面数据与方块状态（阶段 C，`.claude/13` §5）。注册时由生命周期经它
+        #: 从方块实体读出切断面与面板；之后它收同一批设备变化（`_emit`），每帧在拓扑推进
+        #: 之后重算到期格子的六面状态，只在变了时写。
+        self.cables = CableStateKeeper(
+            self.definitions,
+            self.registry,
+            self.catalog,
+            self.topology,
+            self.world,
+            clock=self.clock,
+        )
+        self.lifecycle.set_config_reader(self.cables.read_config)
         self.admission = AdmissionService(self.definitions, self.registry, self.topology)
         #: 每帧给运行时的服务推进预算。与图重建预算分开计：两者消耗的
         #: 是同一帧的时间，但一个是节点展开、一个是业务工作，不能混在一起。
@@ -776,7 +792,9 @@ class ServerBootstrap(object):
         #: 合成终端的工作台集合（11-04）。**只对合成终端开口**：
         #: `accepts` 按方块型号判，别的方块拿不到工作台，于是命令侧
         #: 「这台方块没有九宫格」是一条明确拒绝，而不是凭空造一台空的。
-        self.terminal_archive = TerminalInventoryArchive(self.world, self.registry)
+        #: 终端库存档。面板（阶段 D）也记在这里：按对应整方块终端的那张表记，键带上面名。
+        self.terminal_archive = TerminalInventoryArchive(
+            self.world, self.registry, device_of=self._terminal_kind_of)
         terminal_key = self.terminal_archive.key_for if self.persistence_enabled else None
         self.workbench = WorkbenchStore(accepts=self._is_crafting_terminal, key_of=terminal_key)
         #: 样板终端的真实槽与虚拟配置（11-05）。与 `workbench` 同一地位，
@@ -1079,6 +1097,55 @@ class ServerBootstrap(object):
             player_position=player_position,
         )
         self.sync.attach(self.sync_port)
+        #: 光缆的精确交互（阶段 C，13 §6）：客户端只提交意图，校验、求交与分派在
+        #: `CableIntentService`。通道与同步通道共用同一个事件模块注入点与同一本注册账，
+        #: 玩家维度与坐标也与它共用同一份解析（理由同上）。
+        self.cable_intent_port = CableIntentPort(
+            self.event_binder,
+            events=self.sync_events,
+            player_dimension=player_dimension,
+            player_position=player_position,
+        )
+        #: 伪原版交互的服务端一半（`server/interaction/`）：扣 / 退 / 给物品与放置音效，扳手与
+        #: 面板共用一份；服务端再拦一道原版物品使用的规则表挂在 `event_binder.use_guard`。
+        #: 音效走引擎出口（`adapters.engine_play_sound`），测试替换 `place_feedback.play_sound`。
+        self.item_exchange = ItemExchange(self.cable_intent_port, self.world)
+        self.place_feedback = PlaceFeedback(play_sound=engine_play_sound)
+        self.cable_intents = CableIntentService(
+            self.definitions,
+            self.registry,
+            self.catalog,
+            self.cables,
+            self.world,
+            self.cable_intent_port,
+            self.lifecycle,
+            # 距离口径与终端会话同一条（`SessionPolicy.max_interaction_distance`）
+            reach=self._within_reach,
+            push_event=self.push,
+            clock=self.clock,
+            items=self.item_exchange,
+        )
+        #: 光缆面板（阶段 D，13 §7）：「挂面板」「底座换光缆」两个动作登记进同一张分派表；
+        #: 打开面板登记进事件适配器的右键开界面入口（`event_binder.openers`，与整方块终端同一个
+        #: 入口、同一个限速与推屏），拦截规则登记进 `event_binder.use_guard`；面板外观的读数交给
+        #: 槽位模块显示那一条通道；按面数据一变就让外观与终端库存跟上。
+        self.panels = PanelService(
+            self.definitions,
+            self.registry,
+            self.catalog,
+            self.cables,
+            self.world,
+            self.cable_intent_port,
+            items=self.item_exchange,
+            feedback=self.place_feedback,
+        )
+        self.panels.register(
+            self.cable_intents,
+            guard=self.event_binder.use_guard,
+            openers=self.event_binder.openers,
+        )
+        self.slot_displays.panels = self.panels.display_values
+        self.cables.on_faces_changed = self._on_cable_faces_changed
         # 运行时状态变化的消费者（任务 11）。挂在这里而不是让 sync 自己订阅：
         # `_emit` 的订阅者顺序按注册先后走，而这一步在**装配期**完成，
         # 与 04/05 那些消费者一样是固定的、可复现的顺序。
@@ -1138,6 +1205,8 @@ class ServerBootstrap(object):
             # 另开一份账本的代价是热重载后同一个包被处理两次。
             self.sync_port.listen(self._on_sync_request)
             self.sync_port.on_player_leave(self._on_player_leave)
+            # 光缆交互意图（阶段 C）：同一本注册账，`stop()` 一并注销。
+            self.cable_intent_port.listen(self.cable_intents.handle)
             if hasattr(self.sync_port, "on_player_join") and hasattr(self.inventories, "cursor_of"):
                 self.sync_port.on_player_join(self._return_player_cursor)
             if hasattr(self.sync_port, "on_player_death") and hasattr(self.inventories, "cursor_of"):
@@ -1222,6 +1291,8 @@ class ServerBootstrap(object):
         # 于是对着一批早已离线的玩家组包。
         self.sync.shutdown()
         self.queue.clear()
+        # 光缆排着要重算的格子同理：重启后区块重新加载会再排。
+        self.cables.reset()
         # 停机时把未处理的唤醒信号也丢掉：它们是「这一帧该醒醒了」，
         # 留着会在下次启动的第一帧集中投递一批早已过期的信号。
         self.event_binder.clear_wakes()
@@ -1267,6 +1338,9 @@ class ServerBootstrap(object):
         self._finish_recovery()
         # 事件消费完再重建：同帧的多次变化只算一次重建（02-02）。
         rebuild = self.topology.advance(self.rebuild_steps_per_tick)
+        # 光缆的方块状态紧跟拓扑发布（13 §5「拓扑重建发布后」）：事实来源是拓扑，
+        # 方块状态只是外观；按帧限量，只在变了时写。
+        cable_cells = self.cables.advance(self.clock.current_tick())
         # 唤醒投递必须夹在**重建之后、推进之前**：放前面会丢掉「本帧刚放下、
         # 运行时还没同步成员」的设备（它的 lane 还不存在）；放后面则本帧
         # 白等一帧。集合为空时 `take_wakes()` 是 O(1)，空闲帧几乎不花钱。
@@ -1322,6 +1396,9 @@ class ServerBootstrap(object):
             "topology_steps": rebuild.steps,
             "components_rebuilt": rebuild.components_rebuilt,
             "topology_version": self.topology.version,
+            #: 本帧重算了几格光缆的方块状态（阶段 C）。恒为 0 是正常的——只在放下、
+            #: 区块加载、邻居变化与扳手操作之后才有。
+            "cable_cells": cable_cells,
             #: 本帧服务推进消耗的工作量（03）。受 `runtime_budget` 约束；
             #: 调度器落地后它不再恒为 0——有到期任务时才会有消耗。
             "service_steps": service_steps,
@@ -1790,7 +1867,7 @@ class ServerBootstrap(object):
         镜像 `_note_driver_load_changed`，但有**两处刻意的不同**：
 
         - **不调 `admission.note_device_load_changed`**：内存槽的带宽是定义表
-          里的固定 2u，不随根数变化。跟着调一次只会白白重算一遍负载域名额。
+          里的固定 2u，不随根数变化。跟着调一次只会白白重算一遍线路准入。
         - 值取 `MemorySlotStore.unit_count_of`，因此「从没读到过容器」会送
           `None` 过去而不是 0——判定停在「待确认」，而不是伪造一个
           「这台设备一根内存条都没有、所以不耗电」的结论。
@@ -1855,6 +1932,11 @@ class ServerBootstrap(object):
                     energy.set_device_state(node.ref, state=inputs["state"])
 
     # -- 终端同步的接线（任务 11） --------------------------------------
+
+    def _within_reach(self, anchor, position):
+        # type: (tuple, tuple) -> bool
+        """光缆交互的距离校验：与终端会话同一条口径（`SessionPolicy`，查不到坐标按拒绝）。"""
+        return within_reach(anchor, position, self.session_policy)
 
     def _on_sync_request(self, event):
         # type: (object) -> object
@@ -2048,10 +2130,21 @@ class ServerBootstrap(object):
         """
         if device_ref is None:
             return False
-        record = self.registry.get(device_ref.node_key)
-        if record is None or not record.ref.matches(device_ref):
-            return False
-        return record.device_id == CRAFTING_TERMINAL_DEVICE_ID
+        return self._terminal_kind_of(device_ref) == CRAFTING_TERMINAL_DEVICE_ID
+
+    def _terminal_kind_of(self, device_ref):
+        # type: (object) -> object
+        """这台设备（或这块光缆面板）按哪种**整方块**设备算；对不上返回 None。
+
+        面板与对应的整方块终端行为完全相同（全局约束 9）：工作台、样板槽、终端库存表都按
+        这个判。对不上 = 代次不对、方块已被拆、那一面已经没有面板（`catalog.resolve`）。
+        """
+        if device_ref is None:
+            return None
+        record, device_id = self.catalog.resolve(self.registry, device_ref)
+        if record is None:
+            return None
+        return self.catalog.whole_block_of(device_id)
 
     def _sync_craft_of(self, device_ref):
         # type: (object) -> object
@@ -2094,10 +2187,7 @@ class ServerBootstrap(object):
         一条陈旧请求动到某个来路不明的样板槽。"""
         if device_ref is None:
             return False
-        record = self.registry.get(device_ref.node_key)
-        if record is None or not record.ref.matches(device_ref):
-            return False
-        return record.device_id == TEMPLATE_TERMINAL_DEVICE_ID
+        return self._terminal_kind_of(device_ref) == TEMPLATE_TERMINAL_DEVICE_ID
 
     def _template_stack_limit(self, resource_key):
         # type: (object) -> int
@@ -2320,11 +2410,11 @@ class ServerBootstrap(object):
         """
         if device_ref is None:
             return None
+        blocker = self._part_blocker(device_ref)
         runtime = self.runtimes.runtime_of(device_ref.node_key)
-        if runtime is None:
+        if runtime is None and blocker is None:
             return None
-        record = self.registry.get(device_ref.node_key)
-        master = runtime.master
+        record_ref = self._current_ref(device_ref)
         dimension = None
         position = None
         if self.sync_port is not None:
@@ -2332,6 +2422,13 @@ class ServerBootstrap(object):
             # 会话校验按 `require_position` 处理——默认是拒绝。
             dimension = self.sync_port.dimension_of(player_id)
             position = self.sync_port.position_of(player_id)
+        if runtime is None:
+            # 挂在面板底座上的面板：没有运行时也要把「为什么」说清楚
+            return SessionContext(
+                player_id, record_ref, None, None, None, network_workable=False,
+                player_dimension=dimension, player_position=position, blocker=blocker,
+            )
+        master = runtime.master
         return SessionContext(
             player_id,
             # **传 `record.ref` 而不是 `record`**：`record_ref` 的类型是
@@ -2340,14 +2437,41 @@ class ServerBootstrap(object):
             # 子类。传错的表现不是报错——`matches` 对非 `DeviceRef` 一律返回
             # False，于是**每一个** `session_open` 都被判成 `STALE_INSTANCE`，
             # 症状是「终端一台都打不开」。
-            None if record is None else record.ref,
+            record_ref,
             TerminalSyncHub.network_id_of(runtime.component_id),
             self._epoch_of(runtime.component_id),
             master.instance_id if master is not None else None,
             network_workable=runtime.is_open(),
             player_dimension=dimension,
             player_position=position,
+            blocker=blocker,
         )
+
+    def _part_blocker(self, device_ref):
+        # type: (object) -> object
+        """面板挂在面板底座上（2026-11-10）：会话直接按「面板没有接在光缆上」拒绝，状态栏
+        显示的就是这一句（与 `compose_device_status` 同一口径）；别的情况为 None。"""
+        if not is_part_ref(device_ref):
+            return None
+        record = self.registry.get(device_ref.node_key)
+        if record is None or not self.definitions.is_part_holder(record.device_id):
+            return None
+        return (Reason.PART_NOT_ON_CABLE, "面板没有接在光缆上")
+
+    def _current_ref(self, device_ref):
+        # type: (object) -> object
+        """这台设备（或这块面板）的位置上**现在**的那个实例；什么都没有为 None。
+
+        整方块设备：这一格现在的记录（代次可能已经变了——那是「被替换」，由会话校验判）。
+        光缆面板（阶段 D）：宿主这一格现在的记录 + 同一面现在挂着面板 → 面板引用（宿主的
+        代次）；那一面已经没有面板 → None（会话校验报「已被拆除」）。距离与维度都按宿主那一格。
+        """
+        record = self.registry.get(device_ref.node_key)
+        if record is None:
+            return None
+        if not is_part_ref(device_ref):
+            return record.ref
+        return self.panels.ref_at(record, device_ref.slot)
 
     def _epoch_of(self, component_id):
         # type: (object) -> str
@@ -2397,6 +2521,9 @@ class ServerBootstrap(object):
             # 拓扑是设备变化的固定消费者：它只标脏，真正的重建在 `tick()` 里
             # 有限步完成，因此这里不会拖慢事件消费。
             self.topology.on_lifecycle_change(change)
+            # 光缆的方块状态维护也从**同一批变化**推导（阶段 C）：放下、区块加载、
+            # 邻居变化、面板离开各自决定哪格什么时候重算。
+            self.cables.observe(change)
             # 驱动器状态与接口状态也从**同一批变化**推导，不另开观察者通道——
             # 两条路径分叉就会出「拓扑知道设备没了、驱动器/接口还以为在」。
             self.drivers.observe(change)
@@ -2421,7 +2548,10 @@ class ServerBootstrap(object):
             if self.persistence_enabled:
                 if change.kind in (ChangeKind.ADDED, ChangeKind.LOADED):
                     self.terminal_archive.discovered(change.device_id, change.ref)
+                    # 光缆上的面板（阶段 D）与整方块终端一样在发现时核对库存身份
+                    self._discover_panels(self.registry.get_by_ref(change.ref))
                 elif change.kind == ChangeKind.UNLOADED:
+                    # 宿主光缆卸载时，挂在它上面的面板由存档一并挪进待发现表
                     self.terminal_archive.unloaded(change.device_id, change.ref)
                 elif change.kind == ChangeKind.REMOVED:
                     self.terminal_archive.removed(change.device_id, change.ref)
@@ -2430,12 +2560,77 @@ class ServerBootstrap(object):
                     self.workbench.forget(change.ref)
                 elif change.device_id == TEMPLATE_TERMINAL_DEVICE_ID:
                     self.templates.forget(change.ref)
+            # 光缆面板离开（扳手拆下、整格被挖）：关会话、处置库存、挖掉的掉物品（阶段 D）
+            if change.kind == ChangeKind.PART_DETACHED:
+                self._on_part_detached(change)
+            elif change.kind == ChangeKind.PART_FRONT_CHANGED:
+                # 面板正面那一格换了方块：按面板种类交给它自己（面板骨架，2026-11-10）
+                self.panels.front_changed(change)
+            elif change.kind == ChangeKind.HOST_CONVERTED:
+                # 面板宿主原地换方块（底座 ↔ 光缆）：面板、会话、库存都不动，外观重比一次
+                self.slot_displays.mark_panels(change.node_key)
+            elif change.kind == ChangeKind.REMOVED and self.definitions.has_face_data(
+                change.device_id
+            ):
+                # 光缆或面板底座没了：面板外观的发送记账跟着忘掉
+                self.slot_displays.mark_panels(change.node_key)
         if self.change_sink is not None:
             for change in changes:
                 self.change_sink(change)
         elif self._recent_changes is not None:
             # 没有额外观察者时只保留最近一批，避免无限堆积。
             self._recent_changes = changes
+
+    # -- 光缆面板（阶段 D，13 §7）---------------------------------------
+
+    def _on_part_detached(self, change):
+        # type: (object) -> None
+        """一块面板离开宿主（`ChangeKind.PART_DETACHED`）：与整方块终端被拆时同一处置。
+
+        1. 关掉指着这一块的会话，并告诉客户端（同格别的面板不受影响）；
+        2. 终端面板的库存照整方块终端被拆：接了存档走存档的 `removed`，没接就直接 `forget`
+           （合成终端的九宫格进孤儿索引，样板终端的实物先掉在原地）；别的种类（面板骨架，
+           2026-11-10）没有终端库存，这一步跳过；
+        3. 宿主已经没了（挖掉、炸掉）→ 面板物品掉在原地；扳手拆的物品已经给了玩家。
+
+        **异常在这里接住**：这条挂在生命周期的发布路径上，抛出去会打断同一批变化。
+        """
+        import traceback
+
+        try:
+            ref = DeviceRef(PartKey(change.node_key, change.detail), change.ref.generation)
+            self.sync.close_for_part(ref.part_key)
+            if self.definitions.part_kind_of(change.device_id) == PART_KIND_TERMINAL:
+                kind = self.catalog.whole_block_of(change.device_id)
+                if self.persistence_enabled:
+                    self.terminal_archive.removed(kind, ref)
+                elif kind == CRAFTING_TERMINAL_DEVICE_ID:
+                    self.workbench.forget(ref)
+                elif kind == TEMPLATE_TERMINAL_DEVICE_ID:
+                    self.templates.forget(ref)
+            self.panels.drop_if_orphaned(change)
+            self.slot_displays.mark_panels(change.node_key)
+        except Exception:
+            self._record_tick_error(traceback.format_exc())
+
+    def _on_cable_faces_changed(self, node_key):
+        # type: (object) -> None
+        """光缆的按面数据刚被改过（`CableStateKeeper.on_faces_changed`）：外观下一帧比一次，
+        新出现的面板核对终端库存身份（接了存档时）。"""
+        self.slot_displays.mark_panels(node_key)
+        if self.persistence_enabled:
+            self._discover_panels(self.registry.get(node_key))
+
+    def _discover_panels(self, record):
+        # type: (object) -> None
+        """一格光缆（或面板底座）上的终端面板逐块交给终端库存档核对身份（同整方块终端的
+        「发现」）。"""
+        if record is None or not self.definitions.has_face_data(record.device_id):
+            return
+        for ref, part_id in self.panels.panels_of(record):
+            if self.definitions.part_kind_of(part_id) != PART_KIND_TERMINAL:
+                continue
+            self.terminal_archive.discovered(self.catalog.whole_block_of(part_id), ref)
 
     # -- 测试与诊断 ----------------------------------------------------
 
@@ -2491,6 +2686,14 @@ class ServerBootstrap(object):
             #: 以及旧存档留下的驱动器记录（只报不物化）。
             "drivers": self.drivers.diagnostics(),
             "slot_displays": self.slot_displays.diagnostics(),
+            #: 光缆（阶段 C）：方块状态维护的计数（写了几格、读不到几次）与交互意图的
+            #: 处理结果（按原因计）、通道收发。
+            "cables": self.cables.diagnostics(),
+            "cable_intents": dict(
+                self.cable_intents.diagnostics(), port=self.cable_intent_port.diagnostics()
+            ),
+            #: 光缆面板（阶段 D）：挂上、打开、退还、挖掉时掉出的件数
+            "panels": self.panels.diagnostics(),
             "plan": self.plan_diagnostics(),
             "order": self.order_diagnostics(),
             "energy": self.energy_diagnostics(),
@@ -2774,7 +2977,7 @@ class ServerBootstrap(object):
         # type: () -> dict
         """装配档位、替身清单与未定规则报告。
 
-        未定规则单独列出来，而不是折进「警告」里：R02/R03/R13 这些规则
+        未定规则单独列出来，而不是折进「警告」里：R13 这类规则
         一旦定案，下游（尤其 05 的容量与 09 的槽位）要按新值重算，
         因此它们需要能被一条命令查出来。
         """

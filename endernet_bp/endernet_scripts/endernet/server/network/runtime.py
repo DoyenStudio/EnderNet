@@ -305,7 +305,8 @@ class NetworkRuntime(object):
 
     def note_domain_change(self, node_key, from_domain_ids, to_domain_ids):
         # type: (object, tuple, tuple) -> int
-        """负载域归属变化。分量没变，因此不重挂节点，只让服务知道。"""
+        """所在线路变化（2026-11-09 起「带宽域」就是线路）。分量没变，因此不重挂
+        节点，只让服务知道。"""
         node = self._nodes.get(node_key)
         if node is None:
             return 0
@@ -958,6 +959,11 @@ class RuntimeManager(object):
         获得 1 单位额度；`budget < n` 时不保证人人每帧有份，但环序起点逐帧
         前移，连续 `n` 帧内人人当过一次首位。总消耗永不超过预算。
         """
+        # 带宽线路的整条重算可能跨帧（`AdmissionService.advance`，13 §4.4）：
+        # 每帧先接着算完，再推进各网络的服务——服务读到的准入结论是最新的。
+        # 它有自己的预算（核对的段数），不占这里的运行时额度；没有待算线路时
+        # 是一次空调用。
+        self.admission.advance()
         budget = int(budget)
         keys = sorted(self._runtimes)
         spent = 0

@@ -151,15 +151,15 @@
             },
             {
                 "unavailable_mask@endernet_ui_common.terminal_unavailable_mask": {
-                    "visible": false,
                     "controls": [
                         {
                             "mask_img@endernet_ui_common.terminal_mask_image": {
                                 "clip_direction": "left",
-                                "clip_ratio": 0.0
+                                "clip_ratio": 0
                             }
                         }
-                    ]
+                    ],
+                    "visible": false
                 }
             },
             {
@@ -169,9 +169,9 @@
                 "sort_method_btn@endernet_ui_common.terminal_sort_method_button": {
                     "bindings": [
                         {
-                            "binding_type": "collection_details",
                             "binding_collection_name": "",
-                            "binding_condition": "always_when_visible"
+                            "binding_condition": "always_when_visible",
+                            "binding_type": "collection_details"
                         }
                     ],
                     "controls": [
@@ -196,9 +196,9 @@
                 "sort_order_btn@endernet_ui_common.terminal_sort_order_button": {
                     "bindings": [
                         {
-                            "binding_type": "collection_details",
                             "binding_collection_name": "",
-                            "binding_condition": "always_when_visible"
+                            "binding_condition": "always_when_visible",
+                            "binding_type": "collection_details"
                         }
                     ]
                 }
@@ -442,13 +442,13 @@
                     "type": "panel",
                     "anchor_from": "top_left",
                     "anchor_to": "top_left",
-                    "size": [
-                        "100%",
-                        "100%"
-                    ],
                     "offset": [
                         0,
                         0
+                    ],
+                    "size": [
+                        "100%",
+                        "100%"
                     ],
                     "layer": 0,
                     "controls": [

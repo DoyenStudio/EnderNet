@@ -44,6 +44,7 @@ from ....common.protocol import (
 )
 from ....common.resources.key import ResourceKey, _require_count
 from ...adapters.containers import ContainerAdapter
+from ...persistence.terminals import instance_key, row_key, saved_row
 
 #: 网格自身的存档版本。形状变了就加一，恢复时按它决定读还是跳过。
 WORKBENCH_SCHEMA_VERSION = 1
@@ -355,9 +356,7 @@ class WorkbenchStore(object):
         node_key = getattr(ref, "node_key", None)
         if node_key is None:
             raise ValueError("工作台需要一个设备实例身份（DeviceRef）")
-        return (getattr(node_key, "dimension", 0), getattr(node_key, "x", 0),
-                getattr(node_key, "y", 0), getattr(node_key, "z", 0),
-                getattr(ref, "generation", 0))
+        return instance_key(ref)
 
     def of(self, ref):
         # type: (object) -> WorkbenchGrid
@@ -457,8 +456,7 @@ class WorkbenchStore(object):
         # type: () -> dict
         """正常保存使用的快照，包含已拆设备中尚待处置的原料。"""
         rows = [
-            {"node": list(key[:4]), "generation": key[4],
-             "detached": detached, "grid": grid.to_dict()}
+            saved_row(key, {"detached": detached, "grid": grid.to_dict()})
             for detached, source in ((False, self._grids), (True, self._orphans))
             for key, grid in sorted(source.items())
         ]
@@ -475,10 +473,9 @@ class WorkbenchStore(object):
             return 0
         restored = 0
         for row in payload.get("grids") or ():
-            node = row.get("node") or ()
-            if len(node) != 4:
+            key = row_key(row)
+            if key is None:
                 continue
-            key = (node[0], node[1], node[2], node[3], row.get("generation", 0))
             grid = WorkbenchGrid.from_dict(row.get("grid") or {})
             # 孤儿也一起恢复：它们是**真物品**，丢了就是丢物。
             if row.get("detached"):

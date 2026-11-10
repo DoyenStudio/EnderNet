@@ -12,9 +12,10 @@
   按**实例**判断，不按构造器身份（见
   `test_stand_in_slots_is_judged_by_instance_not_by_identity`）。
 
-**未定规则仍在。** `BandwidthPolicy()` 的字段全是测试替身，本文件只验证
-「替身不会被静默使用」这一机制。**不调用 `assert_settled()`**——那意味着
-宣布数值可以验收了，不属于离线开发阶段。
+**未定规则仍在。** `BandwidthPolicy()` 的字段全是测试替身（2026-11-09 网络改版
+后只剩 R13 一项，R02 的字段随负载域退役），本文件只验证「替身不会被静默使用」
+这一机制。**不调用 `assert_settled()`**——那意味着宣布数值可以验收了，不属于
+离线开发阶段。
 """
 
 import unittest
@@ -29,7 +30,7 @@ from endernet.common.protocol import (
     DeviceCommand,
     Reason,
 )
-from endernet.server.network.admission import BandwidthPolicy
+from endernet.server.network.admission import UNRESOLVED_FIELDS, BandwidthPolicy
 from endernet.server.network.services import (
     AssemblyError,
     AssemblyProfile,
@@ -434,8 +435,11 @@ class TestProfileGuard(unittest.TestCase):
         """
         registry = ServiceRegistry([StandInService(ServiceId.FACTORY, "09", "订单")])
         problems = registry.assert_profile_ok(AssemblyProfile.DEV, BandwidthPolicy())
-        self.assertGreaterEqual(len(problems), 4)
+        # 一个替身 + 带宽策略的每一个未定字段（2026-11-09 起只剩 R13 的满载口径），
+        # 一条都不能少，也不能多报。
+        self.assertEqual(len(problems), 1 + len(UNRESOLVED_FIELDS))
         self.assertTrue(any("替身服务" in item for item in problems))
+        self.assertTrue(any("R13" in item for item in problems))
 
     def test_production_refuses_stand_ins(self):
         registry = ServiceRegistry()
@@ -464,14 +468,16 @@ class TestProfileGuard(unittest.TestCase):
         registry = ServiceRegistry([StandInService(ServiceId.FACTORY, "09", "订单")])
         with self.assertRaises(AssemblyError) as caught:
             registry.assert_profile_ok(AssemblyProfile.PRODUCTION, BandwidthPolicy())
-        self.assertIn("R02", str(caught.exception))
+        self.assertIn("R13", str(caught.exception))
+        self.assertNotIn("R02", str(caught.exception))
         self.assertIn("替身服务", str(caught.exception))
 
     def test_production_still_refuses_an_unresolved_policy_without_any_stand_in(self):
         """**替身撤干净了也不等于正式档放行。**
 
-        任务 09 之后四个槽位都是正式实现，但 R02/R13 与 04/09 的那些未定项
-        一条都没定案。没有这条用例，撤离替身很容易被读成「正式档可以过了」。
+        任务 09 之后四个槽位都是正式实现，但 R13 与 04/09 的那些未定项
+        一条都没定案（R02 的策略字段已随 2026-11-09 网络改版退役）。没有这条
+        用例，撤离替身很容易被读成「正式档可以过了」。
         """
         registry = ServiceRegistry(
             [EchoService(service_id) for service_id in sorted(ServiceId.ALL)]

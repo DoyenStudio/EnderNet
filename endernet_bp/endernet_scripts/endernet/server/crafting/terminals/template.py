@@ -40,6 +40,7 @@ from ....common.definitions import (
 )
 from ....common.resources import item_dict_from_key
 from ....common.resources.key import ResourceKey, _require_count
+from ...persistence.terminals import instance_key, row_key, saved_row
 from ...runtime import ChangeKind
 from .. import patterns
 from ..patterns import PatternStack, PatternValidationError
@@ -661,9 +662,7 @@ class TemplateStore(object):
         node_key = getattr(ref, "node_key", None)
         if node_key is None:
             raise ValueError("样板终端状态需要一个设备实例身份（DeviceRef）")
-        return (getattr(node_key, "dimension", 0), getattr(node_key, "x", 0),
-                getattr(node_key, "y", 0), getattr(node_key, "z", 0),
-                getattr(ref, "generation", 0))
+        return instance_key(ref)
 
     def of(self, ref):
         # type: (object) -> TemplateDeviceState
@@ -832,8 +831,7 @@ class TemplateStore(object):
         # type: () -> dict
         """正常保存使用的快照，包含真实槽、配置以及未掉落的实物。"""
         rows = [
-            {"node": list(key[:4]), "generation": key[4],
-             "detached": detached, "state": state.to_dict()}
+            saved_row(key, {"detached": detached, "state": state.to_dict()})
             for detached, source in ((False, self._states), (True, self._orphans))
             for key, state in sorted(source.items())
         ]
@@ -849,10 +847,9 @@ class TemplateStore(object):
             return 0
         restored = 0
         for row in payload.get("states") or ():
-            node = row.get("node") or ()
-            if len(node) != 4:
+            key = row_key(row)
+            if key is None:
                 continue
-            key = (node[0], node[1], node[2], node[3], row.get("generation", 0))
             state = TemplateDeviceState.from_dict(row.get("state") or {})
             # 孤儿也一起恢复：它们是**真物品**，丢了就是丢物。
             if row.get("detached"):

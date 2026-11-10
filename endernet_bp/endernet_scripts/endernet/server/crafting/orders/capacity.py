@@ -36,7 +36,6 @@
 
 - 没经连接器接入基带的群 `ownership == UNATTACHED` → `contributes_slots()`
   为假 → **贡献零槽位**（验收「无连接器处理器提供零槽位」）；
-- 经连接器接到多个互不相连的负载域的群是 R03 未定案 → 同样不贡献；
 - 群里的 `processors` 在 02 建群时按 `visited` 去过重，因此**同一物理处理器
   只属于一个群、只计一次**（验收「同一物理处理器不会被重复统计」）。
 
@@ -495,8 +494,8 @@ def slot_sources(snapshot, component_id):
     验收用的：它把「有处理器但不贡献槽位」的群逐条列出来，否则一张
     「零槽位」的网络在界面上与「根本没有处理器」一模一样。
 
-    不贡献的两种情形各有各的原因，也已经由 02 写进 `group.reasons`
-    （`PROCESSOR_GROUP_UNATTACHED` / `R03` 的 `PROCESSOR_GROUP_UNRESOLVED`），
+    不贡献的原因已经由 02 写进 `group.reasons`（`PROCESSOR_GROUP_UNATTACHED`；
+    R03 已于 2026-11-09 关闭，处理器群与连接器总在同一网络），
     这里只把群引用与原因带出去。
     """
     idle = []

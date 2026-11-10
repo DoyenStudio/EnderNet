@@ -1,0 +1,126 @@
+{
+    "format_version": "1.8.0",
+    "render_controllers": {
+        "controller.render.endernet.ender_cable_panels": {
+            "geometry": "Geometry.default",
+            "materials": [
+                {
+                    "*": "Material.default"
+                }
+            ],
+            "textures": [
+                "Texture.default"
+            ],
+            "part_visibility": [
+                {
+                    "frame_up": "variable.p0 >= 1"
+                },
+                {
+                    "panel_up_default": "variable.p0 >= 1 && variable.p0 != 2 && variable.p0 != 3 && variable.p0 != 4 && variable.p0 != 5"
+                },
+                {
+                    "panel_up_common": "variable.p0 == 2"
+                },
+                {
+                    "panel_up_crafting": "variable.p0 == 3"
+                },
+                {
+                    "panel_up_template": "variable.p0 == 4"
+                },
+                {
+                    "panel_up_factoric": "variable.p0 == 5"
+                },
+                {
+                    "frame_down": "variable.p1 >= 1"
+                },
+                {
+                    "panel_down_default": "variable.p1 >= 1 && variable.p1 != 2 && variable.p1 != 3 && variable.p1 != 4 && variable.p1 != 5"
+                },
+                {
+                    "panel_down_common": "variable.p1 == 2"
+                },
+                {
+                    "panel_down_crafting": "variable.p1 == 3"
+                },
+                {
+                    "panel_down_template": "variable.p1 == 4"
+                },
+                {
+                    "panel_down_factoric": "variable.p1 == 5"
+                },
+                {
+                    "frame_north": "variable.p2 >= 1"
+                },
+                {
+                    "panel_north_default": "variable.p2 >= 1 && variable.p2 != 2 && variable.p2 != 3 && variable.p2 != 4 && variable.p2 != 5"
+                },
+                {
+                    "panel_north_common": "variable.p2 == 2"
+                },
+                {
+                    "panel_north_crafting": "variable.p2 == 3"
+                },
+                {
+                    "panel_north_template": "variable.p2 == 4"
+                },
+                {
+                    "panel_north_factoric": "variable.p2 == 5"
+                },
+                {
+                    "frame_south": "variable.p3 >= 1"
+                },
+                {
+                    "panel_south_default": "variable.p3 >= 1 && variable.p3 != 2 && variable.p3 != 3 && variable.p3 != 4 && variable.p3 != 5"
+                },
+                {
+                    "panel_south_common": "variable.p3 == 2"
+                },
+                {
+                    "panel_south_crafting": "variable.p3 == 3"
+                },
+                {
+                    "panel_south_template": "variable.p3 == 4"
+                },
+                {
+                    "panel_south_factoric": "variable.p3 == 5"
+                },
+                {
+                    "frame_west": "variable.p4 >= 1"
+                },
+                {
+                    "panel_west_default": "variable.p4 >= 1 && variable.p4 != 2 && variable.p4 != 3 && variable.p4 != 4 && variable.p4 != 5"
+                },
+                {
+                    "panel_west_common": "variable.p4 == 2"
+                },
+                {
+                    "panel_west_crafting": "variable.p4 == 3"
+                },
+                {
+                    "panel_west_template": "variable.p4 == 4"
+                },
+                {
+                    "panel_west_factoric": "variable.p4 == 5"
+                },
+                {
+                    "frame_east": "variable.p5 >= 1"
+                },
+                {
+                    "panel_east_default": "variable.p5 >= 1 && variable.p5 != 2 && variable.p5 != 3 && variable.p5 != 4 && variable.p5 != 5"
+                },
+                {
+                    "panel_east_common": "variable.p5 == 2"
+                },
+                {
+                    "panel_east_crafting": "variable.p5 == 3"
+                },
+                {
+                    "panel_east_template": "variable.p5 == 4"
+                },
+                {
+                    "panel_east_factoric": "variable.p5 == 5"
+                }
+            ]
+        }
+    }
+}

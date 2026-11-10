@@ -43,6 +43,7 @@ DOMAIN_PREFIXES = (
     "server/sync/",
     "server/storage/",
     "server/crafting/",
+    "server/interaction/",
 )
 
 

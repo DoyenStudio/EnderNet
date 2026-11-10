@@ -29,6 +29,9 @@
         "endernet:memory_64k": {
             "textures": "textures/endernet/items/memory_64k"
         },
+        "endernet:network_wrench": {
+            "textures": "textures/endernet/items/network_wrench"
+        },
         "endernet:singleside_tape": {
             "textures": "textures/endernet/items/singleside_tape"
         },

@@ -328,8 +328,8 @@
             },
             {
                 "endernet_order_detail@endernet_factoric_terminal_panel.order_description_window": {
-                    "visible": false,
-                    "layer": 51
+                    "layer": 51,
+                    "visible": false
                 }
             },
             {
@@ -472,14 +472,14 @@
                                 "layer": 4,
                                 "alpha": 0.25,
                                 "clip_direction": "left",
-                                "clip_ratio": 1.0,
                                 "clip_pixelperfect": false,
-                                "keep_ratio": false,
+                                "clip_ratio": 1.0,
                                 "color": [
                                     0.0,
                                     1.0,
                                     1.0
                                 ],
+                                "keep_ratio": false,
                                 "texture": "textures/ui/white_background",
                                 "tiled": false,
                                 "property_bag": {
@@ -487,14 +487,14 @@
                                 },
                                 "bindings": [
                                     {
+                                        "binding_type": "collection",
                                         "binding_collection_name": "orders",
                                         "binding_condition": "always",
-                                        "binding_type": "collection",
                                         "binding_name": "#EnderNetFactoric.order_progress"
                                     },
                                     {
-                                        "binding_type": "view",
                                         "source_property_name": "(1.0 - #EnderNetFactoric.order_progress)",
+                                        "binding_type": "view",
                                         "target_property_name": "#clip_ratio"
                                     }
                                 ]
@@ -964,14 +964,14 @@
                     ],
                     "layer": 1,
                     "clip_direction": "left",
-                    "clip_ratio": 1.0,
                     "clip_pixelperfect": false,
-                    "keep_ratio": false,
+                    "clip_ratio": 1.0,
                     "color": [
                         1.0,
                         0.5,
                         0.5
                     ],
+                    "keep_ratio": false,
                     "texture": "textures/ui/white_background",
                     "tiled": false,
                     "property_bag": {
@@ -979,14 +979,14 @@
                     },
                     "bindings": [
                         {
+                            "binding_type": "collection",
                             "binding_collection_name": "order_sources",
                             "binding_condition": "always",
-                            "binding_type": "collection",
                             "binding_name": "#EnderNetFactoric.source_progress"
                         },
                         {
-                            "binding_type": "view",
                             "source_property_name": "(1.0 - #EnderNetFactoric.source_progress)",
+                            "binding_type": "view",
                             "target_property_name": "#clip_ratio"
                         },
                         {

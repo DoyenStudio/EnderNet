@@ -21,6 +21,10 @@
 from ...common.identity import NodeKey
 from .events import EventKind, NormalizedEvent  # noqa: F401 (NormalizedEvent 仅用于 # type: 注释)
 
+#: 区块加载补查注册出来的设备，`ADDED` / `LOADED` 变化的 `detail`。光缆的状态维护靠它
+#: 区分「刚放下」与「区块刚加载」（后者要等一会儿再读，`devices/cables.py`）。
+SOURCE_BACKFILL = "backfill"
+
 
 class ChangeKind(object):
     """设备层面的变化种类，供拓扑服务消费。"""
@@ -32,6 +36,27 @@ class ChangeKind(object):
     NEIGHBORS_AFFECTED = "neighbors_affected"
     #: 请求交互层决定是否拦截（R01），本身不改变注册表
     PLACEMENT_REVIEW = "placement_review"
+    #: 一块面板离开宿主光缆（扳手拆下单块，或整格光缆被扳手拆掉，13 §6）。
+    #: `node_key` / `ref` 是**宿主光缆**的位置与实例，`device_id` 是面板标识
+    #: （`*_terminal_part`），`detail` 是面名——`PartKey(node_key, detail)` 就是那块面板。
+    #: 面板不是独立的设备记录（它只存在于宿主的 `config["parts"]`），这条变化是会话与
+    #: 存档清理（阶段 D）的钩子；拓扑照常把宿主标脏。
+    #:
+    #: 两条来路（阶段 D）：扳手拆下（`detach_part`，发出时宿主还在注册表里、物品已给玩家）；
+    #: 整格光缆被挖掉、炸掉（移除事件，紧跟在宿主的 `REMOVED` 后面逐块发，发出时宿主已经
+    #: 注销——消费者据此把面板物品掉在原地，见 `devices/panels.py`）。
+    PART_DETACHED = "part_detached"
+    #: 同一格的面板宿主换了方块（2026-11-10）：面板底座 → 光缆（手持光缆点底座），或光缆 →
+    #: 面板底座（扳手潜行拆挂着面板的光缆）。**同一个实例**：`ref` 不变（代次不变），面板与
+    #: 终端库存标记原样留在格子里——全局约束 5 的「同位置替换」，不是拆除 + 放置，面板不算
+    #: 离开，会话与存档不作废。`device_id` 是新方块，`detail` 是旧方块。拓扑照常标脏重建，
+    #: 状态维护重算这格与相邻光缆的外观。
+    HOST_CONVERTED = "host_converted"
+    #: 面板**正面所对**的那一格换了方块（面板骨架，2026-11-10；AE2 `IPart.onNeighborChanged`
+    #: 只关心正面那一格的口径）。`node_key` / `ref` 是宿主，`device_id` 是面板，`detail` 是
+    #: 面名——`PartKey(node_key, detail).front_key()` 就是变了的那一格。**不改拓扑**（拓扑
+    #: 不为它标脏），只交给面板按种类处理（`devices/panels.PanelService.front_changed`）。
+    PART_FRONT_CHANGED = "part_front_changed"
 
 
 class LifecycleChange(object):
@@ -71,6 +96,10 @@ class LifecycleStats(object):
         "try_destroy_seen",
         "backfilled_chunks",
         "unknown_blocks",
+        "config_errors",
+        "parts_detached",
+        "hosts_converted",
+        "part_fronts_changed",
     )
 
     def __init__(self):
@@ -103,6 +132,9 @@ class DeviceLifecycle(object):
         #: 设备变化的唯一发布出口。拓扑等下游只认这一个口子。
         self._change_sink = None
         self.published = 0
+        #: 注册时从世界读设备自带的 config（`(node_key, device_id) -> dict | None`）。
+        #: 光缆要在注册那一刻带上切断面与面板，否则拓扑会先按「全开」连一遍再拆开。
+        self._config_reader = None
 
     # -- 变化发布 ------------------------------------------------------
 
@@ -123,6 +155,83 @@ class DeviceLifecycle(object):
             self._change_sink(changes)
         self.published += len(changes)
         return changes
+
+    def set_config_reader(self, reader):
+        # type: (object) -> None
+        """设置注册时读 config 的口子：`reader(node_key, device_id)` 返回 dict 或 None。
+
+        光缆由 `devices/cables.CableStateKeeper.read_config` 从方块实体读出切断面与面板
+        （`.claude/13` §5）；别的设备返回 None，注册表照旧给空 config。放置与区块补查
+        两条发现路径都经 `_register`，因此都带得上。
+        """
+        self._config_reader = reader
+
+    def _read_config(self, node_key, device_id):
+        # type: (NodeKey, str) -> object
+        """读注册时的 config。读失败不阻断注册（与朝向同理），按「没有 config」处理。"""
+        if self._config_reader is None:
+            return None
+        try:
+            return self._config_reader(node_key, device_id)
+        except Exception:
+            self.stats.config_errors += 1
+            return None
+
+    def _register(self, node_key, device_id, facing_hint=None, tick=0):
+        # type: (NodeKey, str, object, int) -> object
+        """放置与补查共用的注册：朝向与 config 都在这里读，两条路径不会一边漏一边。
+
+        光缆与面板底座没有朝向，不去读它（区块加载时每格省一次 `GetBlockStates`）。同位置
+        已经是同一种方块（重复通知、区块重新加载）时注册表不收新 config，也就不读——
+        重新加载的光缆由状态维护稍后重读（`devices/cables.py`）。
+        """
+        if self.definitions.has_face_data(device_id):
+            facing = None
+        else:
+            facing = self._resolve_facing(node_key, facing_hint)
+        existing = self.registry.get(node_key)
+        if existing is not None and existing.device_id == device_id:
+            config = None
+        else:
+            config = self._read_config(node_key, device_id)
+        return self.registry.register(
+            node_key, device_id, facing=facing, config=config, tick=tick
+        )
+
+    def detach_part(self, record, face, part_id):
+        # type: (object, str, str) -> list
+        """发一条「面板离开」（`ChangeKind.PART_DETACHED`），经唯一出口发布。
+
+        扳手拆下单块面板、或拆掉整格光缆时由交互层调（`devices/cable_intents.py`）。
+        **调用前宿主的 `config["parts"]` 与方块实体已经去掉了这一块**，下游只做清理。
+        """
+        self.stats.parts_detached += 1
+        return self._publish(
+            [LifecycleChange(ChangeKind.PART_DETACHED, record.node_key, part_id, record.ref, face)]
+        )
+
+    def convert(self, node_key, device_id):
+        # type: (NodeKey, str) -> list
+        """面板宿主原地换方块（`ChangeKind.HOST_CONVERTED`），经唯一出口发布并返回变化清单。
+
+        **调用前世界里的方块与方块实体已经换好**（`CableStateKeeper.swap_block`）；这里只改
+        注册表的型号（同一实例、同一代次，`DeviceRegistry.convert`）并通知下游。随后引擎派发的
+        旧方块移除事件按型号对不上忽略，新方块的放置事件当重复，都不会再改一遍。没有这条
+        记录（或型号本来就是它）返回空清单。
+        """
+        record = self.registry.get(node_key)
+        old_device_id = record.device_id if record is not None else None
+        converted = self.registry.convert(node_key, device_id)
+        if converted is None:
+            return []
+        self.stats.hosts_converted += 1
+        changes = [
+            LifecycleChange(
+                ChangeKind.HOST_CONVERTED, node_key, device_id, converted.ref, old_device_id
+            )
+        ]
+        changes.extend(self._neighbor_changes(node_key))
+        return self._publish(changes)
 
     # -- 事件入口 ------------------------------------------------------
 
@@ -203,11 +312,8 @@ class DeviceLifecycle(object):
             self.stats.unknown_blocks += 1
             return []
 
-        outcome = self.registry.register(
-            node_key,
-            device_id,
-            facing=self._resolve_facing(node_key, event.data.get("facing")),
-            tick=event.tick,
+        outcome = self._register(
+            node_key, device_id, facing_hint=event.data.get("facing"), tick=event.tick
         )
         changes = self._changes_from_outcome(
             outcome, node_key, device_id, event.data.get("source", "")
@@ -232,6 +338,14 @@ class DeviceLifecycle(object):
         changes = [
             LifecycleChange(ChangeKind.REMOVED, node_key, device_id, removed.ref)
         ]
+        # 挖掉挂着面板的光缆（阶段 D）：面板就在刚注销的这条记录里，当场读出来，逐块发
+        # 「面板离开」——之后再也读不到了（方块实体随方块没了）。扳手整格拆时面板已先摘掉，
+        # 这里读到的是空的，不会再发一遍。
+        for face, part_id in self.catalog.parts_of(removed):
+            self.stats.parts_detached += 1
+            changes.append(
+                LifecycleChange(ChangeKind.PART_DETACHED, node_key, part_id, removed.ref, face)
+            )
         changes.extend(self._neighbor_changes(node_key))
         return changes
 
@@ -271,6 +385,25 @@ class DeviceLifecycle(object):
                         self.registry.get(candidate).device_id,
                         self.registry.get(candidate).ref,
                     )
+                )
+        out.extend(self._front_changes(node_key, neighbor_key))
+        return out
+
+    def _front_changes(self, node_key, neighbor_key):
+        # type: (NodeKey, NodeKey) -> list
+        """`node_key` 那一格的邻格 `neighbor_key` 变了：挂在朝它那一面的面板，正面所对的
+        方块就变了（面板骨架）。没有面板、或不是正面那一格就没有。"""
+        if node_key is None or neighbor_key is None:
+            return []
+        host = self.registry.get(node_key)
+        if host is None:
+            return []
+        out = []
+        for face, part_id in self.catalog.parts_of(host):
+            if node_key.neighbor(face) == neighbor_key:
+                self.stats.part_fronts_changed += 1
+                out.append(
+                    LifecycleChange(ChangeKind.PART_FRONT_CHANGED, node_key, part_id, host.ref, face)
                 )
         return out
 
@@ -338,11 +471,10 @@ class DeviceLifecycle(object):
         if not device_id or not self.definitions.has(device_id):
             return []
 
-        # 与放置事件走同一条朝向解析，否则重启后方向性设备会丢朝向。
-        outcome = self.registry.register(
-            node_key, device_id, facing=self._resolve_facing(node_key)
-        )
-        changes = self._changes_from_outcome(outcome, node_key, device_id, "backfill")
+        # 与放置事件走同一条注册（朝向与 config），否则重启后方向性设备会丢朝向、
+        # 光缆会丢切断面与面板。
+        outcome = self._register(node_key, device_id)
+        changes = self._changes_from_outcome(outcome, node_key, device_id, SOURCE_BACKFILL)
         if changes:
             changes.extend(self._neighbor_changes(node_key))
         return changes

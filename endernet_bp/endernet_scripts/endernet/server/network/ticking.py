@@ -373,7 +373,7 @@ class SchedulerService(NetworkService):
 
     def note_domain_change(self, node, from_domain_ids, to_domain_ids):
         # type: (object, tuple, tuple) -> bool
-        """`False`：调度不关心负载域。
+        """`False`：调度不关心带宽域（2026-11-09 起即所在线路）。
 
         域变了不等于设备换了，到期周期与轮询间隔都不受影响。
         """

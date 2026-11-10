@@ -385,20 +385,20 @@
             },
             {
                 "endernet_fluid_list_window@endernet_windows.fluid_list_window": {
-                    "visible": false,
-                    "layer": 55
+                    "layer": 55,
+                    "visible": false
                 }
             },
             {
                 "endernet_select_fluid_window@endernet_windows.select_fluid_window": {
-                    "visible": false,
-                    "layer": 65
+                    "layer": 65,
+                    "visible": false
                 }
             },
             {
                 "endernet_port_settings@endernet_bus_fluid_input_io.settings_window": {
-                    "visible": false,
-                    "layer": 45
+                    "layer": 45,
+                    "visible": false
                 }
             }
         ]

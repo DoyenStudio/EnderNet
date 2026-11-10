@@ -44,10 +44,19 @@ blocks.md 没列（R10）；驱动器数量、内存条根数、处理器与装�
 消耗能源，也不依赖 `context["tick"]`。因此 `clock.advance(n); server.tick()`
 仍可精确复现，诊断查询也不会因为「没有新的 IO 事务」而失去能源状态（04 接口
 要求）。`tick()` 因此恒返回 0——本服务没有到期任务。
+
+## 面板（阶段 D，13 §7）
+
+面板不是注册表成员，运行时只挂得到宿主光缆。光缆节点进账时（`add_node`，每次发布都会
+再来一遍），把它 `config["parts"]` 里的面板各记一行，键是 `PartKey`、型号是面板、耗能取
+定义表（面板形态与整方块终端共用同一份 `EnergySpec`，4 EN/t）；面板拆下或光缆离网就撤掉。
+`power_ok(PartKey)` 因此与整方块终端同一口径。
 """
 
-from ...common.definitions import UNCONFIGURED
+from ...common.definitions import CATEGORY_CABLE, UNCONFIGURED
+from ...common.identity import DeviceRef, PartKey
 from ...common.protocol import Reason
+from .node import NetworkNode
 from .services import NetworkService, ServiceId
 
 #: 设备工作态。**只有这两个取值**，与 `EnergySpec.value_for_state` 一致。
@@ -322,23 +331,86 @@ class EnergyService(NetworkService):
         if definition is None:
             self.stats["refused"] += 1
             return False
+        changed = self._put(node, definition)
+        if self._sync_parts(node):
+            changed = True
+        if changed:
+            self._settle()
+        return changed
+
+    def remove_node(self, node):
+        # type: (object) -> bool
+        """节点离开网络：把它那一行撤掉（光缆连同挂着的面板）。**不等于世界里的方块被拆了。**"""
+        changed = self._members.pop(node.node_key, None) is not None
+        if changed:
+            self.stats["removed"] += 1
+        if self._drop_parts(node.node_key, keep=()):
+            changed = True
+        if changed:
+            self._settle()
+        return changed
+
+    def _put(self, node, definition):
+        # type: (object, object) -> bool
+        """记一行；与已有那一行的 `signature()` 相同就不动。返回是否改了。"""
         current = self._members.get(node.node_key)
         built = self._build_member(node, definition, current)
         if current is not None and current.signature() == built.signature():
             return False
         self._members[node.node_key] = built
         self.stats["added"] += 1
-        self._settle()
         return True
 
-    def remove_node(self, node):
+    def _sync_parts(self, node):
         # type: (object) -> bool
-        """节点离开网络：把它那一行撤掉。**不等于世界里的方块被拆了。**"""
-        if self._members.pop(node.node_key, None) is None:
+        """光缆节点：把它现在挂着的面板各记一行（键 `PartKey`），拆下的撤掉。返回是否改了。"""
+        if getattr(node, "category", None) != CATEGORY_CABLE:
             return False
-        self.stats["removed"] += 1
-        self._settle()
-        return True
+        wanted = {}
+        for face, part_id in self._parts_of(node):
+            wanted[PartKey(node.node_key, face)] = part_id
+        changed = self._drop_parts(node.node_key, keep=wanted)
+        for key in sorted(wanted, key=lambda item: item.as_key()):
+            definition = self._definition_of(wanted[key])
+            if definition is None:
+                self.stats["refused"] += 1
+                continue
+            part = NetworkNode(
+                key,
+                DeviceRef(key, node.ref.generation),
+                wanted[key],
+                definition.category,
+                capabilities=definition.capabilities,
+                loaded=getattr(node, "loaded", True),
+            )
+            if self._put(part, definition):
+                changed = True
+        return changed
+
+    def _drop_parts(self, host_key, keep):
+        # type: (object, object) -> bool
+        """撤掉挂在 `host_key` 这一格上、且不在 `keep` 里的面板行。返回是否撤了。"""
+        doomed = [
+            key for key in self._members
+            if isinstance(key, PartKey) and key.node_key == host_key and key not in keep
+        ]
+        for key in doomed:
+            del self._members[key]
+            self.stats["removed"] += 1
+        return bool(doomed)
+
+    def _parts_of(self, node):
+        # type: (object) -> list
+        """这格光缆现在挂着的面板 `[(面名, 型号)]`：读注册表里那条记录（同一代次才算）。"""
+        runtime = self.runtime
+        registry = getattr(runtime, "registry", None)
+        catalog = getattr(runtime, "catalog", None)
+        if registry is None or catalog is None:
+            return []
+        record = registry.get_by_ref(node.ref)
+        if record is None:
+            return []
+        return catalog.parts_of(record)
 
     def note_domain_change(self, node, from_domain_ids, to_domain_ids):
         # type: (object, tuple, tuple) -> bool
@@ -406,7 +478,7 @@ class EnergyService(NetworkService):
 
         **非成员返回 `None`**：设备刚放下、拓扑还没把它同步进来的那一帧就是
         这种情形（与 01 记的「刚放下那一帧」同一类），说「有电」或「没电」
-        都是无根据的。
+        都是无根据的。面板按 `PartKey` 问（阶段 D）。
         """
         if self.runtime is None or node_key not in self._members:
             return None

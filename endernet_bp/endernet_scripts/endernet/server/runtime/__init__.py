@@ -5,7 +5,7 @@
 """
 
 from .events import EventKind, EventQueue, NormalizedEvent, WakeSet
-from .lifecycle import ChangeKind, DeviceLifecycle
+from .lifecycle import SOURCE_BACKFILL, ChangeKind, DeviceLifecycle
 from .scheduler import (
     DeviceLane,
     DueQueue,
@@ -22,6 +22,7 @@ __all__ = [
     "EventQueue",
     "NormalizedEvent",
     "WakeSet",
+    "SOURCE_BACKFILL",
     "ChangeKind",
     "DeviceLifecycle",
     "DeviceLane",

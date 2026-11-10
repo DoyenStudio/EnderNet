@@ -49,6 +49,9 @@
         },
         "sound": "stone"
     },
+    "endernet:common_terminal_part": {
+        "sound": "stone"
+    },
     "endernet:crafting_terminal_panel": {
         "textures": {
             "up": "endernet:common_device_top",
@@ -60,6 +63,9 @@
         },
         "sound": "stone"
     },
+    "endernet:crafting_terminal_part": {
+        "sound": "stone"
+    },
     "endernet:creative_energy_source": {
         "textures": "endernet:creative_energy_source_all",
         "sound": "stone"
@@ -67,6 +73,23 @@
     "endernet:dos_network_endpoint": {
         "textures": "endernet:dos_network_endpoint_all",
         "sound": "stone"
+    },
+    "endernet:ender_cable": {
+        "sound": "stone",
+        "client_entity": {
+            "hand_model_use_client_entity": false,
+            "identifier": "endernet:ender_cable_panels"
+        }
+    },
+    "endernet:ender_dense_cable": {
+        "sound": "stone"
+    },
+    "endernet:ender_glass_cable": {
+        "sound": "stone",
+        "client_entity": {
+            "hand_model_use_client_entity": false,
+            "identifier": "endernet:ender_cable_panels"
+        }
     },
     "endernet:energy_input_interface": {
         "textures": "endernet:energy_input_interface_all",
@@ -81,6 +104,9 @@
             "east": "endernet:common_device_side",
             "west": "endernet:common_device_side"
         },
+        "sound": "stone"
+    },
+    "endernet:factoric_terminal_part": {
         "sound": "stone"
     },
     "endernet:memory_slot": {
@@ -110,6 +136,13 @@
         "textures": "endernet:parallel_processor_connector_all",
         "sound": "stone"
     },
+    "endernet:part_holder": {
+        "sound": "stone",
+        "client_entity": {
+            "hand_model_use_client_entity": false,
+            "identifier": "endernet:ender_cable_panels"
+        }
+    },
     "endernet:storage_driver": {
         "sound": "stone",
         "client_entity": {
@@ -126,6 +159,9 @@
             "east": "endernet:common_device_side",
             "west": "endernet:common_device_side"
         },
+        "sound": "stone"
+    },
+    "endernet:template_terminal_part": {
         "sound": "stone"
     },
     "endernet:tiny_network_endpoint": {

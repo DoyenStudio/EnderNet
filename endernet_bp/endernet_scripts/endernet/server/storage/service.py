@@ -563,8 +563,8 @@ class StorageService(NetworkService):
         # type: (object, tuple, tuple) -> bool
         """**有意不处理。**
 
-        介质额度按介质记账，与带宽负载域无关；驱动器负载变化由
-        `note_device_load_changed` 只重算所在域，域归属变化本身由
+        介质额度按介质记账，与带宽线路无关；驱动器负载变化由
+        `note_device_load_changed` 只重算所在线路，线路归属变化本身由
         `AdmissionService` 在同一次拓扑发布里处理。因此这里恒为 False。
         （这与 `NetworkService.note_domain_change` 文档里「05 的存储会覆盖」
         那句括注不一致，是有意的，理由记在交付说明里。）

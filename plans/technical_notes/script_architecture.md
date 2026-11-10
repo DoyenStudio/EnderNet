@@ -44,6 +44,11 @@ endernet_scripts/
     │   │   ├── device_identity.py                设备界面的身份认领（11-07）。
     │   │   ├── item_catalog.py                   Request the selector catalogue on…
     │   │   └── slot_display.py                   槽位模块显示的客户端一侧（2026-11-05）：把服务端的读数写…
+    │   ├── interaction/                          伪原版交互的客户端一半（2026-11-10）：接管右键、一次按下、射线、挥手
+    │   │   ├── engine.py                         引擎胶水：相机原点、主手物品、潜行、挥手（方法体内导入引擎）。
+    │   │   ├── press.py                          「一次按下」的帧时钟与判定：接管后整次按下都拦。
+    │   │   ├── ray.py                            组射线：相机原点 → 引擎给的命中点。
+    │   │   └── takeover.py                       接管层 `UseTakeover`：一条规则 + 一个发送函数即可复用（光缆意图、以后的面板）。
     │   └── ui/                                   界面登记 `register_screens()`（延迟导入各屏）
     │       ├── device_status/                    设备状态栏与详情弹窗：纯模型、类体绑定
     │       │   ├── bindings.py                   设备状态栏与详情弹窗的类体绑定（11-13 / 11-07）。
@@ -110,6 +115,7 @@ endernet_scripts/
         ├── adapters/                             引擎边界（唯一可 import tooldelta/mod.* 的服务端目录，且只在函数体内）
         │   ├── engine_text.py                    引擎边界上的字符串转换：传 str，不要传 unicode。
         │   ├── events.py                         引擎事件到归一化事件的绑定。本模块是引擎边界。
+        │   ├── interaction.py                    伪原版交互的服务端引擎出口：放置音效（`/playsound`）。
         │   ├── messages.py                       终端同步通道的引擎适配器（任务 11）。本模块是引擎边界。
         │   ├── order_notifications.py            订单完成提示与声音的引擎边界。
         │   ├── persistence_engine.py             真实存档后端：世界 ExtraData（任务 12-02 选定的后…
@@ -153,6 +159,11 @@ endernet_scripts/
         │   ├── registry.py                       设备注册表：位置、区块与实例代次索引。
         │   ├── slot_display.py                   槽位模块显示的服务端一侧：从驱动器 / 内存槽的读数算出每槽的模型…
         │   └── storage_driver.py                 存储驱动器设备：槽位状态、介质归属与真实的存储提供者实现。
+        ├── interaction/                          伪原版交互的服务端一半（2026-11-10）：右键开界面的唯一入口（整方块终端与面板共用）、再拦一道原版物品使用、扣 / 退 / 给物品、放置音效
+        │   ├── feedback.py                       放成功后的原版放置音效（`dig.stone`）。
+        │   ├── guard.py                          `ServerItemUseOnEvent` 再拦一道的规则表 `UseGuard`（开界面、底座换光缆、面板物品放不下）。
+        │   ├── items.py                          扣 / 退 / 给物品 `ItemExchange`（创造不扣，背包满了掉脚下）。
+        │   └── opening.py                        右键开界面的唯一入口：`BlockUse` / `Openers` / `OpenTarget`（整方块终端与面板共用）。
         ├── network/                              拓扑、准入、主控、服务装配与运行时
         │   ├── admission.py                      带宽负载准入：负载域容量、设备获准与 bandwidth_ok。
         │   ├── controller.py                     主控制器：唯一准入出口、网络运行状态与只读设备状态聚合。

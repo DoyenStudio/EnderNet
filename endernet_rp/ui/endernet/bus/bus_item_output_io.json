@@ -502,20 +502,20 @@
             },
             {
                 "endernet_port_settings@endernet_bus_item_output_io.settings_window": {
-                    "visible": false,
-                    "layer": 42
+                    "layer": 42,
+                    "visible": false
                 }
             },
             {
                 "endernet_item_list_window@endernet_windows.item_list_window": {
-                    "visible": false,
-                    "layer": 55
+                    "layer": 55,
+                    "visible": false
                 }
             },
             {
                 "endernet_select_item_window@endernet_windows.select_item_window": {
-                    "visible": false,
-                    "layer": 65
+                    "layer": 65,
+                    "visible": false
                 }
             },
             {
