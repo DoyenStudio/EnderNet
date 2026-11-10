@@ -1,0 +1,218 @@
+{
+  "date": "2026-11-07",
+  "scope": "Active item ports six-way placement and facing-only container detection",
+  "method": "Live engine /setblock with facing states; normal lifecycle discovery and server config_view; native migration adapter with full inventory comparison. Mouse placement not completed: Windows denied game foreground focus.",
+  "offline": {
+    "tests": 4150,
+    "py27_files": 131,
+    "generated_blocks": 23
+  },
+  "initial_vertical": [
+    {
+      "block_states": {
+        "minecraft:facing_direction": "up"
+      },
+      "cache": [],
+      "facing": "up",
+      "position": [
+        0,
+        -35,
+        90,
+        -18
+      ],
+      "target": [
+        0,
+        -35,
+        91,
+        -18
+      ],
+      "view": {
+        "blocker": null,
+        "buffer_summary": "5 格真实缓冲，库存以方块容器为准",
+        "config": {
+          "cache_enabled": true,
+          "direction": "both",
+          "enabled": true,
+          "filter": [],
+          "filter_mode": "blacklist",
+          "item_filters": {
+            "blacklist": [],
+            "whitelist": []
+          },
+          "limit": 0,
+          "supply_slots": []
+        },
+        "device_id": "endernet:bus_item_input_io",
+        "facing_status": "外部容器：已接入",
+        "filter_limit": 16,
+        "filter_modes": [
+          "blacklist",
+          "whitelist"
+        ],
+        "generation": 0,
+        "role": "intake"
+      }
+    },
+    {
+      "block_states": {
+        "minecraft:facing_direction": "down"
+      },
+      "cache": [],
+      "facing": "down",
+      "position": [
+        0,
+        -31,
+        90,
+        -18
+      ],
+      "target": [
+        0,
+        -31,
+        89,
+        -18
+      ],
+      "view": {
+        "blocker": {
+          "code": "port_unconfigured",
+          "detail": "接口尚未配置要搬运什么（该角色必须显式指定过滤，或接口被关掉了）"
+        },
+        "buffer_summary": "5 格真实缓冲，库存以方块容器为准",
+        "config": {
+          "cache_enabled": true,
+          "direction": "both",
+          "enabled": true,
+          "filter": [],
+          "filter_mode": "whitelist",
+          "item_filters": null,
+          "limit": 0,
+          "supply_slots": []
+        },
+        "device_id": "endernet:bus_item_output_io",
+        "facing_status": "外部容器：已接入",
+        "filter_limit": 9,
+        "filter_modes": [
+          "whitelist"
+        ],
+        "generation": 0,
+        "role": "output"
+      }
+    }
+  ],
+  "additional_vertical": [
+    {
+      "device": "endernet:bus_item_input_io",
+      "engine_facing": "up",
+      "facing_status": "外部容器：已接入",
+      "position": [
+        0,
+        -35,
+        90,
+        -18
+      ],
+      "runtime_facing": "up",
+      "target": [
+        0,
+        -35,
+        91,
+        -18
+      ]
+    },
+    {
+      "device": "endernet:bus_item_input_io",
+      "engine_facing": "down",
+      "facing_status": "外部容器：已接入",
+      "position": [
+        0,
+        -34,
+        90,
+        -18
+      ],
+      "runtime_facing": "down",
+      "target": [
+        0,
+        -34,
+        89,
+        -18
+      ]
+    },
+    {
+      "device": "endernet:bus_item_output_io",
+      "engine_facing": "up",
+      "facing_status": "外部容器：已接入",
+      "position": [
+        0,
+        -30,
+        90,
+        -18
+      ],
+      "runtime_facing": "up",
+      "target": [
+        0,
+        -30,
+        91,
+        -18
+      ]
+    }
+  ],
+  "legacy_migration": {
+    "after": [
+      [
+        0,
+        {
+          "aux": 0,
+          "identity": {
+            "custom_tips": null,
+            "durability": null,
+            "enchant_data": null,
+            "extra_id": null,
+            "mod_enchant_data": null,
+            "user_data": {
+              "six_way_test": 1
+            }
+          },
+          "kind": "item",
+          "name": "minecraft:diamond",
+          "schema_version": 1
+        },
+        2
+      ]
+    ],
+    "before": [
+      [
+        0,
+        {
+          "aux": 0,
+          "identity": {
+            "custom_tips": null,
+            "durability": null,
+            "enchant_data": null,
+            "extra_id": null,
+            "mod_enchant_data": null,
+            "user_data": {
+              "six_way_test": 1
+            }
+          },
+          "kind": "item",
+          "name": "minecraft:diamond",
+          "schema_version": 1
+        },
+        2
+      ]
+    ],
+    "engine_facing": "east",
+    "migration_ok": true,
+    "registry_facing": "east",
+    "runtime_facing": "east",
+    "view_with_only_bottom_chest": "外部容器：未接入"
+  },
+  "not_verified": [
+    "PC manual pitch-based placement gesture (FOCUS_DENIED)",
+    "Touch placement gesture",
+    "New vertical routes end-to-end delivery in game (covered offline)"
+  ],
+  "notes": [
+    "Original user port remains north; top chest requires upward placement.",
+    "Test fixtures dimension 0, x -35/-34/-31/-30, y 90, z -18. Output at -31 retains two test diamonds with userData six_way_test=1.",
+    "Player position, rotation and empty carried slot restored after the blocked manual test."
+  ]
+}

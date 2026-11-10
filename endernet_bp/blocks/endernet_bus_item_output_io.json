@@ -38,7 +38,7 @@
             "traits": {
                 "minecraft:placement_direction": {
                     "enabled_states": [
-                        "minecraft:cardinal_direction"
+                        "minecraft:facing_direction"
                     ],
                     "y_rotation_offset": 180.0
                 }

@@ -1,0 +1,112 @@
+{
+  "date": "2026-11-06",
+  "save_exit_reentry": {
+    "method": "Clicked native 保存并退出; MCDK auto_join_game rejoined the same world",
+    "input_blacklist": [
+      "minecraft:dirt"
+    ],
+    "input_whitelist": [
+      "minecraft:diamond"
+    ],
+    "input_enabled": false,
+    "output_cache_enabled": false,
+    "real_input_cache": {
+      "minecraft:emerald": 1
+    }
+  },
+  "pc_ui": {
+    "screenshot": "active_item_ports_screen.jpg",
+    "verified": [
+      "外部容器：已接入",
+      "缓存关闭，仅可取出"
+    ],
+    "unverified": [
+      "touchscreen",
+      "multiplayer concurrent gestures"
+    ]
+  },
+  "gameqa_space": {
+    "cache_cobble": 0,
+    "full": [
+      "ok",
+      {
+        "action": "port_dispatch",
+        "intent": "output",
+        "moved": 0,
+        "note": "网络或缓存没有配置的过滤资源，或目标无空间"
+      },
+      0
+    ],
+    "one_space_delivery": {
+      "payload": {
+        "action": "port_dispatch",
+        "receipt": {
+          "holder": "container:(0, -30, 90, -18)",
+          "moved": 1,
+          "op_id": "qa-9304d606cc714059b3b05e772ff1884f",
+          "reason": "",
+          "requested": 1,
+          "resource_key": {
+            "aux": 0,
+            "identity": {
+              "custom_tips": null,
+              "durability": null,
+              "enchant_data": null,
+              "extra_id": null,
+              "mod_enchant_data": null,
+              "user_data": null
+            },
+            "kind": "item",
+            "name": "minecraft:cobblestone",
+            "schema_version": 1
+          },
+          "status": "complete"
+        },
+        "route": "cache_to_target"
+      },
+      "reasons": [],
+      "status": "ok"
+    },
+    "one_space_stage": {
+      "payload": {
+        "action": "port_dispatch",
+        "receipt": {
+          "holder": "container:(0, -31, 90, -18)",
+          "moved": 1,
+          "op_id": "qa-fe08da0e7b4e42e5be9d41800a44ac20",
+          "reason": "",
+          "requested": 1,
+          "resource_key": {
+            "aux": 0,
+            "identity": {
+              "custom_tips": null,
+              "durability": null,
+              "enchant_data": null,
+              "extra_id": null,
+              "mod_enchant_data": null,
+              "user_data": null
+            },
+            "kind": "item",
+            "name": "minecraft:cobblestone",
+            "schema_version": 1
+          },
+          "status": "complete"
+        },
+        "route": "network_to_cache"
+      },
+      "reasons": [],
+      "status": "ok"
+    },
+    "target_cobble": 64
+  },
+  "gameqa_power": {
+    "buffer_emerald": 1,
+    "dispatch": {
+      "payload": {},
+      "reasons": [
+        "brownout"
+      ],
+      "status": "blocked"
+    }
+  }
+}

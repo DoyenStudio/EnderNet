@@ -69,6 +69,16 @@ class BusItemOutputPanel(ItemPortPanelBase):
     FILTER_BUTTON_MAIN = SUMMARY_BUTTON
     FILTER_TITLE = "自动输出物品"
 
+    @Binder.binding(Binder.BF_BindString, "#EnderNetPort.facing")
+    def port_facing(self):
+        model = getattr(self, "port_config", None)
+        return model.facing_status if model is not None else "外部容器：未知"
+
+    @Binder.binding(Binder.BF_BindString, "#EnderNetPort.hint")
+    def port_hint(self):
+        model = getattr(self, "port_config", None)
+        return model.status_hint() if model is not None else "等待设备配置"
+
 
 @RegistToolDeltaScreen("bus_item_input_io_ui.main", is_proxy=True)
 class BusItemInputPanel(ItemPortPanelBase):
@@ -90,6 +100,16 @@ class BusItemInputPanel(ItemPortPanelBase):
     MODE_TEXT = SETTINGS_MODE_TEXT
     FILTER_BUTTON_SETTINGS = SETTINGS_FILTER_BUTTON
     FILTER_TITLE_FROM_MODE = True
+
+    @Binder.binding(Binder.BF_BindString, "#EnderNetPort.facing")
+    def port_facing(self):
+        model = getattr(self, "port_config", None)
+        return model.facing_status if model is not None else "外部容器：未知"
+
+    @Binder.binding(Binder.BF_BindString, "#EnderNetPort.hint")
+    def port_hint(self):
+        model = getattr(self, "port_config", None)
+        return model.status_hint() if model is not None else "等待设备配置"
 
 
 @RegistToolDeltaScreen("bus_template_io_ui.main", is_proxy=True)
@@ -142,9 +162,6 @@ class BusItemPanel(ItemPortPanelBase):
         self.rendered_slots = None
 
     def _detach_models(self):
-        picker = getattr(self, "_vars", {}).get(WINDOW_ATTRIBUTE)
-        if picker is not None:
-            picker.close()
         self.stock = None
         ItemPortPanelBase._detach_models(self)
 

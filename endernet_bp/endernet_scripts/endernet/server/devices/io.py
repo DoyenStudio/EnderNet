@@ -34,6 +34,7 @@ from ...common.definitions import (
     ITEM_OUTPUT_PORT_SLOT_COUNT,
     PASSIVE_PORT_SLOT_COUNT,
     PICKUP_FILTER_LIMIT,
+    SIX_WAY_ITEM_PORTS,
     TEMPLATE_PATTERN_SLOT_COUNT,
     TEMPLATE_CONTAINER_SLOT_COUNT,
 )
@@ -157,7 +158,7 @@ DEFAULT_STACK_LIMIT = 64
 #: v2 之后被动接口的 9 格是存取共用的**真实库存**、样板接口的 9 格是
 #: **工厂样板专用槽**（原料缓冲改为独立的内存缓冲）。因此 v1 的样板口记录
 #: **不能按新语义解释**——任务 12 要为它写迁移，在那之前只标记、保留原载荷。
-PORT_STATE_SCHEMA_VERSION = 2
+PORT_STATE_SCHEMA_VERSION = 3
 
 #: 接口状态的存档记录类型。**一条接口一条记录**，主键是位置文本
 #: （`node_key_text`）——理由与驱动器槽位同：位置稳定，设备代次不持久。
@@ -213,10 +214,10 @@ def neighbor_key(node_key, facing):
     # type: (object, str) -> object
     """朝向那一面的位置。`facing` 未知或不是合法朝向时返回 None。
 
-    朝向名字取自方块的 `minecraft:cardinal_direction`（`world.facing_at`
-    读的就是它），与 `identity.FACING_NAMES` 一一对应。
-    `adapters/world.py` 明确记着这条**未验证**：方块若缺该 trait，
-    方向性端口会退化为无方向。这里对未知朝向**返回 None 而不猜一个方向**：
+    朝向名字由 `world.facing_at` 读取六向 facing_direction，兼容其他
+    设备的水平 cardinal_direction，与 `identity.FACING_NAMES` 对应。
+    方块若缺朝向 trait，方向性端口会退化为无方向。
+    这里对未知朝向**返回 None 而不猜一个方向**：
     猜错会把东西送进错误的容器，那是不可逆的。
     """
     if not facing:
@@ -270,7 +271,7 @@ class PortPolicy(object):
         output_cache_capacity=None,
         intake_buffer_capacity=None,
         cached_items_on_disable=CACHE_KEEP,
-        output_cache_strategy="demand_first",
+        output_cache_strategy="demand_round_robin",
     ):
         # type: (int, int, str, str, int, int, int, int, str, str) -> None
         #: **R05**：样板接口的**原料缓冲**能装多少件。
@@ -311,13 +312,9 @@ class PortPolicy(object):
             if intake_buffer_capacity is not None
             else ITEM_INTAKE_PORT_SLOT_COUNT.value * DEFAULT_STACK_LIMIT
         )
-        #: **待确认**：存货口的过滤条目上限。`blocks.md` 只说了取货最多 9 种，
-        #: 并明写**不得从取货的 9 种推导存货过滤上限**，因此这里的替身
-        #: 刻意取一个**不等于 9** 的保守值。
+        #: 其他角色的兼容策略；主动物品存货口固定16项，不读取此上限。
         self.intake_filter_limit = int(intake_filter_limit)
-        #: **待确认**：存货口的默认过滤模式（白名单 / 黑名单）。
-        #: 替身取白名单——与 `PortConfig` 一直以来的语义一致，
-        #: 因此不会因为换了策略对象而改变既有存档的读法。
+        #: 其他角色和旧配置的默认模式；新物品存货口显式初始化为黑名单。
         self.default_filter_mode = default_filter_mode
         #: **待确认**：空名单是什么意思。替身取「什么都不搬」，
         #: 因为它是唯一不会让一台刚放下的接口立刻动手的解释。
@@ -329,15 +326,11 @@ class PortPolicy(object):
         #: R05：目标端不支持模拟时，第一次试探搬多少。
         #: 取 1 是保守的：多搬的部分要回滚，而回滚本身可能失败。
         self.probe_unit = int(probe_unit)
-        #: **未定案**：关掉取货口的缓存开关后，**已经在缓存格里的东西**怎么办。
-        #:
-        #: `blocks.md` 的原话是「已有缓存物品的关闭处置仍待定，**不得直接清空**」，
-        #: 因此替身取 `CACHE_KEEP`——唯一一个不会造成损失的选项。
-        #: 另两种口径（回网 / 掉落）**没有实现**，只留名字。
+        #: 物品取货缓存关闭时保留余货，原生容器只可取出。
         self.cached_items_on_disable = cached_items_on_disable
-        # R05 开发替身：先送已有缓存，按名单顺序补货；目标无空间不预取。
+        # 物品取货口已定案：按需供货，ID与变体轮转，目标无空间不预取。
         # 只实现这一个口径，不能把未实现的策略作为可选行为放行。
-        if output_cache_strategy != "demand_first":
+        if output_cache_strategy != "demand_round_robin":
             raise ValueError("未实现的取货缓存策略: %r" % (output_cache_strategy,))
         self.output_cache_strategy = output_cache_strategy
 
@@ -368,7 +361,7 @@ class PortPolicy(object):
                 "intake_buffer_capacity 必须为正，得到 %r"
                 % (self.intake_buffer_capacity,)
             )
-        if self.cached_items_on_disable not in CACHE_ON_DISABLE:
+        if self.cached_items_on_disable != CACHE_KEEP:
             raise ValueError(
                 "未知的关闭缓存处置口径: %r" % (self.cached_items_on_disable,)
             )
@@ -393,13 +386,6 @@ class PortPolicy(object):
         # type: () -> list
         return [
             {
-                "field": "port.output_cache_strategy",
-                "rule": "R05",
-                "value": self.output_cache_strategy,
-                "note": "开发替身：先送缓存、按名单顺序补货、无目标空间不预取；"
-                        "名单移除后的余货保留，预取与调度仍待定案",
-            },
-            {
                 "field": "port.template_buffer_capacity",
                 "rule": "R05",
                 "value": self.template_buffer_capacity,
@@ -409,19 +395,19 @@ class PortPolicy(object):
                 "field": "port.intake_filter_limit",
                 "rule": "R05",
                 "value": self.intake_filter_limit,
-                "note": "存货口过滤条目上限；尚未定案，且不得从取货的 9 种推导",
+                "note": "其他接口的存货过滤上限仍待定；主动物品存货口固定16项",
             },
             {
                 "field": "port.default_filter_mode",
                 "rule": "R05",
                 "value": self.default_filter_mode,
-                "note": "存货口默认过滤模式；替身取白名单",
+                "note": "其他接口默认模式的兼容策略；主动物品存货口新设备固定黑名单",
             },
             {
                 "field": "port.empty_filter_means",
                 "rule": "R05",
                 "value": self.empty_filter_means,
-                "note": "空名单的含义；替身取「什么都不搬」",
+                "note": "其他接口的空名单兼容策略；两种主动物品口不使用此替身",
             },
             {
                 "field": "port.max_batch",
@@ -434,17 +420,6 @@ class PortPolicy(object):
                 "rule": "R05",
                 "value": self.probe_unit,
                 "note": "目标不支持模拟时的试探量；替身取 1",
-            },
-            {
-                "field": "port.cached_items_on_disable",
-                "rule": "R05",
-                "value": self.cached_items_on_disable,
-                "note": (
-                    "关掉取货口缓存开关后，已在缓存格里的东西怎么处置；"
-                    "`blocks.md` 明写「仍待定，不得直接清空」，替身取保留。"
-                    "归 00 的「接口尚待确认的细则：配置变化后的余料处置」，"
-                    "由 06 联合 11/12 明确"
-                ),
             },
         ]
 
@@ -519,6 +494,7 @@ class PortConfig(object):
         "slot_items",
         "limit",
         "cache_enabled",
+        "item_filters",
     )
 
     def __init__(
@@ -530,9 +506,10 @@ class PortConfig(object):
         filter_mode=MODE_WHITELIST,
         supply_slots=(),
         cache_enabled=True,
+        item_filters=None,
         slot_items=None,
     ):
-        # type: (bool, str, tuple, int, str, tuple, bool, object) -> None
+        # type: (bool, str, tuple, int, str, tuple, bool, object, object) -> None
         if direction not in DIRECTIONS:
             raise ValueError("未知方向: %r" % (direction,))
         if filter_mode not in FILTER_MODES:
@@ -557,15 +534,10 @@ class PortConfig(object):
         #: `from_dict` 因此是 `data.get(..., True)`：字段缺失取 True（旧存档
         #: 与新建都走这一支），字段存在则**原样读出**，`False` 不会被顶掉。
         #:
-        #: **只有取货口读它**，其余角色拿到什么值都不影响行为（它们各自的中转
-        #: 语义是别的东西，不由这个开关管）。**本字段目前只被记录与展示**——
-        #: 「网络 → 缓存 → 朝向容器」这条中转路由已于 2026-10-03 交付
-        #: （06-06；游戏内未验）。**存货口那一半（06-05）仍未实现**，
-        #: `dispatch_intake` 至今是直输。
-        #:
-        #: **它与「有没有缓冲」是两件事**：关掉开关不撤缓冲，
-        #: 见 `PortPolicy.cached_items_on_disable`。
+        #: 仅物品取货口使用：关闭后自动直输，真实缓存保留且只可取出。
+        #: 两种主动物品口的两段路由均已接入，库存以方块容器为准。
         self.cache_enabled = bool(cache_enabled)
+        self.item_filters = item_filters
         self.slot_items = slot_items
 
     # -- 判定 ----------------------------------------------------------
@@ -633,6 +605,7 @@ class PortConfig(object):
             "slot_items": list(self.slot_items) if self.slot_items is not None else None,
             "limit": self.limit,
             "cache_enabled": self.cache_enabled,
+            "item_filters": self.item_filters,
         }
 
     @classmethod
@@ -656,6 +629,7 @@ class PortConfig(object):
             tuple(data.get("supply_slots", ())),
             # 缓存开关：缺失即默认启用，存在则原样读出（`False` 不被顶掉）。
             data.get("cache_enabled", True),
+            data.get("item_filters"),
             data.get("slot_items"),
         )
 
@@ -696,12 +670,44 @@ def _normalize_passive_slots(config):
 
 def normalize_item_config(config, device_id, validate=True):
     # type: (PortConfig, str, bool) -> None
-    """按设备型号归一化逐槽配置。"""
+    """按设备型号归一化逐槽配置或主动接口的过滤名单。"""
     if device_id == PASSIVE_ITEM_PORT:
         _normalize_passive_slots(config)
         return
     if config.slot_items is not None:
         raise ValueError("只有总线物品接口支持逐槽配置")
+    if device_id not in ("endernet:bus_item_input_io", "endernet:bus_item_output_io"):
+        return
+
+    def identifiers(entries, limit):
+        result = []
+        seen = set()
+        for entry in entries:
+            key = ResourceKey.from_dict(entry) if isinstance(entry, dict) else entry
+            if not isinstance(key, ResourceKey) or key.kind != "item":
+                raise ValueError("物品名单只能包含物品资源键")
+            if key.name not in seen:
+                seen.add(key.name)
+                result.append(ResourceKey.item(key.name))
+        if validate and len(result) > limit:
+            raise ValueError("物品名单最多 %d 项" % limit)
+        return tuple(result)
+
+    intake = device_id == "endernet:bus_item_input_io"
+    config.filter = identifiers(config.filter, 16 if intake else 9)
+    if not intake:
+        if validate and config.filter_mode != MODE_WHITELIST:
+            raise ValueError("取货口只支持白名单")
+        return
+    lists = config.item_filters
+    if lists is None:
+        lists = {MODE_BLACKLIST: [], MODE_WHITELIST: []}
+    if not isinstance(lists, dict) or set(lists) != set(FILTER_MODES):
+        raise ValueError("黑白名单结构不合法")
+    lists = dict((mode, [key.to_dict() for key in identifiers(entries, 16)])
+                 for mode, entries in lists.items())
+    lists[config.filter_mode] = [key.to_dict() for key in config.filter]
+    config.item_filters = lists
 
 
 class BatchState(object):
@@ -1072,8 +1078,8 @@ class PortStore(object):
     """
 
     def __init__(self, definitions, registry, policy=None, containers=None,
-                 disposition=None, fluids=None):
-        # type: (object, object, PortPolicy, object, object, object) -> None
+                 disposition=None, fluids=None, migrate_facing=None):
+        # type: (object, object, PortPolicy, object, object, object, object) -> None
         #: 定义表。**它被读**：`_register_capabilities` 按定义表声明的能力
         #: 决定注册哪些能力对象——注册多了会造出「声称能传物品、实际没有
         #: 对应实现」的端口（架构 §4 点名的形态）。
@@ -1086,6 +1092,7 @@ class PortStore(object):
         self.containers = containers
         #: 公共流体提供者：container_at(node_key, 目标原生绝对面)。
         self.fluids = fluids
+        self.migrate_facing = migrate_facing
         #: R05 未定：缓冲里剩下的东西怎么处置。默认只保留并留痕。
         self.disposition = disposition if disposition is not None else BufferDisposition()
         self._states = {}
@@ -1137,6 +1144,7 @@ class PortStore(object):
         """取或建一台接口的状态。同一代次重复调用是幂等的。"""
         existing = self.get_by_ref(ref)
         if existing is not None:
+            self._hold_if_frozen(existing)
             return existing
         record = self.registry.get_by_ref(ref)
         if device_id is None:
@@ -1147,6 +1155,8 @@ class PortStore(object):
         if facing is None and record is not None:
             facing = record.facing
         state = PortState(ref, device_id, role, PortConfig(), None, facing)
+        if device_id == "endernet:bus_item_input_io":
+            state.config.filter_mode = MODE_BLACKLIST
         normalize_item_config(state.config, device_id)
         if role == PASSIVE:
             # 被动接口：9 格是存取共用的**真实库存**，实际存放处是它自己的
@@ -1174,8 +1184,7 @@ class PortStore(object):
             #
             # 存放形态同取货口：**方块容器**，因此外部模组直接动那 5 格时
             # 记账看得见。规格要求的流向是「朝向容器 → 缓冲 → 网络」，
-            # 而 `dispatch_intake` 目前走的是**朝向容器 → 网络直输**
-            # （06-05 尚未实现中转），所以本分支同样只立权威、不改行为。
+            # 调度按真实容器逐段搬运，台账不能作为第二份实物库存。
             #
             # **对外那一侧仍是朝向的容器**：存货口从外面**吸**东西，
             # 那件事发生在朝向容器上，不该打到缓冲格——因此本角色不在
@@ -1211,7 +1220,15 @@ class PortStore(object):
         self.stats["created"] += 1
         # 存档里等着这台设备的配置/缓冲/批次：**按位置装**，位置稳定而代次不。
         self._apply_pending_state(state)
+        self._hold_if_frozen(state)
         return state
+
+    def _hold_if_frozen(self, state):
+        # type: (PortState) -> None
+        # 冻结属于存档位置；拆除重放或换型号也不能绕过只读保护继续搬运。
+        if node_key_text(state.node_key) in self._frozen_ports:
+            state.hold = Reason.BAD_PARAMETER
+            state.hold_detail = "接口存档版本或内容无法安全读取，保留原记录并停止搬运"
 
     def _apply_pending_state(self, state):
         # type: (PortState) -> bool
@@ -1421,6 +1438,8 @@ class PortStore(object):
         if state is None:
             return False
         normalize_item_config(config, state.device_id)
+        if node_key_text(state.node_key) in self._frozen_ports:
+            raise ValueError("接口存档被冻结，不能覆盖配置")
         state.config = config
         state.cursor = {}
         self.project(state)
@@ -1432,7 +1451,9 @@ class PortStore(object):
         state = self.get(node_key)
         if state is not None and state.device_id == PASSIVE_ITEM_PORT:
             return slot not in state.config.supply_slots
-        return True
+        return not (state is not None
+                    and state.device_id == "endernet:bus_item_output_io"
+                    and not state.config.cache_enabled)
 
     def hold_if_uncertain(self, state, receipt):
         # type: (PortState, dict) -> bool
@@ -1622,7 +1643,8 @@ class PortStore(object):
             node_key = NodeKey.from_dict(raw["node_key"])
             record = self.registry.get(node_key)
             # 型号对不上（同位置换成了别的方块）就不恢复——那不是同一台设备。
-            if record is None or not is_port_device(record.device_id):
+            if (record is None or not is_port_device(record.device_id)
+                    or raw.get("device_id") != record.device_id):
                 continue
             state = self.ensure(record.ref, record.device_id, record.facing)
             if state is None:
@@ -1639,12 +1661,20 @@ class PortStore(object):
         读不动的子项**不装**、原样留痕：把一份读不懂的批次表当空批次，
         等于把「外部机器投了一半」这件事抹成「没投过」。
         """
+        if raw.get("schema_version", 1) not in (1, 2, PORT_STATE_SCHEMA_VERSION):
+            self._note_bad_record(state, "schema_version", "unsupported version")
+            state.hold = Reason.BAD_PARAMETER
+            self._frozen_ports.add(node_key_text(state.node_key))
+            return False
         if raw.get("config"):
             try:
                 state.config = PortConfig.from_dict(raw["config"])
                 normalize_item_config(state.config, state.device_id)
             except (KeyError, TypeError, ValueError) as error:
                 self._note_bad_record(state, "config", error)
+                state.hold = Reason.BAD_PARAMETER
+                state.hold_detail = "接口配置无法恢复，保留原记录并停止搬运"
+                self._frozen_ports.add(node_key_text(state.node_key))
                 return False
         cursor = raw.get("cursor", {})
         if not isinstance(cursor, dict) or any(
@@ -1653,6 +1683,7 @@ class PortStore(object):
                 for name, value in cursor.items()):
             self._note_bad_record(state, "cursor", "invalid cursor")
             state.hold = Reason.BAD_PARAMETER
+            self._frozen_ports.add(node_key_text(state.node_key))
             return False
         state.cursor = dict(cursor)
         # **待核对标记必须存**（12-07）：不确定的外部投料重进世界后
@@ -1668,6 +1699,30 @@ class PortStore(object):
         if not state.facing:
             # 朝向以世界读数为准；读不到时才退回存档里那一份（存档只是兜底）。
             state.facing = raw.get("facing")
+        if (state.device_id in SIX_WAY_ITEM_PORTS
+                and raw.get("schema_version", 1) < 3
+                and node_key_text(state.node_key) not in self._frozen_ports):
+            # 引擎换 trait 后可能按旧 aux 解释成另一方向；旧档朝向是迁移依据。
+            # 写真实状态并回读确认后才允许搬运，失败保留原档，下次重启再恢复。
+            old_facing = raw.get("facing")
+            try:
+                migrated = old_facing in FACING_NAMES
+                if self.migrate_facing is not None:
+                    migrated = migrated and self.migrate_facing(state.node_key, old_facing)
+            except Exception:
+                migrated = False
+            if not migrated and self.migrate_facing is not None:
+                self._note_bad_record(state, "facing", "legacy facing migration failed")
+                state.hold = Reason.BAD_PARAMETER
+                state.hold_detail = "旧接口朝向无法迁移，保留原记录并停止搬运"
+                self._frozen_ports.add(node_key_text(state.node_key))
+                return False
+            if migrated:
+                state.facing = old_facing
+                record = self.registry.get_by_ref(state.ref)
+                if record is not None:
+                    record.facing = old_facing
+                self.note_changed(state)
         self._restore_buffer(state, raw)
         return True
 
@@ -2035,7 +2090,8 @@ class PortRunner(object):
         # type: (PortState) -> PollOutcome
         """构造并提交一条搬运命令。"""
         role = state.role
-        if role in FACING_ROLES and role != TEMPLATE:
+        if (role in FACING_ROLES and role != TEMPLATE
+                and state.device_id != "endernet:bus_item_input_io"):
             endpoint, reason, detail = self.ports.facing_endpoint(state)
             if endpoint is None:
                 state.stats["no_container"] += 1
@@ -2122,6 +2178,8 @@ class PortRunner(object):
         state = self.ports.get_by_ref(ref)
         if state is None:
             return False, "目标位置上没有接口实例"
+        if node_key_text(state.node_key) in self.ports.frozen_ports():
+            return False, "接口存档版本或内容无法读取，不能直接解除冻结"
         if not state.hold:
             return False, "该接口没有待核对标记"
         detail = "已解除待核对标记（原因：%s）" % (state.hold,)
@@ -2184,7 +2242,10 @@ def port_blocker(state, policy=None):
         )
     if is_fluid_port(state.device_id) and state.role == PASSIVE:
         return BlockReason(Reason.NO_ADAPTER, "被动流体接口的本地储罐尚未接入")
-    if not state.config.is_ready_for(state.role, policy):
+    ready = state.config.is_ready_for(state.role, policy)
+    if state.device_id == "endernet:bus_item_input_io":
+        ready = state.config.enabled  # 已有缓冲与当前过滤、外部容器无关。
+    if not ready:
         return BlockReason(
             Reason.PORT_UNCONFIGURED,
             "接口尚未配置要搬运什么（该角色必须显式指定过滤，或接口被关掉了）",
@@ -2192,8 +2253,8 @@ def port_blocker(state, policy=None):
     return None
 
 
-def config_view(state, policy):
-    # type: (PortState, PortPolicy) -> dict
+def config_view(state, policy, ports=None):
+    # type: (PortState, PortPolicy, object) -> dict
     """一台接口的**配置视图**：界面要显示与编辑的那一份（11-07）。
 
     与 `PortState.to_dict()` **刻意分开**。那一份是**存档结构**（任务 12 的
@@ -2204,8 +2265,8 @@ def config_view(state, policy):
     这里只挑界面真正用得上的：配置本身、**该角色的上限**、**该角色允许的
     过滤模式**，以及当前为什么不工作。
 
-    **上限与模式由策略回答，界面不硬编码。** 取货的 9 种是定案值，而存货口
-    那个上限尚未定案（`PortPolicy.intake_filter_limit`，替身口径）；界面若
+    **上限与模式由策略回答，界面不硬编码。** 取货的9种与物品存货的16种均已定案；其他角色
+    沿用 `PortPolicy.intake_filter_limit` 的兼容策略；界面若
     自己抄一个数字，就是把替身悄悄变成定案。`filter_modes` 同理：取货口
     只接受白名单（`ROLE_FILTER_MODES`），界面不该自己判断。
 
@@ -2235,18 +2296,24 @@ def config_view(state, policy):
     blocker = port_blocker(state, policy)
     buffer = state.buffer
     summary = None
-    if state.device_id == "endernet:bus_item_output_io":
-        summary = "5 格真实缓存，库存以方块容器为准"
+    if state.device_id in ("endernet:bus_item_input_io", "endernet:bus_item_output_io"):
+        summary = "5 格真实缓冲，库存以方块容器为准"
     elif buffer is not None:
         described = buffer.describe()
         summary = "占用 %d/%d 单位物，%d 组" % (
             described["total"], described["capacity"], described["lots"])
+    facing_status = "外部容器：未知"
+    if ports is not None and state.device_id in ("endernet:bus_item_input_io", "endernet:bus_item_output_io"):
+        endpoint, reason, detail = ports.facing_endpoint(state)
+        facing_status = "外部容器：已接入" if endpoint is not None else "外部容器：未接入"
     return {
         "device_id": state.device_id,
+        "facing_status": facing_status,
         "generation": state.ref.generation,
         "role": state.role,
         "config": state.config.to_dict(),
-        "filter_limit": policy.filter_limit_for(state.role),
+        "filter_limit": (16 if state.device_id == "endernet:bus_item_input_io"
+                         else policy.filter_limit_for(state.role)),
         # `sorted` 是为了让它成为**确定的顺序**：发布去重按整个载荷比相等，
         # 集合的迭代顺序一变就会白发一份「内容其实没变」的包。
         "filter_modes": sorted(ROLE_FILTER_MODES.get(state.role, FILTER_MODES)),
@@ -2392,6 +2459,8 @@ class PortDispatcher(object):
         物品/流体」，因此空过滤在这里是有意义的配置，而不是缺省
         （`PortConfig.is_ready_for` 按角色区分这件事）。
         """
+        if state.device_id == "endernet:bus_item_input_io":
+            return self._item_intake(state, request_id, topology_version)
         endpoint, reason, detail = self.ports.facing_endpoint(state)
         if endpoint is None:
             return CommandResult.blocked(request_id, [BlockReason(reason, detail)])
@@ -2455,8 +2524,8 @@ class PortDispatcher(object):
         endpoint, reason, detail = self.ports.facing_endpoint(state)
         if endpoint is None:
             return CommandResult.blocked(request_id, [BlockReason(reason, detail)])
-        if state.config.cache_enabled and state.device_id == "endernet:bus_item_output_io":
-            return self._cached_output(state, request_id, endpoint, topology_version)
+        if state.device_id == "endernet:bus_item_output_io":
+            return self._item_output(state, request_id, endpoint, topology_version)
         limit = state.config.effective_limit(self.ports.policy)
         for key in state.config.filter:
             available = self._available_of(key)
@@ -2481,54 +2550,115 @@ class PortDispatcher(object):
         self.stats["no_source"] += 1
         return self._idle(request_id, OUTPUT, "网络里没有配置的过滤资源")
 
-    def _cached_output(self, state, request_id, target, topology_version):
-        # type: (PortState, str, object, object) -> CommandResult
-        """一次只搬一段，复用主控准入和协调器的回执、回退与去重。
+    def _real_cache(self, state):
+        # type: (PortState) -> object
+        adapter = self.ports.container_at(state.node_key)
+        if adapter is None or adapter.slots_count() != 5:
+            return None
+        endpoint = ContainerEndpoint(adapter, "container:%s" % (state.node_key.as_key(),))
+        return endpoint if endpoint.can_read() and endpoint.can_write() else None
 
-        真实容器是库存权威；不从 TransferBuffer 批次表推算可用量。
-        玩家/外部模组可直接改槽，因此不能把批次表恢复成第二份物品。
-        不在名单中的余货保留；开关关闭后本方法根本不调用。
-        """
+    def _totals(self, endpoint):
+        # type: (object) -> dict
+        totals = {}
+        for _, entry in endpoint.adapter.entries():
+            totals[entry.resource_key] = totals.get(entry.resource_key, 0) + entry.count
+        return totals
+
+    def _round_robin(self, state, keys, lane):
+        # type: (PortState, object, str) -> list
+        names = sorted(set(key.name for key in keys))
+        last_name = state.cursor.get(lane, ["", ""])[0]
+        names = [name for name in names if name > last_name] + [name for name in names if name <= last_name]
+        ordered = []
+        for name in names:
+            variants = sorted((key for key in keys if key.name == name), key=lambda key: key.canonical())
+            last = state.cursor.get(lane + ":" + name, ["", ""])[1]
+            ordered.extend([key for key in variants if key.canonical() > last])
+            ordered.extend([key for key in variants if key.canonical() <= last])
+        return ordered
+
+    def _advance(self, state, key, lane, result):
+        # type: (PortState, ResourceKey, str, object) -> None
+        receipt = (result.payload or {}).get("receipt", {})
+        if receipt.get("moved", 0) > 0 and receipt.get("status") != "uncertain":
+            state.cursor[lane] = [key.name, key.canonical()]
+            state.cursor[lane + ":" + key.name] = [key.name, key.canonical()]
+            self.ports.note_changed(state)
+
+    def _matches_item(self, state, key):
+        # type: (PortState, ResourceKey) -> bool
+        included = key.name in set(entry.name for entry in state.config.filter)
+        return key.kind == "item" and (not included if state.config.filter_mode == MODE_BLACKLIST else included)
+
+    def _item_intake(self, state, request_id, topology_version):
+        # type: (PortState, str, object) -> CommandResult
+        cache = self._real_cache(state)
+        if cache is None:
+            return CommandResult.blocked(request_id, [BlockReason(Reason.NO_ADAPTER, "存货口需要自身的 5 格真实容器")])
+        totals = self._totals(cache)
+        limit = state.config.effective_limit(self.ports.policy)
+        if totals:
+            for key in self._round_robin(state, totals, "drain"):
+                wanted = self._output_space(self.network, key, min(totals[key], limit))
+                if wanted <= 0:
+                    continue
+                result = self._pump(request_id, key, wanted, cache, self.network, ORIGIN_EXTERNAL, topology_version)
+                result.payload["route"] = "cache_to_network"
+                self._advance(state, key, "drain", result)
+                return result
+            return self._idle(request_id, INTAKE, "网络无法接收已有缓冲")
+        source, reason, detail = self.ports.facing_endpoint(state)
+        if source is None:
+            return CommandResult.blocked(request_id, [BlockReason(reason, detail)])
+        totals = self._totals(source)
+        keys = [key for key in totals if self._matches_item(state, key)]
+        for key in self._round_robin(state, keys, "intake"):
+            wanted = self._output_space(self.network, key, min(totals[key], limit))
+            wanted = self._output_space(cache, key, wanted)
+            if wanted <= 0:
+                continue
+            result = self._pump(request_id, key, wanted, source, cache, ORIGIN_INTERNAL, topology_version)
+            result.payload["route"] = "source_to_cache"
+            self._advance(state, key, "intake", result)
+            return result
+        return self._idle(request_id, INTAKE, "没有符合名单且网络可接收的物品")
+
+    def _item_output(self, state, request_id, target, topology_version):
+        # type: (PortState, str, object, object) -> CommandResult
         if not state.config.filter:
             return self._idle(request_id, OUTPUT, "网络里没有配置的过滤资源")
-        adapter = self.ports.container_at(state.node_key)
-        if adapter is None or adapter.slots_count() != ITEM_OUTPUT_PORT_SLOT_COUNT.value:
-            return CommandResult.blocked(
-                request_id, [BlockReason(Reason.NO_ADAPTER, "取货口需要自身的 5 格真实容器")]
-            )
-        cache = ContainerEndpoint(adapter, "container:%s" % (state.node_key.as_key(),))
-        if not cache.can_read() or not cache.can_write():
-            return CommandResult.blocked(
-                request_id, [BlockReason(Reason.NO_ADAPTER, "取货缓存不可读写")]
-            )
+        cache = self._real_cache(state) if state.config.cache_enabled else None
+        if state.config.cache_enabled and cache is None:
+            return CommandResult.blocked(request_id, [BlockReason(Reason.NO_ADAPTER, "取货口需要自身的 5 格真实容器")])
+        totals = self._totals(cache) if cache is not None else {}
+        keys = set(self.network.storage.keys()) | set(totals)
+        keys = [key for key in keys if self._matches_item(state, key)]
         limit = state.config.effective_limit(self.ports.policy)
-        totals = {}
-        for _, entry in adapter.entries():
-            totals[entry.resource_key] = totals.get(entry.resource_key, 0) + entry.count
-        # 开发替身 demand_first：先送旧货，不在同一命令里再扣一次网络。
-        for key in state.config.filter:
-            wanted = self._output_space(target, key, min(totals.get(key, 0), limit))
-            if wanted > 0:
-                result = self._pump(
-                    request_id, key, wanted, cache, target,
-                    ORIGIN_INTERNAL, topology_version,
-                )
-                result.payload["route"] = "cache_to_target"
-                return result
-        for key in state.config.filter:
-            # 同种旧货没送出去时不继续积压；目标满/缺失不预取。
-            if totals.get(key, 0) > 0:
+        for key in self._round_robin(state, keys, "output"):
+            cached = totals.get(key, 0)
+            wanted = self._output_space(target, key, min(cached if cached else self._available_of(key), limit))
+            if wanted <= 0:
                 continue
-            wanted = self._output_space(target, key, min(self._available_of(key), limit))
-            wanted = self._output_space(cache, key, wanted)
-            if wanted > 0:
-                result = self._pump(
-                    request_id, key, wanted, self.network, cache,
-                    ORIGIN_INTERNAL, topology_version,
-                )
-                result.payload["route"] = "network_to_cache"
-                return result
-        return self._idle(request_id, OUTPUT, "缓存或网络无可输出资源，或容器无空间")
+            if cache is None:
+                result = self._pump(request_id, key, wanted, self.network, target, ORIGIN_INTERNAL, topology_version)
+                route = "network_to_target"
+            elif cached:
+                result = self._pump(request_id, key, wanted, cache, target, ORIGIN_INTERNAL, topology_version)
+                route = "cache_to_target"
+            else:
+                if any(other.name == key.name for other in totals):
+                    continue
+                wanted = self._output_space(cache, key, wanted)
+                if wanted <= 0:
+                    continue
+                result = self._pump(request_id, key, wanted, self.network, cache, ORIGIN_INTERNAL, topology_version)
+                route = "network_to_cache"
+            result.payload["route"] = route
+            if route != "network_to_cache":
+                self._advance(state, key, "output", result)
+            return result
+        return self._idle(request_id, OUTPUT, "网络或缓存没有配置的过滤资源，或目标无空间")
 
     def _output_space(self, endpoint, key, wanted):
         # type: (object, ResourceKey, int) -> int

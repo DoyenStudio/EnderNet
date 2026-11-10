@@ -113,6 +113,13 @@ class AssetFixture(unittest.TestCase):
 
 
 class TestBlockJsonCoverage(AssetFixture):
+    def test_active_item_ports_support_six_way_placement(self):
+        for device_id in ("endernet:bus_item_input_io", "endernet:bus_item_output_io"):
+            description = self.read_block_json(device_id)["minecraft:block"]["description"]
+            placement = description["traits"]["minecraft:placement_direction"]
+            self.assertEqual(placement["enabled_states"], ["minecraft:facing_direction"])
+            self.assertEqual(placement["y_rotation_offset"], 180)
+
     def test_every_device_has_a_block_json(self):
         missing = [
             device_id

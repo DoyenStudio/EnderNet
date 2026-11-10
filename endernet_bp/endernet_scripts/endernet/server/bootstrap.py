@@ -850,6 +850,7 @@ class ServerBootstrap(object):
             policy=self.port_policy,
             containers=self.containers,
             fluids=self.fluids,
+            migrate_facing=getattr(self.world, "migrate_item_port_facing", None),
         )
         if isinstance(self.containers, EngineContainerProvider):
             self.containers.accepts_put = self.ports.accepts_container_put
@@ -2304,7 +2305,7 @@ class ServerBootstrap(object):
         state = self.ports.get_by_ref(device_ref)
         if state is None:
             return None
-        return config_view(state, self.ports.policy)
+        return config_view(state, self.ports.policy, self.ports)
 
     def _sync_context_of(self, player_id, device_ref):
         # type: (str, object) -> object

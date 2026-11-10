@@ -63,6 +63,7 @@ class PortConfigModel(object):
         "filter_modes",
         "blocker",
         "buffer_summary",
+        "facing_status",
         "notice",
         "pending",
         "stats",
@@ -81,6 +82,7 @@ class PortConfigModel(object):
         self.filter_modes = ()
         self.blocker = None
         self.buffer_summary = None
+        self.facing_status = "外部容器：未知"
         #: 上一条失败的文案。**目前没有显示位置**（缺项，见交付说明），
         #: 因此它先落在 `diagnostics()` 里。
         self.notice = ""
@@ -113,6 +115,7 @@ class PortConfigModel(object):
         self.filter_modes = tuple(message.filter_modes)
         self.blocker = dict(message.blocker) if message.blocker is not None else None
         self.buffer_summary = message.buffer_summary
+        self.facing_status = message.facing_status
         self.stats["applied"] += 1
         return True
 
@@ -145,6 +148,10 @@ class PortConfigModel(object):
         `widgets/control_api.py`），改名单要用 `name`。
         """
         entries = self.value("filter", ()) or ()
+        if self.device_id == "endernet:bus_item_input_io":
+            lists = self.value("item_filters")
+            if lists is not None:
+                entries = lists.get(self.filter_mode(), [])
         out = []
         for entry in entries:
             if isinstance(entry, dict) and entry.get("name"):
@@ -207,13 +214,28 @@ class PortConfigModel(object):
         `PortConfig.to_dict()` 里那一项逐字相同，因此服务端读进来不需要任何
         转换。塞字符串或 `ResourceKey` 对象进去都会在边界上炸。
         """
-        return {
+        intent = {
             "filter": [ResourceKey.item(name).to_dict() for name in names]
         }
+        if self.device_id == "endernet:bus_item_input_io":
+            intent["filter_mode"] = self.filter_mode()
+        return intent
 
     def intent_mode(self, mode):
         # type: (str) -> dict
         return {"filter_mode": mode}
+
+    def status_hint(self):
+        # type: () -> str
+        if self.notice:
+            return self.notice
+        if not self.ready():
+            return "等待设备配置"
+        if self.device_id == "endernet:bus_item_output_io":
+            return "缓存开启" if self.cache_enabled() else "缓存关闭，仅可取出"
+        if not self.filter_names():
+            return "空黑名单：全部吸取" if self.filter_mode() == "blacklist" else "空白名单：不主动吸取"
+        return "%s %d/16 项" % (self.mode_visual()[2], len(self.filter_names()))
 
     # -- 在途与回执 ----------------------------------------------------
 
@@ -224,6 +246,13 @@ class PortConfigModel(object):
         merged = dict(self.desired)
         for field, value in intent.items():
             merged[field] = value
+        if merged.get("item_filters") is not None:
+            lists = dict(merged["item_filters"])
+            mode = merged["filter_mode"]
+            if "filter" in intent:
+                lists[mode] = intent["filter"]
+            merged["item_filters"] = lists
+            merged["filter"] = lists.get(mode, [])
         self.desired = merged
 
     def busy(self, field):
@@ -254,6 +283,7 @@ class PortConfigModel(object):
             return False
         if config is not None:
             self.applied = dict(config)
+            self.notice = ""
             self.stats["settled"] += 1
         else:
             self.stats["rolled_back"] += 1

@@ -3172,6 +3172,7 @@ PORT_CONFIG_FIELDS = (
     "slot_items",
     "limit",
     "cache_enabled",
+    "item_filters",
 )
 
 #: 过滤模式的**线上词汇**。同样是镜像：真身是 `server/devices/io.py` 的
@@ -3209,6 +3210,7 @@ class PortConfigMessage(SyncMessage):
         "filter_modes",
         "blocker",
         "buffer_summary",
+        "facing_status",
     )
 
     #: 线上字段的**唯一清单**，构造与解析共用，防止两边漂移。
@@ -3222,6 +3224,7 @@ class PortConfigMessage(SyncMessage):
         "filter_modes",
         "blocker",
         "buffer_summary",
+        "facing_status",
     )
 
     def __init__(
@@ -3234,16 +3237,19 @@ class PortConfigMessage(SyncMessage):
         filter_modes=(),
         blocker=None,
         buffer_summary=None,
+        facing_status="外部容器：未知",
     ):
         self.device_id = device_id
         self.generation = generation
         self.role = role
         self.config = dict(config)
+        self.config.setdefault("item_filters", None)
         self.config.setdefault("slot_items", None)
         self.filter_limit = filter_limit
         self.filter_modes = tuple(filter_modes)
         self.blocker = dict(blocker) if blocker is not None else None
         self.buffer_summary = buffer_summary
+        self.facing_status = facing_status
         if settings.DEBUG:
             self._validate(self.to_dict())
 
@@ -3261,10 +3267,18 @@ class PortConfigMessage(SyncMessage):
         _require_count(data["generation"], "port_config.generation")
         require_text(data["role"], "port_config.role")
         _require_count(data["filter_limit"], "port_config.filter_limit")
+        require_text(data["facing_status"], "port_config.facing_status")
         config = data["config"]
         if not isinstance(config, dict):
             raise TypeError("port_config.config 必须是字典")
         _require_fields(config, PORT_CONFIG_FIELDS, "port_config.config")
+        lists = config["item_filters"]
+        if lists is not None:
+            if not isinstance(lists, dict) or set(lists) != set(PORT_FILTER_MODES):
+                raise ValueError("port_config.config.item_filters 必须包含独立黑白名单")
+            for entries in lists.values():
+                if not isinstance(entries, (list, tuple)) or any(not isinstance(entry, dict) for entry in entries):
+                    raise TypeError("黑白名单必须是资源键字典列表")
         if config["filter_mode"] not in PORT_FILTER_MODES:
             raise ValueError(
                 "未知的过滤模式 %r" % (config["filter_mode"],)
@@ -3307,6 +3321,7 @@ class PortConfigMessage(SyncMessage):
             "filter_modes": list(self.filter_modes),
             "blocker": dict(self.blocker) if self.blocker is not None else None,
             "buffer_summary": self.buffer_summary,
+            "facing_status": self.facing_status,
         }
 
     @classmethod
@@ -3325,6 +3340,7 @@ class PortConfigMessage(SyncMessage):
             filter_modes=list(data["filter_modes"]),
             blocker=data["blocker"],
             buffer_summary=data["buffer_summary"],
+            facing_status=data["facing_status"],
         )
 
 

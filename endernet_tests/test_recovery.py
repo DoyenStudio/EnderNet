@@ -101,7 +101,7 @@ class TestPortArchive(PortArchiveFixture):
             PortConfig(
                 enabled=False,
                 filter=(STONE,),
-                filter_mode=MODE_BLACKLIST,
+                filter_mode="whitelist",
                 cache_enabled=False,
             ),
         )
@@ -110,7 +110,7 @@ class TestPortArchive(PortArchiveFixture):
         _, state = self.restart()
         self.assertFalse(state.config.enabled)
         self.assertFalse(state.config.cache_enabled, "关闭状态不得被默认值顶掉")
-        self.assertEqual(state.config.filter_mode, MODE_BLACKLIST)
+        self.assertEqual(state.config.filter_mode, "whitelist")
         self.assertEqual(state.config.filter, (STONE,))
 
     def test_a_port_with_nothing_changed_is_not_written(self):
@@ -173,7 +173,8 @@ class TestPortArchive(PortArchiveFixture):
         # 配置照最好猜测应用……
         self.assertFalse(state.config.enabled)
         # ……但任何改动都不写回。
-        ports.configure(state.ref, PortConfig(enabled=True))
+        with self.assertRaises(ValueError):
+            ports.configure(state.ref, PortConfig(enabled=True))
         ports.save_to_repository(self.repo)
         stored = self.repo._store[PORT_RECORD_KIND][record_id]
         self.assertEqual(stored.schema_version, 99)

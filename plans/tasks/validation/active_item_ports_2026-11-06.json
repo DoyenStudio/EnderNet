@@ -1,0 +1,250 @@
+{
+  "date": "2026-11-06",
+  "environment": "Minecraft China 3.10; isolated network dimension 0 x=-36..-30 y=89..90 z=-18",
+  "notes": [
+    "Command driven game validation, not synthetic offline containers.",
+    "Destroy path tested via setblock air destroy; not all explosion/player break paths."
+  ],
+  "gameqa_routes": {
+    "final_counts": [
+      0,
+      0,
+      0,
+      3
+    ],
+    "intake_drain": {
+      "payload": {
+        "action": "port_dispatch",
+        "receipt": {
+          "holder": "network:4",
+          "moved": 3,
+          "op_id": "qa-c5b6bd5c04fa4d3b8fc0cc0ef71dca38",
+          "reason": "",
+          "requested": 3,
+          "resource_key": {
+            "aux": 0,
+            "identity": {
+              "custom_tips": null,
+              "durability": null,
+              "enchant_data": null,
+              "extra_id": null,
+              "mod_enchant_data": null,
+              "user_data": null
+            },
+            "kind": "item",
+            "name": "minecraft:diamond",
+            "schema_version": 1
+          },
+          "status": "complete"
+        },
+        "route": "cache_to_network"
+      },
+      "reasons": [],
+      "status": "ok"
+    },
+    "intake_mid": [
+      0,
+      3
+    ],
+    "intake_stage": {
+      "payload": {
+        "action": "port_dispatch",
+        "receipt": {
+          "holder": "container:(0, -35, 90, -18)",
+          "moved": 3,
+          "op_id": "qa-0a618da22ef3442392e99d1396986b4e",
+          "reason": "",
+          "requested": 3,
+          "resource_key": {
+            "aux": 0,
+            "identity": {
+              "custom_tips": null,
+              "durability": null,
+              "enchant_data": null,
+              "extra_id": null,
+              "mod_enchant_data": null,
+              "user_data": null
+            },
+            "kind": "item",
+            "name": "minecraft:diamond",
+            "schema_version": 1
+          },
+          "status": "complete"
+        },
+        "route": "source_to_cache"
+      },
+      "reasons": [],
+      "status": "ok"
+    },
+    "output_delivery": {
+      "payload": {
+        "action": "port_dispatch",
+        "receipt": {
+          "holder": "container:(0, -30, 90, -18)",
+          "moved": 3,
+          "op_id": "qa-df40809f917942f1b4ae9b5f4401d438",
+          "reason": "",
+          "requested": 3,
+          "resource_key": {
+            "aux": 0,
+            "identity": {
+              "custom_tips": null,
+              "durability": null,
+              "enchant_data": null,
+              "extra_id": null,
+              "mod_enchant_data": null,
+              "user_data": null
+            },
+            "kind": "item",
+            "name": "minecraft:diamond",
+            "schema_version": 1
+          },
+          "status": "complete"
+        },
+        "route": "cache_to_target"
+      },
+      "reasons": [],
+      "status": "ok"
+    },
+    "output_mid": [
+      3,
+      0
+    ],
+    "output_stage": {
+      "payload": {
+        "action": "port_dispatch",
+        "receipt": {
+          "holder": "container:(0, -31, 90, -18)",
+          "moved": 3,
+          "op_id": "qa-545ab96422ff4705b3f4d0f8c0c9f156",
+          "reason": "",
+          "requested": 3,
+          "resource_key": {
+            "aux": 0,
+            "identity": {
+              "custom_tips": null,
+              "durability": null,
+              "enchant_data": null,
+              "extra_id": null,
+              "mod_enchant_data": null,
+              "user_data": null
+            },
+            "kind": "item",
+            "name": "minecraft:diamond",
+            "schema_version": 1
+          },
+          "status": "complete"
+        },
+        "route": "network_to_cache"
+      },
+      "reasons": [],
+      "status": "ok"
+    },
+    "seed": {
+      "holder": "",
+      "moved": 3,
+      "op_id": "qa-diamonds-7e490ec3eb524c59a48804f427d6231b",
+      "reason": "",
+      "requested": 3,
+      "resource_key": {
+        "aux": 0,
+        "identity": {
+          "custom_tips": null,
+          "durability": null,
+          "enchant_data": null,
+          "extra_id": null,
+          "mod_enchant_data": null,
+          "user_data": null
+        },
+        "kind": "item",
+        "name": "minecraft:diamond",
+        "schema_version": 1
+      },
+      "status": "complete"
+    }
+  },
+  "gameqa_guard": {
+    "disabled_insert": 0,
+    "disabled_take": 1,
+    "reenabled_insert": 1,
+    "remaining": 2,
+    "seed": 2
+  },
+  "gameqa_drop": {
+    "insert": {
+      "holder": "",
+      "moved": 2,
+      "op_id": "qa-drop-3f04154af73841afb14e748d0867f1d3",
+      "reason": "",
+      "requested": 2,
+      "resource_key": {
+        "aux": 0,
+        "identity": {
+          "custom_tips": "port QA",
+          "durability": null,
+          "enchant_data": null,
+          "extra_id": null,
+          "mod_enchant_data": null,
+          "user_data": null
+        },
+        "kind": "item",
+        "name": "minecraft:diamond",
+        "schema_version": 1
+      },
+      "status": "complete"
+    },
+    "new_drops": [
+      [
+        "-283467841487",
+        {
+          "auxValue": 3,
+          "canDestroy": [],
+          "canPlaceOn": [],
+          "count": 1,
+          "customTips": "",
+          "durability": 0,
+          "enchantData": [],
+          "extraId": "",
+          "isDiggerItem": false,
+          "itemId": -9763,
+          "itemName": "endernet:bus_item_input_io",
+          "modEnchantData": [],
+          "modId": "",
+          "modItemId": "",
+          "newAuxValue": 3,
+          "newItemName": "endernet:bus_item_input_io",
+          "showInHand": true,
+          "userData": null
+        }
+      ],
+      [
+        "-283467841486",
+        {
+          "auxValue": 0,
+          "canDestroy": [],
+          "canPlaceOn": [],
+          "count": 2,
+          "customTips": "port QA",
+          "durability": 0,
+          "enchantData": [],
+          "extraId": "",
+          "isDiggerItem": false,
+          "itemId": 264,
+          "itemName": "minecraft:diamond",
+          "modEnchantData": [],
+          "modId": "",
+          "modItemId": "",
+          "newAuxValue": 0,
+          "newItemName": "minecraft:diamond",
+          "showInHand": true,
+          "userData": {
+            "ItemCustomTips": {
+              "__type__": 8,
+              "__value__": "port QA"
+            }
+          }
+        }
+      ]
+    ]
+  }
+}

@@ -80,6 +80,7 @@ from ..devices.io import (
     PortGateway,
     PortRunner,
     is_port_device,
+    normalize_item_config,
     port_blocker,
     role_of,
 )
@@ -2006,6 +2007,10 @@ class StorageService(NetworkService):
         elif "supply_slots" in raw or "filter" in raw:
             # Older clients submit a shared filter and supply-slot indices.
             merged["slot_items"] = None
+        if state.device_id == "endernet:bus_item_input_io" and "filter_mode" in raw:
+            if raw["filter_mode"] not in tuple(FILTER_MODES):
+                return self._reject(command, Reason.BAD_PARAMETER, "未知的过滤模式")
+            merged["filter"] = (merged.get("item_filters") or {}).get(raw["filter_mode"], [])
         for field, value in raw.items():
             if field in merged:
                 merged[field] = value
@@ -2016,6 +2021,8 @@ class StorageService(NetworkService):
                 )
         try:
             config = PortConfig.from_dict(merged, self.ports.policy)
+            if state.device_id != "endernet:bus_item_io":
+                normalize_item_config(config, state.device_id, validate=False)
         except (KeyError, TypeError, ValueError) as error:
             return self._reject(
                 command, Reason.BAD_PARAMETER, "配置内容不合法：%s" % (error,)
@@ -2057,14 +2064,18 @@ class StorageService(NetworkService):
                 ],
             )
         limit = self.ports.policy.filter_limit_for(state.role)
-        if len(config.filter) > limit:
+        count = len(config.filter)
+        if state.device_id == "endernet:bus_item_input_io":
+            limit = 16
+            count = max([count] + [len(entries) for entries in config.item_filters.values()])
+        if count > limit:
             return CommandResult.rejected(
                 prefix,
                 [
                     BlockReason(
                         Reason.FILTER_LIMIT_REACHED,
                         "%s 最多配置 %d 种资源，收到 %d 种"
-                        % (state.role, limit, len(config.filter)),
+                        % (state.role, limit, count),
                     )
                 ],
             )

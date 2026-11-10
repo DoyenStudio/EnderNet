@@ -53,6 +53,7 @@ def build_config_message(view):
         filter_modes=view["filter_modes"],
         blocker=view["blocker"],
         buffer_summary=view["buffer_summary"],
+        facing_status=view.get("facing_status", "外部容器：未知"),
     )
 
 

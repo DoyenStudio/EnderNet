@@ -351,7 +351,7 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
 
     def _switch_mode(self, params=None):
         model = self.port_config
-        if model is None or not model.ready() or model.busy("filter_mode"):
+        if model is None or not model.ready() or model.pending_count() or self.draft is not None:
             return
         self._submit(model.intent_mode(model.next_mode()))
 

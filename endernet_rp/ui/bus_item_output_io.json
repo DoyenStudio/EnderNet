@@ -226,8 +226,16 @@
                                                                         0.2588235294117647
                                                                     ],
                                                                     "font_type": "default",
-                                                                    "text": "外部容器： 未接入",
-                                                                    "text_alignment": "center"
+                                                                    "text": "#text",
+                                                                    "text_alignment": "center",
+                                                                    "bindings": [
+                                                                        {
+                                                                            "binding_type": "global",
+                                                                            "binding_name": "#EnderNetPort.facing",
+                                                                            "binding_name_override": "#text",
+                                                                            "binding_condition": "always"
+                                                                        }
+                                                                    ]
                                                                 }
                                                             }
                                                         ]
@@ -486,6 +494,37 @@
                                                 -4
                                             ]
                                         }
+                                    },
+                                    {
+                                        "port_hint": {
+                                            "type": "label",
+                                            "anchor_from": "top_middle",
+                                            "anchor_to": "top_middle",
+                                            "offset": [
+                                                0,
+                                                103
+                                            ],
+                                            "size": [
+                                                160,
+                                                12
+                                            ],
+                                            "font_scale_factor": 0.7,
+                                            "color": [
+                                                0.25,
+                                                0.25,
+                                                0.25
+                                            ],
+                                            "layer": 3,
+                                            "text": "#text",
+                                            "bindings": [
+                                                {
+                                                    "binding_type": "global",
+                                                    "binding_name": "#EnderNetPort.hint",
+                                                    "binding_name_override": "#text",
+                                                    "binding_condition": "always"
+                                                }
+                                            ]
+                                        }
                                     }
                                 ],
                                 "layer": 0,
@@ -496,7 +535,7 @@
                     "layer": 0,
                     "size": [
                         174,
-                        200
+                        214
                     ]
                 }
             },

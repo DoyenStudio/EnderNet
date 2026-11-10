@@ -597,6 +597,12 @@ ASSEMBLE_CHAMBER_SLOT_COUNT = Value(
 )
 
 # -- 存货口／取货口／内存槽／流体口的容器格数（2026-09-29 User 定案）---------
+#: 主动物品口按视线六向放置；只连接朝向的一面，不扫描其他邻面。
+SIX_WAY_ITEM_PORTS = frozenset((
+    "endernet:bus_item_input_io",
+    "endernet:bus_item_output_io",
+))
+
 #
 # 背景：底下这几台设备的界面**本来就画了**引擎的 `netease_container` 集合
 # （靠继承 `endernet_container_common.container_grid_items`），但方块上
@@ -688,7 +694,8 @@ FLUID_PORT_SLOT_COUNT = Value(
 #: 取货（被动接口的取货与主动取货口）**最多能配置多少种资源**。
 #: `blocks.md`：「对于取货，允许设定 9 种物品/流体」/「只能设定至多 9 种待取物」。
 #:
-#: **它只管取货。** 存货口的过滤条目上限**尚未定案**，文档明写
+#: **它只管取货。** 主动物品存货口已独立定案为16项；其他存货角色不据此推导。
+#: 旧文曾把存货过滤条目上限记为尚未定案，历史说明如下：
 #: 「不得从取货 9 种上限推导存货过滤上限」——那一条在 `PortPolicy` 里，
 #: 不在定义表里。
 PICKUP_FILTER_LIMIT = Value(

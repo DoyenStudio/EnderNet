@@ -49,6 +49,7 @@ from endernet.common.definitions import (  # noqa: E402
     ITEM_OUTPUT_PORT_SLOT_COUNT,
     MEMORY_SLOT_COUNT,
     PASSIVE_PORT_SLOT_COUNT,
+    SIX_WAY_ITEM_PORTS,
     STORAGE_DRIVER_SLOT_COUNT,
     TEMPLATE_CONTAINER_SLOT_COUNT,
     DefinitionSet,
@@ -480,7 +481,10 @@ def build_block_json(device_id, definition):
     if DIRECTIONAL.get(device_id):
         description["traits"] = {
             "minecraft:placement_direction": {
-                "enabled_states": ["minecraft:cardinal_direction"],
+                "enabled_states": [
+                    "minecraft:facing_direction" if device_id in SIX_WAY_ITEM_PORTS
+                    else "minecraft:cardinal_direction"
+                ],
                 "y_rotation_offset": 180.0,
             }
         }

@@ -820,7 +820,7 @@ class TestPortPolicy(unittest.TestCase):
         """
         policy = PortPolicy()
         fields = dict((item["field"], item) for item in policy.unresolved_report())
-        self.assertIn("port.cached_items_on_disable", fields)
+        self.assertNotIn("port.cached_items_on_disable", fields)
         self.assertEqual(policy.cached_items_on_disable, CACHE_KEEP)
         self.assertEqual(
             sorted(CACHE_ON_DISABLE),
@@ -1257,15 +1257,17 @@ class TestCachedOutputPort(PortFixture):
         self.assertEqual(self.box.count_of(STONE), 3)
         self.assertEqual(self.cache.count_of(STONE), 0)
 
-    def test_metadata_is_preserved_and_different_identity_is_not_drained(self):
+    def test_id_filter_moves_all_variants_without_merging_identity(self):
         special = ResourceKey.item("minecraft:stone", aux=1, user_data={"tag": "a"})
         self.configure(filter=(special,))
         self.network_stub.stored[special] = 6
         self.cache.set_slot(0, ContainerEntry(STONE, 2))
         self.result("stage")
         self.result("deliver")
+        self.result("deliver-special")
         self.assertEqual(self.box.count_of(special), 6)
-        self.assertEqual(self.cache.count_of(STONE), 2)
+        self.assertEqual(self.box.count_of(STONE), 2)
+        self.assertEqual(self.cache.count_of(STONE), 0)
         self.assertEqual(self.network_stub.stored[special], 0)
 
     def test_no_simulate_target_limits_both_legs_to_probe_unit(self):
@@ -1284,9 +1286,9 @@ class TestCachedOutputPort(PortFixture):
         self.result("deliver")
         self.assertEqual(self.box.count_of(resources[-1]), 7)
 
-    def test_strategy_remains_explicitly_unsettled(self):
+    def test_output_strategy_is_settled_and_unsupported_strategies_refuse(self):
         report = self.policy.unresolved_report()
-        self.assertIn("port.output_cache_strategy", [item["field"] for item in report])
+        self.assertNotIn("port.output_cache_strategy", [item["field"] for item in report])
         with self.assertRaises(ValueError):
             PortPolicy(output_cache_strategy="prefetch_all")
 
@@ -1329,12 +1331,18 @@ class TestIntakePort(PortFixture):
 
     device_id = INPUT
 
+    def setUp(self):
+        PortFixture.setUp(self)
+        self.cache = FakeContainer(slots=5)
+        self.containers.boxes[self.ref.node_key.as_key()] = self.cache
+
     def test_poll_stops_after_compensation_cannot_return_items_to_source(self):
         from endernet.server.adapters.containers import ReadOnlyContainer
 
         source = ReadOnlyContainer(slots=1)
         source.set_slot(0, ContainerEntry(STONE, 10))
         self.containers.boxes[self.target_ref.node_key.as_key()] = source
+        self.containers.boxes[self.ref.node_key.as_key()] = _HalfFillingBox(accept=0, slots=5)
         target = _RefusingNetwork()
         target.simulate_insert = lambda key, count: {"accepted": count}
         dispatcher = PortDispatcher(self.ports, self.coordinator, NetworkEndpoint(target, "c1"))
@@ -1354,7 +1362,7 @@ class TestIntakePort(PortFixture):
         self.assertEqual(source.count_of(STONE), 5)
         self.assertEqual(self.coordinator.pending_reconcile()[0]["unresolved"], 5)
 
-    def test_an_empty_whitelist_moves_nothing_under_the_stand_in(self):
+    def test_an_empty_whitelist_does_not_absorb_new_stock(self):
         """**空名单的含义尚未定案**，替身口径取「什么都不搬」。
 
         旧实现把存货口的空过滤当成「接收任意物品」——那是一次**推断**，
@@ -1367,8 +1375,9 @@ class TestIntakePort(PortFixture):
         # **门在 `port_blocker`**：轮询、命令处理与只读诊断共用它。
         # 命令处理器本身不重复判定（那正是「一份门」的意思）。
         blocker = port_blocker(self.state, self.ports.policy)
-        self.assertIsNotNone(blocker)
-        self.assertEqual(blocker.code, Reason.PORT_UNCONFIGURED)
+        self.assertIsNone(blocker)  # 空白名单不阻塞已有缓冲入网
+        self.result()
+        self.assertEqual(self.box.count_of(STONE), 9)
 
     def test_a_blacklist_takes_everything_but_the_listed(self):
         """存货口支持黑名单：名单外的都搬。"""
@@ -1384,6 +1393,7 @@ class TestIntakePort(PortFixture):
         self.box.set_slot(1, ContainerEntry(DIRT, 4))
         self.configure(filter=(DIRT,))
         self.result()
+        self.result("drain")
         self.assertEqual(self.box.count_of(STONE), 9, "没配置的不动")
         self.assertEqual(self.network_stub.stored.get(DIRT, 0), 4)
 
@@ -1393,7 +1403,7 @@ class TestIntakePort(PortFixture):
         self.assertEqual(result.status, STATUS_OK)
         self.assertEqual(result.payload["moved"], 0)
 
-    def test_the_resource_order_is_the_configured_order(self):
+    def test_the_initial_rotation_uses_stable_resource_order(self):
         """每轮只搬一种，**「先搬什么」按玩家的配置顺序**而不是容器槽位顺序：
         后者取决于谁先被放进去，结果不可解释。"""
         self.network_stub = _NetworkStub({})
@@ -1403,6 +1413,7 @@ class TestIntakePort(PortFixture):
         self.box.set_slot(1, ContainerEntry(DIRT, 3))
         self.configure(filter=(DIRT, STONE))
         self.result()
+        self.result("drain")
         self.assertEqual(self.network_stub.stored.get(DIRT, 0), 3)
         self.assertEqual(self.network_stub.stored.get(STONE, 0), 0)
 
@@ -1415,7 +1426,10 @@ class TestIntakePort(PortFixture):
         self.box.set_slot(0, ContainerEntry(STONE, 5))
         self.configure()
         self.result("intake-1")
-        self.assertEqual(delivh, [("intake-1", 5)])
+        self.assertEqual(delivh, [])
+        self.result("drain")
+        self.result("drain")
+        self.assertEqual(delivh, [("drain", 5)])
 
     def test_a_refusing_network_leaves_the_items_where_they_were(self):
         """**网络拒收部分留在可追踪位置**——退回它本来的家（朝向容器）。"""
@@ -1425,7 +1439,7 @@ class TestIntakePort(PortFixture):
             self.ports, self.coordinator, NetworkEndpoint(_RefusingNetwork(), "c1")
         )
         result = dispatcher.dispatch(self.state, "r1")
-        self.assertEqual(result.status, STATUS_BLOCKED)
+        self.assertEqual(result.status, STATUS_OK)
         self.assertEqual(self.box.count_of(STONE), 5, "原样留在容器里")
 
 
@@ -2106,7 +2120,7 @@ class BootstrapFixture(unittest.TestCase):
             self.containers.boxes[key(offset + 1).as_key()] = self.driver_box
         if port_device in (BUS, TEMPLATE_DEVICE):
             self.containers.boxes[key(offset).as_key()] = _own_box(self)
-        if port_device == OUTPUT_DEVICE:
+        if port_device in (INPUT, OUTPUT_DEVICE):
             self.containers.boxes[key(offset).as_key()] = FakeContainer(slots=5)
         self.server.tick()
         return self.server.runtimes.runtimes()[0]

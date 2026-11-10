@@ -84,15 +84,25 @@ class ToolDeltaWorldAdapter(object):
         # type: (NodeKey) -> object
         """方块的朝向。方块没有朝向状态时返回 None，而不是抛异常。
 
-        未验证：endernet 方块是否真的带 `minecraft:cardinal_direction`。
-        若实测缺失，方向性端口会退化为无方向，需要先给方块补 traits。
+        六向状态优先，兼容仍使用水平朝向的其他设备与旧方块。
         """
         states = self.block_states_at(node_key) or {}
-        if "minecraft:cardinal_direction" in states:
-            return states["minecraft:cardinal_direction"]
         if "minecraft:facing_direction" in states:
             return states["minecraft:facing_direction"]
+        if "minecraft:cardinal_direction" in states:
+            return states["minecraft:cardinal_direction"]
         return None
+
+    def migrate_item_port_facing(self, node_key, facing):
+        # type: (NodeKey, str) -> bool
+        """升级旧物品口时只改朝向状态，不替换方块或碰真实库存。"""
+        from ....tooldelta.api.server.block import UpdateBlockStates
+
+        if "minecraft:facing_direction" not in (self.block_states_at(node_key) or {}):
+            return False
+        UpdateBlockStates(node_key.dimension, node_key.as_tuple(),
+                          {"minecraft:facing_direction": facing})
+        return self.facing_at(node_key) == facing
 
     def get_block_entity_data(self, node_key):
         # type: (NodeKey) -> dict
