@@ -1,5 +1,12 @@
 # coding=utf-8
-"""客户端 Ore UI 按钮的触摸反馈。"""
+"""客户端 Ore UI 按钮的内容路径和触摸反馈。"""
+
+
+def button_content_paths(child_name):
+    # type: (str) -> tuple
+    """返回公共按钮三个视觉状态内的内容相对路径。"""
+    return tuple("%s/wrapper/button_content/%s" % (state, child_name)
+                 for state in ("default", "hover", "pressed"))
 
 
 def SetOreUiButtonCallback(button, callback):

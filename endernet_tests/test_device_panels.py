@@ -313,29 +313,13 @@ class TestRegistration(unittest.TestCase):
 
 
 def _settings_controls(device_id):
-    """界面 JSON 里 `settings_window` 模板的控件名集合（含嵌套路径）。
+    """展开公共按钮继承后，取得设置窗的实际相对控件路径。"""
+    from ui_terminal_templates import UiControls
 
-    **不去重、不归一**：这里要回答的是「Python 里写的那个名字在 JSON 里
-    存不存在」，因此嵌套那一条按 `父/子` 的路径形式收进来，与
-    `GetElement` 收路径的用法一致（`filter_mode_btn/icon` 就是这种）。
-    """
     data = _load_ui(ui_file_of(device_id))
-    template = data.get("settings_window")
-    if template is None:
+    if data.get("settings_window") is None:
         return None
-    found = set()
-
-    def walk(node, prefix):
-        for entry in node.get("controls") or ():
-            for key, value in entry.items():
-                name = key.split("@")[0]
-                path = prefix + name
-                found.add(path)
-                if isinstance(value, dict):
-                    walk(value, path + "/")
-
-    walk(template, "")
-    return found
+    return UiControls().paths(data["namespace"] + ".settings_window")
 
 
 class TestPortConfigPanels(unittest.TestCase):
@@ -537,6 +521,66 @@ class TestPortConfigPanelLifecycle(unittest.TestCase):
             9, filter_modes=["whitelist"]))
         self.assertFalse(panel.port_config.cache_enabled())
         self.assertEqual(panel.port_config.stats["stale"], 1)
+
+
+class TestModeButtonStateVisuals(unittest.TestCase):
+    def panel(self):
+        from endernet_bp.endernet_scripts.endernet.client.ui.shared.button_utils import (
+            button_content_paths,
+        )
+        panel = object.__new__(device_panels.BusItemInputPanel)
+        panel.controls = {"mode_icons": {}, "mode_icon_uv": {}}
+        panel.failures = {"errors": 0}
+        panel.port_config = mock.Mock()
+        panel.port_config.mode_visual.return_value = ((0.0, 0.0), (16.0, 16.0), "白名单")
+        paths = [panel.MODE_BUTTON + "/" + suffix
+                 for suffix in button_content_paths("icon")]
+        return panel, paths
+
+    def test_mode_uv_updates_all_states_and_keeps_unchanged_icons_cached(self):
+        panel, paths = self.panel()
+        icons = dict((path, mock.Mock()) for path in paths)
+        panel._settings_control = mock.Mock(side_effect=icons.get)
+        panel._refresh_mode()
+        for icon in icons.values():
+            icon.asImage().SetUV.assert_called_once_with((0.0, 0.0), (16.0, 16.0))
+        panel._refresh_mode()
+        for icon in icons.values():
+            self.assertEqual(icon.asImage().SetUV.call_count, 1)
+        panel.port_config.mode_visual.return_value = ((16.0, 0.0), (16.0, 16.0), "黑名单")
+        panel._refresh_mode()
+        for icon in icons.values():
+            self.assertEqual(icon.asImage().SetUV.call_count, 2)
+            icon.asImage().SetUV.assert_called_with((16.0, 0.0), (16.0, 16.0))
+
+    def test_a_late_state_icon_is_found_and_drawn_by_the_next_tick(self):
+        panel, paths = self.panel()
+        icons = dict((path, mock.Mock()) for path in paths[:-1])
+        panel._settings_control = mock.Mock(side_effect=icons.get)
+        panel._refresh_mode()
+        self.assertNotIn(paths[-1], panel.controls["mode_icons"])
+        icons[paths[-1]] = mock.Mock()
+        panel._ensure_controls = mock.Mock()
+        panel._drain_receipts = mock.Mock()
+        panel._watch_filter_window = mock.Mock()
+        panel._poll_switch = mock.Mock()
+        panel._tick_extra()
+        self.assertIs(panel.controls["mode_icons"][paths[-1]], icons[paths[-1]])
+        for icon in icons.values():
+            icon.asImage().SetUV.assert_called_once_with((0.0, 0.0), (16.0, 16.0))
+
+    def test_uv_failure_retries_that_state_without_rewriting_successful_siblings(self):
+        panel, paths = self.panel()
+        icons = dict((path, mock.Mock()) for path in paths)
+        panel._settings_control = mock.Mock(side_effect=icons.get)
+        icons[paths[1]].asImage().SetUV.side_effect = RuntimeError("not ready")
+        panel._refresh_mode()
+        self.assertNotIn(paths[1], panel.controls["mode_icon_uv"])
+        icons[paths[1]].asImage().SetUV.side_effect = None
+        panel._refresh_mode()
+        self.assertIn(paths[1], panel.controls["mode_icon_uv"])
+        self.assertEqual(icons[paths[0]].asImage().SetUV.call_count, 1)
+        self.assertEqual(icons[paths[1]].asImage().SetUV.call_count, 2)
 
 
 class TestItemPickerSearch(unittest.TestCase):

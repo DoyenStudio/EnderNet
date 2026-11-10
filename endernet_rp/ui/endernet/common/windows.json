@@ -601,7 +601,7 @@
                 }
             },
             {
-                "add_btn@common.button": {
+                "add_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/button_default",
@@ -657,26 +657,12 @@
                             "binding_name": "#EnderNetFluidList.can_add"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {
-                                "shadow": true
-                            }
-                        }
-                    ]
+                    "$label_shadow": true,
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "del_btn@common.button": {
+                "del_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/button_default",
@@ -732,22 +718,8 @@
                             "binding_name": "#EnderNetFluidList.can_delete"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {
-                                "shadow": true
-                            }
-                        }
-                    ]
+                    "$label_shadow": true,
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             }
         ]
@@ -1113,7 +1085,7 @@
                 }
             },
             {
-                "add_btn@common.button": {
+                "add_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/button_default",
@@ -1169,26 +1141,12 @@
                             "binding_name": "#EnderNetItemList.can_add"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {
-                                "shadow": true
-                            }
-                        }
-                    ]
+                    "$label_shadow": true,
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "del_btn@common.button": {
+                "del_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/button_default",
@@ -1244,22 +1202,8 @@
                             "binding_name": "#EnderNetItemList.can_delete"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {
-                                "shadow": true
-                            }
-                        }
-                    ]
+                    "$label_shadow": true,
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             }
         ]
@@ -1346,7 +1290,7 @@
                 }
             },
             {
-                "add_1x_btn@common.button": {
+                "add_1x_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -1401,24 +1345,11 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "add_10x_btn@common.button": {
+                "add_10x_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -1473,24 +1404,11 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "add_100x_btn@common.button": {
+                "add_100x_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -1545,20 +1463,7 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
@@ -1618,7 +1523,7 @@
                 }
             },
             {
-                "sub_1x_btn@common.button": {
+                "sub_1x_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -1673,24 +1578,11 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "sub_10x_btn@common.button": {
+                "sub_10x_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -1745,24 +1637,11 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "sub_100x_btn@common.button": {
+                "sub_100x_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -1817,24 +1696,11 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "confirm_btn@common.button": {
+                "confirm_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/button_default",
@@ -1889,22 +1755,8 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {
-                                "shadow": true
-                            }
-                        }
-                    ]
+                    "$label_shadow": true,
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             }
         ]
@@ -2191,7 +2043,7 @@
                 }
             },
             {
-                "cancel_order_btn@common.button": {
+                "cancel_order_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/button_red_default",
@@ -2252,26 +2104,12 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {
-                                "shadow": true
-                            }
-                        }
-                    ]
+                    "$label_shadow": true,
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "confirm_btn@common.button": {
+                "confirm_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/button_light_default",
@@ -2338,20 +2176,7 @@
                             "binding_name": "#EnderNetPreview.submit_enabled"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
@@ -2488,7 +2313,7 @@
                 }
             },
             {
-                "select_from_backpack_btn@common.button": {
+                "select_from_backpack_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -2543,24 +2368,11 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "select_from_all_btn@common.button": {
+                "select_from_all_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -2615,24 +2427,11 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "select_from_net_btn@common.button": {
+                "select_from_net_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -2687,20 +2486,7 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
@@ -2861,7 +2647,7 @@
                 }
             },
             {
-                "select_from_backpack_btn@common.button": {
+                "select_from_backpack_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -2916,24 +2702,11 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "select_from_all_btn@common.button": {
+                "select_from_all_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -2988,24 +2761,11 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "select_from_net_btn@common.button": {
+                "select_from_net_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/background_panel_opaque",
@@ -3060,20 +2820,7 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {

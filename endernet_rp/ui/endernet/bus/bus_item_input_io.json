@@ -59,7 +59,7 @@
                                         "inventory_selected_icon_button@common.inventory_selected_icon_button": {}
                                     },
                                     {
-                                        "close@common.close_button": {
+                                        "close@endernet_ui_common.vanilla_close_button": {
                                             "size": [
                                                 18,
                                                 18
@@ -242,7 +242,7 @@
                                                     }
                                                 },
                                                 {
-                                                    "settings_btn@common.button": {
+                                                    "settings_btn@endernet_ui_common.endernet_button": {
                                                         "type": "button",
                                                         "$control_alpha": 1.0,
                                                         "$default_texture": "textures/endernet/ui/button_light_default",
@@ -296,34 +296,7 @@
                                                                 "binding_condition": "always_when_visible"
                                                             }
                                                         ],
-                                                        "controls": [
-                                                            {
-                                                                "default@netease_editor_template_namespace.default": {}
-                                                            },
-                                                            {
-                                                                "hover@netease_editor_template_namespace.hover": {}
-                                                            },
-                                                            {
-                                                                "pressed@netease_editor_template_namespace.pressed": {}
-                                                            },
-                                                            {
-                                                                "icon": {
-                                                                    "type": "image",
-                                                                    "anchor_from": "top_middle",
-                                                                    "anchor_to": "top_middle",
-                                                                    "offset": [
-                                                                        0.0,
-                                                                        1.0
-                                                                    ],
-                                                                    "size": [
-                                                                        "100%+-4px",
-                                                                        "100%+-4px"
-                                                                    ],
-                                                                    "layer": 4,
-                                                                    "texture": "textures/endernet/ui/settings_icon_light"
-                                                                }
-                                                            }
-                                                        ]
+                                                        "$button_content_control": "endernet_ui_common.settings_button_content"
                                                     }
                                                 },
                                                 {
@@ -527,7 +500,7 @@
                 }
             },
             {
-                "filter_mode_btn@common.button": {
+                "filter_mode_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/frame_rise_dark",
@@ -582,36 +555,7 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "icon": {
-                                "type": "image",
-                                "size": [
-                                    "100%+-2px",
-                                    "100%+-2px"
-                                ],
-                                "layer": 1,
-                                "texture": "textures/endernet/ui/whitelist_or_blacklist_icon",
-                                "uv": [
-                                    16.0,
-                                    0.0
-                                ],
-                                "uv_size": [
-                                    16.0,
-                                    16.0
-                                ]
-                            }
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.filter_mode_button_content"
                 }
             },
             {
@@ -634,7 +578,7 @@
                 }
             },
             {
-                "filter_modification_btn@common.button": {
+                "filter_modification_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/button_light_default",
@@ -689,22 +633,8 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {
-                                "shadow": true
-                            }
-                        }
-                    ]
+                    "$label_shadow": true,
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             }
         ]

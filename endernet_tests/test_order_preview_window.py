@@ -559,8 +559,8 @@ class TestWindowJson(unittest.TestCase):
         订单取消冒充预览取消——那两样点下去动的是别的东西。
         """
         controls = self.windows["order_preview_window"]["controls"]
-        confirm = control(controls, "confirm_btn@common.button")
-        cancel = control(controls, "cancel_order_btn@common.button")
+        confirm = control(controls, "confirm_btn@endernet_ui_common.endernet_button")
+        cancel = control(controls, "cancel_order_btn@endernet_ui_common.endernet_button")
         close = control(controls, "close@endernet_ui_common.close_btn")
         self.assertEqual(confirm["$pressed_button_name"],
                          order_preview.CONFIRM_BINDING)
@@ -573,7 +573,7 @@ class TestWindowJson(unittest.TestCase):
 
     def test_the_submit_button_has_the_enabled_binding(self):
         confirm = control(self.windows["order_preview_window"]["controls"],
-                          "confirm_btn@common.button")
+                          "confirm_btn@endernet_ui_common.endernet_button")
         entry = bindings_of(confirm)[order_preview.SUBMIT_BINDING]
         self.assertEqual(entry["binding_name_override"], "#enabled")
 

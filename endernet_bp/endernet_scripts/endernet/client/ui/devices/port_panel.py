@@ -42,6 +42,7 @@ from ..windows.item_list import WINDOW_ATTRIBUTE as ITEM_LIST_WINDOW_ATTRIBUTE
 from ..windows.item_list import show_item_list_window
 from .proxy_panel import ProxyPanelBase
 from ..shared import on_click, show_item
+from ..shared.button_utils import button_content_paths
 from ..windows.list_bindings import (
     ItemListWindowBindingsMixin, SelectItemWindowBindingsMixin,
 )
@@ -64,7 +65,7 @@ SUMMARY_BUTTON = MAIN + "/item_set_panel/interact_btn"
 SETTINGS_CLOSE = "close"
 SETTINGS_CACHE_SWITCH = "cache_slots_enable_mode_switch"
 SETTINGS_MODE_BUTTON = "filter_mode_btn"
-SETTINGS_MODE_ICON = "filter_mode_btn/icon"
+SETTINGS_MODE_ICON = SETTINGS_MODE_BUTTON + "/" + button_content_paths("icon")[0]
 SETTINGS_MODE_TEXT = "filter_mode_text"
 SETTINGS_FILTER_BUTTON = "filter_modification_btn"
 
@@ -164,7 +165,8 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
 
     def _tick_extra(self):
         for step in (self._ensure_controls, self._drain_receipts,
-                     self._watch_filter_window, self._poll_switch):
+                     self._watch_filter_window, self._poll_switch,
+                     self._refresh_mode):
             try:
                 step()
             except Exception:
@@ -290,9 +292,8 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
                 self.controls["mode_button"] = button
                 button.asButton().SetCallback(self._switch_mode)
             if self.MODE_ICON is not None:
-                icon = self._settings_control(self.MODE_ICON)
-                if icon is not None:
-                    self.controls["mode_icon"] = icon
+                self.controls["mode_icons"] = {}
+                self.controls["mode_icon_uv"] = {}
             if self.MODE_TEXT is not None:
                 label = self._settings_control(self.MODE_TEXT)
                 if label is not None:
@@ -448,20 +449,36 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
             except Exception:
                 self.failures["errors"] += 1
 
-    def _refresh_mode(self, model):
-        icon = self.controls.get("mode_icon")
+    def _refresh_mode(self, model=None):
+        model = model if model is not None else self.port_config
+        if model is None:
+            return
+        icons = self.controls.get("mode_icons")
         label = self.controls.get("mode_text")
-        if icon is None and label is None:
+        if icons is None and label is None:
             return
         uv, size, text = model.mode_visual()
-        if icon is not None:
-            try:
-                icon.asImage().SetUV(uv, size)
-            except Exception:
-                self.failures["errors"] += 1
-        if label is not None:
+        if icons is not None:
+            written = self.controls["mode_icon_uv"]
+            for suffix in button_content_paths("icon"):
+                path = self.MODE_BUTTON + "/" + suffix
+                icon = icons.get(path)
+                if icon is None:
+                    icon = self._settings_control(path)
+                    if icon is None:
+                        continue
+                    icons[path] = icon
+                if written.get(path) == (uv, size):
+                    continue
+                try:
+                    icon.asImage().SetUV(uv, size)
+                    written[path] = (uv, size)
+                except Exception:
+                    self.failures["errors"] += 1
+        if label is not None and self.controls.get("mode_text_value") != text:
             try:
                 label.asLabel().SetText(text)
+                self.controls["mode_text_value"] = text
             except Exception:
                 self.failures["errors"] += 1
 

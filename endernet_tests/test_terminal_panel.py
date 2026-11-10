@@ -3188,10 +3188,12 @@ class TestSearchAndSort(PanelFixture):
 
     def test_the_initial_icons_match_the_initial_order(self):
         """开场图标与真实顺序必须一致：默认名称**降序**（决策 D6）。"""
-        method = self.screen.elements[terminal_panel.SORT_METHOD_ICON_PATH]
-        order = self.screen.elements[terminal_panel.SORT_ORDER_ICON_PATH]
-        self.assertEqual(method.uv, terminal_panel.SORT_METHOD_UV[SORT_NAME])
-        self.assertEqual(order.uv, terminal_panel.SORT_ORDER_UV[True])
+        for path in terminal_panel.SORT_METHOD_ICON_PATHS:
+            self.assertEqual(self.screen.elements[path].uv,
+                             terminal_panel.SORT_METHOD_UV[SORT_NAME])
+        for path in terminal_panel.SORT_ORDER_ICON_PATHS:
+            self.assertEqual(self.screen.elements[path].uv,
+                             terminal_panel.SORT_ORDER_UV[True])
         self.assertEqual(
             self.names(),
             sorted(["minecraft:stone", "minecraft:sand", "minecraft:dirt"],
@@ -3208,6 +3210,52 @@ class TestSearchAndSort(PanelFixture):
         self.bind(BinderStub.BF_ButtonClickUp, "sort_order")
         self.assertEqual(order.uv_writes, before + 1)
         self.assertEqual(order.uv, terminal_panel.SORT_ORDER_UV[False])
+
+    def test_all_button_states_update_and_idle_ticks_do_not_rewrite_uv(self):
+        self.bind(BinderStub.BF_ButtonClickUp, "sort_method")
+        self.bind(BinderStub.BF_ButtonClickUp, "sort_order")
+        for paths, expected in (
+            (terminal_panel.SORT_METHOD_ICON_PATHS, terminal_panel.SORT_METHOD_UV[SORT_COUNT]),
+            (terminal_panel.SORT_ORDER_ICON_PATHS, terminal_panel.SORT_ORDER_UV[False]),
+        ):
+            for path in paths:
+                self.assertEqual(self.screen.elements[path].uv, expected)
+        paths = terminal_panel.SORT_METHOD_ICON_PATHS + terminal_panel.SORT_ORDER_ICON_PATHS
+        writes = [self.screen.elements[path].uv_writes for path in paths]
+        self.view.tick()
+        self.view.tick()
+        self.assertEqual([self.screen.elements[path].uv_writes for path in paths], writes)
+
+    def test_late_state_content_is_retried_on_tick_before_uv_is_cached(self):
+        paths = terminal_panel.SORT_METHOD_ICON_PATHS
+        expected = terminal_panel.SORT_METHOD_UV[SORT_COUNT]
+        self.view.sort_field = SORT_COUNT
+        original = self.screen.GetBaseUIControl
+
+        def missing_pressed(path):
+            if path.endswith(paths[-1]):
+                return None
+            return original(path)
+
+        with patch.object(self.screen, "GetBaseUIControl", side_effect=missing_pressed):
+            self.view._sync_sort()
+        self.assertNotEqual(self.view._sort_uv.get(paths[0]), expected)
+        self.view.tick()
+        self.assertEqual(self.view._sort_uv.get(paths[0]), expected)
+        for path in paths:
+            self.assertEqual(self.screen.elements[path].uv, expected)
+
+    def test_partial_uv_write_failure_does_not_poison_the_three_state_cache(self):
+        paths = terminal_panel.SORT_ORDER_ICON_PATHS
+        self.view.sort_descending = False
+        expected = terminal_panel.SORT_ORDER_UV[False]
+        with patch.object(self.screen.elements[paths[1]], "SetUV",
+                          side_effect=RuntimeError("not mounted")):
+            self.view._sync_sort()
+        self.assertNotEqual(self.view._sort_uv.get(paths[0]), expected)
+        self.view.tick()
+        for path in paths:
+            self.assertEqual(self.screen.elements[path].uv, expected)
 
 
 class TestInteractionsNeedASession(PanelFixture):

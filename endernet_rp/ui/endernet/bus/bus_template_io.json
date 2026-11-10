@@ -64,7 +64,7 @@
                                         }
                                     },
                                     {
-                                        "close@common.close_button": {
+                                        "close@endernet_ui_common.vanilla_close_button": {
                                             "size": [
                                                 18,
                                                 18

@@ -132,14 +132,14 @@
                                                     "gamepad_cursor@common.gamepad_cursor_button": {}
                                                 },
                                                 {
-                                                    "close@common.close_button": {
+                                                    "close@endernet_ui_common.vanilla_close_button": {
                                                         "ignored": "$use_compact_close_button",
                                                         "layer": "$close_button_layer",
                                                         "offset": "$close_button_offset"
                                                     }
                                                 },
                                                 {
-                                                    "compact_close@common.compact_close_button": {
+                                                    "compact_close@endernet_ui_common.vanilla_compact_close_button": {
                                                         "ignored": "(not $use_compact_close_button)",
                                                         "layer": "$close_button_layer",
                                                         "offset": "$close_button_offset"

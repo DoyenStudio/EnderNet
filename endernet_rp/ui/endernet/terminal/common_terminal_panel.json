@@ -105,27 +105,7 @@
             },
             {
                 "sort_method_btn@endernet_ui_common.terminal_sort_method_button": {
-                    "bindings": [],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "icon@endernet_ui_common.terminal_sort_icon": {
-                                "texture": "textures/endernet/ui/terminal_item_sort_methods_icon",
-                                "uv": [
-                                    0,
-                                    0
-                                ]
-                            }
-                        }
-                    ]
+                    "bindings": []
                 }
             },
             {

@@ -47,6 +47,7 @@ except ImportError:
     OnKeyPressInGame = None
 from ..windows.lifecycle import close_windows
 from ..shared import flying_item, slot_layout, stack_size
+from ..shared.button_utils import button_content_paths
 from ..order_preview import window as order_preview_window
 from .hover import slot_durability
 from .input import DOUBLE_CLICK_SECONDS, LONG_PRESS_SECONDS, TerminalInput
@@ -132,8 +133,12 @@ def slot_binding(prefix, suffix):
 #: 因此 `/terminal/...` 就是内容面板的根。滚动区那条**定义在 `slot_layout`
 #: 里**（飞行动画的坐标也走它），这里重导出一次，免得同一条路径两个出处。
 SCROLL_PATH = slot_layout.SCROLL_PATH
-SORT_METHOD_ICON_PATH = "/sort_method_btn/icon"
-SORT_ORDER_ICON_PATH = "/sort_order_btn/icon"
+SORT_METHOD_ICON_PATHS = tuple("/sort_method_btn/" + path
+                               for path in button_content_paths("icon"))
+SORT_ORDER_ICON_PATHS = tuple("/sort_order_btn/" + path
+                              for path in button_content_paths("icon"))
+SORT_METHOD_ICON_PATH = SORT_METHOD_ICON_PATHS[0]
+SORT_ORDER_ICON_PATH = SORT_ORDER_ICON_PATHS[0]
 
 #: 排序方式图标是横排两格：左格按标识符、右格按数量
 #: （`plans/ui/common_terminal_panel.md` 的 UV 表）。
@@ -1216,25 +1221,28 @@ class TerminalListView(object):
         `SetUV` 每帧调用会让引擎每帧重新切图；排序是低频操作，没有理由
         让它跟着渲染帧走。
         """
-        self._set_icon(SORT_METHOD_ICON_PATH, SORT_METHOD_UV[self.sort_field])
-        self._set_icon(SORT_ORDER_ICON_PATH, SORT_ORDER_UV[self.sort_descending])
+        self._set_icon(SORT_METHOD_ICON_PATHS, SORT_METHOD_UV[self.sort_field])
+        self._set_icon(SORT_ORDER_ICON_PATHS, SORT_ORDER_UV[self.sort_descending])
 
-    def _set_icon(self, path, uv):
-        # type: (str, tuple) -> None
-        if self._sort_uv.get(path) == uv:
+    def _set_icon(self, paths, uv):
+        # type: (tuple, tuple) -> None
+        if self._sort_uv.get(paths[0]) == uv:
             return
-        # **路径要先解析**：`path` 是内容区相对的（窗口前缀见 `slot_layout.full_path`），
-        # 直接交给 `GetElement` 一条都取不到——而取不到的代价只是两个排序图标永远不换 UV。
-        full = slot_layout.path_of(self.screen, path)
-        if full is None:
-            return
+        # 状态分支可能晚于按钮根节点建立；三态都写成功才缓存，下一帧会重试。
         try:
-            self.screen.GetElement(full).asImage().SetUV(uv, ICON_UV_SIZE)
+            icons = []
+            for path in paths:
+                full = slot_layout.path_of(self.screen, path)
+                if full is None:
+                    return
+                icons.append(self.screen.GetElement(full).asImage())
+            for icon in icons:
+                icon.SetUV(uv, ICON_UV_SIZE)
         except Exception:
             # 图标缺失或引擎拒绝都不该让排序本身失效：UV 只是表现，
             # 排序状态与列表内容都已经改完了。
             return
-        self._sort_uv[path] = uv
+        self._sort_uv[paths[0]] = uv
 
     # -- 搜索 ----------------------------------------------------------
 
@@ -1800,6 +1808,7 @@ class TerminalListView(object):
         """推进一帧：先记锚点，再收包，最后按需重画。"""
         if self.closed:
             return
+        self._sync_sort()
         self._settle_lost_session()
         self._keepalive()
         self._drain_receipts()

@@ -133,8 +133,14 @@
                                 "type": "image",
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
-                                "offset": [27.0, 0.0],
-                                "size": [54.0, 54.0],
+                                "offset": [
+                                    27.0,
+                                    0.0
+                                ],
+                                "size": [
+                                    54.0,
+                                    54.0
+                                ],
                                 "layer": 10,
                                 "texture": "textures/endernet/ui/slots_frame",
                                 "visible": false
@@ -145,8 +151,14 @@
                                 "type": "image",
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
-                                "offset": [117.0, 18.0],
-                                "size": [18.0, 18.0],
+                                "offset": [
+                                    117.0,
+                                    18.0
+                                ],
+                                "size": [
+                                    18.0,
+                                    18.0
+                                ],
                                 "layer": 10,
                                 "texture": "textures/endernet/ui/slots_frame",
                                 "visible": false
@@ -197,7 +209,7 @@
                             }
                         },
                         {
-                            "make_template_btn@common.button": {
+                            "make_template_btn@endernet_ui_common.endernet_button": {
                                 "type": "button",
                                 "$control_alpha": 1.0,
                                 "$default_texture": "textures/endernet/ui/button_default",
@@ -258,22 +270,8 @@
                                         "binding_condition": "always_when_visible"
                                     }
                                 ],
-                                "controls": [
-                                    {
-                                        "default@netease_editor_template_namespace.default": {}
-                                    },
-                                    {
-                                        "hover@netease_editor_template_namespace.hover": {}
-                                    },
-                                    {
-                                        "pressed@netease_editor_template_namespace.pressed": {}
-                                    },
-                                    {
-                                        "button_label@netease_editor_template_namespace.button_label": {
-                                            "shadow": true
-                                        }
-                                    }
-                                ]
+                                "$label_shadow": true,
+                                "$button_content_control": "endernet_ui_common.button_label_content"
                             }
                         },
                         {
@@ -559,7 +557,7 @@
                             }
                         },
                         {
-                            "universal_import_btn@common.button": {
+                            "universal_import_btn@endernet_ui_common.endernet_badged_button": {
                                 "type": "button",
                                 "$control_alpha": 1.0,
                                 "$default_texture": "textures/endernet/ui/frame_rise_light",
@@ -626,43 +624,8 @@
                                         "binding_condition": "always_when_visible"
                                     }
                                 ],
-                                "controls": [
-                                    {
-                                        "default@netease_editor_template_namespace.default": {}
-                                    },
-                                    {
-                                        "hover@netease_editor_template_namespace.hover": {}
-                                    },
-                                    {
-                                        "pressed@netease_editor_template_namespace.pressed": {}
-                                    },
-                                    {
-                                        "button_label@netease_editor_template_namespace.button_label": {}
-                                    },
-                                    {
-                                        "ok_img": {
-                                            "type": "image",
-                                            "anchor_from": "bottom_right",
-                                            "anchor_to": "bottom_right",
-                                            "size": [
-                                                6.0,
-                                                6.0
-                                            ],
-                                            "layer": 5,
-                                            "clip_direction": "left",
-                                            "clip_ratio": 0.0,
-                                            "texture": "textures/endernet/ui/corner_ok_icon",
-                                            "bindings": [
-                                                {
-                                                    "binding_type": "global",
-                                                    "binding_name_override": "#visible",
-                                                    "binding_condition": "always",
-                                                    "binding_name": "#EnderNetTemplate.universal_import_ready"
-                                                }
-                                            ]
-                                        }
-                                    }
-                                ]
+                                "$button_content_control": "endernet_ui_common.button_label_content",
+                                "$button_badge_control": "endernet_template_terminal_panel.universal_import_ready_badge"
                             }
                         }
                     ]
@@ -745,27 +708,7 @@
             },
             {
                 "sort_method_btn@endernet_ui_common.terminal_sort_method_button": {
-                    "bindings": [],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "icon@endernet_ui_common.terminal_sort_icon": {
-                                "texture": "textures/endernet/ui/terminal_item_sort_methods_icon",
-                                "uv": [
-                                    0.0,
-                                    0.0
-                                ]
-                            }
-                        }
-                    ]
+                    "bindings": []
                 }
             },
             {
@@ -957,5 +900,26 @@
         "grid_item_template": "endernet_template_terminal_panel.terminal_slot"
     },
     "terminal_scroll_background@endernet_ui_common.terminal_scroll_background": {},
-    "terminal_slot@endernet_ui_common.terminal_slot": {}
+    "terminal_slot@endernet_ui_common.terminal_slot": {},
+    "universal_import_ready_badge": {
+        "type": "image",
+        "anchor_from": "bottom_right",
+        "anchor_to": "bottom_right",
+        "size": [
+            6.0,
+            6.0
+        ],
+        "layer": 5,
+        "clip_direction": "left",
+        "clip_ratio": 0.0,
+        "texture": "textures/endernet/ui/corner_ok_icon",
+        "bindings": [
+            {
+                "binding_type": "global",
+                "binding_name_override": "#visible",
+                "binding_condition": "always",
+                "binding_name": "#EnderNetTemplate.universal_import_ready"
+            }
+        ]
+    }
 }

@@ -750,7 +750,7 @@
                 }
             },
             {
-                "cancel_order_btn@common.button": {
+                "cancel_order_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/button_red_default",
@@ -811,26 +811,12 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {
-                                "shadow": true
-                            }
-                        }
-                    ]
+                    "$label_shadow": true,
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             },
             {
-                "confirm_btn@common.button": {
+                "confirm_btn@endernet_ui_common.endernet_button": {
                     "type": "button",
                     "$control_alpha": 1.0,
                     "$default_texture": "textures/endernet/ui/button_light_default",
@@ -891,20 +877,7 @@
                             "binding_condition": "always_when_visible"
                         }
                     ],
-                    "controls": [
-                        {
-                            "default@netease_editor_template_namespace.default": {}
-                        },
-                        {
-                            "hover@netease_editor_template_namespace.hover": {}
-                        },
-                        {
-                            "pressed@netease_editor_template_namespace.pressed": {}
-                        },
-                        {
-                            "button_label@netease_editor_template_namespace.button_label": {}
-                        }
-                    ]
+                    "$button_content_control": "endernet_ui_common.button_label_content"
                 }
             }
         ]

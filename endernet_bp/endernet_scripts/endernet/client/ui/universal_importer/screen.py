@@ -17,6 +17,7 @@ from .....tooldelta.events.basic import ClientEvent
 from .....tooldelta.events.client.ui import ScreenSizeChangedClientEvent
 from .....tooldelta.ui import RegistToolDeltaScreen, SCREEN_BASE_PATH, ToolDeltaScreen
 from ..shared import slot_layout
+from ..shared.button_utils import button_content_paths
 from .config import save_config
 
 
@@ -204,8 +205,9 @@ class UniversalImporterScreen(ToolDeltaScreen):
         paths = ["control_board"]
         for name in ("sample_btn", "mode_btn", "save_btn", "exit_btn"):
             paths.append("control_board/" + name)
-        paths.extend(("control_board/sample_btn/button_label",
-                      "control_board/mode_btn/button_label"))
+        for name in ("sample_btn", "mode_btn"):
+            paths.extend("control_board/%s/%s" % (name, suffix)
+                         for suffix in button_content_paths("button_label"))
         for path in paths:
             if self._view_host.base.GetBaseUIControl(self._view_path + "/" + path) is None:
                 return False
@@ -235,18 +237,22 @@ class UniversalImporterScreen(ToolDeltaScreen):
         self._view_bound = False
 
     def _update_labels(self):
-        if (not self._view_alive() or self._view_host.base.GetBaseUIControl(
-                self._view_path + "/control_board/sample_btn/button_label") is None
-                or self._view_host.base.GetBaseUIControl(
-                    self._view_path + "/control_board/mode_btn/button_label") is None):
+        if not self._view_alive():
             return
+        labels = []
+        for name, text in (
+            ("sample_btn", "关闭选择" if self.selecting else "开始选择"),
+            ("mode_btn", "输入模式" if self.mode == "inputs" else "输出模式"),
+        ):
+            for suffix in button_content_paths("button_label"):
+                path = name + "/" + suffix
+                full = self._view_path + "/control_board/" + path
+                if self._view_host.base.GetBaseUIControl(full) is None:
+                    return
+                labels.append((path, text))
         board = self.GetElement("/control_board")
-        board.GetElement("sample_btn/button_label").asLabel().SetText(
-            "关闭选择" if self.selecting else "开始选择"
-        )
-        board.GetElement("mode_btn/button_label").asLabel().SetText(
-            "输入模式" if self.mode == "inputs" else "输出模式"
-        )
+        for path, text in labels:
+            board.GetElement(path).asLabel().SetText(text)
 
     def _toggle_sampling(self, params=None):
         if self.closed:
