@@ -1150,8 +1150,9 @@ class TestPanelEntry(unittest.TestCase):
                 types.SimpleNamespace(kind=MSG_DEVICE_STATUS))
         self.assertEqual(len(applied), 1)
 
-    def test_losing_an_idle_session_hides_online_status_and_popup(self):
+    def test_losing_an_idle_session_keeps_offline_diagnostics_available(self):
         from endernet_bp.endernet_scripts.endernet.common.protocol import DeviceStatusMessage
+        from endernet_bp.endernet_scripts.endernet.client.ui.device_status import model as device_status
         panel, screen, port = self.make(
             {"device_ref": REF.to_dict(), "dimension": 0})
         self.addCleanup(panel.OnDestroy)
@@ -1160,17 +1161,24 @@ class TestPanelEntry(unittest.TestCase):
             "endernet:crafting_terminal", REF.generation, True, "在线",
             "ok", "runnable", "可运行", 1)
         client.receive(SyncEnvelope(message, client.session_id, "n1", "e1").to_dict())
+        model = panel.status
         panel.OnDeviceStatusClick()
         self.assertEqual(panel.device_status_text(), "在线")
         self.assertTrue(panel.device_status_popup_visible())
         panel.OnTicking()
         self.assertTrue(panel.device_status_visible())
         client.drop_session()
-        panel.OnTicking()
-        self.assertIsNone(panel.status)
-        self.assertFalse(panel.device_status_visible())
-        self.assertFalse(panel.device_status_popup_visible())
-        panel.OnTicking()
+        for unused in range(3):
+            panel.OnTicking()
+        self.assertIs(panel.status, model)
+        self.assertTrue(panel.device_status_visible())
+        self.assertEqual(panel.device_status_text(), "离线")
+        self.assertEqual(panel.device_status_color(), device_status.COLOR_OFFLINE)
+        self.assertEqual(panel.device_status_icon(), device_status.ICON_OFFLINE)
+        self.assertTrue(panel.device_status_popup_visible())
+        panel.OnDeviceStatusClose()
+        panel.OnDeviceStatusClick()
+        self.assertTrue(panel.device_status_popup_visible())
 
     def test_destroy_closes_both_halves_and_clears_the_handlers(self):
         panel, screen, port = self.make(

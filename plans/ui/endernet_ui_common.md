@@ -88,6 +88,7 @@ User 先填写字段含义及已有 JSON 配置，脚本接入方核对后补充
 | 参数字段、类型、必填项及可信来源 | 没有 `$` 参数。设备身份来自宿主界面的 `device_ref`（服务端 `PushUIRequest` 带来），**不接受客户端自报**。 |
 | 初始化、读取快照及订阅入口 | 宿主界面 `OnCreate` 里先 `client.on_message(handler)` **再** `open_session`——服务端下一帧就会推第一份快照，晚一步就永远补不上。订阅表就是会话表，没有第二条通道。 |
 | 更新文本、图标、列表、槽位及状态的方法 | 绑定名一律 `#EnderNetDeviceStatus.*`：`.text`（文字）、`.color`（绿/红）、`.visible`（拿不到结论时不显示）、`.icon`（在线/离线纹理）。回调返回安全值，且**在没有会话时也不抛**。 |
+| 会话被拒绝或失效后的详情 | 保留设备状态模型并标记离线；空会话号的 `error` 将服务端原因交给详情，已有在线快照不再作为当前结论。状态按钮仍可打开、关闭详情；仅销毁主界面时清空模型。 |
 | 事件回调与服务端命令的调用位置 | `.open` → `TerminalPanelBase.OnDeviceStatusClick` → 打开详情弹窗（幂等，连点不叠窗，**不发任何服务端命令**）；详情关闭走 `endernet_windows.device_status_window_basic` 的 `.close`。 |
 | 关闭／销毁后的订阅、回调与缓存清理 | 服务端一侧由 `TerminalSyncHub._forget`（会话关闭的唯一漏斗）丢掉每会话记账；界面一侧 `OnDestroy` 把 `status` 置空、`TerminalListView.close()` 调 `clear_handlers()`。绑定不摘——它们本来就不随会话生灭。 |
 | 公共组件复用方法与允许覆盖的配置 | 任意**非控制器**设备界面都可以 `"stat_bar@endernet_ui_common.device_stat_bar"` 并覆盖 `offset`。控制器不套用（服务端 `ui_applicable` 判），排除**不写在 JSON 里**。 |

@@ -3523,43 +3523,67 @@ class TestStatusSessionLifecycle(PanelFixture):
             (BinderStub.BF_ButtonClickUp, device_status.OPEN_BINDING)]({})
         self.assertTrue(self.panel.device_status_popup_visible())
 
-    def test_rejected_pending_session_clears_status_model(self):
+    def test_rejected_pending_session_keeps_clickable_offline_diagnostics(self):
         self.client.drop_session()
-        self.panel.status = device_status.DeviceStatusModel(REF)
+        model = device_status.DeviceStatusModel(REF)
+        self.panel.status = model
+        self.client.on_message(self.panel._make_status_handler(self.client))
         self.client.open_session(REF, 0)
-        self.client.receive(SyncEnvelope(SyncError("x", "session_invalid")).to_dict())
-        self.panel.OnTicking()
-        self.assertIsNone(self.panel.status)
+        self.client.receive(SyncEnvelope(SyncError(
+            "x", "master_absent", "该网络没有主控接管")).to_dict())
+        for unused in range(3):
+            self.panel.OnTicking()
+        self.assertIs(self.panel.status, model)
+        self.assertEqual(self.panel.device_status_text(), "离线")
+        self.assertTrue(self.panel.device_status_visible())
+        self.assertEqual(self.panel.device_status_icon(), device_status.ICON_OFFLINE)
+        self.assertEqual(self.panel.device_status_master_text(), "该网络没有主控接管")
+        self.assertEqual(self.panel.device_status_master_icon(), device_status.MASK_OFFLINE)
+        self.screen.bindings[
+            (BinderStub.BF_ButtonClickUp, device_status.OPEN_BINDING)]({})
+        self.assertTrue(self.panel.device_status_popup_visible())
+        self.assertEqual(self.client.stats["handler_errors"], 0)
 
     def online(self):
         from endernet_bp.endernet_scripts.endernet.common.protocol import DeviceStatusMessage
         model = device_status.DeviceStatusModel(REF)
         model.apply(DeviceStatusMessage(
             "endernet:common_terminal", REF.generation, True, "在线",
-            "ok", "runnable", "可运行", 1))
+            "ok", "runnable", "可运行", 1, master_instance_id="master-1",
+            bandwidth_ok=True, power_ok=True))
         self.panel.status = model
         self.panel.OnDeviceStatusClick()
         self.assertEqual(self.panel.device_status_text(), "在线")
         self.assertTrue(self.panel.device_status_popup_visible())
         return model
 
-    def test_idle_terminal_clears_status_and_popup_when_session_is_lost(self):
-        self.online()
+    def test_idle_terminal_keeps_offline_status_and_popup_when_session_is_lost(self):
+        model = self.online()
         self.assertEqual(self.view._action_requests, {})
         self.client.drop_session()
-        self.panel.OnTicking()
-        self.assertIsNone(self.panel.status)
-        self.assertFalse(self.panel.device_status_visible())
-        self.assertFalse(self.panel.device_status_popup_visible())
+        for unused in range(3):
+            self.panel.OnTicking()
+        self.assertIs(self.panel.status, model)
+        self.assertTrue(self.panel.device_status_visible())
+        self.assertTrue(self.panel.device_status_popup_visible())
+        self.assertEqual(self.panel.device_status_text(), "离线")
         self.assertEqual(self.panel.device_status_color(), device_status.COLOR_OFFLINE)
-        self.panel.OnTicking()  # 重复收尾安全。
+        self.assertEqual(self.panel.device_status_icon(), device_status.ICON_OFFLINE)
+        self.assertEqual(self.panel.device_status_master_icon(), device_status.MASK_OFFLINE)
+        self.assertEqual(self.panel.device_status_energy_icon(), device_status.MASK_OFFLINE)
+        self.panel.OnDeviceStatusClose()
+        self.panel.OnDeviceStatusClick()
+        self.assertTrue(self.panel.device_status_popup_visible())
 
-    def test_status_is_cleared_even_without_a_backpack(self):
-        self.online()
+    def test_offline_status_is_preserved_even_without_a_backpack(self):
+        model = self.online()
         self.view.backpack = None
         self.client.drop_session()
         self.view.tick()
-        self.assertIsNone(self.panel.status)
+        self.assertIs(self.panel.status, model)
+        self.assertEqual(self.panel.device_status_text(), "离线")
+        self.assertEqual(self.panel.device_status_icon(), device_status.ICON_OFFLINE)
+        self.assertTrue(self.panel.device_status_popup_visible())
 
     def test_active_session_keeps_online_status_and_popup(self):
         model = self.online()
@@ -3578,6 +3602,45 @@ class TestStatusSessionLifecycle(PanelFixture):
         handler(types.SimpleNamespace(session_id=self.client.session_id), message)
         self.assertEqual(self.panel.device_status_text(), "在线")
         self.assertEqual(model.stats["dropped"], 1)
+
+    def test_session_error_preserves_its_reason_after_repeated_ticks(self):
+        model = self.online()
+        self.client.on_message(self.panel._make_status_handler(self.client))
+        self.client.receive(SyncEnvelope(SyncError(
+            "x", "out_of_range", "玩家已离开设备范围")).to_dict())
+        for unused in range(3):
+            self.panel.OnTicking()
+        self.assertIs(self.panel.status, model)
+        self.assertFalse(self.client.has_session())
+        self.assertEqual(self.panel.device_status_text(), "离线")
+        self.assertEqual(self.panel.device_status_net_text(), "玩家已离开设备范围")
+        self.assertEqual(self.panel.device_status_net_icon(), device_status.MASK_OFFLINE)
+        self.assertTrue(self.panel.device_status_popup_visible())
+        self.assertEqual(self.client.stats["handler_errors"], 0)
+
+    def test_request_error_does_not_mark_a_live_session_offline(self):
+        model = self.online()
+        self.client.on_message(self.panel._make_status_handler(self.client))
+        self.feed(SyncError("x", "internal_error", "本次请求执行失败"))
+        self.panel.OnTicking()
+        self.assertTrue(self.client.has_session())
+        self.assertIs(self.panel.status, model)
+        self.assertIsNone(model.refusal)
+        self.assertEqual(self.panel.device_status_text(), "在线")
+        self.assertEqual(self.panel.device_status_icon(), device_status.ICON_ONLINE)
+        self.assertTrue(self.panel.device_status_popup_visible())
+
+    def test_session_error_from_an_old_handler_cannot_change_a_replacement_model(self):
+        model = self.online()
+        handler = self.panel._make_status_handler(self.client)
+        replacement = device_status.DeviceStatusModel(REF)
+        self.panel.status = replacement
+        self.client.drop_session()
+        handler(types.SimpleNamespace(session_id=""), SyncError(
+            "x", "session_invalid", "旧会话已失效"))
+        self.assertIsNone(replacement.refusal)
+        self.assertIsNone(model.refusal)
+        self.assertIs(self.panel.status, replacement)
 
     def test_shared_handler_ignores_replaced_models_and_closed_sessions(self):
         from endernet_bp.endernet_scripts.endernet.common.protocol import MSG_DEVICE_STATUS

@@ -24,7 +24,7 @@ JSON 模板**（`endernet_ui_common.device_stat_bar` 与
 
 from .....tooldelta.ui import Binder
 
-from ....common.protocol import MSG_DEVICE_STATUS
+from ....common.protocol import MSG_DEVICE_STATUS, MSG_ERROR
 from . import model as device_status
 
 #: 颜色绑定的标志。`Binder` 是**引擎在运行期给的类**
@@ -68,12 +68,21 @@ class DeviceStatusBindingsMixin(object):
 
         def on_status_message(envelope, message):
             # type: (object, object) -> None
-            if message is None or message.kind != MSG_DEVICE_STATUS:
+            if message is None or status is None or self.status is not status:
+                return
+            # NetworkClient 已先处理会话级错误并清掉会话；保留状态模型与
+            # 服务端原因，离线时仍能点开详情。带会话号的请求错误不改状态。
+            if message.kind == MSG_ERROR:
+                if not envelope.session_id and not client.has_session():
+                    status.mark_offline(({
+                        "code": message.code, "detail": message.detail,
+                    },))
+                return
+            if message.kind != MSG_DEVICE_STATUS:
                 return
             if not client.has_session() or envelope.session_id != client.session_id:
                 return
-            if status is not None and self.status is status:
-                status.apply(message)
+            status.apply(message)
 
         return on_status_message
 

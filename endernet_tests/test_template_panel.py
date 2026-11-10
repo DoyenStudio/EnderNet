@@ -71,6 +71,7 @@ from endernet_bp.endernet_scripts.endernet.common.protocol import (
     Reason,
     SessionReady,
     SyncEnvelope,
+    SyncError,
     TemplateStateMessage,
 )
 from endernet_bp.endernet_scripts.endernet.common.resources.key import (
@@ -1259,6 +1260,28 @@ class TestPanelEntry(unittest.TestCase):
         panel, _screen, _port = self.make({"device_ref": {"nonsense": 1}})
         self.assertIsNone(panel.template)
         self.assertIsNone(panel.list_view)
+
+    def test_rejected_session_keeps_device_status_button_available(self):
+        panel, screen, _port = self.make({"device_ref": REF.to_dict(),
+                                        "dimension": 0})
+        self.addCleanup(panel.OnDestroy)
+        model = panel.status
+        client = panel.template.client
+        client.receive(SyncEnvelope(SyncError(
+            "open-rejected", Reason.NO_CONTROLLER, "该设备未连接控制器",
+        )).to_dict())
+        for unused in range(3):
+            panel.OnTicking()
+        self.assertIs(panel.status, model)
+        self.assertFalse(client.has_session())
+        self.assertEqual(panel.device_status_text(), "离线")
+        self.assertEqual(panel.device_status_master_text(), "该设备未连接控制器")
+        self.assertEqual(panel.device_status_master_icon(),
+                         terminal_panel.device_status.MASK_OFFLINE)
+        screen.bindings[(BinderStub.BF_ButtonClickUp,
+                         terminal_panel.device_status.OPEN_BINDING)]({})
+        panel.OnTicking()
+        self.assertTrue(panel.device_status_popup_visible())
 
     def test_destroy_closes_the_view_and_clears_the_hook(self):
         panel, _screen, _port = self.make({"device_ref": REF.to_dict(),

@@ -172,12 +172,43 @@ class TestPopupRows(unittest.TestCase):
         self.assertEqual(self.model.energy_text(), "未知故障")
         self.assertEqual(self.model.energy_mask(), device_status.MASK_OFFLINE)
         self.assertEqual(self.model.master_text(), device_status.MASTER_ROW_MISSING)
+        self.assertEqual(self.model.master_mask(), device_status.MASK_OFFLINE)
 
     def test_rows_read_before_any_verdict_are_still_text(self):
         self.assertEqual(self.model.master_text(), device_status.MASTER_ROW_MISSING)
+        self.assertEqual(self.model.master_mask(), device_status.MASK_OFFLINE)
         self.assertEqual(self.model.net_text(), device_status.NET_ROW_UNKNOWN)
         self.assertEqual(self.model.energy_text(), device_status.ENERGY_ROW_UNKNOWN)
         self.assertEqual(self.model.energy_mask(), device_status.MASK_OFFLINE)
+
+    def test_controller_mask_tracks_master_identity_changes(self):
+        for master_id, expected_mask in (
+            ("master-1", device_status.MASK_ONLINE),
+            (None, device_status.MASK_OFFLINE),
+            ("master-2", device_status.MASK_ONLINE),
+        ):
+            self.model.apply(message(online=False, master_instance_id=master_id))
+            self.assertEqual(self.model.master_mask(), expected_mask)
+            self.assertEqual(self.model.master_text(), device_status.MASTER_ROW_OK
+                             if master_id else device_status.MASTER_ROW_MISSING)
+
+    def test_losing_the_session_clears_the_controller_checkmark(self):
+        for reasons in ((), (reason(Reason.REBUILDING, "网络重建中"),)):
+            self.model.apply(message())
+            self.assertEqual(self.model.master_mask(), device_status.MASK_ONLINE)
+            self.model.mark_offline(reasons)
+            self.assertEqual(self.model.master_text(), device_status.MASTER_ROW_MISSING)
+            self.assertEqual(self.model.master_mask(), device_status.MASK_OFFLINE)
+            self.assertEqual(self.model.energy_text(), device_status.ENERGY_ROW_UNKNOWN)
+            self.assertEqual(self.model.energy_mask(), device_status.MASK_OFFLINE)
+
+    def test_network_failure_keeps_a_confirmed_controller_checkmark(self):
+        self.model.apply(message(online=False, reasons=[
+            reason(Reason.REBUILDING, "网络重建中"),
+        ]))
+        self.assertEqual(self.model.master_text(), device_status.MASTER_ROW_OK)
+        self.assertEqual(self.model.master_mask(), device_status.MASK_ONLINE)
+        self.assertEqual(self.model.net_mask(), device_status.MASK_OFFLINE)
 
     def test_energy_changes_do_not_change_the_bandwidth_row(self):
         for power, text in ((True, "能源充足"), (False, "能源不足"),

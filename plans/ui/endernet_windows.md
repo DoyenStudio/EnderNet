@@ -80,7 +80,7 @@ User 先填写字段含义及已有 JSON 配置，脚本接入方核对后补充
 | 控件路径 | 字段含义、类型、单位与范围 | 来源与刷新时机 | JSON 绑定名／事件名 | Python 方法 | 接入状态 |
 | --- | --- | --- | --- | --- | --- |
 | `/device_status_window_basic` | 详情弹窗整体显隐。根控件是 `input_panel`（阻止点击穿透），初值 `visible: false` | 由宿主界面的弹窗层实例化；`#visible` 跟随 `DeviceStatusModel.popup_visible()` | `#EnderNetDeviceStatus.popup_visible` | `device_status_popup_visible` | **已接入**（通用终端面板）；其余界面未接 |
-| `.../controller_conn_stat/text` 与 `/icon/stat_mask` | 第一行：控制器连接/冲突/不支持。有原因就列**具体说明**，没有则按 `master_instance_id` 显示连接与否；遮罩绿色对勾／红色叉 | 与状态栏同一份快照（`reasons` 里 `MASTER_*` / `CONTROLLER_*` 那些码归这一行） | `#EnderNetDeviceStatus.master_text` / `.master_icon` | `device_status_master_text` / `device_status_master_icon` | **已接入**（同上） |
+| `.../controller_conn_stat/text` 与 `/icon/stat_mask` | 第一行：控制器连接/冲突/不支持。有原因就列**具体说明**，没有则按 `master_instance_id` 显示连接与否；仅当前有效结论含主控身份且无控制器故障说明时显示绿色对勾，尚无结论、主控身份缺失或会话失效时显示红色故障标记 | 与状态栏同一份快照（`reasons` 里 `MASTER_*` / `CONTROLLER_*` 那些码归这一行） | `#EnderNetDeviceStatus.master_text` / `.master_icon` | `device_status_master_text` / `device_status_master_icon` | **已接入**（同上） |
 | `.../network_conn_stat/text` 与 `/icon/stat_mask` | 第二行：带宽、能源、重建等网络侧原因；无原因时按 `bandwidth_ok`／`power_ok` 三态说明（`None` 写「待确认」，**不写「不足」**） | 同上（其余原因码归这一行） | `#EnderNetDeviceStatus.net_text` / `.net_icon` | `device_status_net_text` / `device_status_net_icon` | **已接入**（同上） |
 | `/close@endernet_ui_common.close_btn` | 只收起详情，**不关原设备界面** | 无服务端往返 | `#EnderNetDeviceStatus.close` | `OnDeviceStatusClose` | **已接入**（同上） |
 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |

@@ -270,7 +270,8 @@ class DeviceStatusModel(object):
                 network.append(detail)
         return (
             "；".join(master) if master else self._master_default(),
-            MASK_OFFLINE if master else MASK_ONLINE,
+            MASK_ONLINE if (not master and status is not None
+                            and status.master_instance_id) else MASK_OFFLINE,
             "；".join(network) if network else self._net_default(),
             MASK_ONLINE if (not network and status is not None
                             and status.bandwidth_ok is True) else MASK_OFFLINE,
@@ -321,9 +322,10 @@ class DeviceStatusModel(object):
 
     def _energy_default(self):
         # type: () -> str
-        if self.status is None or self.status.power_ok is None:
+        status = self._current()
+        if status is None or status.power_ok is None:
             return ENERGY_ROW_UNKNOWN
-        return "能源充足" if self.status.power_ok else "能源不足"
+        return "能源充足" if status.power_ok else "能源不足"
 
     def diagnostics(self):
         # type: () -> dict

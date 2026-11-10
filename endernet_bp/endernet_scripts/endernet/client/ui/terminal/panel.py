@@ -1913,8 +1913,10 @@ class TerminalListView(object):
         # 拒绝、丢失或关闭会话都会由 _forget_session 清掉设备身份。
         if self.cache.client.device_ref() is not None:
             return
-        # 状态快照与会话一起失效；即使没有在途动作，也不能残留在线与弹窗。
-        self.screen.status = None
+        # 快照随会话失效，但模型要留给离线详情按钮；已有拒绝原因不能覆盖。
+        status = getattr(self.screen, "status", None)
+        if status is not None and status.refusal is None:
+            status.mark_offline()
         if self.backpack is None:
             self._action_requests = {}
             return
