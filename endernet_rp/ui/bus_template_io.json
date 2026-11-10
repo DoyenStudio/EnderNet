@@ -149,6 +149,36 @@
                                                                         80
                                                                     ]
                                                                 }
+                                                            },
+                                                            {
+                                                                "template_items_frame": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "offset": [
+                                                                        0.0,
+                                                                        -40.0
+                                                                    ],
+                                                                    "size": [
+                                                                        162.0,
+                                                                        18.0
+                                                                    ],
+                                                                    "layer": 10,
+                                                                    "texture": "textures/ui/endernet/slots_frame"
+                                                                }
+                                                            },
+                                                            {
+                                                                "input_items_frame": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "size": [
+                                                                        162.0,
+                                                                        18.0
+                                                                    ],
+                                                                    "layer": 10,
+                                                                    "texture": "textures/ui/endernet/slots_frame"
+                                                                }
                                                             }
                                                         ]
                                                     }

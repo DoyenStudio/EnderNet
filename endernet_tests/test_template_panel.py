@@ -908,6 +908,61 @@ class TestTitleIsWrittenByScript(TemplateFixture):
         self.assertEqual([], self.written)
 
 
+class TestSlotFrames(TemplateFixture):
+    def setUp(self):
+        TemplateFixture.setUp(self)
+        self.grids = {}
+        self.frames = {}
+        for name, position, size in (
+                ("source_grid", (27, 0), (54, 54)),
+                ("outputs_grid", (117, 0), (18, 54))):
+            grid = Mock()
+            grid.GetPosition.return_value = position
+            grid.GetSize.return_value = size
+            frame = Mock()
+            self.grids[name] = grid
+            self.frames[name] = frame
+            path = "/terminal/template_panel/" + name
+            self.screen.controls[path] = grid
+            self.screen.controls[path + "_frame"] = frame
+        self.cell = self.grids["outputs_grid"].asGrid.return_value.GetGridItem.return_value
+        self.cell.GetPosition.return_value = (0, 18)
+        self.cell.GetSize.return_value = (18, 18)
+
+    def test_frames_follow_visible_slots_when_switching_both_ways(self):
+        for revision, mode, position, size in (
+                (1, MODE_CRAFTING, (117, 18), (18, 18)),
+                (2, MODE_FACTORY, (117, 0), (18, 54)),
+                (3, MODE_CRAFTING, (117, 18), (18, 18))):
+            self.state(mode=mode, revision=revision)
+            self.panel.OnTicking()
+            self.frames["outputs_grid"].SetPosition.assert_called_with(position)
+            self.frames["outputs_grid"].SetSize.assert_called_with(size)
+            self.frames["source_grid"].SetPosition.assert_called_with((27, 0))
+            self.frames["source_grid"].SetSize.assert_called_with((54, 54))
+
+    def test_frame_reads_actual_cell_layout_and_does_not_rewrite_unchanged_mode(self):
+        self.grids["outputs_grid"].GetPosition.return_value = (120, 2)
+        self.cell.GetPosition.return_value = (1, 20)
+        self.cell.GetSize.return_value = (20, 20)
+        self.panel._sync_slot_frames()
+        frame = self.frames["outputs_grid"]
+        frame.SetPosition.assert_called_once_with((121, 22))
+        frame.SetSize.assert_called_once_with((20, 20))
+        self.panel._sync_slot_frames()
+        self.assertEqual(1, frame.SetSize.call_count)
+
+    def test_missing_frame_is_retried_when_controls_are_ready(self):
+        path = "/terminal/template_panel/outputs_grid_frame"
+        frame = self.screen.controls.pop(path)
+        self.panel._sync_slot_frames()
+        self.assertIsNone(self.panel._slot_frames_mode)
+        self.screen.controls[path] = frame
+        self.panel._sync_slot_frames()
+        frame.SetVisible.assert_called_once_with(True)
+        self.assertEqual(MODE_CRAFTING, self.panel._slot_frames_mode)
+
+
 class TestSourceSelectionCleared(TemplateFixture):
     """一次放入 = 一次来源选择用完（User 2026-10-02）。"""
 

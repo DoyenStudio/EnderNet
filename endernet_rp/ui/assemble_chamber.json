@@ -124,12 +124,29 @@
                                                         ],
                                                         "layer": 1,
                                                         "collection_name": "netease_container",
-                                                        "maximum_grid_items": 9,
                                                         "grid_dimensions": [
                                                             3,
                                                             3
                                                         ],
-                                                        "grid_item_template": "endernet_container_common.container_grid_item"
+                                                        "grid_item_template": "endernet_container_common.container_grid_item",
+                                                        "maximum_grid_items": 9
+                                                    }
+                                                },
+                                                {
+                                                    "source_items_frame": {
+                                                        "type": "image",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            32.0,
+                                                            24.0
+                                                        ],
+                                                        "size": [
+                                                            54.0,
+                                                            54.0
+                                                        ],
+                                                        "layer": 10,
+                                                        "texture": "textures/ui/endernet/slots_frame"
                                                     }
                                                 },
                                                 {
@@ -145,8 +162,8 @@
                                                             "100%cm+0px",
                                                             "100%cm+0px"
                                                         ],
-                                                        "collection_name": "netease_container",
                                                         "layer": 1,
+                                                        "collection_name": "netease_container",
                                                         "controls": [
                                                             {
                                                                 "slot@endernet_container_common.container_grid_item": {
@@ -188,6 +205,253 @@
                                                             }
                                                         ]
                                                     }
+                                                },
+                                                {
+                                                    "templates": {
+                                                        "type": "panel",
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            0.0,
+                                                            86.0
+                                                        ],
+                                                        "size": [
+                                                            162.0,
+                                                            18.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "slot10": {
+                                                                    "type": "stack_panel",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "size": [
+                                                                        "100%cm+0px",
+                                                                        "100%cm+0px"
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "collection_name": "netease_container",
+                                                                    "controls": [
+                                                                        {
+                                                                            "slot@endernet_container_common.container_grid_item": {
+                                                                                "collection_index": 10
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "slot11": {
+                                                                    "type": "stack_panel",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        18.0,
+                                                                        0.0
+                                                                    ],
+                                                                    "size": [
+                                                                        "100%cm+0px",
+                                                                        "100%cm+0px"
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "collection_name": "netease_container",
+                                                                    "controls": [
+                                                                        {
+                                                                            "slot@endernet_container_common.container_grid_item": {
+                                                                                "collection_index": 11
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "slot12": {
+                                                                    "type": "stack_panel",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        36.0,
+                                                                        0.0
+                                                                    ],
+                                                                    "size": [
+                                                                        "100%cm+0px",
+                                                                        "100%cm+0px"
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "collection_name": "netease_container",
+                                                                    "controls": [
+                                                                        {
+                                                                            "slot@endernet_container_common.container_grid_item": {
+                                                                                "collection_index": 12
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "slot13": {
+                                                                    "type": "stack_panel",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        54.0,
+                                                                        0.0
+                                                                    ],
+                                                                    "size": [
+                                                                        "100%cm+0px",
+                                                                        "100%cm+0px"
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "collection_name": "netease_container",
+                                                                    "controls": [
+                                                                        {
+                                                                            "slot@endernet_container_common.container_grid_item": {
+                                                                                "collection_index": 13
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "slot14": {
+                                                                    "type": "stack_panel",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        72.0,
+                                                                        0.0
+                                                                    ],
+                                                                    "size": [
+                                                                        "100%cm+0px",
+                                                                        "100%cm+0px"
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "collection_name": "netease_container",
+                                                                    "controls": [
+                                                                        {
+                                                                            "slot@endernet_container_common.container_grid_item": {
+                                                                                "collection_index": 14
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "slot15": {
+                                                                    "type": "stack_panel",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        90.0,
+                                                                        0.0
+                                                                    ],
+                                                                    "size": [
+                                                                        "100%cm+0px",
+                                                                        "100%cm+0px"
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "collection_name": "netease_container",
+                                                                    "controls": [
+                                                                        {
+                                                                            "slot@endernet_container_common.container_grid_item": {
+                                                                                "collection_index": 15
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "slot16": {
+                                                                    "type": "stack_panel",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        108.0,
+                                                                        0.0
+                                                                    ],
+                                                                    "size": [
+                                                                        "100%cm+0px",
+                                                                        "100%cm+0px"
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "collection_name": "netease_container",
+                                                                    "controls": [
+                                                                        {
+                                                                            "slot@endernet_container_common.container_grid_item": {
+                                                                                "collection_index": 16
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "slot17": {
+                                                                    "type": "stack_panel",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        126.0,
+                                                                        0.0
+                                                                    ],
+                                                                    "size": [
+                                                                        "100%cm+0px",
+                                                                        "100%cm+0px"
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "collection_name": "netease_container",
+                                                                    "controls": [
+                                                                        {
+                                                                            "slot@endernet_container_common.container_grid_item": {
+                                                                                "collection_index": 17
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "slot18": {
+                                                                    "type": "stack_panel",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        144.0,
+                                                                        0.0
+                                                                    ],
+                                                                    "size": [
+                                                                        "100%cm+0px",
+                                                                        "100%cm+0px"
+                                                                    ],
+                                                                    "layer": 1,
+                                                                    "collection_name": "netease_container",
+                                                                    "controls": [
+                                                                        {
+                                                                            "slot@endernet_container_common.container_grid_item": {
+                                                                                "collection_index": 18
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "template_items_frame": {
+                                                        "type": "image",
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            0.0,
+                                                            86.0
+                                                        ],
+                                                        "size": [
+                                                            162.0,
+                                                            18.0
+                                                        ],
+                                                        "layer": 10,
+                                                        "texture": "textures/ui/endernet/slots_frame"
+                                                    }
                                                 }
                                             ]
                                         }
@@ -205,236 +469,6 @@
                                 ],
                                 "layer": 0,
                                 "texture": "textures/ui/endernet/background_panel_opaque"
-                            }
-                        },
-                        {
-                            "templates": {
-                                "type": "panel",
-                                "anchor_from": "top_middle",
-                                "anchor_to": "top_middle",
-                                "offset": [
-                                    0.0,
-                                    86.0
-                                ],
-                                "size": [
-                                    162.0,
-                                    18.0
-                                ],
-                                "layer": 1,
-                                "controls": [
-                                    {
-                                        "slot10": {
-                                            "type": "stack_panel",
-                                            "anchor_from": "top_left",
-                                            "anchor_to": "top_left",
-                                            "size": [
-                                                "100%cm+0px",
-                                                "100%cm+0px"
-                                            ],
-                                            "collection_name": "netease_container",
-                                            "layer": 1,
-                                            "controls": [
-                                                {
-                                                    "slot@endernet_container_common.container_grid_item": {
-                                                        "collection_index": 10
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "slot11": {
-                                            "type": "stack_panel",
-                                            "anchor_from": "top_left",
-                                            "anchor_to": "top_left",
-                                            "offset": [
-                                                18.0,
-                                                0.0
-                                            ],
-                                            "size": [
-                                                "100%cm+0px",
-                                                "100%cm+0px"
-                                            ],
-                                            "collection_name": "netease_container",
-                                            "layer": 1,
-                                            "controls": [
-                                                {
-                                                    "slot@endernet_container_common.container_grid_item": {
-                                                        "collection_index": 11
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "slot12": {
-                                            "type": "stack_panel",
-                                            "anchor_from": "top_left",
-                                            "anchor_to": "top_left",
-                                            "offset": [
-                                                36.0,
-                                                0.0
-                                            ],
-                                            "size": [
-                                                "100%cm+0px",
-                                                "100%cm+0px"
-                                            ],
-                                            "collection_name": "netease_container",
-                                            "layer": 1,
-                                            "controls": [
-                                                {
-                                                    "slot@endernet_container_common.container_grid_item": {
-                                                        "collection_index": 12
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "slot13": {
-                                            "type": "stack_panel",
-                                            "anchor_from": "top_left",
-                                            "anchor_to": "top_left",
-                                            "offset": [
-                                                54.0,
-                                                0.0
-                                            ],
-                                            "size": [
-                                                "100%cm+0px",
-                                                "100%cm+0px"
-                                            ],
-                                            "collection_name": "netease_container",
-                                            "layer": 1,
-                                            "controls": [
-                                                {
-                                                    "slot@endernet_container_common.container_grid_item": {
-                                                        "collection_index": 13
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "slot14": {
-                                            "type": "stack_panel",
-                                            "anchor_from": "top_left",
-                                            "anchor_to": "top_left",
-                                            "offset": [
-                                                72.0,
-                                                0.0
-                                            ],
-                                            "size": [
-                                                "100%cm+0px",
-                                                "100%cm+0px"
-                                            ],
-                                            "collection_name": "netease_container",
-                                            "layer": 1,
-                                            "controls": [
-                                                {
-                                                    "slot@endernet_container_common.container_grid_item": {
-                                                        "collection_index": 14
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "slot15": {
-                                            "type": "stack_panel",
-                                            "anchor_from": "top_left",
-                                            "anchor_to": "top_left",
-                                            "offset": [
-                                                90.0,
-                                                0.0
-                                            ],
-                                            "size": [
-                                                "100%cm+0px",
-                                                "100%cm+0px"
-                                            ],
-                                            "collection_name": "netease_container",
-                                            "layer": 1,
-                                            "controls": [
-                                                {
-                                                    "slot@endernet_container_common.container_grid_item": {
-                                                        "collection_index": 15
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "slot16": {
-                                            "type": "stack_panel",
-                                            "anchor_from": "top_left",
-                                            "anchor_to": "top_left",
-                                            "offset": [
-                                                108.0,
-                                                0.0
-                                            ],
-                                            "size": [
-                                                "100%cm+0px",
-                                                "100%cm+0px"
-                                            ],
-                                            "collection_name": "netease_container",
-                                            "layer": 1,
-                                            "controls": [
-                                                {
-                                                    "slot@endernet_container_common.container_grid_item": {
-                                                        "collection_index": 16
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "slot17": {
-                                            "type": "stack_panel",
-                                            "anchor_from": "top_left",
-                                            "anchor_to": "top_left",
-                                            "offset": [
-                                                126.0,
-                                                0.0
-                                            ],
-                                            "size": [
-                                                "100%cm+0px",
-                                                "100%cm+0px"
-                                            ],
-                                            "collection_name": "netease_container",
-                                            "layer": 1,
-                                            "controls": [
-                                                {
-                                                    "slot@endernet_container_common.container_grid_item": {
-                                                        "collection_index": 17
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    },
-                                    {
-                                        "slot18": {
-                                            "type": "stack_panel",
-                                            "anchor_from": "top_left",
-                                            "anchor_to": "top_left",
-                                            "offset": [
-                                                144.0,
-                                                0.0
-                                            ],
-                                            "size": [
-                                                "100%cm+0px",
-                                                "100%cm+0px"
-                                            ],
-                                            "collection_name": "netease_container",
-                                            "layer": 1,
-                                            "controls": [
-                                                {
-                                                    "slot@endernet_container_common.container_grid_item": {
-                                                        "collection_index": 18
-                                                    }
-                                                }
-                                            ]
-                                        }
-                                    }
-                                ]
                             }
                         }
                     ],

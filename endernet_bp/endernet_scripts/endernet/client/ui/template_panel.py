@@ -959,6 +959,7 @@ class TemplatePanel(RecipeChoiceBindings, ItemListWindowBindingsMixin, TerminalP
     #: 早一拍（与 `list_view` 同一条理由）。
     _title_path = None
     _title_text = None
+    _slot_frames_mode = None
 
     # -- 四个格子区的绑定（类体注册） ----------------------------------
     #
@@ -1164,6 +1165,35 @@ class TemplatePanel(RecipeChoiceBindings, ItemListWindowBindingsMixin, TerminalP
             return
         self._title_text = text
 
+    def _sync_slot_frames(self):
+        # type: () -> None
+        """模式切换后按实际槽位布局同步边框；控件未就绪时下一帧重试。"""
+        mode = self.template.mode if self.template is not None else DEFAULT_MODE
+        if mode == self._slot_frames_mode:
+            return
+        for name in ("source_grid", "outputs_grid"):
+            grid = slot_layout.control(self, "/template_panel/" + name)
+            frame = slot_layout.control(self, "/template_panel/" + name + "_frame")
+            if grid is None or frame is None:
+                return
+            try:
+                position = grid.GetPosition()
+                size = grid.GetSize()
+                if name == "outputs_grid" and mode == MODE_CRAFTING:
+                    cell = grid.asGrid().GetGridItem(0, CRAFT_PREVIEW_CELL)
+                    cell_position = cell.GetPosition()
+                    position = (position[0] + cell_position[0],
+                                position[1] + cell_position[1])
+                    size = cell.GetSize()
+                if size[0] <= 0 or size[1] <= 0:
+                    return
+                frame.SetPosition(position)
+                frame.SetSize(size)
+                frame.SetVisible(True)
+            except Exception:
+                return
+        self._slot_frames_mode = mode
+
     @Binder.binding(Binder.BF_BindBool, BINDING_PREFIX + "mode_crafting_selected")
     def mode_crafting_selected(self):
         # type: () -> bool
@@ -1362,6 +1392,7 @@ class TemplatePanel(RecipeChoiceBindings, ItemListWindowBindingsMixin, TerminalP
         # 标题走 SetText（见 `_sync_title`），因此每帧要对一次；文本没变时
         # 它第一步就返回，代价是一次字符串比较。
         self._sync_title()
+        self._sync_slot_frames()
 
     def OnDestroy(self):
         if self.list_view is not None:

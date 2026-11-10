@@ -628,6 +628,23 @@
                     "text": "container.inventory",
                     "text_alignment": "center"
                 }
+            },
+            {
+                "hotbar_frame": {
+                    "type": "image",
+                    "anchor_from": "bottom_middle",
+                    "anchor_to": "bottom_middle",
+                    "offset": [
+                        0.0,
+                        -5.0
+                    ],
+                    "size": [
+                        162.0,
+                        18.0
+                    ],
+                    "layer": 10,
+                    "texture": "textures/ui/endernet/slots_frame"
+                }
             }
         ]
     },
@@ -659,6 +676,23 @@
                         3
                     ],
                     "grid_item_template": "endernet_container_common.grid_item_for_inventory"
+                }
+            },
+            {
+                "frame": {
+                    "type": "image",
+                    "anchor_from": "bottom_middle",
+                    "anchor_to": "bottom_middle",
+                    "offset": [
+                        0.0,
+                        -26.0
+                    ],
+                    "size": [
+                        "100%sm+0px",
+                        "100%sm+0px"
+                    ],
+                    "layer": 10,
+                    "texture": "textures/ui/endernet/slots_frame"
                 }
             }
         ]
