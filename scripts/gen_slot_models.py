@@ -431,11 +431,20 @@ def outputs(definitions, probe=False):
     return files
 
 
+def same_content(path, payload):
+    """磁盘上的文件是否已是这份内容。文本文件忽略换行差异（Windows 检出会转成 CRLF）。"""
+    if not os.path.isfile(path):
+        return False
+    with open(path, "rb") as handle:
+        existing = handle.read()
+    if path.endswith(".png"):
+        return existing == payload
+    return existing.replace(b"\r\n", b"\n") == payload.replace(b"\r\n", b"\n")
+
+
 def write_if_changed(path, payload, check_only):
-    if os.path.isfile(path):
-        with open(path, "rb") as handle:
-            if handle.read() == payload:
-                return False
+    if same_content(path, payload):
+        return False
     if not check_only:
         directory = os.path.dirname(path)
         if not os.path.isdir(directory):

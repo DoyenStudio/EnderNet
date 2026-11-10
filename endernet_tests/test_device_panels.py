@@ -47,6 +47,7 @@ class BinderStub(object):
     BF_ButtonClickUp = 4
     BF_EditChanged = 5
     BF_ButtonClickDown = 6
+    BF_ButtonClickCancel = 99
     #: 11-06 起本仓库也用到这两个旗标（工厂终端的进度条与三色背景）。
     #: 取值与真引擎无关，只要求**各测试文件彼此一致**。
     BF_BindColor = 7
@@ -946,14 +947,36 @@ class TestProxyPanelLifecycle(unittest.TestCase):
         client.session_id = ""
         self.tick(panel, proxy_panel.SESSION_OPEN_GRACE_FRAMES + 1)
         self.assertIsNone(panel.client, "被拒之后必须收摊，否则屏再也认不到身份")
-        self.assertIsNone(panel.status)
         self.assertEqual(client.port.unlistens, 1)
         self.assertEqual(client.closes, 1)
+        # 收摊只断连接：状态栏一直显示离线（规格「离线时照样能打开查看原因」）。
+        status = panel.status
+        self.assertTrue(panel.device_status_visible())
+        self.assertEqual(panel.device_status_text(), device_status.OFFLINE_TEXT)
+        self.assertEqual(panel.device_status_color(), device_status.COLOR_OFFLINE)
         # **收摊之后还能被下一次右键救回来**（latch 里那条已经被取走，
         # 所以要新推一条）——这正是收摊的意义。
         self.offer()
         self.tick(panel, 1)
         self.assertIsNotNone(panel.client)
+        self.assertIsNot(panel.status, status, "新身份换上新的状态模型")
+
+    def test_an_open_popup_stays_open_after_a_refusal(self):
+        """离线设备的状态框点开后不会自己关；拒绝原因出现在详情里，关屏才清。"""
+        self.offer()
+        panel = self.panel()
+        panel.OnCreate()
+        panel.status.open_popup()
+        panel.client.deliver("", protocol.SyncError("req-1", protocol.Reason.MASTER_UNLOADED,
+                                                    "该网络当前没有主控接管"))
+        self.tick(panel, 1)
+        self.assertIsNone(panel.client, "收到拒绝就收摊，不必干等超时")
+        self.tick(panel, proxy_panel.SESSION_OPEN_GRACE_FRAMES * 3)
+        self.assertTrue(panel.status.popup_visible())
+        self.assertEqual(panel.status.master_text(), "该网络当前没有主控接管")
+        self.assertEqual(panel.status.icon(), device_status.ICON_OFFLINE)
+        panel.OnDestroy()
+        self.assertIsNone(panel.status)
 
     def test_a_session_that_establishes_is_kept_and_kept_alive(self):
         self.offer()
@@ -976,7 +999,8 @@ class TestProxyPanelLifecycle(unittest.TestCase):
         panel.client.session_id = ""      # 服务端判死 / TTL 回收
         self.tick(panel, 1)
         self.assertIsNone(panel.client)
-        self.assertIsNone(panel.status)
+        self.assertEqual(panel.device_status_text(), device_status.OFFLINE_TEXT,
+                         "断开后改显示离线，不残留之前的结论")
         # 收摊之后 latch 是空的，屏安静地停住（不自救、也不再发包）。
         self.tick(panel, 50)
         self.assertIsNone(panel.client)

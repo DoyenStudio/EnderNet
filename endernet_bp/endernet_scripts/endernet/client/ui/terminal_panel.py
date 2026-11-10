@@ -46,7 +46,8 @@ except ImportError:
     # 是同一手法。
     OnKeyPressInGame = None
 from . import flying_item, order_preview_window, slot_layout, stack_size
-from .terminal_input import DOUBLE_CLICK_SECONDS, TerminalInput
+from .terminal_hover import slot_durability
+from .terminal_input import DOUBLE_CLICK_SECONDS, LONG_PRESS_SECONDS, TerminalInput
 from .number_set_window import show_number_set_window
 from .widgets.window_lifecycle import close_windows
 from .widgets import device_status
@@ -79,13 +80,6 @@ _COLOR_BINDING_FLAG = device_status_bindings.COLOR_BINDING_FLAG
 #: 调引擎」的教训；容器那边的既定做法也是退避轮询。
 BACKPACK_POLL_FRAMES = 12
 
-#: 长按判定的门槛（秒）。**这是手感值，只由观感决定**，与 `flying_item` 的
-#: `FLY_SECONDS` 同一类，不进任何判定——改它只会改变「按多久算长按」。
-#: 手势本身由 User 2026-10-01 定为**长按背包槽 = 拆分一半**（`inv_split`）。
-#: **按秒不按帧**：界面的渲染帧率与脚本 tick、模拟 tick 都不是一回事，
-#: 按帧数计时会让同一段时长在低帧率下拖长一截。
-LONG_PRESS_SECONDS = 0.4
-
 #: 终端列表的绑定前缀与集合名，与 `common_terminal_panel.json` 里
 #: `terminal_slot` 模板覆盖的那几个 `$` 变量一一对应。
 BINDING_PREFIX = "#EnderNetTerminal."
@@ -101,6 +95,10 @@ UNAVAILABLE_BINDING = BINDING_PREFIX + "unavailable"
 #: `terminal_scroll_background` 的 `$pressed_button_name` **逐字相同**——
 #: 对不上时引擎只是查不到绑定、安静地什么都不做（同其余几条绑定）。
 QUICK_STORE_BINDING = BINDING_PREFIX + "quick_store"
+#: 点窗外丢出持物（原版 `cursor_drop_all` / `cursor_drop_one`），映射写在三台终端
+#: `main@common.base_screen` 的 `button_mappings` 上，名字要逐字相同。
+DROP_ALL_BINDING = BINDING_PREFIX + "drop_cursor_all"
+DROP_ONE_BINDING = BINDING_PREFIX + "drop_cursor_one"
 
 #: 下半屏的两段格子。绑定是**按集合**注册的，而集合绑定的回调只拿得到「集合内
 #: 下标」、拿不到集合名，所以两段必须各用一套绑定名：共用一套的话，快捷栏那 9
@@ -351,18 +349,12 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         self.backpack = BackpackModel()
         self._poll_frames = 0
         self._slot_input = TerminalInput(self)
-        #: 长按判定（`inv_split` 的手势）。**按下记时、抬起判时**：引擎只有
-        #: 「按下」与「抬起」两个相位，没有「长按」这一档绑定，时长只能在
-        #: 脚本侧算（见 `_press` 与 `_click`）。
-        self._press_index = None
-        self._press_at = 0.0
         #: 时钟**可注入**：按秒不按帧的理由与 `flying_item` 完全一样，而
         #: 注入之后离线能精确推进——用例不必真的 sleep 0.4 秒。
         self._clock = time.time
         #: 搬运动画。控件解析是懒的（`flying_item` 不在本界面上时永久退化成
         #: 不做任何事），因此这里不等 `OnCreate`，也不会因为没有它而失败。
-        #: 两条路径都是**内容区相对**的，由 `slot_layout.control` 按本界面的
-        #: 屏幕挂法解析（两种挂法见 `slot_layout._candidates`）。
+        #: 两条路径都是**内容区相对**的，由 `slot_layout.control` 补上窗口前缀。
         self.fly = flying_item.FlightPool(
             self, slot_layout.FLYING_ITEM_PATH, slot_layout.FLYING_ITEMS_PATH)
 
@@ -439,12 +431,15 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         """
         if self.list_view is not None:
             if not self.slot_input.press("left", ("network", params.get("#collection_index", -1))):
+                self.slot_input.touch.press("network", params.get("#collection_index", -1), params)
                 self.list_view.on_row_press(params)
 
     @Binder.binding(Binder.BF_ButtonClickUp, SELECT_BINDING)
     def terminal_select(self, params):
         # type: (object) -> None
         if self.list_view is not None:
+            if self.slot_input.touch.release(params):
+                return
             craft = getattr(self, "craft", None)
             if craft is not None and craft.put_selected("network", params.get("#collection_index", -1)):
                 return
@@ -580,7 +575,8 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         # type: (tuple, object) -> int
         preview = self.slot_input.preview_cell("bag", self._slot_index(segment, index))
         if preview:
-            return stack_size.id_aux(preview["name"], preview["aux"])
+            # 触屏平分时来源格可能被分空。
+            return stack_size.id_aux(preview["name"], preview["aux"]) if preview["count"] else 0
         entry = self._slot_entry(segment, index)
         if entry is None:
             return 0
@@ -617,7 +613,7 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         """
         self.slot_input.tick()
         self._poll_frames += 1
-        if self._poll_frames >= BACKPACK_POLL_FRAMES:
+        if self._poll_frames >= BACKPACK_POLL_FRAMES or self.slot_input.watching_bag():
             self._poll_frames = 0
             self.backpack.replace_from_engine()
 
@@ -646,24 +642,13 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         # 里可以接着点，每一轮都作用在虚拟空间上、并记进 `_pending`。真值
         # 沿队列从头兑现（`BackpackModel._retire`）。
         ui_index = start + index
+        # 触屏的长按拆堆与拖动先判（`touch_input`），没挪动的短按照常往下走。
+        if self.slot_input.touch.release(params):
+            return
         craft = getattr(self, "craft", None)
         if craft is not None and craft.put_selected("bag", ui_index):
             return
         if self.slot_input.primary("bag", ui_index):
-            return
-        # **长按是另一条手势，先判它。** `inv_split`（把这一槽的一半存进网络）
-        # 由 User 2026-10-01 定为长按；引擎没有「长按」这一档绑定，所以时长
-        # 在这里按「按下 - 抬起」算（`_press` 记的）。
-        #
-        # **判完无论长短都要把按下记录清掉**：留着的话，下一下短按会拿上一次
-        # 的时间戳去比，一次偶然的长按会让之后**每一下短按**都变成拆分。
-        hold = None
-        if self._press_index == ui_index:
-            hold = self._clock() - self._press_at
-        self._press_index = None
-        if hold is not None and hold >= LONG_PRESS_SECONDS:
-            if self.list_view is not None:
-                self.list_view.on_backpack_split(ui_index, params)
             return
         # **三选一，顺序就是优先级。**
         #
@@ -718,25 +703,21 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
 
     def _press(self, params, start, count):
         # type: (object, int, int) -> None
-        """按下（`BF_ButtonClickDown`）：**只记格子与时刻**，什么都不做。
+        """按下（`BF_ButtonClickDown`）：键鼠交给 `slot_input.press`，触屏记下长按 / 拖动的起点。
 
         与抬起那条绑定**挂同一个名字**（`slot_binding(prefix, "click")`）：
         引擎按「标志 + 名字」找回调，两个相位于是各挂各的，而 **JSON 侧一个
         字都不用改**——这是不碰 User 界面的那条路（`item_can_be_selected`
         是共享模板，上半屏也在用）。
-
-        取不到合法的格子下标就把记录清掉：那一下按下的是一格**算不出身份**
-        的位置，抬起时不该拿它去比对。
         """
         index = params.get("#collection_index")
         if (isinstance(index, bool) or not isinstance(index, INTEGER_TYPES)
                 or not 0 <= index < count):
-            self._press_index = None
+            self.slot_input.touch.reset()
             return
         if self.slot_input.press("left", ("bag", start + index)):
             return
-        self._press_index = start + index
-        self._press_at = self._clock()
+        self.slot_input.touch.press("bag", start + index, params)
 
     @Binder.binding(Binder.BF_ButtonClickDown, slot_binding("backpack", "click"))
     def OnBackpackPress(self, params):
@@ -754,17 +735,18 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
     def OnHotbarClick(self, params):
         self._click(params, HOTBAR_START, HOTBAR_COUNT)
 
-    @Binder.binding(Binder.BF_ButtonClickDown, "#EnderNetTerminal.secondary")
-    def desktop_secondary_press(self, params):
-        self.slot_input.press("right")
+    # 触屏拖出按钮再松手，按钮收到的是取消而不是抬起。
+    @Binder.binding(Binder.BF_ButtonClickCancel, slot_binding("backpack", "click"))
+    def OnBackpackCancel(self, params):
+        self.slot_input.touch.release(params)
 
-    @Binder.binding(Binder.BF_ButtonClickUp, "#EnderNetTerminal.secondary")
-    def desktop_secondary(self, params):
-        self.slot_input.mapped_click("right", params)
+    @Binder.binding(Binder.BF_ButtonClickCancel, slot_binding("hotbar", "click"))
+    def OnHotbarCancel(self, params):
+        self.slot_input.touch.release(params)
 
-    @Binder.binding(Binder.BF_ButtonClickUp, "#EnderNetTerminal.quick")
-    def desktop_quick(self, params):
-        self.slot_input.mapped_click("quick", params)
+    @Binder.binding(Binder.BF_ButtonClickCancel, SELECT_BINDING)
+    def OnSelectCancel(self, params):
+        self.slot_input.touch.release(params)
 
     @Binder.binding(Binder.BF_ButtonClickUp, QUICK_STORE_BINDING)
     def OnQuickStoreClick(self, params=None):
@@ -784,11 +766,21 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         没有会话（`OpenDemo`）时列表视图缺席，这一下什么也不做。
         """
         if self.list_view is not None:
+            if self.slot_input.touch.release(params):
+                return
             craft = getattr(self, "craft", None)
             if craft is not None and craft.put_selected("network", -1):
                 return
             if not self.slot_input.primary("network", -1):
                 self.list_view.on_quick_store(params)
+
+    @Binder.binding(Binder.BF_ButtonClickDown, DROP_ALL_BINDING)
+    def OnDropAll(self, params=None):
+        self.slot_input.drop("left", params)
+
+    @Binder.binding(Binder.BF_ButtonClickDown, DROP_ONE_BINDING)
+    def OnDropOne(self, params=None):
+        self.slot_input.drop("right", params)
 
     def top_modal(self):
         for name in ("select_item_window", "select_fluid_window", "number_set_window",
@@ -836,14 +828,22 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         board = getattr(OnKeyPressInGame, "KeyBoardType", None)
         key = getattr(event, "key", None)
         down = getattr(event, "isDown", 0) == 1
-        if board is not None and self.slot_input.desktop and not self.slot_input.editing:
+        if board is not None and self.slot_input.desktop:
+            editing = self.slot_input.editing
+            # 编辑搜索框时只忽略按下；松开照常记，否则在框里松开的 Shift 会一直卡着。
             if key == getattr(board, "KEY_LSHIFT", None):
-                was_shift = self.slot_input.shift
-                self.slot_input.shift = down
-                if was_shift and not down and self.list_view is not None:
-                    self.list_view.refresh()
-            elif key == getattr(board, "KEY_SPACE", None):
+                if not (down and editing):
+                    was_shift = self.slot_input.shift
+                    self.slot_input.shift = down
+                    if was_shift and not down and self.list_view is not None:
+                        self.list_view.refresh()
+            elif key == getattr(board, "KEY_SPACE", None) and not (down and editing):
                 self.slot_input.space = down
+            elif key == getattr(board, "KEY_CONTROL", None) and not (down and editing):
+                self.slot_input.ctrl = down
+            elif key == getattr(board, "KEY_Q", None) and down:
+                # 原版：Q 丢出鼠标下那一格的一个，Ctrl+Q 丢整组（编辑搜索框时由路由忽略）。
+                self.slot_input.drop_hovered(self.slot_input.ctrl)
         if not down:
             return
         if ESCAPE_KEY is None or getattr(event, "key", None) != ESCAPE_KEY:
@@ -892,6 +892,103 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
         self.slot_input.reset()
         self.backpack.clear_selection()
         self.fly.clear()
+
+
+#: 每种格子：所属区域、绑定名前缀、集合下标的偏移、集合名。前缀下有三个名字：
+#: `_secondary`（右键）、`_quick`（Shift 点击）与 `_hover_text`（悬停提示）。
+#: 按格分名，回调直接拿 `#collection_index`，不必再按鼠标位置命中。
+SLOT_REGIONS = (
+    ("network", BINDING_PREFIX + "network", 0, COLLECTION),
+    ("bag", BINDING_PREFIX + "backpack", 0, BACKPACK_COLLECTION),
+    ("bag", BINDING_PREFIX + "hotbar", HOTBAR_START, HOTBAR_COLLECTION),
+    ("grid", "#EnderNetCraft.grid", 0, "crafting_grid"),
+    ("output", "#EnderNetCraft.output", 0, "endernet_craft_output"),
+    ("source", "#EnderNetTemplate.source", 0, "endernet_template_source"),
+    ("outputs", "#EnderNetTemplate.outputs", 0, "endernet_template_outputs"),
+    ("input", "#EnderNetTemplate.input", 0, "endernet_template_input"),
+    ("result", "#EnderNetTemplate.result", 0, "endernet_template_result"),
+)
+
+
+def mapped_target(params, area, offset):
+    # type: (object, str, int) -> object
+    """回调参数 → `(区域, 序号)`；下标缺失或不合法时返回 `None`（这一下不处理）。"""
+    index = (params or {}).get("#collection_index")
+    if isinstance(index, bool) or not isinstance(index, INTEGER_TYPES) or index < 0:
+        return None
+    return area, offset + index
+
+
+def _bind_slot_region(area, prefix, offset, collection):
+    def secondary_press(self, params=None):
+        self.slot_input.press("right", mapped_target(params, area, offset))
+
+    def secondary(self, params=None):
+        self.slot_input.mapped_click("right", params, mapped_target(params, area, offset))
+
+    def quick(self, params=None):
+        self.slot_input.mapped_click("quick", params, mapped_target(params, area, offset))
+
+    def hover_text(self, index):
+        return self.slot_input.hover.text((area, offset + index))
+
+    region = prefix.split(".", 1)[1]
+    for suffix, flag, phase, func in (("secondary", Binder.BF_ButtonClickDown, "press", secondary_press),
+                                      ("secondary", Binder.BF_ButtonClickUp, "up", secondary),
+                                      ("quick", Binder.BF_ButtonClickUp, "up", quick)):
+        func.__name__ = "mapped_%s_%s_%s" % (region, suffix, phase)
+        setattr(TerminalPanelBase, func.__name__, Binder.binding(flag, "%s_%s" % (prefix, suffix))(func))
+    hover_text.__name__ = "slot_%s_hover_text" % region
+    binder = Binder.binding_collection(Binder.BF_BindString, collection, prefix + "_hover_text")
+    setattr(TerminalPanelBase, hover_text.__name__, binder(hover_text))
+    # 耐久条：原版 `common.durability_bar` 的三个绑定名，按集合区分。
+    for field, flag, name in ((0, Binder.BF_BindBool, "#item_durability_visible"),
+                              (1, Binder.BF_BindInt, "#item_durability_total_amount"),
+                              (2, Binder.BF_BindInt, "#item_durability_current_amount")):
+        def durability(self, index, field=field):
+            return slot_durability(self, (area, offset + index))[field]
+        durability.__name__ = "slot_%s_durability_%d" % (region, field)
+        binder = Binder.binding_collection(flag, collection, name)
+        setattr(TerminalPanelBase, durability.__name__, binder(durability))
+
+
+for _area, _prefix, _offset, _collection in SLOT_REGIONS:
+    _bind_slot_region(_area, _prefix, _offset, _collection)
+
+
+#: 光标与选中格上的原版进度条（`progress_bar_renderer`）照原版用绑定取数：
+#: `endernet_container_common` 把 `<名字>_visible/_total/_current` 覆盖到
+#: `#touch_progress_bar_visible`（或 `#progress_bar_visible`）与 `#progress_bar_*_amount` 上。
+#: 每项给出 `(当前, 总量)`，不显示时为 None。
+PROGRESS_BARS = (
+    ("take_bar", lambda panel: panel.slot_input.take_bar()),
+    ("split_bar", lambda panel: panel.slot_input.touch.selection_bar()),
+    ("cursor_durability", lambda panel: panel.slot_input.durability_bar()),
+)
+
+
+def _bind_progress_bar(name, source):
+    def visible(self):
+        return source(self) is not None
+
+    def total(self):
+        bar = source(self)
+        return bar[1] if bar else 1
+
+    def current(self):
+        bar = source(self)
+        return bar[0] if bar else 0
+
+    for suffix, flag, func in (("visible", Binder.BF_BindBool, visible),
+                               ("total", Binder.BF_BindInt, total),
+                               ("current", Binder.BF_BindInt, current)):
+        func.__name__ = "progress_%s_%s" % (name, suffix)
+        binder = Binder.binding(flag, "%s%s_%s" % (BINDING_PREFIX, name, suffix))
+        setattr(TerminalPanelBase, func.__name__, binder(func))
+
+
+for _name, _source in PROGRESS_BARS:
+    _bind_progress_bar(_name, _source)
 
 
 class TerminalListView(object):
@@ -1127,9 +1224,8 @@ class TerminalListView(object):
         # type: (str, tuple) -> None
         if self._sort_uv.get(path) == uv:
             return
-        # **路径要先解析**：`path` 是内容区相对的，四台面板的屏幕挂法不同
-        # （见 `slot_layout._candidates`），直接交给 `GetElement` 会在这三台
-        # 上一条都取不到——而取不到的代价只是两个排序图标永远不换 UV。
+        # **路径要先解析**：`path` 是内容区相对的（窗口前缀见 `slot_layout.full_path`），
+        # 直接交给 `GetElement` 一条都取不到——而取不到的代价只是两个排序图标永远不换 UV。
         full = slot_layout.path_of(self.screen, path)
         if full is None:
             return
@@ -1458,6 +1554,10 @@ class TerminalListView(object):
         **「尽可能多」由服务端裁**：网络装不下的部分回 `PARTIAL`，本地不
         预先截断——截断要读网络余量，而那是客户端看不到的东西。
         """
+        if self.backpack.selected_count is not None:
+            # 触屏长按拆出了一部分：只存那部分，`inv_quick_move` 是整槽。
+            self._send_take(params)
+            return
         take = self.backpack.pending_take(whole=True)
         if take is None:
             return
@@ -1478,56 +1578,6 @@ class TerminalListView(object):
         )
         # 与 `inv_take` 同一条收尾：东西已经进网络了，那个指向空槽的选中
         # 没有意义。回执按同一张表清（`_settle_action` 不按动作分家）。
-        self._action_requests[request_id] = (
-            "bag", self.backpack.selection_revision())
-        self._schedule_flight(request_id, key, slot_layout.backpack_slot_rect(self.screen, ui_index),
-                  self._entry_target(params, key))
-
-    def on_backpack_split(self, ui_index, params=None):
-        # type: (int, object) -> None
-        """**长按背包格：把这一槽的一半存进网络**（`inv_split`）。
-
-        手势由 User 2026-10-01 定：**长按**（PC 与触控同一颗按钮，不需要
-        组合键，也不需要区分左右键）。服务端那侧 `inv_split` 就是「带槽锚的
-        `inv_take`，只取一部分」，因此**核账与 `_send_take` 完全相同**——
-        发之前重读那一格、对服务端快照核指纹与槽版本、核对不过是等待同步。
-        这里不另写一套：分开的代价是迟早有一份忘了重读。
-
-        **先选中再取**：`pending_take` 读的是选中那一格。选中之后若那一格
-        已经空了，`pending_take` 会返回 `None` 并清掉选中，于是这一下什么都
-        不发——与「点了一个空格」同一种结局。
-
-        **「一半」由 `pending_take(half=True)` 定义**（`该槽数量 // 2`），
-        堆叠是 1 时它给出 `None`：一件东西拆不出两半，那一下就该什么都不做，
-        而不是发一条 `count=0` 去换一张越界回执。
-
-        回执走**同一条**收尾（`_settle_action` 不按动作分家）：成与不成都清
-        选中，因为这半槽已经进网络了／那一次意图已经被服务端答复过了。
-        """
-        if self.closed or self.backpack is None:
-            return
-        client = self.cache.client
-        if not client.has_session():
-            return
-        if self.backpack.entry(ui_index) is None:
-            return
-        if self.backpack.selected != ui_index:
-            self.backpack.select(ui_index)
-        take = self.backpack.pending_take(half=True)
-        if take is None:
-            return
-        slot, key, count = take
-        view = client.inventory_slots.get(slot)
-        if view is None or view["canonical"] != key.canonical():
-            return
-        request_id = client.send_command(
-            "inv_split",
-            expected_index_version=client.index_version,
-            key=key,
-            count=count,
-            slot=slot,
-            slot_version=view["slot_version"],
-        )
         self._action_requests[request_id] = (
             "bag", self.backpack.selection_revision())
         self._schedule_flight(request_id, key, slot_layout.backpack_slot_rect(self.screen, ui_index),
@@ -1907,8 +1957,10 @@ class TerminalListView(object):
             self._settle_action(message.result)
             router = getattr(self.screen, "slot_input", None)
             if router is not None:
+                router.watch_bag()
                 if message.result.get("status") not in (STATUS_OK, "partial"):
-                    router.notice(message.result)
+                    router.notice(message.result,
+                                  self.cache.client.action_of(message.result.get("request_id")))
                 router.settle(message.result)
         del self.receipts[:-RECEIPT_MEMORY]
         if self.receipt_sink is not None:

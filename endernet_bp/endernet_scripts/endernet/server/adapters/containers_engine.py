@@ -44,11 +44,14 @@
 由注入的替身原语覆盖，见 `endernet_tests/test_containers_engine.py`。
 """
 
+import math
+import random
 from copy import deepcopy
 
 from ...common import item_codec
 from ...common.item_codec import (
     is_empty_item,
+    item_dict_for_drop,
     item_dict_from_key,
     item_key_from_dict,
 )
@@ -68,6 +71,13 @@ from .engine_text import engine_item_data, engine_text
 #: 与 `client/ui/inventory_model.py` 的 `SLOT_COUNT` 是同一个数，
 #: 但两处各自成立——那边是界面布局，这边是服务端寻址。
 PLAYER_SLOT_COUNT = 36
+
+#: 丢出持物的抛掷，照原版按 Q：眼高往下 0.3 格生成，沿视线 0.3 格/刻，再往上 0.1，
+#: 加水平 0～0.02、竖直 ±0.1 的随机扰动。数值按 Java 版 `Player.drop` 推断，基岩版未核实。
+THROW_DROP_HEIGHT = 0.3
+THROW_SPEED = 0.3
+THROW_LIFT = 0.1
+THROW_SPREAD = 0.02
 
 #: 空槽的规范表示。写回整表时用它占位，而不是 `None`：
 #: 引擎的 `SetPlayerAllItems` 对 `None` 的行为未验证，用空气字典更保守。
@@ -336,6 +346,9 @@ class EngineItemPrimitives(object):
     只会表现为「返回 None」或「没反应」。
     """
 
+    #: 丢出时给掉落物加抛掷速度失败的次数（实体已生成，不影响结果）。
+    throw_errors = 0
+
     def _container_comp(self):
         from mod.server.extraServerApi import GetEngineCompFactory, GetLevelId
 
@@ -450,12 +463,39 @@ class EngineItemPrimitives(object):
         return rules["cheat_info"]["keep_inventory"]
 
     def drop_cursor(self, player_id, data):
-        from mod.server.extraServerApi import GetEngineCompFactory
+        """从玩家眼前抛出一叠（原版按 Q 的样子）。返回是否生成了掉落物实体。
+
+        `CreateEngineItemEntity` 给不出实体 id 就按「没生成」算，与
+        `WorldAdapter.drop_items_at` 同一口径。抛掷速度只是表现：实体已经生成，
+        `SetMotion` 再出错也不能把这次丢出改判成失败——那会让调用方以为物品
+        还在手上而重丢一次。
+        """
+        from mod.server.extraServerApi import GetDirFromRot, GetEngineCompFactory
         factory = GetEngineCompFactory()
-        pos = factory.CreatePos(player_id).GetFootPos()
+        x, y, z = factory.CreatePos(player_id).GetPos()
         dimension = factory.CreateDimension(player_id).GetEntityDimensionId()
-        item = engine_item_data(item_codec.with_engine_empty_values(data))
-        return self._player_comp(player_id).SpawnItemToLevel(item, dimension, pos)
+        item = engine_item_data(item_dict_for_drop(item_key_from_dict(data), data["count"]))
+        entity_id = self.spawn_item_entity(item, dimension, (x, y - THROW_DROP_HEIGHT, z))
+        if entity_id is None:
+            return False
+        try:
+            dx, dy, dz = GetDirFromRot(factory.CreateRot(player_id).GetRot())
+            angle = random.random() * math.pi * 2
+            spread = random.random() * THROW_SPREAD
+            factory.CreateActorMotion(entity_id).SetMotion((
+                dx * THROW_SPEED + math.cos(angle) * spread,
+                dy * THROW_SPEED + THROW_LIFT + (random.random() - random.random()) * 0.1,
+                dz * THROW_SPEED + math.sin(angle) * spread))
+        except Exception:
+            self.throw_errors += 1
+        return True
+
+    @staticmethod
+    def spawn_item_entity(item, dimension, position):
+        # type: (dict, int, tuple) -> object
+        """`ServerSystem.CreateEngineItemEntity`，没有 tooldelta 封装（同 `WorldAdapter.drop_items_at`）。"""
+        from ....tooldelta.internal import GetServer
+        return GetServer().CreateEngineItemEntity(item, dimension, position)
 
     def player_item(self, player_id, slot):
         # type: (str, int) -> object
@@ -728,20 +768,26 @@ class PlayerCursor(SlotBackedContainer):
         return self.drop_remaining()
 
     def drop_remaining(self):
+        return self.drop()
+
+    def drop(self, count=None):
+        """Drop `count` items (the whole stack by default) at the player's feet."""
         record = self.primitives.cursor_record(self.player_id)
         item = record.get("item")
         if record.get("pending") or _is_empty(item):
             return not record.get("pending")
+        count = item["count"] if count is None else min(count, item["count"])
+        rest = dict(item, count=item["count"] - count) if item["count"] > count else None
         # Journal the drop before calling the engine. An interrupted spawn is
         # ambiguous and must never be retried as another item entity.
         record = dict(self.primitives.cursor_record(self.player_id))
         record["pending"] = {"area": "drop", "identity": self.player_id}
         if not self.primitives.save_cursor(self.player_id, record):
             return False
-        dropped = self.primitives.drop_cursor(self.player_id, item)
+        dropped = self.primitives.drop_cursor(self.player_id, dict(item, count=count))
         if dropped:
             return self.primitives.save_cursor(self.player_id, {
-                "revision": record["revision"] + 1, "item": None})
+                "revision": record["revision"] + 1, "item": rest})
         if dropped is False:
             del record["pending"]
             self.primitives.save_cursor(self.player_id, record)

@@ -535,7 +535,7 @@
                 "cursor_host@endernet_container_common.cursor_host": {}
             },
             {
-                "slot_info@endernet_ui_common.terminal_slot_info": {}
+                "split_bar@endernet_container_common.split_bar": {}
             },
             {
                 "endernet_importer_overlay@endernet_universal_importer_ui.overlay_panel": {
@@ -547,6 +547,7 @@
     "craft_output_slot@endernet_windows.item_can_be_selected": {
         "$item_collection_name": "endernet_craft_output",
         "$item_count_binding": "#EnderNetCraft.output_item_count",
+        "$item_hover_text_binding": "#EnderNetCraft.output_hover_text",
         "$item_id_aux_binding": "#EnderNetCraft.output_item_id_aux",
         "$item_select_button": "#EnderNetCraft.take",
         "$item_selected_binding": "#EnderNetCraft.output_selected",
@@ -560,18 +561,19 @@
             {
                 "from_button_id": "button.menu_secondary_select",
                 "mapping_type": "pressed",
-                "to_button_id": "#EnderNetTerminal.secondary"
+                "to_button_id": "#EnderNetCraft.output_secondary"
             },
             {
                 "from_button_id": "button.menu_auto_place",
                 "mapping_type": "pressed",
-                "to_button_id": "#EnderNetTerminal.quick"
+                "to_button_id": "#EnderNetCraft.output_quick"
             }
         ]
     },
     "craft_slot@endernet_windows.item_can_be_selected": {
         "$item_collection_name": "crafting_grid",
         "$item_count_binding": "#EnderNetCraft.grid_item_count",
+        "$item_hover_text_binding": "#EnderNetCraft.grid_hover_text",
         "$item_id_aux_binding": "#EnderNetCraft.grid_item_id_aux",
         "$item_select_button": "#EnderNetCraft.grid_click",
         "$item_selected_binding": "#EnderNetCraft.grid_selected",
@@ -587,12 +589,12 @@
                 "button_up_right_of_first_refusal": true,
                 "from_button_id": "button.menu_secondary_select",
                 "mapping_type": "pressed",
-                "to_button_id": "#EnderNetTerminal.secondary"
+                "to_button_id": "#EnderNetCraft.grid_secondary"
             },
             {
                 "from_button_id": "button.menu_auto_place",
                 "mapping_type": "pressed",
-                "to_button_id": "#EnderNetTerminal.quick"
+                "to_button_id": "#EnderNetCraft.grid_quick"
             }
         ]
     },
@@ -708,7 +710,22 @@
         ]
     },
     "main@common.base_screen": {
-        "$screen_content": "crafting_terminal_panel_ui.content"
+        "$screen_background_alpha": 0.4,
+        "$screen_bg_content": "common.screen_background",
+        "$screen_content": "endernet_ui_common.screen_root",
+        "$window_content": "crafting_terminal_panel_ui.content",
+        "button_mappings": [
+            {
+                "from_button_id": "button.menu_select",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetTerminal.drop_cursor_all"
+            },
+            {
+                "from_button_id": "button.menu_secondary_select",
+                "mapping_type": "pressed",
+                "to_button_id": "#EnderNetTerminal.drop_cursor_one"
+            }
+        ]
     },
     "namespace": "crafting_terminal_panel_ui",
     "recipe_entry": {

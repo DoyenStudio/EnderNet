@@ -37,6 +37,7 @@ from endernet.server.adapters.containers_engine import (
     build_stack_limit,
 )
 from endernet.server.storage.transfer import SlotAnchor
+from endernet.server.adapters import containers_engine
 
 STONE = ResourceKey.item("minecraft:stone")
 DIRT = ResourceKey.item("minecraft:dirt")
@@ -775,31 +776,34 @@ class TestPlayerWriteDictionary(unittest.TestCase):
                     self.assertIs(primitives.set_player_item("p1", target[1], EMPTY_ITEM), receipt)
                     component.SetInvItemNum.assert_called_with(target[1], 0)
 
-    def test_dropped_cursor_uses_engine_fields_and_spawn_result(self):
+    def test_dropped_cursor_is_thrown_from_the_eyes_with_drop_fields(self):
         api = Mock()
         factory = api.GetEngineCompFactory.return_value
-        pos = (4, 65, -7)
-        factory.CreatePos.return_value.GetFootPos.return_value = pos
+        factory.CreatePos.return_value.GetPos.return_value = (4, 66.62, -7)
         factory.CreateDimension.return_value.GetEntityDimensionId.return_value = 1
-        spawn = factory.CreateItem.return_value.SpawnItemToLevel
+        api.GetDirFromRot.return_value = (0.0, 0.0, 1.0)
         primitives = EngineItemPrimitives()
         data = item_dict(STONE, 3)
         data["userData"] = {"display": {"Lore": ["样板"]}}
-        with patch.dict("sys.modules", {"mod.server.extraServerApi": api}):
-            spawn.return_value = True
+        with patch.dict("sys.modules", {"mod.server.extraServerApi": api}), patch.object(
+                EngineItemPrimitives, "spawn_item_entity", return_value="-123") as spawn:
             self.assertTrue(primitives.drop_cursor("p1", data))
             written, dimension, position = spawn.call_args.args
-            self.assertEqual((dimension, position), (1, pos))
+            self.assertEqual(dimension, 1)
+            self.assertAlmostEqual(position[1], 66.62 - containers_engine.THROW_DROP_HEIGHT)
+            # 掉落物字典用旧式键名，且空身份字段写成引擎的空值（`item_dict_for_drop`）。
+            self.assertEqual((written[b"itemName"], written[b"count"]), (STONE.name.encode("utf-8"), 3))
             self.assertEqual((written[b"customTips"], written[b"extraId"], written[b"durability"]),
                              (b"", b"", 0))
             self.assertEqual(written[b"userData"], {b"display": {b"Lore": ["样板".encode("utf-8")]}})
-            self.assertNotIn("durability", data)
-            data.update(customTips="说明", extraId="pattern", durability=7)
-            spawn.return_value = False
+            motion = factory.CreateActorMotion.return_value.SetMotion.call_args.args[0]
+            factory.CreateActorMotion.assert_called_with("-123")
+            self.assertGreater(motion[2], containers_engine.THROW_SPEED - containers_engine.THROW_SPREAD)
+            factory.CreateActorMotion.return_value.SetMotion.side_effect = RuntimeError("no motion")
+            self.assertTrue(primitives.drop_cursor("p1", data), "实体已生成，速度设不上也算丢出")
+            self.assertEqual(primitives.throw_errors, 1)
+            spawn.return_value = None
             self.assertFalse(primitives.drop_cursor("p1", data))
-            written = spawn.call_args.args[0]
-            self.assertEqual((written[b"customTips"], written[b"extraId"], written[b"durability"]),
-                             ("说明".encode("utf-8"), b"pattern", 7))
 
 
 class TestContainerWriteDictionary(unittest.TestCase):

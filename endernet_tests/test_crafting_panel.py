@@ -48,6 +48,7 @@ class BinderStub(object):
     BF_ButtonClickUp = 4
     BF_EditChanged = 5
     BF_ButtonClickDown = 6
+    BF_ButtonClickCancel = 99
     #: 11-06 起本仓库也用到这两个旗标（工厂终端的进度条与三色背景）。
     #: 取值与真引擎无关，只要求**各测试文件彼此一致**。
     BF_BindColor = 7
@@ -211,7 +212,7 @@ class Screen(object):
                                  ("endernet_order_detail", "factoric_terminal_panel_ui.order_description_window"),
                                  ("endernet_item_list_window", "endernet_windows.item_list_window"),
                                  ("endernet_select_item_window", "endernet_windows.select_item_window")):
-            path = "/terminal/" + name
+            path = slot_layout.full_path("/" + name)
             self.controls[path] = self.elements[path] = ControlStub(definition, name)
             self.controls[path].SetVisible(False)
         self._activated = True
@@ -1496,7 +1497,7 @@ class TestSlotLayoutPaths(unittest.TestCase):
     def test_scroll_view_at_finds_the_touch_branch_too(self):
         content = ControlStub()
         path = crafting_panel.RECIPE_SCROLL_PATH + "/scroll_touch/scroll_view"
-        self.screen.controls[path] = ScrollStub(content)
+        self.screen.controls[slot_layout.full_path(path)] = ScrollStub(content)
         self.assertIs(
             slot_layout.scroll_content_at(
                 self.screen, crafting_panel.RECIPE_SCROLL_PATH), content)

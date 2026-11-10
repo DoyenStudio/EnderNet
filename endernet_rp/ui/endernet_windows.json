@@ -743,6 +743,7 @@
         "type": "panel",
         "$item_collection_name|default": "endernet_item_list",
         "$item_count_binding|default": "#EnderNetItemList.item_count",
+        "$item_hover_text_binding|default": "#EnderNetItemList.hover_text",
         "$item_id_aux_binding|default": "#EnderNetItemList.item_id_aux",
         "$item_select_button|default": "#EnderNetItemList.select",
         "$item_selected_binding|default": "#EnderNetItemList.selected",
@@ -776,7 +777,7 @@
                         "100%+-2px",
                         "100%+-2px"
                     ],
-                    "layer": 1,
+                    "layer": 2,
                     "property_bag": {
                         "#item_id_aux": 0
                     },
@@ -792,9 +793,38 @@
                 }
             },
             {
+                "durability@common.durability_bar": {
+                    "ignored": false,
+                    "layer": 3,
+                    "bindings": [
+                        {
+                            "binding_name_override": "#touch_progress_bar_visible",
+                            "binding_collection_name": "$item_collection_name",
+                            "binding_condition": "always_when_visible",
+                            "binding_type": "collection",
+                            "binding_name": "#item_durability_visible"
+                        },
+                        {
+                            "binding_name_override": "#progress_bar_total_amount",
+                            "binding_collection_name": "$item_collection_name",
+                            "binding_condition": "always_when_visible",
+                            "binding_type": "collection",
+                            "binding_name": "#item_durability_total_amount"
+                        },
+                        {
+                            "binding_name_override": "#progress_bar_current_amount",
+                            "binding_collection_name": "$item_collection_name",
+                            "binding_condition": "always_when_visible",
+                            "binding_type": "collection",
+                            "binding_name": "#item_durability_current_amount"
+                        }
+                    ]
+                }
+            },
+            {
                 "selected_frame": {
                     "type": "image",
-                    "layer": 1,
+                    "layer": 2,
                     "visible": false,
                     "texture": "textures/ui/endernet/slots_frame",
                     "bindings": [
@@ -841,7 +871,7 @@
                     "$pressed_button_name": "$item_select_button",
                     "$pressed_texture": "",
                     "$texture_layer": 2,
-                    "layer": 2,
+                    "layer": 1,
                     "button_mappings": "$slot_mappings",
                     "default_control": "default",
                     "hover_control": "hover",
@@ -858,7 +888,31 @@
                             "default@netease_editor_template_namespace.default": {}
                         },
                         {
-                            "hover@netease_editor_template_namespace.hover": {}
+                            "hover": {
+                                "type": "panel",
+                                "controls": [
+                                    {
+                                        "highlight@common.highlight_slot": {
+                                            "texture": "textures/ui/White",
+                                            "alpha": 0.4
+                                        }
+                                    },
+                                    {
+                                        "hover_text@common.hover_text": {
+                                            "layer": 30,
+                                            "bindings": [
+                                                {
+                                                    "binding_name_override": "#hover_text",
+                                                    "binding_collection_name": "$item_collection_name",
+                                                    "binding_condition": "always_when_visible",
+                                                    "binding_type": "collection",
+                                                    "binding_name": "$item_hover_text_binding"
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
                         },
                         {
                             "pressed@netease_editor_template_namespace.pressed": {}
@@ -871,8 +925,8 @@
                     "type": "label",
                     "anchor_from": "bottom_right",
                     "anchor_to": "bottom_right",
-                    "layer": 2,
-                    "font_scale_factor": 0.8,
+                    "offset": [0, 1],
+                    "layer": 3,
                     "font_type": "default",
                     "shadow": true,
                     "text": "#text",

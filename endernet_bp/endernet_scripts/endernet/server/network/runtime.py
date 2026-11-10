@@ -493,7 +493,7 @@ class NetworkRuntime(object):
             return self.master.blockers()
         out = component_blockers_by_id(self.topology, self.component_id)
         if self.topology.snapshot().components.get(self.component_id) is not None:
-            out.append(BlockReason(Reason.MASTER_ABSENT, "该网络没有主控接管"))
+            out.append(BlockReason(Reason.MASTER_ABSENT, "网络中没有可用的控制器"))
         return tuple(out)
 
     def state(self):

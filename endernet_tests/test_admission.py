@@ -324,8 +324,8 @@ class TestCapacityBoundary(AdmissionFixture):
         self.assertNotIn(Reason.BANDWIDTH_OVERLOADED, codes, "域只用了 24/32，没满载")
         # 第一条原因必须自带这两个数，否则玩家无从判断。
         detail = result.reasons[0].detail
-        self.assertIn("16", detail)
-        self.assertIn("24/32", detail)
+        self.assertIn("4 u", detail)
+        self.assertIn("6 / 8 u", detail)
 
     def test_status_carries_the_numbers_the_ui_needs(self):
         records = self._fill(2)

@@ -523,34 +523,105 @@
         "layer": 80,
         "controls": [
             {
-                "hover_text@common.hover_text": {
-                    "layer": 99,
-                    "visible": false,
-                    "property_bag": {"#hover_text": ""}
-                }
-            },
-            {
                 "cursor_item@endernet_container_common.flying_item_renderer": {
                     "anchor_from": "center",
                     "anchor_to": "center",
+                    "size": [21, 21],
+                    "offset": [-1, -2],
                     "layer": 1,
                     "visible": false
+                }
+            },
+            {
+                "cursor_durability": {
+                    "type": "custom",
+                    "renderer": "progress_bar_renderer",
+                    "anchor_from": "center",
+                    "anchor_to": "center",
+                    "size": [16, 1],
+                    "offset": [-1, 5],
+                    "layer": 3,
+                    "property_bag": {
+                        "drop_shadow": true,
+                        "is_durability": true,
+                        "round_value": true
+                    },
+                    "bindings": [
+                        {
+                            "binding_name": "#EnderNetTerminal.cursor_durability_visible",
+                            "binding_name_override": "#touch_progress_bar_visible",
+                            "binding_condition": "always"
+                        },
+                        {
+                            "binding_name": "#EnderNetTerminal.cursor_durability_total",
+                            "binding_name_override": "#progress_bar_total_amount",
+                            "binding_condition": "always_when_visible"
+                        },
+                        {
+                            "binding_name": "#EnderNetTerminal.cursor_durability_current",
+                            "binding_name_override": "#progress_bar_current_amount",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ]
                 }
             },
             {
                 "cursor_count": {
                     "type": "label",
                     "anchor_from": "center",
-                    "anchor_to": "top_left",
-                    "offset": [-6, 1],
-                    "size": [16, 9],
-                    "text_alignment": "right",
-                    "font_size": "small",
+                    "anchor_to": "bottom_right",
+                    "offset": [7, 8],
                     "shadow": true,
                     "layer": 2,
                     "visible": false,
                     "text": ""
                 }
+            },
+            {
+                "cursor_take_bar@common.inventory_hold_icon": {
+                    "bindings": [
+                        {
+                            "binding_name": "#EnderNetTerminal.take_bar_visible",
+                            "binding_name_override": "#progress_bar_visible",
+                            "binding_condition": "always"
+                        },
+                        {
+                            "binding_name": "#EnderNetTerminal.take_bar_total",
+                            "binding_name_override": "#progress_bar_total_amount",
+                            "binding_condition": "always_when_visible"
+                        },
+                        {
+                            "binding_name": "#EnderNetTerminal.take_bar_current",
+                            "binding_name_override": "#progress_bar_current_amount",
+                            "binding_condition": "always_when_visible"
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "split_bar@common.inventory_hold_icon_release": {
+        "size": [
+            15,
+            3
+        ],
+        "anchor_from": "top_left",
+        "anchor_to": "top_left",
+        "bindings": [
+            {
+                "binding_name": "#EnderNetTerminal.split_bar_visible",
+                "binding_name_override": "#touch_progress_bar_visible",
+                "binding_condition": "always"
+            },
+            {
+                "binding_name": "#EnderNetTerminal.split_bar_total",
+                "binding_name_override": "#progress_bar_total_amount",
+                "binding_condition": "always_when_visible"
+            },
+            {
+                "binding_name": "#EnderNetTerminal.split_bar_current",
+                "binding_name_override": "#progress_bar_current_amount",
+                "binding_condition": "always_when_visible"
             }
         ]
     },

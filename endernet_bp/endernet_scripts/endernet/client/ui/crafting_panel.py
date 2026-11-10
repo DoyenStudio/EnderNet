@@ -51,7 +51,7 @@ from .select_item_window import (
 from .terminal_cache import TerminalCache
 from .slot_layout import window_control
 from .widgets.window_lifecycle import hide_window
-from .terminal_panel import RecipeChoiceBindings, TerminalListView, TerminalPanelBase
+from .terminal_panel import LONG_PRESS_SECONDS, RecipeChoiceBindings, TerminalListView, TerminalPanelBase
 from .widgets import device_status
 from ..network_client import NetworkClient
 from ...common.identity import DeviceRef
@@ -438,7 +438,9 @@ class CraftingView(object):
         bag = self.screen.backpack
         view = self.screen.list_view
         if bag.selected is not None and bag.entry(bag.selected):
-            self.move_grid(index, "bag", bag.selected, True, bag.entry(bag.selected).key)
+            # 触屏长按拆出的一部分放不进来：`grid_move` 只搬整格，宁可不动也不多搬。
+            if bag.selected_count is None:
+                self.move_grid(index, "bag", bag.selected, True, bag.entry(bag.selected).key)
         elif view is not None and view.cache.model.selected_key() is not None:
             key = view.cache.model.selected_key()
             self.move_grid(index, "network", -1, True, key)
@@ -924,7 +926,7 @@ class CraftingPanel(RecipeChoiceBindings, TerminalPanelBase):
             if not self.slot_input.primary("output", 0):
                 pressed = getattr(self, "_output_pressed", None)
                 self._output_pressed = None
-                if pressed is not None and self._clock() - pressed >= 0.4 and self.craft.preview:
+                if pressed is not None and self._clock() - pressed >= LONG_PRESS_SECONDS and self.craft.preview:
                     from .number_set_window import show_number_set_window
                     show_number_set_window(self, 1, partial(self.craft.start_batch, "bag"),
                                            max_number=2304, title=u"合成次数")

@@ -41,6 +41,7 @@ from endernet_bp.endernet_scripts.endernet.client.network_client import (
 )
 from endernet_bp.endernet_scripts.endernet.client.ui import (
     backpack_model,
+    slot_layout,
     stack_size,
     template_panel,
 )
@@ -922,7 +923,7 @@ class TestSlotFrames(TemplateFixture):
             frame = Mock()
             self.grids[name] = grid
             self.frames[name] = frame
-            path = "/terminal/template_panel/" + name
+            path = slot_layout.full_path("/template_panel/" + name)
             self.screen.controls[path] = grid
             self.screen.controls[path + "_frame"] = frame
         self.cell = self.grids["outputs_grid"].asGrid.return_value.GetGridItem.return_value
@@ -953,7 +954,7 @@ class TestSlotFrames(TemplateFixture):
         self.assertEqual(1, frame.SetSize.call_count)
 
     def test_missing_frame_is_retried_when_controls_are_ready(self):
-        path = "/terminal/template_panel/outputs_grid_frame"
+        path = slot_layout.full_path("/template_panel/outputs_grid_frame")
         frame = self.screen.controls.pop(path)
         self.panel._sync_slot_frames()
         self.assertIsNone(self.panel._slot_frames_mode)

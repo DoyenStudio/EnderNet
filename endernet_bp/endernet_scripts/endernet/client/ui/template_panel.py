@@ -42,7 +42,7 @@
   （`/template_panel/template_input_slot` 等，2026-10-02）。**继承来的**那条
   交互（背包↔网络列表、整槽存入）照常飞：它走的是 `TerminalListView`，
   共用 `slot_layout` 的路子，2026-10-02 那条「一切路径都取不到」的缺陷已经
-  修好（见 `slot_layout._candidates`）。
+  修好（见 `slot_layout.full_path`）。
 - **失败原因没有显示位置**：与通用／合成终端同一处境，原因码只进
   `last_error` 与 `diagnostics()`，界面上没有控件显示它。
 - **滚动重锚缺席**：本界面的滚动控件路径同样没有运行时结论，因此
@@ -139,15 +139,14 @@ TITLE_FORMAT = u"样板配置 - %s"
 #: 结构，抄一份只会在它变化时静默取不到控件，而「取不到」在这里只表现为
 #: 「标题不写」——界面上看不出与「没接」的区别。
 #:
-#: 本界面的内容是通过 `$screen_content` **内联**进 `root_screen_panel` 的，
-#: 没有通用终端那层 `/terminal`（那台是手写的 `controls`，所以它有）；
-#: 内联之后「从基底怎么走到它」就是这一条。
+#: 本界面的内容以 `window` 挂在铺满屏幕的 `root_screen_panel` 下
+#: （`slot_layout.WINDOW_ROOT`），「从基底怎么走到它」就是这一条再加那一层。
 TITLE_PATH = "/template_panel/title"
 
 
 def title_control_path():
     # type: () -> object
-    """`<屏幕基底>/template_panel/title`；拿不到基底时返回 `None`。
+    """`<屏幕基底>/window/template_panel/title`；拿不到基底时返回 `None`。
 
     **导入放在函数里**：`tooldelta/ui/utils.py` 在**模块级**就
     `import mod.client.extraClientApi`，离线（没有引擎）时整个包导不进来
@@ -158,7 +157,7 @@ def title_control_path():
         from ....tooldelta.ui import SCREEN_BASE_PATH
     except ImportError:
         return None
-    return SCREEN_BASE_PATH + TITLE_PATH
+    return SCREEN_BASE_PATH + slot_layout.WINDOW_ROOT + TITLE_PATH
 
 #: 六个动作名，**与 `StorageService.handle` 的动作表逐字相同**。
 ACTION_MODE = "template_mode"

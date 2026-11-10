@@ -2377,8 +2377,7 @@ def receipt_result(request_id, receipt, action="transfer"):
             [
                 BlockReason(
                     Reason.CONTAINER_UNCERTAIN,
-                    "结果不确定，不得重发整批（余量位置：%s）"
-                    % (receipt.holder or "无法确认",),
+                    "无法确认物品是否转移成功，请检查背包和网络库存",
                 )
             ],
         )

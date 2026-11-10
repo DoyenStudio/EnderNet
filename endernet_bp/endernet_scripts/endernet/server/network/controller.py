@@ -177,7 +177,7 @@ def component_blockers_by_id(topology, component_id):
     """
     component = topology.snapshot().components.get(component_id)
     if component is None:
-        return [BlockReason(Reason.REBUILDING, "该网络尚未归属或已消失")]
+        return [BlockReason(Reason.REBUILDING, "网络正在刷新，请稍候")]
     return list(component.reason_list())
 
 
@@ -191,10 +191,10 @@ def component_blockers(topology, node_key):
     snapshot = topology.snapshot()
     component = snapshot.component_of(node_key)
     if component is None:
-        return [BlockReason(Reason.REBUILDING, "该位置尚未归属到任何网络")]
+        return [BlockReason(Reason.REBUILDING, "网络正在刷新，请稍候")]
     out = list(component.reason_list())
     if node_key in snapshot.pending_keys and not component.pending:
-        out.append(BlockReason(Reason.REBUILDING, "该位置正在重新归属"))
+        out.append(BlockReason(Reason.REBUILDING, "网络正在刷新，请稍候"))
     return out
 
 
@@ -213,14 +213,14 @@ def power_blocker(services, node_key):
     「没电」会让人去修供电，而真正要做的是把定义表或输入补齐。
     """
     if services is None:
-        return BlockReason(Reason.SERVICE_ABSENT, "网络服务未装配")
+        return BlockReason(Reason.SERVICE_ABSENT, "网络功能暂不可用")
     service = services.get(ServiceId.ENERGY)
     if service is None:
-        return BlockReason(Reason.SERVICE_ABSENT, "能源服务未装配")
+        return BlockReason(Reason.SERVICE_ABSENT, "网络功能暂不可用")
     if service.is_stand_in:
         return BlockReason(
             Reason.SERVICE_ABSENT,
-            "能源服务尚未实现（任务 %s）" % (service.pending_task,),
+            "网络功能暂不可用",
         )
     ok = service.power_ok(node_key)
     if ok is True:
@@ -246,32 +246,28 @@ def service_blockers(services, profile=AssemblyProfile.DEV, policy=None):
     # type: (object, str, object) -> tuple
     """网络级服务阻塞原因：计时、供能，以及正式档下的未定规则。"""
     if services is None:
-        return (BlockReason(Reason.SERVICE_ABSENT, "网络服务未装配"),)
+        return (BlockReason(Reason.SERVICE_ABSENT, "网络功能暂不可用"),)
     out = []
     for service_id in NETWORK_CRITICAL_SERVICES:
         service = services.get(service_id)
         if service is None:
-            out.append(BlockReason(Reason.SERVICE_ABSENT, "服务 %s 未装配" % (service_id,)))
+            out.append(BlockReason(Reason.SERVICE_ABSENT, "网络功能暂不可用"))
         elif service.is_stand_in:
             out.append(
                 BlockReason(
                     Reason.SERVICE_ABSENT,
-                    "服务 %s 尚未实现（任务 %s）" % (service_id, service.pending_task),
+                    "网络功能暂不可用",
                 )
             )
         elif not service.is_ready():
-            out.append(BlockReason(Reason.SERVICE_NOT_READY, "服务 %s 尚未就绪" % (service_id,)))
+            out.append(BlockReason(Reason.SERVICE_NOT_READY, "网络功能尚未就绪，请稍候"))
     if profile == AssemblyProfile.PRODUCTION and policy is not None:
         unresolved = policy.unresolved_report()
         if unresolved:
             out.append(
                 BlockReason(
                     Reason.ASSEMBLY_UNRESOLVED,
-                    "正式装配档下准入策略仍有 %d 项未定案：%s"
-                    % (
-                        len(unresolved),
-                        "、".join(str(item.get("field")) for item in unresolved),
-                    ),
+                    "网络暂不可用",
                 )
             )
     return tuple(out)
@@ -292,17 +288,17 @@ def route_blocker(services, kind):
     if service_id is None:
         return None
     if services is None:
-        return BlockReason(Reason.SERVICE_ABSENT, "网络服务未装配")
+        return BlockReason(Reason.SERVICE_ABSENT, "网络功能暂不可用")
     service = services.get(service_id)
     if service is None:
-        return BlockReason(Reason.SERVICE_ABSENT, "服务 %s 未装配" % (service_id,))
+        return BlockReason(Reason.SERVICE_ABSENT, "网络功能暂不可用")
     if service.is_stand_in:
         return BlockReason(
             Reason.SERVICE_ABSENT,
-            "服务 %s 尚未实现（任务 %s）" % (service_id, service.pending_task),
+            "网络功能暂不可用",
         )
     if not service.is_ready():
-        return BlockReason(Reason.SERVICE_NOT_READY, "服务 %s 尚未就绪" % (service_id,))
+        return BlockReason(Reason.SERVICE_NOT_READY, "网络功能尚未就绪，请稍候")
     return None
 
 
@@ -779,7 +775,7 @@ def compose_device_status(
             None,
             None,
             version=version,
-            reasons=[BlockReason(Reason.DEVICE_GONE, "实例已不存在或代次过期")],
+            reasons=[BlockReason(Reason.DEVICE_GONE, "设备已被拆除或替换，请重新打开界面")],
         )
 
     reasons = []
@@ -794,7 +790,7 @@ def compose_device_status(
     else:
         blockers = component_blockers(topology, node_key)
         if snapshot.component_of(node_key) is not None:
-            blockers.append(BlockReason(Reason.MASTER_ABSENT, "该网络没有主控接管"))
+            blockers.append(BlockReason(Reason.MASTER_ABSENT, "网络中没有可用的控制器"))
         run_state = run_state_of(tuple(blockers))
         master_instance_id = None
         master_device_id = None
@@ -804,7 +800,7 @@ def compose_device_status(
     if bandwidth.ok is not True:
         reasons.extend(bandwidth.reasons)
         if bandwidth.state == BandwidthState.UNKNOWN and not bandwidth.reasons:
-            reasons.append(BlockReason(Reason.BANDWIDTH_UNKNOWN, "带宽判定尚未确认"))
+            reasons.append(BlockReason(Reason.BANDWIDTH_UNKNOWN, "网络带宽确认中，请稍候"))
     notes.extend(bandwidth.notes)
 
     power_ok = power_state_of(services, node_key)
@@ -818,8 +814,7 @@ def compose_device_status(
             reasons.append(
                 BlockReason(
                     Reason.CONTROLLER_DOES_NOT_SERVE,
-                    "%s 不由 %s 控制：%s"
-                    % (record.device_id, master_device_id, verdict.detail),
+                    "当前控制器不支持此设备",
                 )
             )
 
@@ -944,11 +939,11 @@ class MasterController(object):
         out = component_blockers(self.topology, self.ref.node_key)
         record = self.registry.get_by_ref(self.ref)
         if record is None:
-            out.append(BlockReason(Reason.MASTER_ABSENT, "主控实例已不存在或代次过期"))
+            out.append(BlockReason(Reason.MASTER_ABSENT, "控制器已被拆除或替换"))
         elif not record.loaded:
-            out.append(BlockReason(Reason.MASTER_UNLOADED, "主控实例所在区块未加载"))
+            out.append(BlockReason(Reason.MASTER_UNLOADED, "控制器所在区块未加载"))
         if self._recovering:
-            out.append(BlockReason(Reason.MASTER_RECOVERING, "主控恢复流程尚未完成"))
+            out.append(BlockReason(Reason.MASTER_RECOVERING, "控制器正在恢复，请稍候"))
         blocker = power_blocker(self.runtime.services, self.ref.node_key)
         if blocker is not None:
             out.append(blocker)
@@ -1074,8 +1069,7 @@ class MasterController(object):
                 [
                     BlockReason(
                         Reason.WRONG_NETWORK,
-                        "目标设备属于 %s，本主控管的是 %s"
-                        % (component_id, self.component_id),
+                        "该设备已不在当前网络，请重新打开界面",
                     )
                 ],
                 version,
@@ -1088,7 +1082,7 @@ class MasterController(object):
         if record is None:
             return None, CommandResult.blocked(
                 request_id,
-                [BlockReason(Reason.MASTER_ABSENT, "主控实例已不存在或代次过期")],
+                [BlockReason(Reason.MASTER_ABSENT, "控制器已被拆除或替换")],
                 version,
             )
         if not record.loaded:
@@ -1097,7 +1091,7 @@ class MasterController(object):
                 [
                     BlockReason(
                         Reason.MASTER_UNLOADED,
-                        "主控实例所在区块未加载；这不代表它已被拆除",
+                        "控制器所在区块未加载",
                     )
                 ],
                 version,
@@ -1111,7 +1105,7 @@ class MasterController(object):
             # 连快照都取不回来，所以它照旧一律拦下。
             return None, CommandResult.blocked(
                 request_id,
-                [BlockReason(Reason.MASTER_RECOVERING, "主控恢复流程尚未完成")],
+                [BlockReason(Reason.MASTER_RECOVERING, "控制器正在恢复，请稍候")],
                 version,
             )
 
@@ -1122,7 +1116,7 @@ class MasterController(object):
                 [
                     BlockReason(
                         Reason.STALE_VERSION,
-                        "命令依据的图版本 %r，当前 %r" % (command.topology_version, version),
+                        "网络刚发生变化，请重试",
                     )
                 ],
                 version,
@@ -1154,7 +1148,7 @@ class MasterController(object):
         if target is None:
             return None, CommandResult.stale(
                 request_id,
-                [BlockReason(Reason.DEVICE_GONE, "实例已不存在或代次过期")],
+                [BlockReason(Reason.DEVICE_GONE, "设备已被拆除或替换，请重新打开界面")],
                 version,
             )
         served = self.catalog.controller_serves(record.device_id, target.device_id)
@@ -1164,8 +1158,7 @@ class MasterController(object):
                 [
                     BlockReason(
                         Reason.CONTROLLER_DOES_NOT_SERVE,
-                        "%s 不由 %s 控制：%s"
-                        % (target.device_id, record.device_id, served.detail),
+                        "当前控制器不支持此设备",
                     )
                 ],
                 version,
@@ -1181,8 +1174,7 @@ class MasterController(object):
                     [
                         BlockReason(
                             Reason.ASSEMBLY_UNRESOLVED,
-                            "正式装配档下准入策略仍有 %d 项未定案，数值不可信"
-                            % (len(unresolved),),
+                            "网络暂不可用",
                         )
                     ],
                     version,
@@ -1196,14 +1188,14 @@ class MasterController(object):
                 reasons.append(
                     BlockReason(
                         Reason.BANDWIDTH_UNKNOWN,
-                        "带宽判定尚未确认；未确认不等于可以",
+                        "网络带宽确认中，请稍候",
                     )
                 )
             elif not reasons:
                 reasons.append(
                     BlockReason(
                         Reason.BANDWIDTH_OVERLOADED,
-                        "带宽未放行（恰好满载时的口径见 R13，当前策略不予放行）",
+                        "网络带宽不足，无法操作",
                     )
                 )
             return None, CommandResult.blocked(request_id, reasons, version)

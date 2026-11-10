@@ -263,7 +263,7 @@ class PatternStack(object):
                 # 这种谁也执行不了、但结构上「合法」的样板。
                 raise _fail(
                     PatternError.SLOT_NOT_ALLOWED,
-                    u"流体不能占有序槽位（%s）" % (key.name,),
+                    u"流体不能放进合成格",
                 )
             self.slot = _grid_slot(slot)
         self.unlimited = bool(unlimited)
@@ -416,11 +416,10 @@ class PatternDefinition(object):
         if not self.inputs:
             raise _fail(
                 PatternError.EMPTY_INPUTS,
-                "样板至少要有一条输入：零输入的配方会让网络凭空生成物品"
-                "（全局约束 3：物品守恒）",
+                "样板至少需要一种输入物品",
             )
         if not self.outputs:
-            raise _fail(PatternError.EMPTY_OUTPUTS, "样板至少要有一个产物（07-01）")
+            raise _fail(PatternError.EMPTY_OUTPUTS, "样板至少需要一个产物")
         self._check_layout()
         self._check_returns()
 

@@ -6,10 +6,8 @@
 改了 JSON 只改到一处，另一处静默指向一个不存在的控件。
 
 **路径一律写成「内容区相对」的形式**（`/flying_items/flying_item`、`/inventory/backpack`），
-由 `control()` 按 `_candidates` 补前缀。**四台终端面板有两种屏幕挂法**，同
-一个控件因此在两个命名空间里（通用终端是 `/terminal/…`，另外三台是
-`SCREEN_BASE_PATH + …`）；写死其中一种，另一类面板上**每一个槽位都取不到**，
-而那是静默的——见 `_candidates` 的实测记录。
+由 `control()` 补上窗口前缀（`full_path`）。前缀只在这里拼：写错一处，那块面板上
+**每一个槽位都取不到**，而那是静默的。
 
 **矩形是「现在」的。** 每次调用都现问引擎，不缓存：滚动一下、窗口一缩放、
 背包行数一变，同一个槽位的坐标就变了。缓存下来的结果是动画飞到一个
@@ -29,15 +27,13 @@
 """
 
 #: 内容区本身。
-#: 空串＝「这一层的内容区」，由 `_candidates` 补上两种挂法各自的前缀。
+#: 空串＝「这一层的内容区」，由 `full_path` 补上窗口前缀。
 CONTENT_PATH = ""
 
-#: **通用终端那一种挂法**的内容区前缀。四台终端面板里只有它一个用：
-#: 它在 `main@common.base_screen` 的 `controls` 里显式挂了
-#: `terminal@common_terminal_panel_ui.content`，于是引擎的相对命名空间从
-#: `terminal` 开始。其余三台（合成／工厂／样板）用 `$screen_content` 把内容
-#: **直接铺在屏幕基底上**，没有这一层。详见 `_candidates`。
-CONTENT_ROOT = "/terminal"
+#: 窗口在屏幕基底下的名字（2026-11-08 起）。`root_screen_panel` 是铺满屏幕的
+#: `endernet_ui_common.screen_root`，各界面的内容区（`$window_content`）以
+#: `window` 挂在它下面，大小不变。
+WINDOW_ROOT = "/window"
 
 #: 滚动区面板。**注意它自己是 `common.scrolling_panel`（一个 panel），不是
 #: `scroll_view`**，真正的滚动控件在它下面一层，见 `SCROLL_VIEW_PATHS`。
@@ -105,34 +101,15 @@ def screen_base():
     return str(SCREEN_BASE_PATH)
 
 
-def _candidates(screen, path):
-    # type: (object, str) -> tuple
-    """`path` 是**内容区相对路径**（如 `/inventory/backpack`），返回按序试的完整路径。
+def full_path(path):
+    # type: (str) -> str
+    """内容区相对路径（如 `/inventory/backpack`）→ 完整路径 `SCREEN_BASE_PATH + /window + …`。
 
-    **四台终端面板有两种屏幕挂法，同一个控件因此在两个命名空间里**，两条都
-    在真机上量过（2026-10-02，两张面板各开着直接问引擎）：
-
-    - **通用终端**（`common_terminal_panel.json`）在 `main@common.base_screen`
-      的 `controls` 里**显式**挂了 `terminal@common_terminal_panel_ui.content`，
-      引擎的相对命名空间从 `terminal` 开始 → `/terminal/inventory/backpack`
-      命中，而 `SCREEN_BASE_PATH + …` **取不到**。
-    - **合成／工厂／样板**三台用 `main@common.base_screen` 的 `$screen_content`
-      把内容**直接铺在屏幕基底上**，没有 `terminal` 那一层，相对命名空间是空的
-      → 只有 `SCREEN_BASE_PATH + /inventory/backpack` 命中，`/terminal/…`
-      取不到。
-
-    两条候选实测**互斥**，因此「按序试、命中即用」不会选错；两条都取不到时
-    调用方拿到 `None`，与「这块面板上没有这个控件」是同一种结局（本模块不发
-    明一个第三种说法）。
-
-    **这两条是这次修的缺陷的落点**：`SCREEN_BASE_PATH` 是 2026-10-02 才引入的
-    约定（屏幕从 `common.inventory_screen_common` 换成 `common.base_screen`
-    之后，相对路径在三个新面板上全部失效），而本模块当时还在发裸的
-    `/terminal/…`，于是**每一个槽位矩形都取不到**——表现是飞行动画整个不见，
-    而不报任何错。
+    所有界面的内容区都以 `window` 挂在铺满屏幕的根面板下（`WINDOW_ROOT`），只有这一种挂法。
+    2026-11-08 之前有过两种（通用终端显式挂 `/terminal`、另外三台内联在屏幕基底上），
+    改成同一个外层面板后，旧的两条路径一并删除。
     """
-    base = screen_base()
-    return (CONTENT_ROOT + path, base + path)
+    return screen_base() + WINDOW_ROOT + path
 
 
 def _control_at(screen, path):
@@ -146,29 +123,22 @@ def _control_at(screen, path):
 
 def control(screen, path):
     # type: (object, str) -> object
-    """按**内容区相对路径**取控件（`path` 同 `_candidates`）；取不到返回 `None`。
+    """按**内容区相对路径**取控件；取不到返回 `None`。
 
-    公开给 `flying_item`：动画器手上只有路径字符串，解析（两种挂法的候选）
-    必须走同一条路，否则控件找到了、原点却按另一条候选算，图标会整块偏移。
+    公开给 `flying_item`：动画器手上只有路径字符串，解析必须走同一条路，
+    否则控件找到了、原点却按另一条路径算，图标会整块偏移。
     """
-    for candidate in _candidates(screen, path):
-        found = _control_at(screen, candidate)
-        if found is not None:
-            return found
-    return None
+    return _control_at(screen, full_path(path))
 
 
 def path_of(screen, path):
     # type: (object, str) -> object
-    """内容区相对路径 → **本界面上真正取得到的那条完整路径**；一条都不中返回 `None`。
+    """内容区相对路径 → **本界面上取得到的完整路径**；取不到返回 `None`。
 
     给「必须把路径字符串交给别的接口」的调用方用（`GetElement` 之类）。
-    与 `control` 是同一套候选，因此两边永远不会指向不同的控件。
     """
-    for candidate in _candidates(screen, path):
-        if _control_at(screen, candidate) is not None:
-            return candidate
-    return None
+    full = full_path(path)
+    return full if _control_at(screen, full) is not None else None
 
 
 def window_control(screen, name):
@@ -410,6 +380,23 @@ DEVICE_GRIDS = {
     "result": ("/template_panel/template_output_slot", 1, 1),
 }
 
+#: 设备区域归哪个面板模型：屏幕上没有这个模型，就没有这几块网格，不必去问引擎。
+DEVICE_OWNERS = {
+    "grid": "craft",
+    "output": "craft",
+    "source": "template",
+    "outputs": "template",
+    "input": "template",
+    "result": "template",
+}
+
+
+def device_grids(screen):
+    # type: (object) -> list
+    """这张屏幕实际拥有的设备网格，按 `DEVICE_GRIDS` 的固定顺序。"""
+    return [(name, DEVICE_GRIDS[name]) for name in sorted(DEVICE_GRIDS)
+            if getattr(screen, DEVICE_OWNERS[name], None) is not None]
+
 
 def slot_rect(screen, area, index):
     if area == "bag":
@@ -431,13 +418,25 @@ def slot_rect(screen, area, index):
     return (grid[0] + index % columns * width, grid[1] + index // columns * height, width, height)
 
 
+def screen_control(screen, path):
+    # type: (object, str) -> object
+    """铺满屏幕的根面板（`screen_root`）下的控件，不经窗口那一层；`path` 为空串即根面板本身。"""
+    return _control_at(screen, screen_base() + path)
+
+
+def window_rect(screen):
+    # type: (object) -> object
+    """窗口（内容区）本身的矩形；点在它外面才算「点窗外」。"""
+    return _rect(control(screen, CONTENT_PATH))
+
+
 def contains(rect, point):
     return bool(rect and point and rect[0] <= point[0] < rect[0] + rect[2]
                 and rect[1] <= point[1] < rect[1] + rect[3])
 
 
 def slot_at(screen, point):
-    """Hit-test only on input. Scroll clipping has priority over offscreen cells."""
+    """鼠标所在的格子 `(区域, 序号)`；网络区优先（被滚动裁掉的格子不算）。"""
     area = network_area_rect(screen)
     if contains(area, point):
         content = scroll_content(screen)
@@ -459,7 +458,7 @@ def slot_at(screen, point):
         return "network", -1
     groups = [("bag", BACKPACK_GRID_PATH, 9, 27, 0),
               ("bag", HOTBAR_GRID_PATH, 9, 9, 27)]
-    for name, (path, cols, count) in DEVICE_GRIDS.items():
+    for name, (path, cols, count) in device_grids(screen):
         groups.append((name, path, cols, count, 0))
     for name, path, cols, count, offset in groups:
         rect = _grid_cell_rect(screen, path, 0, cols)

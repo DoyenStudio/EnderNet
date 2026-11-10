@@ -184,6 +184,7 @@ class ScreenTests(unittest.TestCase):
             #: `ViewBinder` 上确实有它（2026-10-01 用 `dir()` 看过），
             #: 这个桩只是没抄全。
             BF_ButtonClickDown = 6
+            BF_ButtonClickCancel = 99
 
             @staticmethod
             def binding(flag, name):

@@ -150,11 +150,15 @@ class _FakeRegistry(object):
 class _FakeEvent(object):
     def __init__(self, block_name, player_id="p1"):
         self.blockName = block_name
-        self.playerId = player_id
+        self.playerId = self.entityId = player_id
         self.dimensionId = 0
         self.x = 1
         self.y = 2
         self.z = 3
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
 
 
 class _FakeQueue(object):
@@ -179,6 +183,8 @@ class BlockUseFixture(unittest.TestCase, _FakeClockFixture):
         self.binder._notify_ui = (
             lambda player_id, ui_key, params: self.pushed.append((player_id, ui_key))
         )
+        self.sneaking = set()
+        self.binder._is_sneaking = lambda player_id: player_id in self.sneaking
 
     def click(self, player_id="p1", block=None):
         self.binder._on_block_use(_FakeEvent(block or self.BLOCK, player_id))
@@ -237,6 +243,38 @@ class BlockUseFixture(unittest.TestCase, _FakeClockFixture):
         self.registry.known = True
         self.click()
         self.assertEqual(len(self.pushed), 1)
+
+    # -- 手持物品右键终端：只开界面，不放方块、不用物品（同蔚蓝科技）；下蹲交给原版 --
+
+    def test_a_click_opens_the_ui_and_cancels_both_halves(self):
+        block = _FakeEvent(self.BLOCK)
+        item = _FakeEvent(self.BLOCK)
+        self.binder._on_block_use(block)
+        self.binder._on_item_use_on(item)
+        self.assertEqual(len(self.pushed), 1)
+        self.assertTrue(block.cancelled)
+        self.assertTrue(item.cancelled, "不取消的话手里的方块会被放下")
+
+    def test_repeated_events_inside_the_window_are_cancelled_too(self):
+        self.click()
+        again = _FakeEvent(self.BLOCK)
+        self.binder._on_block_use(again)
+        self.assertEqual(len(self.pushed), 1)
+        self.assertTrue(again.cancelled)
+
+    def test_sneaking_leaves_the_vanilla_interaction_alone(self):
+        self.sneaking.add("p1")
+        block = _FakeEvent(self.BLOCK)
+        item = _FakeEvent(self.BLOCK)
+        self.binder._on_block_use(block)
+        self.binder._on_item_use_on(item)
+        self.assertEqual(self.pushed, [])
+        self.assertFalse(block.cancelled or item.cancelled)
+
+    def test_other_blocks_are_untouched(self):
+        item = _FakeEvent("minecraft:dirt")
+        self.binder._on_item_use_on(item)
+        self.assertFalse(item.cancelled)
 
 
 if __name__ == "__main__":

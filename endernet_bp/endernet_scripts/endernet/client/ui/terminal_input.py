@@ -1,15 +1,39 @@
 # coding=utf-8
 """Desktop slot gestures. Collection indices are resolved before commands queue."""
+import math
 from collections import deque
 
-from . import slot_layout
+from . import slot_layout, stack_size
 from .backpack_model import INTEGER_TYPES, engine_slot_of
-from .flying_item import ICON_SIZE
-from .terminal_hover import TerminalHover
+from .terminal_hover import ItemDetails, TerminalHover
+from .touch_input import TouchGesture
+from ...common.protocol import Reason
 from ...common.resource_key import ResourceKey
 
 
 DOUBLE_CLICK_SECONDS = 0.25
+#: 长按判定的门槛（秒）。**这是手感值，只由观感决定**，与 `flying_item` 的
+#: `FLY_SECONDS` 同一类。触屏长按背包槽 = 渐进拆堆（User 2026-11-08 定，见
+#: `touch_input`；10-01 定的「长按存半槽」随之取消）。
+#: **按秒不按帧**：界面的渲染帧率与脚本 tick、模拟 tick 都不是一回事，
+#: 按帧数计时会让同一段时长在低帧率下拖长一截。
+LONG_PRESS_SECONDS = 0.4
+#: 搬格子的命令。它们的失败（格子空了、目标满了、格子刚被别处改过）原版容器一句话都
+#: 不说，格子自己会回到真实样子；只有 `LOUD_REASONS` 那种要玩家知道的才提示。
+SLOT_ACTIONS = frozenset((
+    "slot_click", "slot_batch", "cursor_drop", "cursor_return", "grid_move", "craft_take",
+    "inv_put", "inv_take", "inv_split", "inv_merge", "inv_swap", "inv_quick_move",
+    "template_cell_put", "template_cell_clear", "template_cell_count",
+    "template_input_put", "template_input_take", "template_output_take",
+))
+LOUD_REASONS = frozenset((Reason.CONTAINER_UNCERTAIN,))
+#: 键鼠长按拿取：过长按门槛后，拿取数量从 1 涨到整叠要多久（秒）。手感值，待真机对照原版调。
+TAKE_FILL_SECONDS = 1.0
+#: 输入模式（键鼠 / 触屏）多久查一次。每次查询都要新建一个 PlayerView 组件。
+MODE_CHECK_SECONDS = 0.25
+#: 收到回执后背包按帧重读多久。引擎的背包同步比回执晚到，按分频轮询会让格子
+#: 在飞行动画落地后还停在旧样子。
+BAG_WATCH_SECONDS = 0.5
 
 
 def input_api():
@@ -20,13 +44,28 @@ def input_api():
         return None
 
 
+def hold_count(total, held):
+    # type: (int, float) -> int
+    """键鼠空手按住一格 `held` 秒时拿多少个（原版旧式长按）；不到长按门槛返回 0。"""
+    if total <= 0 or held < LONG_PRESS_SECONDS:
+        return 0
+    ratio = min(1.0, float(held - LONG_PRESS_SECONDS) / TAKE_FILL_SECONDS)
+    return max(1, int(math.ceil(total * ratio)))
+
+
+#: 持物图标照原版 `inventory_selected_icon`：21x21，中心相对鼠标偏 (-1, -2)。
+CURSOR_ICON_SIZE = 21
+CURSOR_ICON_OFFSET = (-1, -2)
+
+
 def cursor_item_rect(point):
     # type: (object) -> object
-    """Global bounds of the 16px held item, centered on the mouse hotspot."""
+    """Global bounds of the held item icon around the mouse hotspot."""
     if point is None:
         return None
-    half = ICON_SIZE / 2.0
-    return (point[0] - half, point[1] - half, ICON_SIZE, ICON_SIZE)
+    half = CURSOR_ICON_SIZE / 2.0
+    return (point[0] + CURSOR_ICON_OFFSET[0] - half, point[1] + CURSOR_ICON_OFFSET[1] - half,
+            CURSOR_ICON_SIZE, CURSOR_ICON_SIZE)
 
 
 class TerminalInput(object):
@@ -34,6 +73,7 @@ class TerminalInput(object):
         self.screen = screen
         self.shift = False
         self.space = False
+        self.ctrl = False
         self.pending = deque()
         self.active = None
         self.drag = None
@@ -46,117 +86,67 @@ class TerminalInput(object):
         self.cursor_count = None
         self.cursor_icon = None
         self.cursor_signature = None
-        self.info_target = self.info_point = self.info_label = self.info_text = None
-        self.info_time = self.notice_until = 0
+        #: 光标上画着的那一叠（耐久条读它）与长按拿取的进度，供进度条绑定读。
+        self.cursor_key = None
+        self.take_state = None
+        #: 键鼠短按拿起后、回执到之前，光标上先显示的那一叠（原版按下即拿起）。
+        self.lifted = None
+        self.host_shown = False
         self.desktop = False
-        self.hover = TerminalHover(screen)
+        self.mode_due = 0
+        self.bag_watch_until = 0
+        self.hover = TerminalHover(screen, self)
+        self.details = ItemDetails(screen, self.hover)
+        self.touch = TouchGesture(screen, LONG_PRESS_SECONDS)
 
     def reset(self):
-        self.hover.hide()
         self.pending.clear()
         self.active = self.drag = self.settling_drag = None
         self.finished_drag_button = None
-        self.shift = self.space = self.editing = False
+        self.shift = self.space = self.ctrl = self.editing = False
         self.pocket_tap = None
         self.last_quick = None
         self.last_left = None
-        if self.cursor_icon is not None:
-            self.cursor_icon.SetVisible(False)
-        if self.cursor_count is not None:
-            self.cursor_count.SetVisible(False)
+        self.lifted = None
+        for control in (self.cursor_icon, self.cursor_count):
+            if control is not None:
+                control.SetVisible(False)
         self.cursor_signature = None
-        if self.info_label is not None:
-            self.info_label.SetVisible(False)
-        self.info_text = self.info_point = self.info_target = None
-        self.notice_until = 0
+        self.cursor_key = self.take_state = None
+        self.bag_watch_until = 0
+        self.details.reset()
+        self.touch.reset()
 
-    def show_info(self, text):
-        if self.info_text == text:
-            return
-        if self.info_label is None:
-            self.info_label = slot_layout.control(self.screen, "/slot_info")
-        if self.info_label is not None:
-            if text:
-                self.info_label.asLabel().SetText(text)
-            self.info_label.SetVisible(bool(text))
-            self.info_text = text
+    def watch_bag(self):
+        # type: () -> None
+        self.bag_watch_until = self.screen._clock() + BAG_WATCH_SECONDS
 
-    def notice(self, result):
+    def watching_bag(self):
+        # type: () -> bool
+        return self.screen._clock() < self.bag_watch_until
+
+    def notice(self, result, action=None):
+        # type: (dict, object) -> None
+        """失败回执的原因进底部气泡；搬格子的失败不提示（见 `SLOT_ACTIONS`）。"""
         reasons = result.get("reasons") or ()
-        if reasons and reasons[0].get("detail"):
-            self.show_info(reasons[0]["detail"])
-            self.notice_until = self.screen._clock() + 2
-
-    def update_info(self, api, view):
-        now = self.screen._clock()
-        if self.screen.top_modal():
-            self.hover.hide()
-            self.show_info("")
+        if action in SLOT_ACTIONS and not (reasons and reasons[0].get("code") in LOUD_REASONS):
             return
-        if self.drag or self.settling_drag:
-            self.hover.hide()
-        if now < self.info_time:
-            return
-        self.info_time = now + 0.12
-        target = None
-        if self.desktop:
-            point = api.GetFocusPos()
-            # Scrolling and refreshed grids can change the item under a still mouse.
-            self.info_target = slot_layout.slot_at(self.screen, point) if point else None
-            self.info_point = point
-            target = self.info_target
-            if not self.drag and not self.settling_drag:
-                self.hover.update(target)
-        elif self.screen.backpack.selected is not None:
-            target = ("bag", self.screen.backpack.selected)
-        else:
-            key = view.cache.model.selected_key()
-            if key is not None:
-                target = ("network", view.cache.model.index_of(key))
-        if now < self.notice_until:
-            return
-        name, count = None, 0
-        if target is not None:
-            area, index = target
-            preview = self.preview_cell(area, index)
-            if preview:
-                name, count = preview["name"], preview["count"]
-            elif area == "network" and view.has_item(index):
-                row = view.rows[index]
-                name, count = row.name, row.stored
-            elif area == "bag":
-                item = self.screen.backpack.entry(index)
-                if item:
-                    name, count = item.key.name, item.count()
-            elif area in ("grid", "output", "source", "outputs", "input", "result"):
-                model = getattr(self.screen, "craft", None) if area in ("grid", "output") else getattr(self.screen, "template", None)
-                if model is not None:
-                    if area == "output":
-                        row = model.preview
-                    elif area == "grid":
-                        row = model.cell(index)
-                    else:
-                        row = model.cell(area, index)
-                    if row:
-                        name, count = row.get("name"), row.get("count", 0)
-        if name and isinstance(name, bytes):
-            name = name.decode("utf-8")
-        if name and ":" in name:
-            from .stack_size import display_name
-            name = display_name(name)
-        self.show_info(u"%s × %d" % (name, count) if name else "")
+        self.details.notice(result)
 
     def tick(self):
         # Only suppress duplicate Up callbacks for the release frame.
         self.finished_drag_button = None
         view = self.screen.list_view
         if view is None or not view.cache.client.has_session():
-            self.hover.hide()
             if self.active or self.cursor_signature or self.pending or self.drag or self.settling_drag:
                 self.reset()
             return
         api = input_api()
-        desktop = api is not None and api.GetToggleMode() == 0
+        desktop = self.desktop if api is not None else False
+        now = self.screen._clock()
+        if api is not None and now >= self.mode_due:
+            self.mode_due = now + MODE_CHECK_SECONDS
+            desktop = api.GetToggleMode() == 0
         if desktop != self.desktop:
             if self.desktop:
                 view.cache.client.send_command("cursor_return")
@@ -164,12 +154,18 @@ class TerminalInput(object):
             self.screen.backpack.clear_selection()
             view.cache.model.clear_selection()
             self.desktop = desktop
+        if not self.host_shown:
+            # 跟随光标的宿主两种输入都开着：隐藏时不跟手，触屏第一次拖动的图标会停在左上角。
             host = slot_layout.control(self.screen, "/cursor_host")
             if host is not None:
-                host.SetVisible(desktop)
-        if api is not None:
-            self.update_info(api, view)
+                host.SetVisible(True)
+                self.host_shown = True
+        self.details.tick(*self.selected_target(view))
         if not desktop:
+            self.touch.tick()
+            self.retire_distribution()
+            # 队列两种输入共用：触屏的丢出与滑动平分都是「拿到光标上」再发第二条，要在这里发。
+            self.dispatch()
             return
         hand = getattr(view.cache.client, "cursor", None)
         if self.drag and self.screen.top_modal():
@@ -182,35 +178,109 @@ class TerminalInput(object):
             if self.drag["preview"] and self.drag["revision"] != (hand or {}).get("revision"):
                 self.end_drag()
         self.retire_distribution()
+        hold = self.drag.get("hold") if self.drag else None
+        if hold is not None and len(self.drag["slots"]) > 1:
+            # 按住后划到了别的格子：那是拖动，不是长按拿取。
+            hold = self.drag["hold"] = None
+        if hold is not None:
+            hold["count"] = hold_count(hold["total"], now - hold["at"])
         distribution = self.drag or self.settling_drag
         count = distribution["remainder"] if distribution and distribution["preview"] else (hand or {}).get("count", 0)
-        if hand and hand["key"] and count and not self.screen.top_modal():
-            signature = (hand["revision"], count)
-            if self.cursor_signature != signature:
-                if self.cursor_icon is None:
-                    self.cursor_icon = slot_layout.control(self.screen, "/cursor_host/cursor_item")
-                if self.cursor_count is None:
-                    self.cursor_count = slot_layout.control(self.screen, "/cursor_host/cursor_count")
-                if self.cursor_icon is not None and self.cursor_count is not None:
-                    key = ResourceKey.from_dict(hand["key"])
-                    self.cursor_icon.asItemRenderer().SetUiItem(key.name, key.aux or 0)
-                    self.cursor_icon.SetVisible(True)
-                    self.cursor_count.asLabel().SetText(str(count))
-                    self.cursor_count.SetVisible(count > 1)
-                    self.cursor_signature = signature
-        elif self.cursor_signature is not None:
-            self.cursor_icon.SetVisible(False)
-            if self.cursor_count is not None:
-                self.cursor_count.SetVisible(False)
-            self.cursor_signature = None
+        if self.screen.top_modal():
+            self.show_cursor(None, 0)
+        elif hand and hand["key"] and count:
+            self.show_cursor(ResourceKey.from_dict(hand["key"]), count, revision=hand["revision"])
+        elif hold is not None and hold["count"]:
+            # 按够久：物品回到格子里，光标上方出现原版旧式的灰底绿色进度条。
+            self.show_cursor(None, 0, take=hold["count"], total=hold["total"])
+        elif hold is not None or self.lifted is not None:
+            lifted = hold or self.lifted
+            self.show_cursor(lifted["key"], lifted["total"])
+        else:
+            self.show_cursor(None, 0)
         self.dispatch()
 
-    def mapped_click(self, button, params):
+    def show_cursor(self, key, count, revision=None, take=0, total=0):
+        # type: (object, int, object, int, int) -> None
+        """光标上的持物图标与数量，或长按拿取的进度（`take` 非零）。
+
+        两条进度条（耐久、长按拿取）照原版用绑定取数，见 `take_bar` / `durability_bar`；
+        图标与数量直接写控件，状态没变就不碰引擎。
+        """
+        self.cursor_key = key if key is not None and count else None
+        self.take_state = (take, total) if take else None
+        signature = (revision, key, count)
+        if signature == self.cursor_signature:
+            return
+        control = slot_layout.control
+        if self.cursor_icon is None:
+            self.cursor_icon = control(self.screen, "/cursor_host/cursor_item")
+        if self.cursor_count is None:
+            self.cursor_count = control(self.screen, "/cursor_host/cursor_count")
+        if self.cursor_icon is None or self.cursor_count is None:
+            return
+        if key is not None and count:
+            self.cursor_icon.asItemRenderer().SetUiItem(key.name, key.aux or 0)
+            self.cursor_count.asLabel().SetText(str(count))
+        self.cursor_icon.SetVisible(key is not None and count > 0)
+        self.cursor_count.SetVisible(key is not None and count > 1)
+        self.cursor_signature = signature
+
+    def take_bar(self):
+        # type: () -> object
+        """键鼠长按拿取的进度 `(当前, 总量)`；没在拿时为 None。"""
+        return self.take_state
+
+    def durability_bar(self):
+        # type: () -> object
+        """光标上那一叠的耐久 `(当前, 总量)`（原版 `durability_bar_grabbed`）；不是受损工具时为 None。"""
+        visible, total, current = stack_size.durability(self.cursor_key)
+        return (current, total) if visible else None
+
+    def selected_target(self, view):
+        # type: (object) -> tuple
+        """触屏当前选中的格子与标识这次选中的记号；键鼠没有选中说明，两个都是 None。"""
+        if self.desktop:
+            return None, None
+        backpack = self.screen.backpack
+        if backpack.selected is not None:
+            entry = backpack.entry(backpack.selected)
+            return ("bag", backpack.selected), ("bag", backpack.selected, entry.key if entry else None)
+        key = view.cache.model.selected_key()
+        if key is None:
+            return None, None
+        return ("network", view.cache.model.index_of(key)), ("network", key)
+
+    def _hold_target(self, button, target):
+        # type: (str, object) -> object
+        """键鼠空手左键按住一格：记下长按拿取的物品与整叠数量；不能拿就返回 None。"""
+        view = self.screen.list_view
+        hand = view.cache.client.cursor or {}
+        if button != "left" or self.shift or self.space or hand.get("key") or target is None:
+            return None
+        area, index = target
+        key, total = None, 0
+        if area == "bag":
+            entry = self.screen.backpack.entry(index)
+            if entry is not None:
+                key, total = entry.key, entry.count()
+        elif area == "network" and view.has_item(index):
+            row = view.rows[index]
+            key, total = row.key, min(row.stored - row.reserved, view._stack_limit(row.key.name))
+        if key is None or total <= 0:
+            return None
+        return {"key": key, "total": total, "at": self.screen._clock(), "count": 0}
+
+    def mapped_click(self, button, params, target=None):
         if not self.desktop or self.screen.top_modal():
             self.end_drag()
             return
-        point = input_api().GetFocusPos()
-        target = slot_layout.slot_at(self.screen, point)
+        drag = self.drag
+        if drag and drag["button"] == button and self.dragged(drag):
+            # 拖动过的话，抬起回到最初按下的那个按钮，参数里的序号不是松手的地方。
+            target = slot_layout.slot_at(self.screen, input_api().GetFocusPos())
+        elif target is not None and target[0] == "network" and not self.screen.list_view.has_item(target[1]):
+            target = ("network", -1)
         if target:
             area, index = target
             if button == "quick" and area == "bag":
@@ -243,14 +313,23 @@ class TerminalInput(object):
         drag = self.drag
         drag["placements"], drag["preview"] = [], {}
         hand = self.screen.list_view.cache.client.cursor
-        if (len(drag["slots"]) < 2 or not hand or not hand["key"]
-                or drag["revision"] != hand["revision"] or self.active or self.pending):
+        source = drag.get("source")
+        if len(drag["slots"]) < 2 or self.active or self.pending:
             return
-        key = ResourceKey.from_dict(hand["key"])
+        if source is not None:
+            key, total = source["key"], source["count"]
+        elif not hand or not hand["key"] or drag["revision"] != hand["revision"]:
+            return
+        else:
+            key, total = ResourceKey.from_dict(hand["key"]), hand["count"]
         limit = self.screen.list_view._stack_limit(key.name)
         eligible = []
         physical = 0
         for area, index in drag["slots"]:
+            # 触屏平分：来源是选中的那一格，它自己不算目标；只分到实物格。
+            if source is not None and (area not in ("bag", "grid")
+                                       or (area == "bag" and index == source["index"])):
+                continue
             existing = 0
             if area == "bag":
                 entry = self.screen.backpack.entry(index)
@@ -270,7 +349,7 @@ class TerminalInput(object):
                 physical += 1
             eligible.append((area, index, existing))
 
-        remaining = hand["count"]
+        remaining = total
         share = 1 if drag["button"] == "right" else max(1, remaining // max(1, physical))
         for area, index, existing in eligible:
             if area in ("bag", "grid"):
@@ -278,13 +357,57 @@ class TerminalInput(object):
                 remaining -= amount
             else:
                 # Template cells copy the configuration without consuming the cursor.
-                amount = 1 if drag["button"] == "right" else hand["count"]
+                amount = 1 if drag["button"] == "right" else total
             if amount:
                 target = (area, index)
                 drag["placements"].append((area, index, amount))
                 drag["preview"][target] = {"name": key.name, "aux": key.aux,
                                            "count": existing + amount}
         drag["remainder"] = remaining
+        if source is not None and remaining < total:
+            drag["preview"][("bag", source["index"])] = {
+                "name": key.name, "aux": key.aux, "count": source["stack"] - (total - remaining)}
+
+    def begin_spread(self, start):
+        # type: (tuple) -> bool
+        """触屏：选中之后滑动，沿手指经过的格子平分选中的那一叠（User 2026-11-09）。
+
+        平分的规则与键鼠左键拖动是同一份（`plan_distribution`），差别只在来源：
+        键鼠分的是光标上的那一叠，这里分的是选中的那一格（长按拆出的就只分那些）。
+        """
+        backpack = self.screen.backpack
+        hand = self.screen.list_view.cache.client.cursor
+        entry = backpack.entry(backpack.selected) if backpack.selected is not None else None
+        if (entry is None or not hand or hand["key"] or self.active or self.pending
+                or self.screen.top_modal()):
+            return False
+        count = min(backpack.selected_count or entry.count(), entry.count())
+        self.drag = {"slots": [], "button": "left", "point": None, "start_point": None,
+                     "target": start, "row_key": None, "shift": False, "space": False,
+                     "preview": {}, "placements": [], "revision": hand["revision"], "remainder": 0,
+                     "source": {"index": backpack.selected, "key": entry.key, "count": count,
+                                "stack": entry.count()}}
+        self.visit(start)
+        return True
+
+    def finish_spread(self):
+        # type: () -> None
+        """松手：先把要分出去的数量 `take` 到光标上，再发与键鼠拖动同一条 `slot_batch`。
+
+        只拿正好分出去的那么多，没分完的留在原格；批量没落完时把光标还回背包（`settle`）。
+        """
+        drag, self.drag = self.drag, None
+        if not drag or not drag["placements"]:
+            return
+        source = drag["source"]
+        self.screen.backpack.clear_selection()
+        self.settling_drag = drag
+        queued = len(self.pending) + (self.active is not None)
+        self.click("bag", source["index"], "take", sum(amount for _, _, amount in drag["placements"]))
+        if len(self.pending) + (self.active is not None) > queued:
+            self.submit_distribution(drag)
+        else:
+            self.settling_drag = None
 
     def preview_cell(self, area, index):
         # type: (str, object) -> object
@@ -306,6 +429,12 @@ class TerminalInput(object):
             return
         self.screen.backpack.replace_from_engine()
         self.settling_drag = None
+
+    @staticmethod
+    def dragged(drag):
+        # type: (dict) -> bool
+        """这次按住之后鼠标挪过或划过了别的格子。"""
+        return len(drag["slots"]) > 1 or input_api().GetFocusPos() != drag["start_point"]
 
     def end_drag(self):
         # type: () -> None
@@ -339,6 +468,7 @@ class TerminalInput(object):
                      "target": target, "row_key": key,
                      "shift": self.shift, "space": self.space, "preview": {}, "placements": [],
                      "revision": (view.cache.client.cursor or {}).get("revision"), "remainder": 0}
+        self.drag["hold"] = self._hold_target(button, target)
         self.visit(target)
         return True
 
@@ -365,13 +495,21 @@ class TerminalInput(object):
                 view = self.screen.list_view
                 if not view.has_item(index) or view.rows[index].key != drag["row_key"]:
                     return
+            hold = drag.get("hold")
+            if hold is not None and hold["count"]:
+                # 拿玩家最后一帧看到的那个数（`tick` 里算的）。
+                self.click(area, index, "take", hold["count"])
+                return
             gesture = "quick" if drag["shift"] and button == "left" else button
             if drag["shift"] and button == "right" and area == "network":
                 gesture = "one_out"
             if drag["space"] and button == "left" and area in ("bag", "network"):
                 self.quick_region(area, index)
             else:
+                queued = (self.active, len(self.pending))
                 self.click(area, index, gesture)
+                if hold is not None and (self.active, len(self.pending)) != queued:
+                    self.lifted = hold
 
     def submit_distribution(self, drag):
         self.last_left = None
@@ -390,8 +528,10 @@ class TerminalInput(object):
                 model = self.screen.craft if area == "grid" else self.screen.template
                 entry["slot_version"] = model.revision
             placements.append(entry)
-        fields = {"config": {"revision": drag["revision"], "placements": placements}}
-        self.pending.append((fields, "batch", None, None))
+        source = drag.get("source")
+        # 触屏的批量排在 `take` 后面，持物修订到发出时才知道（见 `dispatch`）。
+        fields = {"config": {"revision": None if source else drag["revision"], "placements": placements}}
+        self.pending.append((fields, "batch", source["index"] if source else None, None))
         self.dispatch()
 
     def quick_region(self, area, index, matching=None):
@@ -418,9 +558,8 @@ class TerminalInput(object):
         if not self.desktop:
             return False
         if self.drag and self.drag["button"] == "left":
-            point = input_api().GetFocusPos()
-            if point != self.drag["start_point"] or len(self.drag["slots"]) > 1:
-                target = slot_layout.slot_at(self.screen, point)
+            if self.dragged(self.drag):
+                target = slot_layout.slot_at(self.screen, input_api().GetFocusPos())
                 if target is None:
                     self.end_drag()
                     return True
@@ -487,6 +626,73 @@ class TerminalInput(object):
         self.pending.append((fields, area, index, key))
         self.dispatch()
 
+    def drop(self, button, params=None):
+        # type: (str, object) -> None
+        """点窗外：左键丢整叠、右键丢一个（原版 `cursor_drop_all` / `cursor_drop_one`）。"""
+        api = input_api()
+        view = self.screen.list_view
+        if not self.desktop and api is not None and view is not None:
+            self.drop_selection(params)
+            return
+        if (api is None or not self.desktop or view is None or self.drag or self.settling_drag
+                or self.screen.top_modal()):
+            return
+        hand = view.cache.client.cursor
+        window = slot_layout.window_rect(self.screen)
+        if not hand or not hand["key"] or window is None or slot_layout.contains(window, api.GetFocusPos()):
+            return
+        self.pending.append(({"config": {"count": "one" if button == "right" else "all"}}, "drop", -1, None))
+        self.dispatch()
+
+    def drop_selection(self, params):
+        # type: (object) -> None
+        """触屏点窗外：丢出选中的背包格，长按拆出的就只丢那些（原版 Pocket）。"""
+        backpack = self.screen.backpack
+        if self.screen.top_modal() or backpack.selected is None or self.touch.source is not None:
+            return
+        rect = slot_layout.click_rect(params)
+        point = rect[:2] if rect else self.touch.finger()
+        window = slot_layout.window_rect(self.screen)
+        if point is None or window is None or slot_layout.contains(window, point):
+            return
+        hand = self.screen.list_view.cache.client.cursor
+        ui_index = backpack.selected
+        take = backpack.pending_take(whole=True)
+        if not hand or hand["key"] or take is None:
+            return
+        backpack.clear_selection()
+        self.take_and_drop(ui_index, take[2])
+
+    def drop_hovered(self, whole):
+        # type: (bool) -> None
+        """键鼠按 Q：丢出鼠标下那一格背包物品的一个，Ctrl+Q 丢整组（原版）。"""
+        api = input_api()
+        view = self.screen.list_view
+        if (api is None or not self.desktop or view is None or self.editing or self.drag
+                or self.settling_drag or self.screen.top_modal()):
+            return
+        target = slot_layout.slot_at(self.screen, api.GetFocusPos())
+        hand = view.cache.client.cursor
+        if target is None or target[0] != "bag" or not hand or hand["key"]:
+            return
+        entry = self.screen.backpack.entry(target[1])
+        if entry is not None:
+            self.take_and_drop(target[1], entry.count() if whole else 1)
+
+    def take_and_drop(self, ui_index, count):
+        # type: (int, int) -> None
+        """把背包这一格的 `count` 个丢出去：先 `take` 拿到空的光标上，再 `cursor_drop` 抛出。
+
+        两步都是已有的带日志事务，与键鼠持物点窗外丢出走同一条丢出命令。
+        拿到了却没丢成时把光标还回背包（见 `settle`）。
+        """
+        queued = len(self.pending) + (self.active is not None)
+        self.click("bag", ui_index, "take", count)
+        if len(self.pending) + (self.active is not None) > queued:
+            # 队列项的序号记下这一叠原本在哪一格（键鼠持物丢出时是 -1）。
+            self.pending.append(({"config": {"count": "all"}}, "drop", ui_index, None))
+            self.dispatch()
+
     def dispatch(self):
         if self.active is not None or not self.pending or self.screen.top_modal():
             return
@@ -495,9 +701,12 @@ class TerminalInput(object):
         if not hand or not client.has_session():
             return
         fields, area, index, key = self.pending.popleft()
-        if area != "batch":
+        if area == "drop" and not hand["key"]:
+            return self.dispatch()
+        if area != "batch" or fields["config"]["revision"] is None:
             fields["config"]["revision"] = hand["revision"]
-        request = client.send_command("slot_batch" if area == "batch" else "slot_click", **fields)
+        action = {"batch": "slot_batch", "drop": "cursor_drop"}.get(area, "slot_click")
+        request = client.send_command(action, **fields)
         point = input_api().GetFocusPos()
         self.active = (request, area, index, key, hand, point, fields)
 
@@ -507,16 +716,26 @@ class TerminalInput(object):
         _, area, index, key, before, point, sent = self.active
         gesture, version = sent["config"].get("gesture"), sent.get("slot_version")
         self.active = None
+        self.lifted = None
         payload = result.get("payload") or {}
         client = self.screen.list_view.cache.client
         hand = payload.get("cursor")
         if hand and (not client.cursor or hand["revision"] >= client.cursor["revision"]):
             client.cursor = hand
+        if area == "drop":
+            if result.get("status") != "ok":
+                self.pending.clear()
+                if index >= 0:
+                    # 从格子丢出是先拿到光标上再丢；没丢成就还回去，那一叠本来不在手上。
+                    client.send_command("cursor_return")
+            return
         if area == "batch":
             if result.get("status") != "ok":
                 self.pending.clear()
                 self.settling_drag = None
-                self.notice(result)
+                if index is not None:
+                    # 触屏平分是先拿到光标上再落；没落完的还回背包，触屏看不见光标。
+                    client.send_command("cursor_return")
             elif self.settling_drag:
                 for name in ("grid_revision", "template_revision"):
                     if name in payload:

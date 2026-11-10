@@ -341,9 +341,13 @@ class TestImport(Fixture):
                 raise TypeError("引擎返回了 bool")
 
         self.service.recipes = Broken()
-        result = self.import_stick()
+        result = self.import_stick(request_id="r7")
         self.assertFalse(result.is_applied())
         self.assertIn(Reason.NO_ADAPTER, self.reasons(result))
+        # 回执要对得上请求号，否则客户端的在途记录永不释放。
+        self.assertEqual(result.request_id, "r7")
+        self.assertNotIn("bool", result.reasons[0].detail)
+        self.assertIn("TypeError", self.service.last_error)
 
 
 class TestCraft(Fixture):

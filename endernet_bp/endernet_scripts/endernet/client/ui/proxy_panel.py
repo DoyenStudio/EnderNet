@@ -32,6 +32,7 @@ from ....tooldelta.ui import ToolDeltaScreen
 
 from ..device_identity import latch as identity_latch
 from ..network_client import NetworkClient
+from ...common.protocol import MSG_ERROR
 from .widgets import device_status
 from .widgets.device_status_bindings import DeviceStatusBindingsMixin
 from .widgets.window_lifecycle import close_windows
@@ -97,6 +98,8 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
         #: 发出 `session_open` 的那一帧。给「还没建起来」一个等待窗口，
         #: 超时按失败收摊（理由见 `SESSION_OPEN_GRACE_FRAMES`）。
         self._opened_at = None
+        #: 服务端拒绝开会话时给的原因（`_make_refusal_handler`）；收摊时交给状态模型。
+        self._refusal = None
 
     # -- 生命周期 ------------------------------------------------------
 
@@ -148,6 +151,7 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
         # 就会推一份总体状态。
         self.status = device_status.DeviceStatusModel(device_ref)
         client.on_message(self._make_status_handler(client))
+        client.on_message(self._make_refusal_handler())
         # 子类的模型与收包回调（11-07）。**在 `open_session` 之前**：会话一开
         # 服务端下一帧就会推配置，晚一步那一份就永远补不上了（与上面那条
         # 「先挂收包再开会话」同一条理由）。
@@ -161,22 +165,26 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
         # type: () -> bool
         """会话这一侧出了问题就收摊，返回是否已经收摊。三种情况：
 
-        - **建起来了又没了**（服务端判死、TTL 回收）→ 立刻收摊；
-        - **一直没建起来**（`session_open` 被拒，或回包没到）→ 等
-          `SESSION_OPEN_GRACE_FRAMES` 帧，超了按失败收摊；
+        - **建起来了又没了**（服务端判死、TTL 回收、网络关闭）→ 立刻收摊；
+        - **一直没建起来** → 服务端回了拒绝（空会话号的 `error`，原因见
+          `_make_refusal_handler`）就下一帧收摊；回包一直没到就等
+          `SESSION_OPEN_GRACE_FRAMES` 帧再收摊；
         - **还在正常用** → 什么都不做。
 
-        第二种是必需的：被拒时服务端回的是**空会话号**的 `error`，客户端
-        `drop_session()` 之后 `has_session()` 与「刚发出去还没回」一模一样。
-        不收摊的话 `self.client` 永远不是 `None`，`OnTicking` 再也不去认领
-        身份——屏就此卡死，连**下一次右键**推来的身份都没人接。
+        第二种是必需的：被拒时客户端 `drop_session()` 之后 `has_session()` 与
+        「刚发出去还没回」一模一样。不收摊的话 `self.client` 永远不是 `None`，
+        `OnTicking` 再也不去认领身份——屏就此卡死，连**下一次右键**推来的身份
+        都没人接。
+
+        **收摊只断连接，不清状态**（2026-11-09）：状态栏改为一直显示「离线」，
+        详情弹窗照常开着、列出服务端给的原因（规格「离线时照样能打开查看原因」）。
+        此前收摊连 `status` 一起清掉，离线设备的状态框点开后一秒左右就自己关了。
+        之前的在线结论随之作废（`mark_offline`），不会残留绿色。
 
         **不自动重开**：那是一次新决定（可能立刻因距离/维度复核失败，次数
         也属未定的量），与 D-08 的「面板不自救」同一条口径。收摊之后
-        `self.client` 归 `None`，`OnTicking` 回到「等身份」那一支；latch 里
-        那条已经被取走，于是屏安静地停住——状态栏随之隐藏（`status` 置回
-        `None`，`visible()` 因此为假），**不会残留一个绿色的「在线」**。
-        玩家关掉重开（或再右键一次）就会拿到一条新身份。
+        `self.client` 归 `None`，`OnTicking` 回到「等身份」那一支；玩家关掉重开
+        （或再右键一次）就会拿到一条新身份和一个新的状态模型。
         """
         if self.client is None:
             return True
@@ -184,14 +192,35 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
             self._had_session = True
             self._opened_at = None
             return False
-        if self._had_session:
-            self._release()
-            return True
-        if (self._opened_at is not None
-                and self._ticks - self._opened_at > SESSION_OPEN_GRACE_FRAMES):
-            self._release()
+        if (self._had_session or self._refusal is not None
+                or (self._opened_at is not None
+                    and self._ticks - self._opened_at > SESSION_OPEN_GRACE_FRAMES)):
+            self._go_offline()
             return True
         return False
+
+    def _make_refusal_handler(self):
+        # type: () -> object
+        """服务端拒绝开会话（空会话号的 `error`）时记下原因，供离线详情显示。"""
+        status = self.status
+
+        def on_refusal(envelope, message):
+            # type: (object, object) -> None
+            if message is None or message.kind != MSG_ERROR or envelope.session_id:
+                return
+            if self.status is status and not self._had_session:
+                self._refusal = ({"code": message.code, "detail": message.detail},)
+
+        return on_refusal
+
+    def _go_offline(self):
+        # type: () -> None
+        """断开会话，状态模型留下并标成离线。"""
+        status, reasons = self.status, self._refusal or ()
+        self._drop_client()
+        if status is not None:
+            status.mark_offline(reasons)
+            self.status = status
 
     def _keepalive(self):
         # type: () -> None
@@ -212,17 +241,23 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
 
     def _release(self):
         # type: () -> None
-        """收尾：注销端口、丢回调、关会话、把两个类属性置回安全值。
+        """关屏收尾：断开会话，并把状态也置回安全值。**幂等**。"""
+        self._drop_client()
+        self.status = None
+
+    def _drop_client(self):
+        # type: () -> None
+        """注销端口、丢回调、关会话，`client` 置回 `None`（于是还能认领下一条身份）。
 
         **幂等**：`OnDestroy` 与 `_session_lost` 都可能走到这里。
         """
         close_windows(self)
         client = self.client
         self.client = None
-        self.status = None
         self._detach_models()
         self._had_session = False
         self._opened_at = None
+        self._refusal = None
         if client is None:
             return
         client.port.unlisten()

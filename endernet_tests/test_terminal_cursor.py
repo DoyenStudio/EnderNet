@@ -40,13 +40,15 @@ class TestTerminalCursor(Fixture):
         self.sequence = 0
         self.recipes.recipes_for_input = lambda key: [STICK_RECIPE] if key == PLANKS else []
 
-    def click(self, region, index, gesture, key=None, revision=None):
+    def click(self, region, index, gesture, key=None, revision=None, count=None):
         self.sequence += 1
         options = {"gesture": gesture, "revision": self.hand.snapshot()["revision"]
                    if revision is None else revision}
         command = {"action": "slot_click", "target": region, "cell": index, "config": options}
         if key:
             command["key"] = key.to_dict()
+        if count is not None:
+            command["count"] = count
         if region == "bag":
             view = self.bag.slot_view(index)
             command.update(slot=index, slot_version=view["version"])
@@ -356,3 +358,38 @@ class TestTerminalCursor(Fixture):
         self.assertFalse(self.hand.return_to_player(self.bag.adapter))
         self.assertEqual(len(self.engine.drops), 1)
         self.assertEqual(self.engine.record["pending"]["area"], "drop")
+
+    def drop(self, count, revision=None):
+        self.sequence += 1
+        options = {"count": count, "revision": self.hand.snapshot()["revision"]
+                   if revision is None else revision}
+        return self.send({"action": "cursor_drop", "config": options}, "drop-%d" % self.sequence)
+
+    def test_outside_click_drops_one_or_the_whole_stack(self):
+        self.hand.write_slot(0, item_dict_from_key(STICK, 3))
+        self.assertFalse(self.drop("all", self.hand.snapshot()["revision"] - 1).is_applied())
+        self.assertTrue(self.drop("one").is_applied())
+        self.assertEqual(self.hand.snapshot()["count"], 2)
+        self.assertEqual(self.drop("all").payload["cursor"]["count"], 0)
+        self.assertEqual([(item_key_from_dict(data), data["count"]) for data in self.engine.drops],
+                         [(STICK, 1), (STICK, 2)])
+        self.assertFalse(self.drop("one").is_applied())
+        self.assertEqual(len(self.engine.drops), 2)
+
+    def test_a_lost_drop_receipt_locks_the_hand_instead_of_dropping_again(self):
+        self.hand.write_slot(0, item_dict_from_key(STICK, 3))
+        self.engine.drop_cursor = lambda owner, data: self.engine.drops.append(data)
+        self.assertFalse(self.drop("one").is_applied())
+        self.assertFalse(self.drop("one").is_applied())
+        self.assertEqual(len(self.engine.drops), 1)
+        self.assertEqual(self.engine.record["pending"]["area"], "drop")
+
+    def test_hold_take_lifts_only_the_held_count_onto_an_empty_hand(self):
+        """键鼠长按拿取（`take`）：只拿按住时长算出的数量，手上有东西时拒绝。"""
+        self.engine.slots[1] = item_dict_from_key(STICK, 10)
+        self.ok("bag", 1, "take", count=4)
+        self.assertEqual(self.hand.snapshot()["count"], 4)
+        self.assertEqual(self.engine.slots[1]["count"], 6)
+        self.assertFalse(self.click("bag", 1, "take", count=1).is_applied())
+        self.assertEqual(self.engine.slots[1]["count"], 6)
+        self.assertEqual(self.hand.snapshot()["count"], 4)

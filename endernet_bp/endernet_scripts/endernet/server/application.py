@@ -142,6 +142,8 @@ class ApplicationService(object):
             "queries": 0,
             "queries_refused": 0,
         }
+        #: 最近一次执行异常的类型与消息。玩家只看到「操作失败」，排查看这里。
+        self.last_error = ""
 
     # -- 业务命令 ------------------------------------------------------
 
@@ -181,15 +183,16 @@ class ApplicationService(object):
         try:
             return runtime.master.submit(command)
         except Exception as error:
-            # 缺陷在这里被挡下，但**不被掩埋**：原因码与异常类型都带上，
-            # 详细堆栈由调用方（引擎事件路径）记进 tick_errors。
+            # 缺陷在这里被挡下，但**不被掩埋**：玩家只看到通用说明，
+            # 异常类型与消息记进诊断的 `last_error`。
             self.stats["errors"] += 1
+            self.last_error = "%s: %s" % (type(error).__name__, error)
             return CommandResult.rejected(
                 command.request_id,
                 [
                     BlockReason(
                         Reason.INTERNAL,
-                        "处理请求时抛出 %s: %s" % (type(error).__name__, error),
+                        "操作失败，请重试",
                     )
                 ],
                 self.topology.version,
@@ -691,6 +694,7 @@ class ApplicationService(object):
                 "admission_version": self.admission.version,
                 "networks": len(self.runtimes.status_view()),
                 "assembly": self.assembly_view(),
+                "last_error": self.last_error,
             }
         )
         return report

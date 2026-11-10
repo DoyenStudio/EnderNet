@@ -57,6 +57,8 @@ R12 的手势映射**（拖拽、长按、鼠标键位与组合键、光标持�
 攒着上一个会话的 id。
 """
 
+from collections import OrderedDict
+
 from ..common.protocol import (
     MSG_COMMAND_RESULT,
     MSG_ERROR,
@@ -87,6 +89,9 @@ from ..common.resource_sync import ResourceDescriptions
 #: 现在给一个未经测量的数字是可以接受的，而它仍然标着「待定」。
 DEFAULT_QUEUE_LIMIT = 256
 
+
+#: `action_of` 记住多少条回执的动作。回执当帧就被面板取走，留几十条足够。
+RESULT_ACTION_MEMORY = 64
 
 class _CommandOutcome(object):
     """`take_command_results()` 里一个元素的最小形状：只要一个 `.result`。
@@ -442,6 +447,8 @@ class NetworkClient(object):
         #: 去重账本按 `request_id` 记账，重编一条就绕过去了（见模块 docstring）。
         #: 只增不减会漏，因此 `_forget_session` 清它。
         self._in_flight = {}
+        #: 收到回执的命令各是什么动作（`action_of`），只留最近这么多条。
+        self._result_actions = OrderedDict()
         #: 已取回、还没被界面取走的命令回执。与 `_queue` 同理：取走即出队。
         self._results = []
         self.stats = {
@@ -562,6 +569,8 @@ class NetworkClient(object):
         # `request_id` 永远不会被新命令复用，它们只会变成**永远取不走**的
         # 垃圾——而界面的「有没有命令没回来」会一直说有。
         self._in_flight = {}
+        #: 收到回执的命令各是什么动作（`action_of`），只留最近这么多条。
+        self._result_actions = OrderedDict()
         self._results = []
 
     def drop_session(self):
@@ -1062,12 +1071,28 @@ class NetworkClient(object):
         那个核对过（`_validate_result`），所以这里只按消息层的 id 记账是
         安全的——两个 id 必然一致，对不上时那条包根本进不来。
         """
-        if self._in_flight.pop(message.request_id, None) is None:
+        envelope = self._in_flight.pop(message.request_id, None)
+        if envelope is not None:
+            self._result_actions[message.request_id] = envelope.message.action
+            while len(self._result_actions) > RESULT_ACTION_MEMORY:
+                self._result_actions.popitem(last=False)
+        if envelope is None:
             if self.stats["commands"]:
                 self.stats["stale_results"] += 1
             else:
                 self.stats["unknown_results"] += 1
         self._results.append(message)
+
+    def action_of(self, request_id):
+        # type: (str) -> object
+        """这条回执对应的命令动作（`inv_put`、`slot_click`……）；不认识返回 None。
+
+        服务端报错代答的那种回执（`_CommandOutcome`）不经 `_absorb_command_result`，
+        命令还在途表里，从那里读。"""
+        if request_id in self._result_actions:
+            return self._result_actions[request_id]
+        envelope = self._in_flight.get(request_id)
+        return envelope.message.action if envelope is not None else None
 
     def take_command_results(self, limit=None):
         # type: (object) -> list

@@ -33,6 +33,12 @@ from ...common.definitions import (
 from ...common.protocol import BlockReason, DeviceStatusChanged, Reason
 
 
+def _u_text(quarters):
+    # type: (int) -> str
+    """带宽计数（四分之一 u）→ 玩家看的 u 数：4 → 1，1 → 0.25，6 → 1.5。"""
+    return ("%.2f" % (quarters / 4.0)).rstrip("0").rstrip(".")
+
+
 # -- 设备在带宽上的角色 ----------------------------------------------------
 
 
@@ -772,7 +778,7 @@ class AdmissionService(object):
         if record is None:
             return self._unknown(
                 key, None, None, BandwidthRole.UNKNOWN,
-                [BlockReason(Reason.DEVICE_GONE, "设备已不存在")],
+                [BlockReason(Reason.DEVICE_GONE, "设备已被拆除，请重新打开界面")],
             )
 
         role = role_of(self.definitions, record.device_id)
@@ -786,7 +792,7 @@ class AdmissionService(object):
         if snapshot.is_pending(key):
             return self._unknown(
                 key, record, role,
-                [BlockReason(Reason.REBUILDING, "拓扑重建中，带宽判定待确认")],
+                [BlockReason(Reason.REBUILDING, "网络正在刷新，请稍候")],
                 domain_ids=domain_ids, demand=demand,
             )
 
@@ -798,7 +804,7 @@ class AdmissionService(object):
                 reasons=[
                     BlockReason(
                         Reason.NO_BANDWIDTH_DOMAIN,
-                        "该设备没有连到任何网络基带，不属于任何负载域",
+                        "该设备没有连接到网络基带",
                     )
                 ],
             )
@@ -812,8 +818,7 @@ class AdmissionService(object):
                     [
                         BlockReason(
                             Reason.MULTI_DOMAIN_DEVICE,
-                            "该设备同时接在 %d 个互不相连的负载域上，归属待定（R02）"
-                            % (len(domain_ids),),
+                            "该设备连在多段不相连的基带上，请只连一段",
                         )
                     ],
                     domain_ids=domain_ids, demand=demand,
@@ -824,13 +829,13 @@ class AdmissionService(object):
         if admission is None:
             return self._unknown(
                 key, record, role,
-                [BlockReason(Reason.BANDWIDTH_UNKNOWN, "负载域尚未计算")],
+                [BlockReason(Reason.BANDWIDTH_UNKNOWN, "带宽计算中，请稍候")],
                 domain_ids=domain_ids, demand=demand,
             )
         if admission.capacity_quarters is UNCONFIGURED:
             return self._unknown(
                 key, record, role,
-                [BlockReason(Reason.BANDWIDTH_UNCONFIGURED, "负载域容量未配置")],
+                [BlockReason(Reason.BANDWIDTH_UNCONFIGURED, "带宽状态未知")],
                 domain_ids=domain_ids, demand=demand, admission=admission,
             )
 
@@ -847,8 +852,7 @@ class AdmissionService(object):
                 reasons=[
                     BlockReason(
                         Reason.DEFINITION_UNCONFIGURED,
-                        "%s 的带宽占用在 blocks.md 中未列出（R10）"
-                        % (record.device_id,),
+                        "带宽状态未知",
                     )
                 ],
                 notes=["该设备的占用未计入域负载，域占用是已知部分的下界"],
@@ -867,12 +871,11 @@ class AdmissionService(object):
             reasons.append(
                 BlockReason(
                     Reason.BANDWIDTH_DENIED,
-                    "本设备需求 %s，域 %s 已占用 %d/%d 个四分之一 u"
+                    "网络带宽不足：本设备需要 %s，已用 %s / %s u"
                     % (
-                        "未知" if demand is UNCONFIGURED else "%d" % (demand,),
-                        domain_ids[0],
-                        admission.used_quarters,
-                        admission.capacity_quarters,
+                        "未知" if demand is UNCONFIGURED else "%s u" % (_u_text(demand),),
+                        _u_text(admission.used_quarters),
+                        _u_text(admission.capacity_quarters),
                     ),
                 )
             )
@@ -883,13 +886,12 @@ class AdmissionService(object):
                 reasons.append(
                     BlockReason(
                         Reason.BANDWIDTH_DEMAND_EXCEEDS_DOMAIN,
-                        "单台设备需求 %d 个四分之一 u 已超过本域总容量 %d"
-                        % (demand, admission.capacity_quarters),
+                        "这台设备需要的带宽超过网络总带宽",
                     )
                 )
             elif admission.used_quarters >= admission.capacity_quarters:
                 # 真的满了：额度全部分配出去，被拒是「挤不进来」。
-                reasons.append(BlockReason(Reason.BANDWIDTH_OVERLOADED, "负载域已满载"))
+                reasons.append(BlockReason(Reason.BANDWIDTH_OVERLOADED, "网络带宽已满"))
             # 剩下的情形是「域没满，但剩余额度不够本设备用」——第一条原因里
             # 已经给了需求与占用的两个数，结论由玩家自己算得出，这里不再补
             # 一句会误导的「满载」。三种情形都拒绝，区别只在解释。
@@ -941,7 +943,7 @@ class AdmissionService(object):
                 reasons=[
                     BlockReason(
                         Reason.NO_BANDWIDTH_DOMAIN,
-                        "该设备没有连到任何网络基带，不属于任何负载域",
+                        "该设备没有连接到网络基带",
                     )
                 ],
             )

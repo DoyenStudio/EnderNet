@@ -125,10 +125,9 @@ class FlyingItemAnimator(object):
         # type: () -> object
         """解析一次控件，成败都记下（见类文档）。
 
-        **两条路径都交给 `slot_layout.control` 解析**，不自己拼字符串：四台
-        终端面板有两种屏幕挂法（见 `slot_layout._candidates`），同一个控件
-        在两个命名空间里。各解各的就会出现「图标找对了、原点按另一条候选算」，
-        而那个错的症状是**图标整块偏移**，看起来像缓动写错了。
+        **两条路径都交给 `slot_layout.control` 解析**，不自己拼字符串（窗口前缀
+        见 `slot_layout.full_path`）。各拼各的就会出现「图标找对了、原点按另一条
+        路径算」，而那个错的症状是**图标整块偏移**，看起来像缓动写错了。
         """
         if self._resolved:
             return self._control

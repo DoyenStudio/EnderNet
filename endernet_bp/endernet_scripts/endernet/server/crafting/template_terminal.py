@@ -978,7 +978,7 @@ def _factory_pattern(config, preview, policy):
     outputs = []
     occupied = config.occupied(GROUP_OUTPUTS)
     if policy.factory_output_requires_primary and occupied and occupied[0] != 0:
-        raise _invalid("工厂样板的第一格是主产物，不能空着而后面有东西")
+        raise _invalid("请把主产物放在第一个输出格")
     for index in occupied:
         entry = config.cell(GROUP_OUTPUTS, index)
         outputs.append(PatternStack(entry[0], entry[1]))
