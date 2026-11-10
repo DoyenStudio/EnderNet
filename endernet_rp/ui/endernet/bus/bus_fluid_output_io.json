@@ -1,0 +1,407 @@
+{
+    "content": {
+        "type": "panel",
+        "layer": 1,
+        "controls": [
+            {
+                "flying_item_renderer@common.flying_item_renderer": {
+                    "layer": 11,
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "container_gamepad_helpers@common.container_gamepad_helpers": {
+                    "layer": 3
+                }
+            },
+            {
+                "selected_item_details_factory@common.selected_item_details_factory": {
+                    "layer": 4,
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "item_lock_notification_factory@common.item_lock_notification_factory": {
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "root_panel@common.root_panel": {
+                    "controls": [
+                        {
+                            "bg@common.dialog_background_opaque": {
+                                "controls": [
+                                    {
+                                        "inventory_selected_icon_button@common.inventory_selected_icon_button": {}
+                                    },
+                                    {
+                                        "close@common.close_button": {
+                                            "size": [
+                                                18,
+                                                18
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "main": {
+                                            "type": "panel",
+                                            "controls": [
+                                                {
+                                                    "title": {
+                                                        "type": "image",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "size": [
+                                                            84.0,
+                                                            16.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "texture": "textures/endernet/ui/device_title_background",
+                                                        "controls": [
+                                                            {
+                                                                "title_text": {
+                                                                    "type": "label",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        3.0,
+                                                                        3.0
+                                                                    ],
+                                                                    "color": [
+                                                                        0.3058823529411765,
+                                                                        0.2549019607843137,
+                                                                        0.3137254901960784
+                                                                    ],
+                                                                    "font_scale_factor": 1.2,
+                                                                    "font_type": "default",
+                                                                    "text": "tile.endernet:bus_fluid_output_io.name",
+                                                                    "text_alignment": "center"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "stat_bar@endernet_ui_common.device_stat_bar": {
+                                                        "offset": [
+                                                            84,
+                                                            1
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "conn_band_img": {
+                                                        "type": "image",
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            0.0,
+                                                            42.0
+                                                        ],
+                                                        "size": [
+                                                            40.0,
+                                                            50.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "color": [
+                                                            0.6941176470588235,
+                                                            0.6941176470588235,
+                                                            0.6941176470588235
+                                                        ],
+                                                        "texture": "textures/ui/white_background",
+                                                        "tiled": true,
+                                                        "controls": [
+                                                            {
+                                                                "arrow_img_upper": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "offset": [
+                                                                        1.0,
+                                                                        4.0
+                                                                    ],
+                                                                    "size": [
+                                                                        34.0,
+                                                                        4.0
+                                                                    ],
+                                                                    "clip_direction": "left",
+                                                                    "clip_ratio": 0.0,
+                                                                    "texture": "textures/endernet/ui/sign_flatted_up_simple",
+                                                                    "tiled": true
+                                                                }
+                                                            },
+                                                            {
+                                                                "arrow_img_lower": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "offset": [
+                                                                        1.0,
+                                                                        43.0
+                                                                    ],
+                                                                    "size": [
+                                                                        34.0,
+                                                                        4.0
+                                                                    ],
+                                                                    "clip_direction": "left",
+                                                                    "clip_ratio": 0.0,
+                                                                    "texture": "textures/endernet/ui/sign_flatted_up_simple",
+                                                                    "tiled": true
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "fluid_slot@endernet_container_common.fluid_displayer": {
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            0,
+                                                            52
+                                                        ],
+                                                        "size": [
+                                                            100,
+                                                            30
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "outer_container_panel": {
+                                                        "type": "panel",
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            0.0,
+                                                            24.0
+                                                        ],
+                                                        "size": [
+                                                            100,
+                                                            20.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "bg_frame": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "layer": 1,
+                                                                    "color": [
+                                                                        1.0,
+                                                                        1.0,
+                                                                        1.0
+                                                                    ],
+                                                                    "texture": "textures/endernet/ui/dark_frame_with_shadow"
+                                                                }
+                                                            },
+                                                            {
+                                                                "stat_text": {
+                                                                    "type": "label",
+                                                                    "color": [
+                                                                        0.2588235294117647,
+                                                                        0.2588235294117647,
+                                                                        0.2588235294117647
+                                                                    ],
+                                                                    "font_type": "default",
+                                                                    "text": "外部容器： 未接入",
+                                                                    "text_alignment": "center"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "baseband_img": {
+                                                        "type": "panel",
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            0.0,
+                                                            90.0
+                                                        ],
+                                                        "size": [
+                                                            100.0,
+                                                            10.0
+                                                        ],
+                                                        "layer": 1,
+                                                        "controls": [
+                                                            {
+                                                                "bg": {
+                                                                    "type": "image",
+                                                                    "texture": "textures/endernet/devices/network_baseband_8_all",
+                                                                    "tiled": true
+                                                                }
+                                                            },
+                                                            {
+                                                                "frame": {
+                                                                    "type": "image",
+                                                                    "layer": 1,
+                                                                    "texture": "textures/endernet/ui/frame_rise_light"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "settings_btn@common.button": {
+                                                        "type": "button",
+                                                        "$control_alpha": 1.0,
+                                                        "$default_texture": "textures/endernet/ui/button_light_default",
+                                                        "$hover_texture": "textures/endernet/ui/button_hovered",
+                                                        "$is_new_nine_slice": false,
+                                                        "$label_color": [
+                                                            1,
+                                                            1,
+                                                            1
+                                                        ],
+                                                        "$label_font_scale_factor": 1.0,
+                                                        "$label_font_size": "large",
+                                                        "$label_layer": 3,
+                                                        "$label_offset": [
+                                                            0,
+                                                            0
+                                                        ],
+                                                        "$label_text": "Button",
+                                                        "$nine_slice_buttom": 0,
+                                                        "$nine_slice_left": 0,
+                                                        "$nine_slice_right": 0,
+                                                        "$nine_slice_top": 0,
+                                                        "$nineslice_size": [
+                                                            0,
+                                                            0,
+                                                            0,
+                                                            0
+                                                        ],
+                                                        "$pressed_button_name": "%netease_editor_template_namespace.click",
+                                                        "$pressed_texture": "textures/endernet/ui/button_pressed",
+                                                        "$texture_layer": 2,
+                                                        "anchor_from": "top_right",
+                                                        "anchor_to": "top_right",
+                                                        "offset": [
+                                                            -8.0,
+                                                            86.0
+                                                        ],
+                                                        "size": [
+                                                            20.0,
+                                                            20.0
+                                                        ],
+                                                        "button_mappings": [],
+                                                        "default_control": "default",
+                                                        "hover_control": "hover",
+                                                        "is_handle_button_move_event": true,
+                                                        "pressed_control": "pressed",
+                                                        "bindings": [
+                                                            {
+                                                                "binding_type": "collection_details",
+                                                                "binding_collection_name": "",
+                                                                "binding_condition": "always_when_visible"
+                                                            }
+                                                        ],
+                                                        "controls": [
+                                                            {
+                                                                "default@netease_editor_template_namespace.default": {}
+                                                            },
+                                                            {
+                                                                "hover@netease_editor_template_namespace.hover": {}
+                                                            },
+                                                            {
+                                                                "pressed@netease_editor_template_namespace.pressed": {}
+                                                            },
+                                                            {
+                                                                "icon": {
+                                                                    "type": "image",
+                                                                    "anchor_from": "top_middle",
+                                                                    "anchor_to": "top_middle",
+                                                                    "offset": [
+                                                                        0.0,
+                                                                        1.0
+                                                                    ],
+                                                                    "size": [
+                                                                        "100%+-4px",
+                                                                        "100%+-4px"
+                                                                    ],
+                                                                    "layer": 4,
+                                                                    "texture": "textures/endernet/ui/settings_icon_light"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "inventory@endernet_container_common.inventory": {
+                                            "anchor_from": "bottom_middle",
+                                            "anchor_to": "bottom_middle",
+                                            "offset": [
+                                                0,
+                                                -4
+                                            ]
+                                        }
+                                    }
+                                ],
+                                "layer": 0,
+                                "texture": "textures/endernet/ui/background_panel_opaque"
+                            }
+                        }
+                    ],
+                    "layer": 0,
+                    "size": [
+                        174,
+                        200
+                    ]
+                }
+            },
+            {
+                "device_status_popup@endernet_windows.device_status_window_basic": {
+                    "anchor_from": "center",
+                    "anchor_to": "center",
+                    "bindings": [
+                        {
+                            "binding_condition": "always",
+                            "binding_name": "#EnderNetDeviceStatus.popup_visible",
+                            "binding_name_override": "#visible",
+                            "binding_type": "global"
+                        }
+                    ],
+                    "layer": 40
+                }
+            },
+            {
+                "endernet_importer_overlay@endernet_universal_importer.overlay_panel": {
+                    "visible": false
+                }
+            },
+            {
+                "endernet_fluid_list_window@endernet_windows.fluid_list_window": {
+                    "visible": false,
+                    "layer": 55
+                }
+            },
+            {
+                "endernet_select_fluid_window@endernet_windows.select_fluid_window": {
+                    "visible": false,
+                    "layer": 65
+                }
+            }
+        ]
+    },
+    "main@common.inventory_screen_common": {
+        "$screen_background_alpha": 0.4,
+        "$screen_bg_content": "common.screen_background",
+        "$screen_content": "endernet_ui_common.screen_root",
+        "$window_content": "endernet_bus_fluid_output_io.content"
+    },
+    "namespace": "endernet_bus_fluid_output_io"
+}

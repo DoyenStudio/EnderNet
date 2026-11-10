@@ -375,18 +375,16 @@ _install_stubs()
 from endernet_bp.endernet_scripts.endernet.client.network_client import (  # noqa: E402
     NetworkClient,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui import (  # noqa: E402
-    backpack_model, flying_item, slot_layout, stack_size, terminal_panel,
-)
-from endernet_bp.endernet_scripts.endernet.client.ui.item_list_model import (  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal import backpack_model, panel as terminal_panel  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.shared import flying_item, slot_layout, stack_size  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal.item_list_model import (  # noqa: E402
     SORT_COUNT, SORT_NAME,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui.terminal_cache import (  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal.cache import (  # noqa: E402
     TerminalCache,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui.widgets import (  # noqa: E402
-    device_status, order_preview, order_preview_bindings,
-)
+from endernet_bp.endernet_scripts.endernet.client.ui.device_status import model as device_status  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.order_preview import model as order_preview, bindings as order_preview_bindings  # noqa: E402
 from endernet_bp.endernet_scripts.endernet.common.protocol import (  # noqa: E402
     STATUS_OK, STATUS_REJECTED, CommandResultMessage, ItemDelta, SessionReady,
     SnapshotBegin, SnapshotChunk, SnapshotEnd, SyncEnvelope, SyncError,
@@ -394,7 +392,7 @@ from endernet_bp.endernet_scripts.endernet.common.protocol import (  # noqa: E40
 from endernet_bp.endernet_scripts.endernet.common.identity import (  # noqa: E402
     DeviceRef, NodeKey,
 )
-from endernet_bp.endernet_scripts.endernet.common.resource_key import (  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.common.resources.key import (  # noqa: E402
     ResourceKey,
 )
 
@@ -469,7 +467,7 @@ class PanelFixture(unittest.TestCase):
         )
         self.panel.list_view = self.view
         # **面板与列表视图必须共用同一个背包模型。** 生产就是这么接的
-        # （`terminal_panel.py` 的 `TerminalListView(..., backpack=self.backpack)`），
+        # （`terminal/panel.py` 的 `TerminalListView(..., backpack=self.backpack)`），
         # 而夹具此前各建各的——那时看不出来，因为面板的点击路径只碰自己的那一份。
         # 2026-09-30 起 `_click` 会读背包（判断这一下是不是背包内动作），两份模型
         # 走岔的表现是「点了有反应，但反应在另一个对象上」，离线全绿、真机全错。
@@ -1901,7 +1899,7 @@ class TestQuickStore(PanelFixture):
 class TestDesktopDoubleClick(PanelFixture):
     def setUp(self):
         super().setUp()
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         self.engine_backpack((9, STONE.name, 4), (10, STONE.name, 1))
         self.router = self.panel.slot_input
         self.router.desktop = True
@@ -1994,7 +1992,7 @@ class TestDesktopHoldTake(PanelFixture):
 
     def setUp(self):
         super().setUp()
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         self.terminal_input = terminal_input
         self.engine_backpack((9, STONE.name, 40))
         self.router = self.panel.slot_input
@@ -2053,7 +2051,7 @@ class TestOutsideDrop(PanelFixture):
 
     def setUp(self):
         super().setUp()
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         self.router = self.panel.slot_input
         self.router.desktop = True
         self.client.cursor = {"key": STONE.to_dict(), "count": 5, "revision": 4}
@@ -2108,7 +2106,7 @@ class TestTouchOutsideDrop(PanelFixture):
 
     def setUp(self):
         super().setUp()
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         self.engine_backpack((9, STONE.name, 30))
         self.router = self.panel.slot_input
         self.client.cursor = {"key": None, "count": 0, "revision": 4}
@@ -2161,7 +2159,7 @@ class TestDesktopQDrop(PanelFixture):
 
     def setUp(self):
         super().setUp()
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         self.engine_backpack((9, STONE.name, 30))
         self.router = self.panel.slot_input
         self.router.desktop = True
@@ -2255,7 +2253,7 @@ class TestTouchSpread(PanelFixture):
 
     def setUp(self):
         super().setUp()
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         self.engine_backpack((9, STONE.name, 63))
         self.router = self.panel.slot_input
         self.client.cursor = {"key": None, "count": 0, "revision": 4}
@@ -2333,7 +2331,7 @@ class TestTouchSpread(PanelFixture):
 
 class TestDesktopDistribution(PanelFixture):
     def test_native_cursor_host_tracks_even_with_an_empty_hand(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         router = self.panel.slot_input
         host, icon, count, api = Mock(), Mock(), Mock(), Mock()
         controls = {"/cursor_host": host, "/cursor_host/cursor_item": icon,
@@ -2367,7 +2365,7 @@ class TestDesktopDistribution(PanelFixture):
             control.SetPosition.assert_not_called()
 
     def test_flight_endpoint_is_centered_on_the_held_icon(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         flight_rect = terminal_input.cursor_item_rect((100.5, 90))
         # 持物图标中心在鼠标左上 (1, 2)（原版 `inventory_selected_icon` 的偏移）。
         self.assertEqual(flying_item.FlyingItemAnimator._corner(flight_rect, (40, 17)), (51.5, 63))
@@ -2396,7 +2394,7 @@ class TestDesktopDistribution(PanelFixture):
                              [("bag", 0, 2), ("bag", 1, 2)])
 
     def test_right_button_bindings_place_one_per_distinct_visited_slot(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         self.engine_backpack((9, STONE.name, 4))
         self.client.cursor = {"key": STONE.to_dict(), "count": 7, "revision": 7}
         router, api = self.panel.slot_input, Mock()
@@ -2421,7 +2419,7 @@ class TestDesktopDistribution(PanelFixture):
                              [("bag", 0, 1), ("bag", 27, 1), ("bag", 1, 1)])
 
     def test_mapped_clicks_take_the_cell_from_the_binding(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         router, api = self.panel.slot_input, Mock()
         router.desktop = True
         api.GetFocusPos.return_value = (5, 5)
@@ -2436,7 +2434,7 @@ class TestDesktopDistribution(PanelFixture):
             hit.assert_not_called()
 
     def test_moving_the_mouse_rebalances_previous_slots_and_cursor_before_release(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         self.engine_backpack((9, STONE.name, 63), (10, SAND.name, 4), (11, STONE.name, 64))
         hand = {"key": STONE.to_dict(), "count": 11, "revision": 7}
         self.client.cursor = hand
@@ -2472,7 +2470,7 @@ class TestDesktopDistribution(PanelFixture):
                              [("bag", 0, 1), ("bag", 27, 3), ("bag", 3, 3)])
 
     def test_releasing_off_grid_or_opening_a_modal_discards_the_preview(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         self.client.cursor = {"key": STONE.to_dict(), "count": 6, "revision": 7}
         router = self.panel.slot_input
         router.desktop = True
@@ -2500,7 +2498,7 @@ class TestDesktopDistribution(PanelFixture):
             clicked.assert_not_called()
 
     def test_committed_layout_stays_visible_until_the_queue_settles_or_is_rejected(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         self.engine_backpack()
         router = self.panel.slot_input
         router.desktop = True
@@ -2540,7 +2538,7 @@ class TestDesktopDistribution(PanelFixture):
                 self.backpack.replace_from_engine()
 
     def test_batch_receipt_updates_queued_click_and_partial_cancels_it(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import terminal_input
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import input as terminal_input
         for partial in (False, True):
             with self.subTest(partial=partial), patch.object(terminal_input, "input_api", return_value=Mock()):
                 router = self.panel.slot_input
@@ -3728,7 +3726,7 @@ class TestEngineBindingResolution(unittest.TestCase):
         # 11-07 再加三条：挂在终端屏上的三个**辅助窗口**的输入框绑定
         # （物品选择器、流体选择器、数量窗）。它们原先由窗口对象自己用
         # 运行时注册声明——正是本条钉住的那条不通的路——因此搬到类体上
-        # （`widgets/list_window_bindings.py`）。数在终端这一侧是因为
+        # （`windows/list_bindings.py`）。数在终端这一侧是因为
         # `TerminalPanelBase` 是它们的宿主。
         # 右键按下、右键抬起、Shift 点击、悬停提示、三条耐久条：每种格子各一组（`SLOT_REGIONS`）。
         # 点窗外丢出整叠、丢出一个：两条。触屏拖出按钮后松手的取消相位（背包、快捷栏、网络行）：三条。
@@ -3796,18 +3794,18 @@ class TestJsonContract(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "terminal",
                                "common_terminal_panel.json"), encoding="utf-8") as handle:
             from ui_terminal_templates import inline_terminal_controls
             cls.panel = inline_terminal_controls(json.load(handle))
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
-                               "endernet_windows.json"), encoding="utf-8") as handle:
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common",
+                               "windows.json"), encoding="utf-8") as handle:
             cls.windows = json.load(handle)
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
-                               "endernet_container_common.json"), encoding="utf-8") as handle:
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common",
+                               "container_common.json"), encoding="utf-8") as handle:
             cls.container = json.load(handle)
-        with open(os.path.join(ROOT, "endernet_rp", "ui",
-                               "endernet_ui_common.json"), encoding="utf-8") as handle:
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common",
+                               "ui_common.json"), encoding="utf-8") as handle:
             cls.common = json.load(handle)
 
     def controls(self, node):
@@ -3856,7 +3854,7 @@ class TestJsonContract(unittest.TestCase):
         grid = self.panel["terminal_items_grid"]
         self.assertEqual(grid["collection_name"], terminal_panel.COLLECTION)
         self.assertEqual(grid["grid_item_template"],
-                         "common_terminal_panel_ui.terminal_slot")
+                         "endernet_common_terminal_panel.terminal_slot")
         binding = grid["bindings"][0]
         self.assertEqual(binding["binding_name_override"], "#maximum_grid_items")
         self.assertEqual(binding["binding_type"], "global")
@@ -3889,7 +3887,7 @@ class TestJsonContract(unittest.TestCase):
         content = self.controls(self.panel["content"])
         scroll = content["terminal_items_scroll"]
         self.assertEqual(scroll["$scroll_background_image_control"],
-                         "common_terminal_panel_ui.terminal_scroll_background")
+                         "endernet_common_terminal_panel.terminal_scroll_background")
         # 背景要显示出来，否则整块按钮根本不存在（`background` 挂着
         # `visible: $show_background`）。
         self.assertTrue(scroll["$show_background"])
@@ -3912,7 +3910,7 @@ class TestJsonContract(unittest.TestCase):
         for filename in ("common_terminal_panel.json", "crafting_terminal_panel.json",
                          "template_terminal_panel.json"):
             from ui_terminal_templates import inline_terminal_controls
-            with open(os.path.join(ROOT, "endernet_rp", "ui", filename),
+            with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "terminal", filename),
                       encoding="utf-8") as handle:
                 panel = inline_terminal_controls(json.load(handle))
             pool = flying_item.FlightPool(
@@ -4122,7 +4120,7 @@ class TestJsonContract(unittest.TestCase):
                 for key, value in entry.items()}
         energy = rows["energy_stat"]
         icon = energy["controls"][0]["icon"]["texture"]
-        self.assertEqual(icon, "textures/ui/endernet/energy_simple_icon")
+        self.assertEqual(icon, "textures/endernet/ui/energy_simple_icon")
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "endernet_rp", icon + ".png")))
         network = rows["network_conn_stat"]
         self.assertGreaterEqual(energy["offset"][1],
@@ -4147,10 +4145,12 @@ class TestPressedNamesAreActuallyClickable(unittest.TestCase):
     """
 
     def ui_files(self):
-        ui_dir = os.path.join(ROOT, "endernet_rp", "ui")
-        for name in sorted(os.listdir(ui_dir)):
-            if name.endswith(".json") and name != "_ui_defs.json":
-                yield name, os.path.join(ui_dir, name)
+        ui_dir = os.path.join(ROOT, "endernet_rp", "ui", "endernet")
+        for directory, dirnames, filenames in os.walk(ui_dir):
+            dirnames.sort()
+            for name in sorted(filenames):
+                if name.endswith(".json"):
+                    yield name, os.path.join(directory, name)
 
     def test_every_real_pressed_name_has_a_button_mapping(self):
         # 计数器与清单都放进列表：py2 没有 `nonlocal`，嵌套函数里 `+=` 会
@@ -4354,7 +4354,7 @@ class TestKeepalive(PanelFixture):
         return [item["message"]["kind"] for item in self.port.sent[since:]]
 
     def test_the_interval_is_the_same_number_as_the_proxy_panel(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import proxy_panel
+        from endernet_bp.endernet_scripts.endernet.client.ui.devices import proxy_panel
 
         self.assertEqual(proxy_panel.KEEPALIVE_FRAMES,
                          terminal_panel.KEEPALIVE_FRAMES)
@@ -4464,19 +4464,19 @@ class TestEscapeKey(PanelFixture):
         self.assertEqual([], self.removed)
 
 
-REPO_UI = os.path.join(testsupport.REPO_ROOT, "endernet_rp", "ui")
+REPO_UI = os.path.join(testsupport.REPO_ROOT, "endernet_rp", "ui", "endernet")
 
 
 class TestHoverJsonContract(unittest.TestCase):
     """每种格子的集合名与提示绑定名，JSON 与 `terminal_panel.SLOT_REGIONS` 一致。"""
 
-    FILES = ("endernet_terminal_inventory.json", "endernet_ui_common.json",
-             "crafting_terminal_panel.json", "template_terminal_panel.json")
+    FILES = ("common/terminal_inventory.json", "common/ui_common.json",
+             "terminal/crafting_terminal_panel.json", "terminal/template_terminal_panel.json")
 
     def wrappers(self):
         found = {}
         for name in self.FILES:
-            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
+            with open(os.path.join(REPO_UI, *name.split("/")), encoding="utf-8") as handle:
                 data = json.load(handle)
             for key, value in data.items():
                 if key.endswith("@endernet_windows.item_can_be_selected"):
@@ -4495,13 +4495,13 @@ class TestHoverJsonContract(unittest.TestCase):
 
     def test_count_labels_follow_vanilla(self):
         """格子数量照 `common.stack_count_label`，持物数量照 `inventory_selected_stack_size_text`。"""
-        with open(os.path.join(REPO_UI, "endernet_windows.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "windows.json"), encoding="utf-8") as handle:
             slot = json.load(handle)["item_can_be_selected"]
         label = [entry["item_count"] for entry in slot["controls"] if "item_count" in entry][0]
         self.assertNotIn("font_scale_factor", label)
         self.assertEqual((label["anchor_to"], label["offset"], label["shadow"]), ("bottom_right", [0, 1], True))
         self.assertEqual(slot["size"], [18.0, 18.0])
-        with open(os.path.join(REPO_UI, "endernet_container_common.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "container_common.json"), encoding="utf-8") as handle:
             host = json.load(handle)["cursor_host"]
         controls = dict((list(entry)[0].split("@")[0], list(entry.values())[0]) for entry in host["controls"])
         count = controls["cursor_count"]
@@ -4511,7 +4511,7 @@ class TestHoverJsonContract(unittest.TestCase):
         self.assertEqual((controls["cursor_item"]["size"], controls["cursor_item"]["offset"]), ([21, 21], [-1, -2]))
 
     def test_the_hover_state_carries_highlight_and_tooltip(self):
-        with open(os.path.join(REPO_UI, "endernet_windows.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "windows.json"), encoding="utf-8") as handle:
             slot = json.load(handle)["item_can_be_selected"]
         layers = dict((list(entry)[0], list(entry.values())[0].get("layer", 0)) for entry in slot["controls"])
         button = layers.pop("interact_btn@common.button")
@@ -4529,15 +4529,19 @@ class TestHoverJsonContract(unittest.TestCase):
 class TestFullScreenJsonContract(unittest.TestCase):
     """界面铺满屏幕（原版容器的暗底），三台有持物的终端在屏幕层接「点窗外丢出」。"""
 
-    DROPPING = ("common_terminal_panel.json", "crafting_terminal_panel.json", "template_terminal_panel.json")
+    DROPPING = ("terminal/common_terminal_panel.json", "terminal/crafting_terminal_panel.json",
+                "terminal/template_terminal_panel.json")
 
     def mains(self):
-        for name in sorted(os.listdir(REPO_UI)):
-            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
-                data = json.load(handle)
-            for key, value in data.items():
-                if key.startswith("main@common."):
-                    yield name, value
+        for directory, dirnames, filenames in os.walk(REPO_UI):
+            dirnames.sort()
+            for filename in sorted(filenames):
+                name = os.path.relpath(os.path.join(directory, filename), REPO_UI).replace(os.sep, "/")
+                with open(os.path.join(REPO_UI, *name.split("/")), encoding="utf-8") as handle:
+                    data = json.load(handle)
+                for key, value in data.items():
+                    if key.startswith("main@common."):
+                        yield name, value
 
     def test_every_screen_has_the_vanilla_backdrop(self):
         found = 0
@@ -4548,7 +4552,7 @@ class TestFullScreenJsonContract(unittest.TestCase):
         self.assertGreater(found, 4)
 
     def test_the_root_panel_fills_the_screen_and_holds_the_window(self):
-        with open(os.path.join(REPO_UI, "endernet_ui_common.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "ui_common.json"), encoding="utf-8") as handle:
             root = json.load(handle)["screen_root"]
         self.assertEqual(root["size"], ["100%", "100%"])
         names = [list(entry)[0].split("@")[0] for entry in root["controls"]]
@@ -4559,12 +4563,12 @@ class TestFullScreenJsonContract(unittest.TestCase):
             self.assertEqual(main["$screen_content"], "endernet_ui_common.screen_root", name)
             namespace, control = main["$window_content"].split(".")
             self.assertEqual(control, "content", name)
-            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
+            with open(os.path.join(REPO_UI, *name.split("/")), encoding="utf-8") as handle:
                 self.assertEqual(json.load(handle)["namespace"], namespace, name)
 
     def test_the_slot_durability_bar_does_not_need_an_ancestor_variable(self):
         """原版 `durability_bar` 的 `ignored` 只在祖先里找 `$durability_bar_required`，覆盖掉它。"""
-        with open(os.path.join(REPO_UI, "endernet_windows.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "windows.json"), encoding="utf-8") as handle:
             slot = json.load(handle)["item_can_be_selected"]
         bar = [entry["durability@common.durability_bar"] for entry in slot["controls"]
                if "durability@common.durability_bar" in entry][0]
@@ -4577,7 +4581,7 @@ class TestFullScreenJsonContract(unittest.TestCase):
 
     def test_progress_bars_inherit_vanilla_and_read_the_panel_bindings(self):
         """进度条继承原版控件，数据照原版走绑定（覆盖到 `#progress_bar_*`），名字与 `PROGRESS_BARS` 对上。"""
-        with open(os.path.join(REPO_UI, "endernet_container_common.json"), encoding="utf-8") as handle:
+        with open(os.path.join(REPO_UI, "common", "container_common.json"), encoding="utf-8") as handle:
             common = json.load(handle)
         host = dict((list(entry)[0], list(entry.values())[0]) for entry in common["cursor_host"]["controls"])
         bars = {"take_bar": host["cursor_take_bar@common.inventory_hold_icon"],
@@ -4592,7 +4596,7 @@ class TestFullScreenJsonContract(unittest.TestCase):
             self.assertIn(visible["binding_name_override"], ("#progress_bar_visible", "#touch_progress_bar_visible"))
             self.assertNotIn("#progress_bar_total_amount", bar.get("property_bag", {}), "不再靠属性袋写数")
         for name in self.DROPPING:
-            with open(os.path.join(REPO_UI, name), encoding="utf-8") as handle:
+            with open(os.path.join(REPO_UI, *name.split("/")), encoding="utf-8") as handle:
                 content = json.load(handle)["content"]
             self.assertIn("split_bar@endernet_container_common.split_bar",
                           [list(entry)[0] for entry in content["controls"]], name)

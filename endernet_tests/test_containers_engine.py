@@ -23,9 +23,9 @@ from unittest.mock import Mock, patch
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.protocol import Reason, TransferStatus
-from endernet.common.resource_key import ResourceKey
-from endernet.common.item_codec import item_key_from_dict
-from endernet.server.adapters.containers_engine import (
+from endernet.common.resources.key import ResourceKey
+from endernet.common.resources.item_codec import item_key_from_dict
+from endernet.server.adapters.containers.engine import (
     EMPTY_ITEM,
     PLAYER_SLOT_COUNT,
     EngineContainerProvider,
@@ -37,7 +37,7 @@ from endernet.server.adapters.containers_engine import (
     build_stack_limit,
 )
 from endernet.server.storage.transfer import SlotAnchor
-from endernet.server.adapters import containers_engine
+from endernet.server.adapters.containers import engine as containers_engine
 
 STONE = ResourceKey.item("minecraft:stone")
 DIRT = ResourceKey.item("minecraft:dirt")
@@ -443,7 +443,7 @@ class TestEngineItemNormalization(unittest.TestCase):
     }
 
     def test_the_measured_shape_is_normalized(self):
-        from endernet.server.adapters.containers_engine import normalize_engine_item
+        from endernet.server.adapters.containers.engine import normalize_engine_item
 
         out = normalize_engine_item(dict(self.MEASURED))
         self.assertEqual(sorted(out), [
@@ -458,19 +458,19 @@ class TestEngineItemNormalization(unittest.TestCase):
         self.assertEqual(out["newItemName"], "minecraft:stone")
 
     def test_the_normalized_shape_is_accepted_by_the_codec(self):
-        from endernet.common.item_codec import item_key_from_dict
-        from endernet.server.adapters.containers_engine import normalize_engine_item
+        from endernet.common.resources.item_codec import item_key_from_dict
+        from endernet.server.adapters.containers.engine import normalize_engine_item
 
         key = item_key_from_dict(normalize_engine_item(dict(self.MEASURED)))
         self.assertEqual(key, ResourceKey.item("minecraft:stone"))
 
     def test_a_round_trip_key_matches_the_written_key(self):
         """**这才是归一化的目的**：写进去的键与读回来的键必须是同一个。"""
-        from endernet.common.item_codec import (
+        from endernet.common.resources.item_codec import (
             item_dict_from_key,
             item_key_from_dict,
         )
-        from endernet.server.adapters.containers_engine import normalize_engine_item
+        from endernet.server.adapters.containers.engine import normalize_engine_item
 
         written = item_dict_from_key(STONE, 12)
         read_back = dict(self.MEASURED)
@@ -482,7 +482,7 @@ class TestEngineItemNormalization(unittest.TestCase):
         )
 
     def test_nonempty_adventure_restrictions_are_rejected(self):
-        from endernet.server.adapters.containers_engine import normalize_engine_item
+        from endernet.server.adapters.containers.engine import normalize_engine_item
 
         for field in ("canPlaceOn", "canDestroy"):
             with self.subTest(field=field):
@@ -494,8 +494,8 @@ class TestEngineItemNormalization(unittest.TestCase):
     def test_an_unknown_field_still_raises(self):
         """**只放行已知派生字段。** 再出现别的未知字段仍然要炸——
         「不静默丢弃潜在身份数据」这条守卫不能因为「引擎字段多」就放开。"""
-        from endernet.common.item_codec import item_key_from_dict
-        from endernet.server.adapters.containers_engine import normalize_engine_item
+        from endernet.common.resources.item_codec import item_key_from_dict
+        from endernet.server.adapters.containers.engine import normalize_engine_item
 
         weird = dict(self.MEASURED)
         weird["someNewIdentityField"] = "?"
@@ -503,7 +503,7 @@ class TestEngineItemNormalization(unittest.TestCase):
             item_key_from_dict(normalize_engine_item(weird))
 
     def test_an_empty_slot_passes_through(self):
-        from endernet.server.adapters.containers_engine import normalize_engine_item
+        from endernet.server.adapters.containers.engine import normalize_engine_item
 
         self.assertIsNone(normalize_engine_item(None))
         air = {"newItemName": "minecraft:air", "newAuxValue": 0, "count": 0,
@@ -512,7 +512,7 @@ class TestEngineItemNormalization(unittest.TestCase):
 
     def test_an_enchanted_item_keeps_its_identity(self):
         """归一化只碰「空值」，不碰真正的身份数据。"""
-        from endernet.server.adapters.containers_engine import normalize_engine_item
+        from endernet.server.adapters.containers.engine import normalize_engine_item
 
         enchanted = dict(self.MEASURED)
         enchanted["enchantData"] = [(9, 1)]
@@ -690,7 +690,7 @@ class TestEngineBoundary(unittest.TestCase):
     """
 
     ADAPTER = os.path.join(
-        testsupport.ENDERNET_ROOT, "server", "adapters", "containers_engine.py"
+        testsupport.ENDERNET_ROOT, "server", "adapters", "containers", "engine.py"
     )
 
     def test_no_module_level_engine_import(self):
@@ -712,7 +712,7 @@ class TestEngineBoundary(unittest.TestCase):
 
     def test_the_module_imports_without_an_engine(self):
         """模块本身必须能在一个没有 `mod.server.*` 的环境里导入成功。"""
-        import endernet.server.adapters.containers_engine as module
+        import endernet.server.adapters.containers.engine as module
 
         self.assertTrue(hasattr(module, "EngineItemPrimitives"))
 
@@ -1001,7 +1001,7 @@ class TestContainerTransferBroadcast(unittest.TestCase):
         original_import = builtins.__import__
 
         def import_engine(name, globals=None, locals=None, fromlist=(), level=0):
-            if level == 4 and name in modules:
+            if level == 5 and name in modules:
                 return modules[name]
             return original_import(name, globals, locals, fromlist, level)
 

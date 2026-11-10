@@ -9,6 +9,10 @@
 2. 端口种类：双方必须各有一个可对接的端口（本模块 `PortRuleSet`）；
 3. 方向：两个端口所在的面必须互相朝向（本模块 `PORT_FACE_POLICY`）。
 
+2026-11-09 网络改版另有一道**按实例**的面判定：光缆某一面被扳手切断或挂着
+面板时不连（`server/devices/catalog.py` 的 `DeviceCatalog.face_verdict`）。
+它看的是这一格方块自己的数据，不是分类，因此不在本模块的表里。
+
 **关于方向。** `plans/blocks.md` 只规定了「谁能连谁」，没有规定
 「哪一面能连」。因此 `PORT_FACE_POLICY` 里所有条目的默认值是
 **显式声明的「六面皆可」**，而不是「因为是相邻所以默认连通」——
@@ -25,6 +29,7 @@ from ...common.definitions import (
     CATEGORY_ASSEMBLY,
     CATEGORY_BASEBAND,
     CATEGORY_BUS,
+    CATEGORY_CABLE,
     CATEGORY_CONTROLLER,
     CATEGORY_ENERGY_INPUT,
     CATEGORY_MEMORY,
@@ -42,7 +47,7 @@ from ...common.identity import FACING_NAMES
 class PortKind(object):
     """端口种类。种类决定了「能不能对上」，分类决定「允不允许对上」。"""
 
-    #: 网络侧端口：基带、控制器，以及一切直接挂在基带上的设备。
+    #: 网络侧端口：基带、控制器、光缆，以及一切接基带或光缆的设备。
     NETWORK = "network"
     #: 连接器的网络侧端口。与 `NETWORK` 成对，
     #: 但它只出现在并行处理器连接器上，因此「连接器—总线」这种
@@ -128,6 +133,7 @@ class PortRuleSet(object):
     CATEGORY_PORTS = {
         CATEGORY_BASEBAND: frozenset([PortKind.NETWORK]),
         CATEGORY_CONTROLLER: frozenset([PortKind.NETWORK]),
+        CATEGORY_CABLE: frozenset([PortKind.NETWORK]),
         CATEGORY_BUS: frozenset([PortKind.NETWORK]),
         CATEGORY_TERMINAL: frozenset([PortKind.NETWORK]),
         CATEGORY_STORAGE: frozenset([PortKind.NETWORK]),
@@ -357,6 +363,9 @@ class NetworkNode(object):
 
     def is_baseband(self):
         return self.category == CATEGORY_BASEBAND
+
+    def is_cable(self):
+        return self.category == CATEGORY_CABLE
 
     def is_controller(self):
         return self.category == CATEGORY_CONTROLLER

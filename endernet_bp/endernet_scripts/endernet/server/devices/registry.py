@@ -12,6 +12,10 @@
    旧代次回来的延迟任务、请求、订阅因此无法匹配而被丢弃。
 4. **卸载不是拆除。** 区块卸载只把记录标记为未加载并卸下运行时能力，
    保留记录与存档；不得执行掉落或删除记录。
+
+记录的 `config` 是设备自带的按格数据（2026-11-09 网络改版起，光缆的切断面与面板就
+存在这里，拓扑经 `catalog.CableFaces` 读）。注册时由生命周期从世界读入，之后改它
+一律走 `update_config`。
 """
 
 from ...common.identity import (  # noqa: F401 (ChunkKey/NodeKey 仅用于 # type: 注释)
@@ -19,7 +23,11 @@ from ...common.identity import (  # noqa: F401 (ChunkKey/NodeKey 仅用于 # typ
     DeviceRef,
     GenerationAllocator,
     NodeKey,
+    is_part_ref,
 )
+
+#: `update_config` 比较时「原来没有这个键」的哨兵（与任何值都不相等，包括 None）
+_MISSING = object()
 
 
 class DeviceRecord(object):
@@ -159,6 +167,7 @@ class DeviceRegistry(object):
         self.duplicate_events = 0
         self.replacements = 0
         self.reloads = 0
+        self.conversions = 0
 
     # -- 注册 / 注销 ---------------------------------------------------
 
@@ -201,6 +210,24 @@ class DeviceRegistry(object):
         self._by_node[node_key] = record
         self._by_chunk.setdefault(node_key.chunk_key(), set()).add(node_key)
         return RegisterOutcome(record, kind, replaced)
+
+    def convert(self, node_key, device_id):
+        # type: (NodeKey, str) -> DeviceRecord
+        """同一格的面板宿主换方块（面板底座 ↔ 光缆，2026-11-10）：**同一个实例**，代次、
+        config、加载状态都不变，只改型号。返回改过的记录；没有记录、或型号本来就是它返回 None。
+
+        这是全局约束 5 里「同位置替换」的一种：挂着的面板没有离开（它们的引用是宿主位置 +
+        宿主代次 + 面名），会话与终端库存都不能因为换了方块就作废。别的设备换方块仍走
+        `register` 的 REPLACED（新代次）。随后引擎派发的旧方块移除事件按型号对不上忽略，
+        新方块的放置事件按「同位置同方块」当重复（见 `unregister_matching` / `register`）。
+        """
+        self.definitions.get(device_id)  # 未注册的标识立刻报错，不静默接受
+        record = self._by_node.get(node_key)
+        if record is None or record.device_id == device_id:
+            return None
+        record.device_id = device_id
+        self.conversions += 1
+        return record
 
     def unregister(self, node_key):
         # type: (NodeKey) -> DeviceRecord
@@ -250,6 +277,29 @@ class DeviceRegistry(object):
         self._unloaded.discard(node_key)
         return record
 
+    # -- 记录的 config -------------------------------------------------
+
+    def update_config(self, node_key, changes):
+        # type: (NodeKey, dict) -> bool
+        """改一条记录的 `config`：`changes` 里值为 None 的键删掉，其余覆盖。返回是否真的变了。
+
+        光缆的切断面与面板（阶段 C）经这里写：拓扑只读 `config`，写的一方一律走这个口子，
+        调用方再对该格 `topology.mark_dirty`。没有这条记录返回 False（什么都不改）。
+        """
+        record = self._by_node.get(node_key)
+        if record is None:
+            return False
+        changed = False
+        for key, value in changes.items():
+            if value is None:
+                if key in record.config:
+                    del record.config[key]
+                    changed = True
+            elif record.config.get(key, _MISSING) != value:
+                record.config[key] = value
+                changed = True
+        return changed
+
     # -- 加载 / 卸载 ---------------------------------------------------
 
     def mark_loaded(self, node_key):
@@ -298,7 +348,15 @@ class DeviceRegistry(object):
 
     def get_by_ref(self, ref):
         # type: (DeviceRef) -> DeviceRecord
-        """按实例代次取记录。代次不符返回 None——这是延迟任务的失效检查。"""
+        """按实例代次取记录。代次不符返回 None——这是延迟任务的失效检查。
+
+        **面板引用一律返回 None**（阶段 D）：面板不是注册表成员，只活在宿主光缆的
+        `config["parts"]` 里（13 §7）。不认识面板的路径拿到面板引用只会「查不到」，不会
+        把它当成那格光缆；要宿主就 `get_by_ref(ref.host())`，要面板经
+        `DeviceCatalog.resolve`。
+        """
+        if is_part_ref(ref):
+            return None
         record = self._by_node.get(ref.node_key)
         if record is None or record.generation != ref.generation:
             return None
@@ -358,4 +416,5 @@ class DeviceRegistry(object):
             "duplicate_events": self.duplicate_events,
             "replacements": self.replacements,
             "reloads": self.reloads,
+            "conversions": self.conversions,
         }

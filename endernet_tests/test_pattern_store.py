@@ -23,7 +23,7 @@ import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import DefinitionSet
 from endernet.common.identity import DeviceRef, NodeKey
-from endernet.common.item_codec import item_dict_from_key
+from endernet.common.resources.item_codec import item_dict_from_key
 from endernet.common.protocol import (
     STATUS_BLOCKED,
     STATUS_OK,
@@ -32,14 +32,14 @@ from endernet.common.protocol import (
     Reason,
     TransferStatus,
 )
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import FakeContainer
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import FakeContainer
 from endernet.server.crafting import patterns
-from endernet.server.crafting.execution import (
+from endernet.server.crafting.providers.execution import (
     AssemblyChamberExecution,
     NoPresetRecipeSource,
 )
-from endernet.server.crafting.store import (
+from endernet.server.crafting.providers.store import (
     PATTERN_MAX_STALE_FRAMES,
     PATTERN_REFRESH_BUDGET,
     PATTERN_SETTLE_FRAMES,
@@ -47,7 +47,7 @@ from endernet.server.crafting.store import (
     container_slot_count,
     is_pattern_provider,
 )
-from endernet.server.devices.io import (
+from endernet.server.devices.bus_io import (
     BUFFER_MEMORY,
     TEMPLATE,
     PortPolicy,
@@ -532,7 +532,7 @@ class TestPatternsDoNotLeakIntoInventory(StoreCase):
         这是对的（内容不同就是不同的东西），也是为什么它们不能进库存。"""
         one = self.store.template_item(simple_pattern(1))
         two = self.store.template_item(simple_pattern(2))
-        from endernet.common.item_codec import item_key_from_dict
+        from endernet.common.resources.item_codec import item_key_from_dict
 
         self.assertNotEqual(item_key_from_dict(one), item_key_from_dict(two))
 

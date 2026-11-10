@@ -37,11 +37,9 @@ from test_crafting_panel import (  # noqa: F401
 from endernet_bp.endernet_scripts.endernet.client.network_client import (
     NetworkClient,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui import (
-    factoric_panel,
-    stack_size,
-)
-from endernet_bp.endernet_scripts.endernet.client.ui.factoric_panel import (
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal import factoric_panel
+from endernet_bp.endernet_scripts.endernet.client.ui.shared import stack_size
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal.factoric_panel import (
     ACTION_CANCEL,
     BINDING_PREFIX,
     COLOR_DONE,
@@ -74,7 +72,7 @@ from endernet_bp.endernet_scripts.endernet.common.protocol import (
     VIEW_ORDER,
 )
 
-SCREEN_NAME = "factoric_terminal_panel_ui.main"
+SCREEN_NAME = "endernet_factoric_terminal_panel.main"
 DEVICE_ID = "endernet:factoric_terminal_panel"
 
 ORDER_ID = "order@net-1/master-1/1"
@@ -684,11 +682,11 @@ class TestJsonContract(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.panel = cls.load("factoric_terminal_panel.json")
+        cls.panel = cls.load("terminal/factoric_terminal_panel.json")
 
     @staticmethod
     def load(name):
-        path = os.path.join(ROOT, "endernet_rp", "ui", name)
+        path = os.path.join(ROOT, "endernet_rp", "ui", "endernet", *name.split("/"))
         with open(path, encoding="utf-8") as handle:
             return json.load(handle)
 

@@ -15,8 +15,8 @@ def register_screens():
     完全看不出来——而漏导入一个模块的后果不是报错，是**那个界面在客户端
     查不到**，`PushUIRequest` 一到就抛异常（右键合成终端什么都不开）。
     """
-    from .crafting_panel import CraftingPanel
-    from .device_panels import (
+    from .terminal.crafting_panel import CraftingPanel
+    from .devices.panels import (
         AssembleChamberPanel,
         BusFluidInputPanel,
         BusFluidOutputPanel,
@@ -27,10 +27,10 @@ def register_screens():
         MemorySlotPanel,
         StorageDriverPanel,
     )
-    from .factoric_panel import FactoricPanel
-    from .template_panel import TemplatePanel
-    from .terminal_panel import CommonTerminalPanel
-    from .universal_importer import UniversalImporterScreen
+    from .terminal.factoric_panel import FactoricPanel
+    from .terminal.template_panel import TemplatePanel
+    from .terminal.panel import CommonTerminalPanel
+    from .universal_importer.screen import UniversalImporterScreen
 
     return (
         CommonTerminalPanel,

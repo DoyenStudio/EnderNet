@@ -22,9 +22,9 @@ import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import DefinitionSet
 from endernet.common.identity import DeviceRef, NodeKey
-from endernet.common.item_codec import item_dict_from_key
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import FakeContainer
+from endernet.common.resources.item_codec import item_dict_from_key
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import FakeContainer
 from endernet.server.devices.memory_slot import (
     MEMORY_MAX_STALE_FRAMES,
     MEMORY_REFRESH_BUDGET,

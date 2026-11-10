@@ -2,7 +2,7 @@
 """网络与外部容器之间的资源转移：端点、预检、受控提交与中转缓冲。
 
 对应任务 06-01 至 06-03，以及 06-09 的转移半边。端点契约与回执字段与
-13-01 的统一容器契约（`adapters/containers.py` / `common/protocol.py`）共用；
+13-01 的统一容器契约（`adapters/containers/contract.py` / `common/protocol.py`）共用；
 **本模块不 import 任何引擎模块**，因此可以脱离游戏测试。
 
 参考 AE2 的 `IStorageMonitorableAccessor`——外部拿到的不是「某个控制器」，
@@ -33,7 +33,7 @@
 只报「成功了多少」而不报「剩下的在哪」，正是「先删源再假定目标接收」的温床。
 """
 
-from ...common.item_codec import item_dict_from_key, item_key_from_dict
+from ...common.resources import item_dict_from_key, item_key_from_dict
 from ...common.protocol import (
     BlockReason,
     ORIGIN_EXTERNAL,
@@ -44,8 +44,8 @@ from ...common.protocol import (
     TransferStatus,
     reason_code,
 )
-from ...common.resource_key import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
-from ..network.controller import RequestLedger
+from ...common.resources import ResourceKey  # noqa: F401 (仅用于 # type: 注释)
+from ..network import RequestLedger
 
 #: 缓冲归属台账的存档结构版本。任务 12 用它判断能否读入。
 TRANSFER_SCHEMA_VERSION = 1
@@ -878,8 +878,8 @@ def anchored_insert_endpoint(endpoint, anchor):
 #
 # **为什么放在这里而不是各自的适配器里。** 按槽语义（堆叠上限、读回核对、
 # 槽被占或装着别的东西时的处理）是**一条规则**，而它有两个载体：
-# `adapters/containers_engine.py` 的 `SlotBackedContainer`（真实引擎）
-# 与 `adapters/containers.py` 的 `FakeContainer`（测试替身，也是 13-06 的
+# `adapters/containers/engine.py` 的 `SlotBackedContainer`（真实引擎）
+# 与 `adapters/containers/contract.py` 的 `FakeContainer`（测试替身，也是 13-06 的
 # 用例载体）。各写一份的代价是「真机能放、假容器放不了」这类偏差只在
 # 游戏里暴露。因此规则写在这里，两边只提供三个原始操作：
 # `read_slot` / `write_slot` / `stack_limit_of`。
@@ -2295,7 +2295,7 @@ class TransferCoordinator(object):
             "sink_wired": self.sink is not None,
             "scope_note": (
                 "预检、受控提交、实际数量回执与有界中转缓冲已实现；"
-                "端点的真实引擎实现（背包、外部容器）在 adapters/containers_engine.py，"
+                "端点的真实引擎实现（背包、外部容器）在 adapters/containers/engine.py，"
                 "**未经游戏内实测**。"
                 + (
                     "合格回流入口（任务 10）尚未接线，外部输入通知目前无处可去——"

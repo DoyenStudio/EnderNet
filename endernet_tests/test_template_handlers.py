@@ -31,9 +31,9 @@ from endernet.common.protocol import (
     TransferReceipt,
     TransferStatus,
 )
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 from endernet.server.crafting import patterns
-from endernet.server.crafting.template_terminal import (
+from endernet.server.crafting.terminals.template import (
     GROUP_OUTPUTS,
     GROUP_SOURCE,
     INPUT_SLOT,

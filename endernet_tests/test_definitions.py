@@ -11,6 +11,19 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import (
+    CABLES,
+    CATEGORY_ASSEMBLY,
+    CATEGORY_CABLE,
+    CATEGORY_MEMORY,
+    DEVICE_CATEGORIES,
+    DEVICE_PASSTHROUGH_QUARTERS,
+    FORM_BLOCK,
+    FORM_PART,
+    ITEM_TOOLS,
+    TERMINAL_PARTS,
+    TERMINAL_SCREENS,
+    TOOLS,
+    ToolSpec,
     BandwidthSpec,
     CAP_ITEM_PORT,
     CAP_PATTERN_PROVIDER,
@@ -569,7 +582,7 @@ class TestPatternTemplates(unittest.TestCase):
         defs = DefinitionSet()
         self.assertEqual(
             set(defs.item_keys()),
-            set(ITEM_MEDIUMS) | set(ITEM_TEMPLATES) | set(ITEM_MEMORIES),
+            set(ITEM_MEDIUMS) | set(ITEM_TEMPLATES) | set(ITEM_MEMORIES) | set(ITEM_TOOLS),
         )
         self.assertTrue(set(ITEM_TEMPLATES).issubset(set(defs.item_keys())))
         self.assertEqual(len(defs.item_specs()), len(defs.item_keys()))
@@ -677,25 +690,80 @@ class TestConnectionRules(unittest.TestCase):
     def test_processor_must_not_connect_directly_to_controller(self):
         self.assertFalse(ConnectionRules.accepts(CATEGORY_PROCESSOR, CATEGORY_CONTROLLER))
 
-    def test_connector_rejects_terminals_and_storage(self):
-        for category in ("terminal", "storage", "bus", "memory", "assembly"):
-            self.assertFalse(
+    def test_connector_reaches_cables_and_devices(self):
+        """13 §3：连接器原来只接基带，现扩到光缆与设备。"""
+        for category in ("terminal", "storage", "bus", "memory", "assembly", CATEGORY_CABLE):
+            self.assertTrue(
                 ConnectionRules.accepts(CATEGORY_PROCESSOR_CONNECTOR, category), category
             )
+        self.assertFalse(
+            ConnectionRules.accepts(CATEGORY_PROCESSOR_CONNECTOR, CATEGORY_PROCESSOR_CONNECTOR)
+        )
 
-    def test_devices_do_not_connect_to_each_other(self):
-        self.assertFalse(ConnectionRules.accepts("bus", "terminal"))
-        self.assertFalse(ConnectionRules.accepts("terminal", "terminal"))
-        self.assertFalse(ConnectionRules.accepts("storage", "assembly"))
+    def test_devices_pass_through_each_other(self):
+        """13 §0.5：设备彼此透传（同类也连）。"""
+        self.assertTrue(ConnectionRules.accepts("bus", "terminal"))
+        self.assertTrue(ConnectionRules.accepts("terminal", "terminal"))
+        self.assertTrue(ConnectionRules.accepts("storage", "assembly"))
+        self.assertTrue(ConnectionRules.accepts("energy_input", "memory"))
+
+    def test_the_table_matches_section_3_exactly(self):
+        """逐对核对 13 §3 的连接表（期望值在这里独立写出，不从实现推）。
+
+        表外的一律不连：主控只接基带；处理器只接处理器与连接器；连接器之间不连；
+        面板不是方块，不在表里。
+        """
+        devices = ["bus", "terminal", "storage", "memory", "assembly", "energy_input"]
+        expected = set()
+
+        def allow(first, second):
+            expected.add(frozenset([first, second]))
+
+        allow("controller", "baseband")
+        allow("baseband", "baseband")
+        allow("baseband", "cable")
+        allow("baseband", "processor_connector")
+        allow("cable", "cable")
+        allow("cable", "processor_connector")
+        allow("processor_connector", "processor")
+        allow("processor", "processor")
+        for device in devices:
+            allow("baseband", device)
+            allow("cable", device)
+            allow("processor_connector", device)
+            for other in devices:
+                allow(device, other)
+        categories = ["controller", "baseband", "cable", "processor_connector", "processor"] + devices
+        for first in categories:
+            for second in categories:
+                self.assertEqual(
+                    ConnectionRules.accepts(first, second),
+                    frozenset([first, second]) in expected,
+                    "%s <-> %s" % (first, second),
+                )
+        self.assertEqual(DEVICE_CATEGORIES, frozenset(devices))
+
+    def test_controller_only_accepts_baseband(self):
+        """13 §0.6：主控只接基带。"""
+        for category in (CATEGORY_CABLE, "terminal", "storage", CATEGORY_PROCESSOR_CONNECTOR):
+            self.assertFalse(ConnectionRules.accepts(CATEGORY_CONTROLLER, category), category)
+            self.assertEqual(
+                ConnectionRules.reason_for_reject(CATEGORY_CONTROLLER, category),
+                "controller_only_accepts_baseband",
+            )
 
     def test_rules_are_symmetric(self):
         """白名单必须双向一致，否则会出现单向连通。"""
         categories = [
             CATEGORY_BASEBAND,
             CATEGORY_CONTROLLER,
+            CATEGORY_CABLE,
             CATEGORY_BUS,
             CATEGORY_TERMINAL,
             CATEGORY_STORAGE,
+            CATEGORY_MEMORY,
+            CATEGORY_ASSEMBLY,
+            CATEGORY_ENERGY_INPUT,
             CATEGORY_PROCESSOR,
             CATEGORY_PROCESSOR_CONNECTOR,
         ]
@@ -711,6 +779,157 @@ class TestConnectionRules(unittest.TestCase):
         """业务错误不得只显示为「离线」，要有可定位原因。"""
         reason = ConnectionRules.reason_for_reject(CATEGORY_PROCESSOR, CATEGORY_BASEBAND)
         self.assertNotEqual(reason, "")
+
+
+class TestNetworkRedesignDefinitions(unittest.TestCase):
+    """2026-11-09 网络改版（13 §2）的定义：光缆、面板形态、扳手、透传容量。"""
+
+    def setUp(self):
+        self.defs = DefinitionSet()
+
+    def test_three_cables_carry_8_16_32_units_and_consume_nothing(self):
+        expected = {
+            "endernet:ender_glass_cable": ("末影玻璃光缆", 8, True),
+            "endernet:ender_cable": ("末影光缆", 16, True),
+            "endernet:ender_dense_cable": ("致密末影光缆", 32, False),
+        }
+        self.assertEqual(set(self.defs.cables), set(expected))
+        self.assertEqual(len(CABLES), 3)
+        for device_id, (label, units, accepts_parts) in expected.items():
+            definition = self.defs.get(device_id)
+            self.assertEqual(definition.label, label)
+            self.assertEqual(definition.category, CATEGORY_CABLE)
+            self.assertEqual(definition.bandwidth.capacity_quarters, units * 4)
+            self.assertEqual(definition.bandwidth.base_quarters, 0)
+            self.assertTrue(definition.bandwidth.is_carrier())
+            self.assertEqual(definition.accepts_parts, accepts_parts)
+            self.assertEqual(self.defs.accepts_parts(device_id), accepts_parts)
+            self.assertTrue(self.defs.is_cable(device_id))
+
+    def test_cables_are_not_whole_block_devices(self):
+        """光缆的方块按面生成，归阶段 C 的生成器，不进整方块那张表。"""
+        for device_id in self.defs.cables:
+            self.assertNotIn(device_id, self.defs.devices)
+            self.assertTrue(self.defs.has(device_id))
+
+    def test_cable_energy_is_unconfigured_not_zero(self):
+        """blocks.md 没列光缆耗能：未配置（R10），不是 0。"""
+        paths = [path for path, _ in self.defs.unconfigured_report()]
+        for device_id in self.defs.cables:
+            self.assertIn("%s.energy.idle" % device_id, paths)
+
+    def test_terminal_parts_mirror_their_whole_block_terminal(self):
+        expected = {
+            "endernet:common_terminal_part": ("通用终端面板", "endernet:common_terminal_panel"),
+            "endernet:crafting_terminal_part": ("合成终端面板", "endernet:crafting_terminal_panel"),
+            "endernet:template_terminal_part": ("样板终端面板", "endernet:template_terminal_panel"),
+            "endernet:factoric_terminal_part": ("工厂终端面板", "endernet:factoric_terminal_panel"),
+        }
+        self.assertEqual(set(self.defs.parts), set(expected))
+        self.assertEqual(len(TERMINAL_PARTS), 4)
+        for part_id, (label, panel_id) in expected.items():
+            part = self.defs.get(part_id)
+            panel = self.defs.get(panel_id)
+            self.assertEqual(part.label, label)
+            self.assertEqual(part.form, FORM_PART)
+            self.assertTrue(part.is_part())
+            self.assertEqual(part.whole_block_id, panel_id)
+            self.assertEqual(part.category, panel.category)
+            self.assertIs(part.bandwidth, panel.bandwidth)
+            self.assertIs(part.energy, panel.energy)
+            self.assertEqual(part.capabilities, panel.capabilities)
+            self.assertEqual(part.bandwidth.demand_quarters(), 4)
+            self.assertEqual(part.energy.value_for_state("idle"), 4)
+            self.assertNotIn(part_id, self.defs.devices)
+            self.assertTrue(self.defs.is_part(part_id))
+            # 面板与整方块终端同名（作者 2026-11-10 改语言文件），形态不同。
+            self.assertEqual(panel.form, FORM_BLOCK)
+            self.assertEqual(part.label, panel.label)
+
+    def test_parts_open_the_same_screen_as_their_whole_block(self):
+        for part_id in self.defs.parts:
+            panel_id = self.defs.get(part_id).whole_block_id
+            self.assertEqual(self.defs.terminal_screen_of(part_id), TERMINAL_SCREENS[panel_id])
+        self.assertEqual(
+            self.defs.terminal_screen_of("endernet:common_terminal_panel"),
+            TERMINAL_SCREENS["endernet:common_terminal_panel"],
+        )
+        self.assertIsNone(self.defs.terminal_screen_of("endernet:storage_driver"))
+        self.assertIsNone(self.defs.terminal_screen_of("endernet:ghost"))
+
+    def test_terminal_category_includes_both_forms(self):
+        terminals = self.defs.devices_in_category(CATEGORY_TERMINAL)
+        self.assertIn("endernet:common_terminal_panel", terminals)
+        self.assertIn("endernet:common_terminal_part", terminals)
+        self.assertEqual(len(terminals), 8)
+
+    def test_wrench_is_registered_as_an_item(self):
+        """扳手的物品 JSON 与图标由阶段 C 的 gen_items 生成：规格与物品登记都在。"""
+        self.assertEqual([(tool.id, tool.label) for tool in TOOLS], [("endernet:network_wrench", "网络扳手")])
+        self.assertEqual(ITEM_TOOLS, ("endernet:network_wrench",))
+        self.assertTrue(self.defs.has_tool("endernet:network_wrench"))
+        self.assertIsInstance(self.defs.get_tool("endernet:network_wrench"), ToolSpec)
+        self.assertIn("endernet:network_wrench", self.defs.item_keys())
+        self.assertIs(
+            self.defs.get_item_tool("endernet:network_wrench"),
+            self.defs.get_tool("endernet:network_wrench"),
+        )
+
+    def test_registering_the_wrench_as_an_item_needs_a_spec(self):
+        defs = DefinitionSet(item_tools=("endernet:network_wrench",))
+        self.assertIn("endernet:network_wrench", defs.item_keys())
+        self.assertEqual([spec.id for spec in defs.item_tool_specs()], ["endernet:network_wrench"])
+        with self.assertRaises(ValueError):
+            DefinitionSet(item_tools=("endernet:no_such_tool",))
+
+    def test_passthrough_is_a_settled_8u(self):
+        """R14-a：2026-11-09 作者定案 8u。已定数值，不进 unresolved 报告。"""
+        self.assertEqual(DEVICE_PASSTHROUGH_QUARTERS.value, 8 * 4)
+        self.assertTrue(DEVICE_PASSTHROUGH_QUARTERS.is_settled())
+        self.assertEqual(self.defs.device_passthrough_quarters(), 8 * 4)
+        unresolved = [value.unresolved for _, value in self.defs.unresolved_report()]
+        self.assertNotIn("R14", unresolved)
+        self.assertNotIn("R14-a", unresolved)
+        self.assertNotIn("R02", unresolved)
+
+    def test_missing_passthrough_is_unconfigured_not_zero(self):
+        defs = DefinitionSet(config={"network.device_passthrough_quarters": Value(UNCONFIGURED)})
+        self.assertIs(defs.device_passthrough_quarters(), UNCONFIGURED)
+
+    def test_basebands_output_their_tier_on_every_exposed_face(self):
+        for units in (8, 16, 32):
+            definition = self.defs.get("endernet:network_baseband_%d" % units)
+            self.assertEqual(definition.bandwidth.capacity_quarters, units * 4)
+            self.assertIn("每个外露面", definition.notes)
+
+    def test_part_form_is_validated(self):
+        with self.assertRaises(ValueError):
+            DeviceDefinition("endernet:x_part", "x", CATEGORY_TERMINAL, form=FORM_PART)
+        with self.assertRaises(ValueError):
+            DeviceDefinition(
+                "endernet:x", "x", CATEGORY_TERMINAL, whole_block_id="endernet:common_terminal_panel"
+            )
+        with self.assertRaises(ValueError):
+            DeviceDefinition("endernet:x", "x", CATEGORY_TERMINAL, accepts_parts=True)
+        with self.assertRaises(ValueError):
+            DeviceDefinition("endernet:x", "x", CATEGORY_TERMINAL, form="hologram")
+
+    def test_ids_are_unique_across_the_three_tables(self):
+        clash = DeviceDefinition(
+            "endernet:ender_cable", "冒名", CATEGORY_CABLE, accepts_parts=True
+        )
+        with self.assertRaises(ValueError):
+            DefinitionSet(cables=CABLES + (clash,))
+        with self.assertRaises(ValueError):
+            DefinitionSet(devices=DEVICES + (CABLES[0],))
+
+    def test_every_new_device_passes_the_guard(self):
+        self.defs.assert_no_silent_unresolved()
+        paths = [path for path, _ in self.defs.iter_values()]
+        for device_id in list(self.defs.cables) + list(self.defs.parts):
+            self.assertIn("%s.bandwidth.base" % device_id, paths)
+        for device_id in self.defs.cables:
+            self.assertIn("%s.bandwidth.capacity" % device_id, paths)
 
 
 class TestCapabilities(unittest.TestCase):

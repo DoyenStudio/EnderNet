@@ -4,10 +4,10 @@
 import unittest
 
 import testsupport  # noqa: F401
-from endernet.common.resource_amount import format_resource_amount
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.amount import format_resource_amount
+from endernet.common.resources.key import ResourceKey
 from endernet.server.adapters.order_notifications import notify_order_completed
-from endernet.server.crafting.jobs import Order, OrderStatus
+from endernet.server.crafting.orders.jobs import Order, OrderStatus
 from test_executor import OneLevel, BLOCK, IRON
 
 
@@ -110,7 +110,7 @@ class TestCompletionNotification(OneLevel):
         self.assertEqual(self.service.stats["notification_failed"], 1)
 
     def test_inventory_satisfied_order_also_notifies(self):
-        from endernet.server.crafting.planner import TargetSemantics
+        from endernet.server.crafting.planning.planner import TargetSemantics
 
         self.server.plan_policy.target_semantics = TargetSemantics.HOLD
         completed = []

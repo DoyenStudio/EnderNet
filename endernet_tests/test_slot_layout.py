@@ -5,7 +5,7 @@ import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
 
-from endernet.client.ui import slot_layout
+from endernet.client.ui.shared import slot_layout
 
 
 class FakeScreen(object):

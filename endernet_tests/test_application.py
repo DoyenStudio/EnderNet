@@ -23,8 +23,8 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.identity import ChunkKey, NodeKey
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import FakeContainer
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import FakeContainer
 from endernet.server.crafting.patterns import (
     MODE_FACTORY,
     PatternDefinition,
@@ -653,7 +653,7 @@ class TestPatternDebugQuery(PatternFixture):
 
     def test_a_rejected_pattern_shows_up_in_the_view(self):
         """槽里塞了不该放的东西时，界面要能说出是哪一格、为什么。"""
-        from endernet.common.item_codec import item_dict_from_key
+        from endernet.common.resources.item_codec import item_dict_from_key
 
         container = self.application.patterns.container_at(TEMPLATE_POS)
         container.write_slot(2, item_dict_from_key(ResourceKey.item("minecraft:stone"), 1))

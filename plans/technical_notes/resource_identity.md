@@ -6,7 +6,7 @@ IncrementalUpdateHelper 与缺失内容保留机制。
 
 ## 1. 身份与复制边界
 
-`common/resource_key.py` 保持普通 Python 对象，不拦截属性赋值，不强制 immutable。
+`common/resources/key.py` 保持普通 Python 对象，不拦截属性赋值，不强制 immutable。
 构造时复制并校验元数据，`raw_identity` / `to_dict()` 返回独立深层副本。
 调用方不得在键进入库存字典后修改其内部身份字段；身份变化应构造新键。
 数量不属于身份，精确身份比较与未来的配方/过滤器模糊匹配分开。
@@ -33,8 +33,8 @@ ASCII 指纹维持原形式；旧非 ASCII 文本指纹应由完整描述重新�
 
 ### 介质动态容量 Lore 的新增边界（**2026-10-04 已实现，真机未验**）
 
-> **实现位置**：`common/medium_item.py` 的 `project_identity_user_data`，
-> 由 `resource_key.py` 的 `_item_identity_tree` 在 `user_data` 分支调用。
+> **实现位置**：`common/resources/medium_item.py` 的 `project_identity_user_data`，
+> 由 `resources/key.py` 的 `_item_identity_tree` 在 `user_data` 分支调用。
 > 边界完全按本段：**只对已识别的本模组介质（有合法载体的）生效**，
 > 剔除后 `Lore` 为空则省略 `Lore`、`display` 为空则省略 `display`；
 > `_raw` / `raw_identity` / `to_dict` 拿到的仍是**完整载荷**。
@@ -49,7 +49,7 @@ ID 携带、行归属标记、空结构归一化、版本迁移及描述会话�
 
 ### 现有转换入口
 
-`common/item_codec.py` 不导入引擎。客户端背包模拟已复用 `item_key()`。
+`common/resources/item_codec.py` 不导入引擎。客户端背包模拟已复用 `item_key()`。
 
 - `item_key(item)` / `item_key_from_dict(data)`：真实字段转为资源身份，空槽返回 None。
 - `item_dict_from_key(key, count=1)`：独立引擎字段描述，默认可用作图标样本。
@@ -82,7 +82,7 @@ ID 携带、行归属标记、空结构归一化、版本迁移及描述会话�
    还展示了写入时用这两个键显式指定类型；不能假定同形业务字典会自动
    被引擎再次包装以避免歧义。
 
-   解包实现见 `common/item_codec.py::unbox_engine_value`：当前仅支持
+   解包实现见 `common/resources/item_codec.py::unbox_engine_value`：当前仅支持
    1/3/5/8，递归遍历未包装容器；其他包装连同载荷原样保留，由调用方
    校验。它用于自有样板载荷读取，会丢失类型信息，不是完整 NBT 解码器，
    也不能用于资源身份规范化；资源身份仍保留原始 `userData`。
@@ -162,7 +162,7 @@ ID 携带、行归属标记、空结构归一化、版本迁移及描述会话�
 > `customTips` 相同时丢——第三方真把它当载荷写的话要留下）。这**推翻**了
 > 本节原先「解包会丢 NBT 类型信息，不能用于资源身份规范化」的取舍：
 > 同形歧义只是理论上的，而身份不相等已经造成了复制。载荷侧的解码
-> （`crafting/store.py` 的 `unbox_engine_value`）不变，两处看到的是同一份
+> （`crafting/providers/store.py` 的 `unbox_engine_value`）不变，两处看到的是同一份
 > 形状了。
 >
 > 另外补了一条**不依赖身份**的安全带（`storage/transfer.py` 的
@@ -199,7 +199,7 @@ tooldelta 封装**）与写容器／写背包那两个口子**不吃同一种字
 
 ## 3. 终端描述映射
 
-`common/resource_sync.py` 的 `ResourceDescriptions(network_id, epoch)` 由服务端和
+`common/resources/sync.py` 的 `ResourceDescriptions(network_id, epoch)` 由服务端和
 客户端分别持有。epoch 由外层会话生成，重开或重同步须使用新值。
 
 `StorageChanged.to_dict()` 默认包含指纹和完整描述；传入描述表后，首次发送

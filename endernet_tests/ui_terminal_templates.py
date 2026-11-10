@@ -14,7 +14,7 @@ import os
 def inline_terminal_controls(document, common=None):
     if common is None:
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                            "endernet_rp", "ui", "endernet_ui_common.json")
+                            "endernet_rp", "ui", "endernet", "common", "ui_common.json")
         with open(path, encoding="utf-8") as handle:
             common = json.load(handle)
     definitions = {key.split("@")[0]: (key, value)

@@ -12,8 +12,8 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.protocol import Reason, TransferStatus
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import (
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import (
     ContainerEntry,
     FakeContainer,
     GhostContainer,
@@ -138,7 +138,7 @@ class TestCapabilities(unittest.TestCase):
     """能力声明必须被调用方真正尊重。"""
 
     def test_default_capabilities_are_conservative(self):
-        from endernet.server.adapters.containers import ContainerAdapter
+        from endernet.server.adapters.containers.contract import ContainerAdapter
 
         caps = ContainerAdapter().capabilities()
         self.assertFalse(caps.can_simulate)

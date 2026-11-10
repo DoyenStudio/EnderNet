@@ -1,7 +1,7 @@
 # coding=utf-8
 """客户端设备状态模型：代次隔离、两行分组、弹窗单例（11-13）。
 
-**全部离线**：`client/ui/widgets/device_status.py` 不 import 引擎，只提供
+**全部离线**：`client/ui/device_status/model.py` 不 import 引擎，只提供
 绑定要读的值，因此这里直接构造模型、喂消息、断言读出来的东西。
 
 三条判据：
@@ -19,12 +19,12 @@ import unittest
 
 import testsupport  # noqa: F401  (放进 sys.path)
 
-from endernet.client.ui.widgets import device_status
+from endernet.client.ui.device_status import model as device_status
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.protocol import DeviceStatusMessage, Reason
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEXTURES = os.path.join(ROOT, "endernet_rp", "textures", "ui", "endernet")
+TEXTURES = os.path.join(ROOT, "endernet_rp", "textures", "endernet", "ui")
 
 REF = DeviceRef(NodeKey(0, 10, 64, 20), 3)
 
@@ -230,7 +230,7 @@ class TestTexturePaths(unittest.TestCase):
         """路径写错的表现是紫黑块，而它在离线与真机都不会报错。"""
         for path in (device_status.ICON_ONLINE, device_status.ICON_OFFLINE,
                      device_status.MASK_ONLINE, device_status.MASK_OFFLINE):
-            self.assertTrue(path.startswith("textures/ui/endernet/"), path)
+            self.assertTrue(path.startswith("textures/endernet/ui/"), path)
             name = path.rsplit("/", 1)[-1] + ".png"
             self.assertTrue(os.path.exists(os.path.join(TEXTURES, name)),
                             "缺少贴图 %s" % (name,))

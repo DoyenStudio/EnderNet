@@ -17,7 +17,7 @@ import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import DefinitionSet, MemorySpec
 from endernet.common.identity import NodeKey
-from endernet.common.item_codec import item_dict_from_key
+from endernet.common.resources.item_codec import item_dict_from_key
 from endernet.common.protocol import (
     CommandKind,
     CommandSource,
@@ -26,15 +26,15 @@ from endernet.common.protocol import (
     STATUS_OK,
     STATUS_REJECTED,
 )
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 from endernet.server.bootstrap import ServerBootstrap
-from endernet.server.crafting.capacity import OrderPolicy
-from endernet.server.crafting.executor import AbsentReturns, ReturnsSink
-from endernet.server.crafting.jobs import OrderStatus, StepStatus
+from endernet.server.crafting.orders.capacity import OrderPolicy
+from endernet.server.crafting.orders.executor import AbsentReturns, ReturnsSink
+from endernet.server.crafting.orders.jobs import OrderStatus, StepStatus
 from endernet.server.crafting import patterns as pattern_module
 from endernet.server.network.energy import EnergyPolicy
 from endernet.server.network.services import ServiceId
-from endernet.server.adapters.containers import FakeContainer
+from endernet.server.adapters.containers.contract import FakeContainer
 
 IRON = ResourceKey.item("minecraft:iron_ingot")
 GOLD = ResourceKey.item("minecraft:gold_ingot")
@@ -618,7 +618,7 @@ class TestSubmit(OneLevel):
                          [("p1", "c2", 2), ("p2", "c2", 3)])
 
     def test_production_order_is_created_even_when_target_is_already_stored(self):
-        from endernet.server.crafting.planner import TargetSemantics
+        from endernet.server.crafting.planning.planner import TargetSemantics
 
         self.server.plan_policy.target_semantics = TargetSemantics.PRODUCE
         self.seed(BLOCK, 1, request_id="seed-stored-product")
@@ -1103,7 +1103,7 @@ class StaleMirror(OneLevel):
     """
 
     def setUp(self):
-        from endernet.server.devices.io import PortPolicy
+        from endernet.server.devices.bus_io import PortPolicy
 
         self.port_policy = PortPolicy(template_buffer_capacity=1)
         OneLevel.setUp(self)
@@ -1760,7 +1760,7 @@ class PartialStaging(OneLevel):
     """
 
     def setUp(self):
-        from endernet.server.devices.io import PortPolicy
+        from endernet.server.devices.bus_io import PortPolicy
 
         self.port_policy = PortPolicy(template_buffer_capacity=1)
         OneLevel.setUp(self)

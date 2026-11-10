@@ -23,8 +23,8 @@ def _on_server_uninit():
     销毁钩子是把「显式注销」真正兑现的那个环节。
     """
     from .endernet.server.bootstrap import stop_server
-    from .endernet.server.adapters.item_catalog import stop_catalog
-    from .endernet.server.adapters.slot_display import stop_slot_display
+    from .endernet.server.adapters.channels import stop_catalog
+    from .endernet.server.adapters.channels import stop_slot_display
 
     stop_slot_display()
     stop_catalog()
@@ -34,7 +34,7 @@ def _on_server_uninit():
 @ClientUninitCallback()
 def _on_client_uninit():
     from .endernet.client.bootstrap import stop_client
-    from .endernet.client.item_catalog import stop_catalog
+    from .endernet.client.channels import stop_catalog
 
     stop_catalog()
     stop_client()
@@ -49,8 +49,8 @@ class EnderNet(ToolDeltaMod):
         # 延迟导入：bootstrap 会拉起适配层，适配层依赖 mod.server.*，
         # 只在服务端系统真正初始化后才可用。
         from .endernet.server.bootstrap import start_server
-        from .endernet.server.adapters.item_catalog import start_catalog
-        from .endernet.server.adapters.slot_display import start_slot_display
+        from .endernet.server.adapters.channels import start_catalog
+        from .endernet.server.adapters.channels import start_slot_display
 
         start_server()
         start_catalog()
@@ -58,7 +58,7 @@ class EnderNet(ToolDeltaMod):
 
     def OnClientInited(self):
         from .endernet.client.bootstrap import start_client
-        from .endernet.client.item_catalog import start_catalog
+        from .endernet.client.channels import start_catalog
 
         start_client()
         start_catalog()

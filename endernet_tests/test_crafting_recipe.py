@@ -584,7 +584,7 @@ class TestEngineRecipeSource(unittest.TestCase):
         return self.EngineRecipeSource(fetch=fetch)
 
     def test_it_asks_the_tag_that_actually_works(self):
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning([GOLDEN_APPLE])
         source.recipes_for(ResourceKey.item("minecraft:golden_apple"))
         name, tag, aux, _max = self.calls[0]
@@ -593,33 +593,33 @@ class TestEngineRecipeSource(unittest.TestCase):
         self.assertEqual(0, aux)
 
     def test_the_output_aux_is_passed_through(self):
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning([])
         source.recipes_for(ResourceKey.item("minecraft:wool", aux=4))
         self.assertEqual(4, self.calls[0][2])
 
     def test_an_unknown_item_is_an_empty_list_not_an_error(self):
         # 实测：查不存在的物品返回 []，不抛。空表是引擎的回答。
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning([])
         self.assertEqual([], source.recipes_for(ResourceKey.item("endernet:nope")))
 
     def test_a_non_list_return_is_not_read_as_no_recipes(self):
         # 实测：引擎在参数类型不对时返回 `False`。若把它读成空表，
         # 「这条查询整个坏了」与「这个产物确实没有配方」就分不开了。
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning(False)
         with self.assertRaises(TypeError):
             source.recipes_for(ResourceKey.item("minecraft:stone"))
 
     def test_a_none_return_is_not_read_as_no_recipes_either(self):
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning(None)
         with self.assertRaises(TypeError):
             source.recipes_for(ResourceKey.item("minecraft:stone"))
 
     def test_a_dirty_recipe_is_skipped_and_remembered(self):
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning([{"nonsense": True}, GOLDEN_APPLE])
         recipes = source.recipes_for(ResourceKey.item("minecraft:golden_apple"))
         self.assertEqual(1, len(recipes))
@@ -629,21 +629,21 @@ class TestEngineRecipeSource(unittest.TestCase):
         self.assertEqual(BAD_SHAPE, source.skipped[0][1])
 
     def test_the_engine_dict_is_kept_for_diagnosis(self):
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         raw = {"nonsense": True}
         source = self.source_returning([raw])
         source.recipes_for(ResourceKey.item("minecraft:stone"))
         self.assertIs(raw, source.skipped[0][2])
 
     def test_only_the_last_few_skips_are_kept(self):
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning([{"nonsense": True}] * 20)
         source.recipes_for(ResourceKey.item("minecraft:stone"))
         self.assertEqual(20, source.stats["skipped"])
         self.assertLessEqual(len(source.skipped), 8)
 
     def test_the_same_output_is_asked_once(self):
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning([GOLDEN_APPLE])
         key = ResourceKey.item("minecraft:golden_apple")
         source.recipes_for(key)
@@ -652,7 +652,7 @@ class TestEngineRecipeSource(unittest.TestCase):
         self.assertEqual(1, source.stats["cache_hits"])
 
     def test_forget_clears_the_cache(self):
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning([GOLDEN_APPLE])
         key = ResourceKey.item("minecraft:golden_apple")
         source.recipes_for(key)
@@ -663,14 +663,14 @@ class TestEngineRecipeSource(unittest.TestCase):
         self.assertEqual(0, source.stats["cache_hits"])
 
     def test_two_aux_values_are_two_cache_entries(self):
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning([])
         source.recipes_for(ResourceKey.item("minecraft:wool", aux=0))
         source.recipes_for(ResourceKey.item("minecraft:wool", aux=4))
         self.assertEqual(2, len(self.calls))
 
     def test_describe_reports_what_it_did(self):
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         source = self.source_returning([{"nonsense": True}, GOLDEN_APPLE])
         source.recipes_for(ResourceKey.item("minecraft:golden_apple"))
         report = source.describe()

@@ -30,8 +30,8 @@ from endernet.common.protocol import (
     STATUS_OK,
     STATUS_REJECTED,
 )
-from endernet.common.resource_key import ResourceKey
-from endernet.server.crafting import planner, preview
+from endernet.common.resources.key import ResourceKey
+from endernet.server.crafting.planning import planner, preview
 
 BLOCK = ResourceKey.item("minecraft:iron_block")
 INGOT = ResourceKey.item("minecraft:iron_ingot")

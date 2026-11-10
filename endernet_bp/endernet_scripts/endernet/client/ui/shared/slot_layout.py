@@ -1,0 +1,471 @@
+# coding=utf-8
+"""本界面各槽位在屏幕上的**全局矩形**，给飞行动画算起终点。
+
+控件的路径集中在这里，`terminal/panel.py` 从本模块取（`SCROLL_PATH` 等），
+免得同一条路径在两个文件里各写一份——那种重复的代价不是多打几个字，而是
+改了 JSON 只改到一处，另一处静默指向一个不存在的控件。
+
+**路径一律写成「内容区相对」的形式**（`/flying_items/flying_item`、`/inventory/backpack`），
+由 `control()` 补上窗口前缀（`full_path`）。前缀只在这里拼：写错一处，那块面板上
+**每一个槽位都取不到**，而那是静默的。
+
+**矩形是「现在」的。** 每次调用都现问引擎，不缓存：滚动一下、窗口一缩放、
+背包行数一变，同一个槽位的坐标就变了。缓存下来的结果是动画飞到一个
+已经没人站的位置，而那种错要盯着屏幕才看得出来。
+
+**取不到就是 `None`，调用方据此不飞。** 本模块**不抛**：路径少一层、
+格子还没生成、控件类型对不上，都在这里收成 `None`。理由是这些失败全都
+只该让「这一次动画不做」，不该让搬运本身失败——搬运的成败由命令回执说，
+不归这里管。
+
+**这里给的是「控件」的矩形，不是「图标」的矩形。** 槽位控件是 18×18，
+而槽里那张图标是 16×16、在槽位里居中，两者差 `(18 - 16) / 2 = 1` 像素。
+这个换算**不在这里做**：本模块的职责是「屏幕上这个控件在哪儿」，而「图标
+该落在哪一点」是 `flying_item` 的事（它按 `ICON_SIZE` 把图标摆到矩形正中，
+一份规则同时管住槽位、整块区域与退化成一个点的点击处）。在这里也缩一次，
+就会缩两遍——而两遍差 1 像素，只在屏幕上看得见。
+"""
+
+#: 内容区本身。
+#: 空串＝「这一层的内容区」，由 `full_path` 补上窗口前缀。
+CONTENT_PATH = ""
+
+#: 窗口在屏幕基底下的名字（2026-11-08 起）。`root_screen_panel` 是铺满屏幕的
+#: `endernet_ui_common.screen_root`，各界面的内容区（`$window_content`）以
+#: `window` 挂在它下面，大小不变。
+WINDOW_ROOT = "/window"
+
+#: 滚动区面板。**注意它自己是 `common.scrolling_panel`（一个 panel），不是
+#: `scroll_view`**，真正的滚动控件在它下面一层，见 `SCROLL_VIEW_PATHS`。
+SCROLL_PATH = "/terminal_items_scroll"
+
+#: 背包那一半的整块面板（上 9x3 + 下 9x1）。
+INVENTORY_PATH = "/inventory"
+
+#: 两段格子。**与 `common_terminal_panel.json` 里的两个 collection 一一对应**，
+#: 顺序是界面序：0..26 在背包网格、27..35 在快捷栏。
+BACKPACK_GRID_PATH = INVENTORY_PATH + "/backpack"
+HOTBAR_GRID_PATH = INVENTORY_PATH + "/hotbar"
+
+#: 飞行动画面板作为图标的坐标系原点。
+FLYING_ITEMS_PATH = "/flying_items"
+# 改层级后须重载本模块并重建已打开的 FlightPool；仅重载 JSON 会留下旧路径。
+FLYING_ITEM_PATH = FLYING_ITEMS_PATH + "/flying_item"
+
+try:
+    INTEGER_TYPES = (int, long)
+except NameError:
+    INTEGER_TYPES = (int,)
+
+#: 每行几格。两段格子与网络列表**都是 9 列**，因此一处定义。
+COLUMNS = 9
+
+#: 背包网格里有几格（9x3）。界面槽号到段的换算靠它。
+BACKPACK_CELLS = 27
+
+#: 滚动控件相对**滚动面板**的三条候选后缀。`terminal_items_scroll` 自己是
+#: 面板，`scroll_view` 在它下面，而**那一层的名字随输入方式分叉**：鼠标端
+#: `scroll_mouse`、触控端 `scroll_touch`（原版模板 `common.scrolling_panel`
+#: 里两边靠 `ignored` 互斥）。写死一条就会在另一种设备上取不到控件——**那不
+#: 报错**，只表现为「动画不动」，而动画不动看起来和「没触发」一模一样。
+#:
+#: 空串是既有代码的假设（把滚动面板直接当 `scroll_view`），留着它是因为它
+#: 到底成不成立**还没在游戏里验过**：成功了就不必再往下试。
+#:
+#: **后缀而不是整条路径**：合成终端还有一个同样是 `common.scrolling_panel`
+#: 的候选配方窗口（`client/ui/terminal/crafting_panel.py`），它的分叉方式一模一样而
+#: 前缀不同。把三条候选写成后缀，两边共用一套，免得新界面上又抄一遍、
+#: 抄漏一条。
+SCROLL_VIEW_SUFFIXES = (
+    "",
+    "/scroll_mouse/scroll_view",
+    "/scroll_touch/scroll_view",
+)
+
+SCROLL_VIEW_PATHS = tuple(SCROLL_PATH + suffix for suffix in SCROLL_VIEW_SUFFIXES)
+
+
+def screen_base():
+    # type: () -> str
+    """屏幕基底（`tooldelta.ui.SCREEN_BASE_PATH`）。
+
+    **惰性 import**：`tooldelta/ui/utils.py` 在**模块级**就
+    `import mod.client.extraClientApi`，顶层 import 会让本模块离线（没有引擎）
+    时整个导不进来。拿不到就返回空串——离线用例因此拿到**相对路径**那一支，
+    与通用终端在游戏里的走法一致。与 `template_panel.title_control_path` 同一手法。
+    """
+    try:
+        from .....tooldelta.ui import SCREEN_BASE_PATH
+    except ImportError:
+        return ""
+    return str(SCREEN_BASE_PATH)
+
+
+def full_path(path):
+    # type: (str) -> str
+    """内容区相对路径（如 `/inventory/backpack`）→ 完整路径 `SCREEN_BASE_PATH + /window + …`。
+
+    所有界面的内容区都以 `window` 挂在铺满屏幕的根面板下（`WINDOW_ROOT`），只有这一种挂法。
+    2026-11-08 之前有过两种（通用终端显式挂 `/terminal`、另外三台内联在屏幕基底上），
+    改成同一个外层面板后，旧的两条路径一并删除。
+    """
+    return screen_base() + WINDOW_ROOT + path
+
+
+def _control_at(screen, path):
+    # type: (object, str) -> object
+    """按**完整**路径取控件；取不到（或引擎抛）返回 `None`。"""
+    try:
+        return screen.GetBaseUIControl(path)
+    except Exception:
+        return None
+
+
+def control(screen, path):
+    # type: (object, str) -> object
+    """按**内容区相对路径**取控件；取不到返回 `None`。
+
+    公开给 `flying_item`：动画器手上只有路径字符串，解析必须走同一条路，
+    否则控件找到了、原点却按另一条路径算，图标会整块偏移。
+    """
+    return _control_at(screen, full_path(path))
+
+
+def path_of(screen, path):
+    # type: (object, str) -> object
+    """内容区相对路径 → **本界面上取得到的完整路径**；取不到返回 `None`。
+
+    给「必须把路径字符串交给别的接口」的调用方用（`GetElement` 之类）。
+    """
+    full = full_path(path)
+    return full if _control_at(screen, full) is not None else None
+
+
+def window_control(screen, name):
+    # type: (object, str) -> object
+    """Resolve a named prefab through the active screen's content root."""
+    path = path_of(screen, "/" + name)
+    if path is None:
+        raise ValueError("Missing window control: %s" % name)
+    return screen.GetElement(path)
+
+
+def _rect(control):
+    # type: (object) -> object
+    """控件的全局矩形 `(x, y, 宽, 高)`；取不到返回 `None`。
+
+    用 `GetGlobalPosition()` 而不是 `GetPosition()`：前者是屏幕坐标，起终点
+    与坐标原点都在同一个坐标系里，减一下就是相对位置；后者是相对各自父节点
+    的，两个槽位的父节点不同（一个在网格里、一个在滚动内容里），直接相减
+    没有意义。
+    """
+    if control is None:
+        return None
+    try:
+        x, y = control.GetGlobalPosition()
+        width, height = control.GetSize()
+        return (float(x), float(y), float(width), float(height))
+    except Exception:
+        return None
+
+
+def scroll_view_at(screen, panel_path):
+    # type: (object, str) -> object
+    """**任意**滚动面板下面的滚动控件（`ScrollViewUIControl`）；取不到返回 `None`。
+
+    `panel_path` 是这个滚动面板的**内容区相对**路径（如
+    `/terminal_items_scroll`）。**不给默认值**：默认值会让调用方以为
+    「不传就是本界面的那一个」，而本模块里唯一知道自己是哪个面板的地方是调用点。
+    """
+    for suffix in SCROLL_VIEW_SUFFIXES:
+        found = control(screen, panel_path + suffix)
+        if found is None:
+            continue
+        try:
+            view = found.asScrollView()
+        except Exception:
+            continue
+        if view is not None:
+            return view
+    return None
+
+
+def scroll_view(screen):
+    # type: (object) -> object
+    """本终端列表的滚动控件。"""
+    return scroll_view_at(screen, SCROLL_PATH)
+
+
+def scroll_content_at(screen, panel_path):
+    # type: (object, str) -> object
+    """**任意**滚动面板里那一层内容控件；取不到返回 `None`。"""
+    return _content_of(scroll_view_at(screen, panel_path))
+
+
+def scroll_content(screen):
+    # type: (object) -> object
+    """滚动区里的**内容控件**，也就是那张 `terminal_items_grid`。
+
+    **内容路径不写死**：内容在 `scroll_view` 之下，而那一段的名字随输入方式
+    分叉（见 `SCROLL_VIEW_PATHS`）。引擎自己知道内容是谁——原版模板里的
+    `scroll_content` 属性就指名了它——问它要才是跨端一致的
+    （`ScrollViewUIControl.GetScrollViewContentControl()`；tooldelta 的
+    `UScrollView.GetContent()` 转发的是同一个接口）。
+
+    两个调用口都试：运行版本里百分比接口要从 `.base` 上拿（既有代码就是
+    这么调的），而文档把内容接口写在控件本身，两者对不上，因此都试一次。
+    """
+    return _content_of(scroll_view(screen))
+
+
+def _content_of(view):
+    # type: (object) -> object
+    """从一个滚动控件上问出它的内容控件；取不到返回 `None`。"""
+    if view is None:
+        return None
+    base = getattr(view, "base", None)
+    for holder in (view, base):
+        getter = getattr(holder, "GetScrollViewContentControl", None)
+        if getter is None:
+            continue
+        try:
+            control = getter()
+        except Exception:
+            continue
+        if control is not None:
+            return control
+    return None
+
+
+def _grid_cell_rect(screen, path, index, columns=COLUMNS):
+    # type: (object, str, int) -> object
+    """某个网格里第 `index` 格（按行优先、每行 `COLUMNS` 格）的矩形。"""
+    found = control(screen, path)
+    if found is None:
+        return None
+    try:
+        grid = found.asGrid()
+    except Exception:
+        return None
+    if grid is None:
+        return None
+    try:
+        cell = grid.GetGridItem(index % columns, index // columns)
+    except Exception:
+        return None
+    return _rect(cell)
+
+
+def backpack_slot_rect(screen, ui_index):
+    # type: (object, object) -> object
+    """**界面槽号**（0..35）→ 全局矩形；取不到返回 `None`。
+
+    收的是界面槽号，不是引擎槽号——两套槽序方向相反（`backpack_model.
+    engine_slot_of` 是它们之间唯一的换算），而点击路径上拿到的一律是界面
+    槽号。这里不做那次换算：本模块只回答「屏幕上这一格在哪儿」，引擎槽号
+    是另一件事（哪一格的数据），混进来就会在某一处把方向写反。
+    """
+    # `bool` 要单独挡：它是 `int` 的子类，而 `True` 会被算成第 1 格。
+    if isinstance(ui_index, bool) or not isinstance(ui_index, INTEGER_TYPES):
+        return None
+    if not 0 <= ui_index < BACKPACK_CELLS + COLUMNS:
+        return None
+    if ui_index < BACKPACK_CELLS:
+        return _grid_cell_rect(screen, BACKPACK_GRID_PATH, ui_index)
+    return _grid_cell_rect(screen, HOTBAR_GRID_PATH, ui_index - BACKPACK_CELLS)
+
+
+def backpack_area_rect(screen):
+    # type: (object) -> object
+    """背包那一半**整块**的矩形（上 9x3 + 下 9x1）。
+
+    用在「网络 → 背包」这一向上：服务端把东西放进**第一个装得下的格子**，
+    客户端看不到是哪一格，因此只能落到整块区域，而不假装知道是哪一格。
+    """
+    return _rect(control(screen, INVENTORY_PATH))
+
+
+def network_row_rect(screen, row):
+    # type: (object, object) -> object
+    """网络列表第 `row` 行 → 全局矩形；行取不到返回 `None`。
+
+    行坐标**不是缓存下来的**：滚动之后同一个下标就是另一行了，所以每次
+    现问内容控件（它的全局位置本来就带着滚动偏移）。
+    """
+    content = scroll_content(screen)
+    if content is None:
+        return None
+    if isinstance(row, bool) or not isinstance(row, INTEGER_TYPES) or row < 0:
+        return None
+    try:
+        grid = content.asGrid()
+    except Exception:
+        return None
+    if grid is None:
+        return None
+    try:
+        cell = grid.GetGridItem(row % COLUMNS, row // COLUMNS)
+    except Exception:
+        cell = None
+    rect = _rect(cell)
+    if rect is None:
+        origin = _rect(content)
+        if origin and origin[2] > 0:
+            size = float(origin[2]) / COLUMNS
+            rect = (origin[0] + row % COLUMNS * size, origin[1] + row // COLUMNS * size, size, size)
+    clip = network_area_rect(screen)
+    if rect and clip:
+        x, y, w, h = rect
+        if y + h <= clip[1] or y >= clip[1] + clip[3]:
+            return (x, clip[1] if y < clip[1] else clip[1] + clip[3], w, 0)
+    return rect
+
+
+def network_area_rect(screen):
+    # type: (object) -> object
+    """网络列表**整块**的矩形。
+
+    用在「物品在网络里还没有行」的场合——它要飞进去的是那一份库存，而
+    屏幕上还没有它落脚的地方；落到列表区的中心，比随便挑一行准。
+    """
+    return _rect(control(screen, SCROLL_PATH))
+
+
+#: 引擎附在按钮回调参数里的**点击位置**，键名取自
+#: `SetButtonTouchDownCallback` 的 args 表（`TouchPosX` / `TouchPosY`，
+#: 文档写明是「按钮被点击时屏幕上的 **UI 坐标**」）。PC 端是鼠标点下的
+#: 位置，触屏端是手指按下的位置——同一套键，因此不必分端。
+CLICK_X_KEY = "TouchPosX"
+CLICK_Y_KEY = "TouchPosY"
+
+
+def click_rect(params):
+    # type: (object) -> object
+    """这一次点击落在屏幕的哪里，包成一个**退化矩形** `(x, y, 0, 0)`。
+
+    收的是**绑定回调收到的那个 params**，不是现问鼠标：要的是「玩家点的那
+    一下在哪儿」，而不是「动画开始时鼠标在哪儿」——后者在那两下点击之后也
+    可能已经被挪走了。
+
+    坐标系与 `GetGlobalPosition()` **同一个**（都是 UI 坐标），所以可以直接
+    当飞行动画的落点，不需要任何缩放换算。
+
+    取不到就返回 `None`（键盘触发、参数形状变了、老引擎不带这两个键），
+    调用方据此退回原来的落点——**不飞向 `(0, 0)`**，那会是一道横穿屏幕的
+    假动画。
+    """
+    if not isinstance(params, dict):
+        return None
+    raw_x = params.get(CLICK_X_KEY)
+    raw_y = params.get(CLICK_Y_KEY)
+    # `bool` 单独挡：它是 `int` 的子类，`True` 会被 `float()` 收成 1.0。
+    # 类型元组用模块级那份，别在这里写 `long`——离线跑的是 py3，那是个 NameError。
+    for value in (raw_x, raw_y):
+        if isinstance(value, bool):
+            return None
+        if not isinstance(value, INTEGER_TYPES) and not isinstance(value, float):
+            return None
+    try:
+        return (float(raw_x), float(raw_y), 0.0, 0.0)
+    except (TypeError, ValueError):
+        return None
+
+
+DEVICE_GRIDS = {
+    "grid": ("/crafting_panel/crafting_grid", 3, 9),
+    "output": ("/crafting_panel/output_slot", 1, 1),
+    "source": ("/template_panel/source_grid", 3, 9),
+    "outputs": ("/template_panel/outputs_grid", 1, 3),
+    "input": ("/template_panel/template_input_slot", 1, 1),
+    "result": ("/template_panel/template_output_slot", 1, 1),
+}
+
+#: 设备区域归哪个面板模型：屏幕上没有这个模型，就没有这几块网格，不必去问引擎。
+DEVICE_OWNERS = {
+    "grid": "craft",
+    "output": "craft",
+    "source": "template",
+    "outputs": "template",
+    "input": "template",
+    "result": "template",
+}
+
+
+def device_grids(screen):
+    # type: (object) -> list
+    """这张屏幕实际拥有的设备网格，按 `DEVICE_GRIDS` 的固定顺序。"""
+    return [(name, DEVICE_GRIDS[name]) for name in sorted(DEVICE_GRIDS)
+            if getattr(screen, DEVICE_OWNERS[name], None) is not None]
+
+
+def slot_rect(screen, area, index):
+    if area == "bag":
+        return backpack_slot_rect(screen, index)
+    if area == "network":
+        return network_row_rect(screen, index) if index >= 0 else network_area_rect(screen)
+    path, columns, count = DEVICE_GRIDS[area]
+    if not 0 <= index < count:
+        return None
+    cell = _grid_cell_rect(screen, path, index, columns)
+    if cell is not None and min(cell[2:]) > 0:
+        return cell
+    # Hidden result renderers can report 0x0 just after the last craft.
+    grid = _rect(control(screen, path))
+    if grid is None or min(grid[2:]) <= 0:
+        return None
+    width = float(grid[2]) / columns
+    height = float(grid[3]) / ((count + columns - 1) // columns)
+    return (grid[0] + index % columns * width, grid[1] + index // columns * height, width, height)
+
+
+def screen_control(screen, path):
+    # type: (object, str) -> object
+    """铺满屏幕的根面板（`screen_root`）下的控件，不经窗口那一层；`path` 为空串即根面板本身。"""
+    return _control_at(screen, screen_base() + path)
+
+
+def window_rect(screen):
+    # type: (object) -> object
+    """窗口（内容区）本身的矩形；点在它外面才算「点窗外」。"""
+    return _rect(control(screen, CONTENT_PATH))
+
+
+def contains(rect, point):
+    return bool(rect and point and rect[0] <= point[0] < rect[0] + rect[2]
+                and rect[1] <= point[1] < rect[1] + rect[3])
+
+
+def slot_at(screen, point):
+    """鼠标所在的格子 `(区域, 序号)`；网络区优先（被滚动裁掉的格子不算）。"""
+    area = network_area_rect(screen)
+    if contains(area, point):
+        content = scroll_content(screen)
+        try:
+            rect = _rect(content.asGrid().GetGridItem(0, 0)) if content else None
+        except (AttributeError, ValueError, RuntimeError):
+            rect = None
+        if not rect or min(rect[2:]) <= 0:
+            origin = _rect(content)
+            if origin and origin[2] > 0:
+                size = float(origin[2]) / COLUMNS
+                rect = (origin[0], origin[1], size, size)
+        if rect and rect[2] > 0 and rect[3] > 0:
+            x = int((point[0] - rect[0]) // rect[2])
+            y = int((point[1] - rect[1]) // rect[3])
+            index = y * COLUMNS + x
+            if 0 <= x < COLUMNS and y >= 0 and screen.list_view.has_item(index):
+                return "network", index
+        return "network", -1
+    groups = [("bag", BACKPACK_GRID_PATH, 9, 27, 0),
+              ("bag", HOTBAR_GRID_PATH, 9, 9, 27)]
+    for name, (path, cols, count) in device_grids(screen):
+        groups.append((name, path, cols, count, 0))
+    for name, path, cols, count, offset in groups:
+        rect = _grid_cell_rect(screen, path, 0, cols)
+        if not rect or min(rect[2:]) <= 0:
+            continue
+        x = int((point[0] - rect[0]) // rect[2])
+        y = int((point[1] - rect[1]) // rect[3])
+        if 0 <= x < cols and y >= 0 and y * cols + x < count:
+            return name, offset + y * cols + x
+    return None

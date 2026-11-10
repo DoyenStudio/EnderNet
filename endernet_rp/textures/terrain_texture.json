@@ -46,6 +46,18 @@
         "endernet:dos_network_endpoint_all": {
             "textures": "textures/endernet/devices/dos_network_endpoint_all"
         },
+        "endernet:ender_cable_model": {
+            "textures": "textures/endernet/models/ender_cable"
+        },
+        "endernet:ender_cable_panels": {
+            "textures": "textures/endernet/entity/ender_cable_panels"
+        },
+        "endernet:ender_dense_cable_model": {
+            "textures": "textures/endernet/models/ender_dense_cable"
+        },
+        "endernet:ender_glass_cable_model": {
+            "textures": "textures/endernet/models/ender_glass_cable"
+        },
         "endernet:energy_input_interface_all": {
             "textures": "textures/endernet/devices/energy_input_interface_all"
         },

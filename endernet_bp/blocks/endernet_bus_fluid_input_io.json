@@ -24,7 +24,7 @@
             },
             "netease:block_container": {
                 "custom_description": "总线流体存货口",
-                "screen_name": "bus_fluid_input_io_ui.main",
+                "screen_name": "endernet_bus_fluid_input_io.main",
                 "container_size": 1
             },
             "netease:custom_tips": {

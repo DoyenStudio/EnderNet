@@ -178,7 +178,7 @@ class FakeSlotContainerProvider(object):
         self.by_position = {}
 
     def container_at(self, node_key):
-        from endernet.server.adapters.containers import FakeContainer
+        from endernet.server.adapters.containers.contract import FakeContainer
 
         position = node_key.as_key()
         if position not in self.by_position:
@@ -552,9 +552,9 @@ def item_dict_with_carrier(name, medium_id, count=1, version=None):
     载体的格式版本默认取 `medium_item.CARRIER_VERSION`；显式给一个别的值
     用来测「版本不认识」那条分支。
     """
-    from endernet.common import medium_item
-    from endernet.common.item_codec import item_dict_from_key
-    from endernet.common.resource_key import ResourceKey
+    from endernet.common.resources import medium_item
+    from endernet.common.resources.item_codec import item_dict_from_key
+    from endernet.common.resources.key import ResourceKey
 
     data = item_dict_from_key(ResourceKey.item(name, 0), count)
     if version is None:
@@ -566,7 +566,7 @@ def item_dict_with_carrier(name, medium_id, count=1, version=None):
 def carrier_of_item(data):
     # type: (object) -> object
     """一件物品字典上的载体，等价于 `medium_item.read_carrier(userData)`。"""
-    from endernet.common import medium_item
+    from endernet.common.resources import medium_item
 
     if not isinstance(data, dict):
         return None
@@ -576,7 +576,7 @@ def carrier_of_item(data):
 def managed_lines_of(data):
     # type: (object) -> tuple
     """一件物品的 `display.Lore` 里**本模组管理的**那些行。"""
-    from endernet.common import medium_item
+    from endernet.common.resources import medium_item
 
     if not isinstance(data, dict):
         return ()
@@ -595,8 +595,8 @@ def managed_lines_of(data):
 def item_dict_without_carrier(name, count=1):
     # type: (str, int) -> dict
     """一件**没有载体**的介质物品字典 = 一块未初始化的空白介质。"""
-    from endernet.common.item_codec import item_dict_from_key
-    from endernet.common.resource_key import ResourceKey
+    from endernet.common.resources.item_codec import item_dict_from_key
+    from endernet.common.resources.key import ResourceKey
 
     return item_dict_from_key(ResourceKey.item(name, 0), count)
 
@@ -654,7 +654,7 @@ def registered_device_screens():
     import types
     from unittest.mock import patch
     from endernet_bp.endernet_scripts.endernet.client import ui
-    name = ui.__name__ + ".universal_importer"
+    name = ui.__name__ + ".universal_importer.screen"
     importer = types.ModuleType(name)
     importer.UniversalImporterScreen = type("UniversalImporterScreen", (), {})
     with patch.dict(sys.modules, {name: importer}):

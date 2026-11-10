@@ -38,7 +38,7 @@ from gen_items import item_texture_name  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS_ROOT = os.path.join(REPO, "endernet_bp", "endernet_scripts")
-ITEM_OUT_DIR = os.path.join(REPO, "endernet_rp", "textures", "items")
+ITEM_OUT_DIR = os.path.join(REPO, "endernet_rp", "textures", "endernet", "items")
 if SCRIPTS_ROOT not in sys.path:
     sys.path.insert(0, SCRIPTS_ROOT)
 

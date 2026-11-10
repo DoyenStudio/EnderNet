@@ -3,7 +3,7 @@
 
 import unittest
 
-from endernet_bp.endernet_scripts.endernet.client.ui.button_utils import (
+from endernet_bp.endernet_scripts.endernet.client.ui.shared.button_utils import (
     SetOreUiButtonCallback,
 )
 

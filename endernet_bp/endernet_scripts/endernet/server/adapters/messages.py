@@ -42,7 +42,7 @@ from ...common.protocol import SYNC_CHANNEL_C2S, SYNC_CHANNEL_S2C
 from .events import engine_player_dimension
 
 #: 文本类型。**py2 下 `str` 与 `unicode` 是两类**（先例见
-#: `client/ui/inventory_model.py` 的 `INTEGER_TYPES`）：引擎给的玩家 id
+#: `client/ui/terminal/inventory_model.py` 的 `INTEGER_TYPES`）：引擎给的玩家 id
 #: 在哪一类上，两边都出现过。只认 `str` 的话，py2 里一条 `unicode` 形式的
 #: id 会被判成「取不到身份」，而那会让**每一次开界面都失败**——
 #: 失败方向是安全的，但整个功能没了。

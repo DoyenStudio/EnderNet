@@ -23,10 +23,11 @@ import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import (
     STORAGE_DRIVER_SLOT_COUNT,
+    UNCONFIGURED,
     DefinitionSet,
 )
 from endernet.common.identity import NodeKey
-from endernet.common.medium_item import CARRIER_VERSION
+from endernet.common.resources.medium_item import CARRIER_VERSION
 from endernet.common.protocol import (
     CommandKind,
     CommandSource,
@@ -37,7 +38,7 @@ from endernet.common.protocol import (
     STATUS_REJECTED,
     TransferStatus,
 )
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 from endernet.server.devices.capabilities import STORAGE_PROVIDER
 from endernet.server.devices.registry import DeviceRegistry
 from endernet.server.devices.storage_driver import (
@@ -1329,27 +1330,38 @@ class TestDriverNetworkAccess(unittest.TestCase):
             device_ref=self.terminal))
 
     def test_driver_with_unknown_admission_cannot_trade_through_admitted_terminal(self):
-        driver = self.place(key(0, 64, 1), DRIVER_DEVICE_ID)
+        # 驱动器挂在核心里那块 16 位基带的南面（8 位与 16 位基带贴着，R14-b 允许混搭）。
+        bb16 = self.place(key(0, 64, 1), "endernet:network_baseband_16")
+        driver = self.place(key(0, 64, 2), DRIVER_DEVICE_ID)
         self.fill_slots(driver, 1)
         medium_id = self.server.drivers.get_by_ref(driver).assignment(0).medium_id
         medium = self.server.drivers.medium(medium_id)
         self.assertEqual(self.from_terminal("in", "insert", STONE, 7).status, STATUS_OK)
         self.assertIsNotNone(self.storage.reserve("order", STONE, 2))
 
-        # 第二段独立基带同时连接主控和驱动器，使驱动器处于多接入待确认。
-        extra = self.place(key(1, 64, 1), "endernet:network_baseband_8")
-        self.assertIsNone(self.server.admission.status_of(driver).ok)
-        self.assertTrue(self.server.admission.status_of(self.terminal).ok)
-        self.assertEqual(self.runtime.state(), RunState.RUNNABLE)
-        self.assertEqual(self.from_terminal("denied-in", "insert", DIRT, 1).status, STATUS_BLOCKED)
-        self.assertEqual(self.from_terminal("denied-out", "extract", STONE, 1).status, STATUS_BLOCKED)
-        self.assertEqual(self.storage.query(STONE)["available"], 0)
-        self.assertIsNone(self.storage.reserve("order2", STONE, 1))
-        self.assertEqual(self.storage.reservations_of("order"), ())
-        self.assertEqual(medium.count_of(STONE), 7)
-        self.assertEqual(medium.count_of(DIRT), 0)
+        # 让驱动器的准入进入「待确认」：它那条线路的根（16 位基带的南面）容量未配置
+        # （R10 缺项）。改版前这里靠「多接入」制造待确认，那条规则已随 R02 退役。
+        # 终端在 8 位基带西面那条线路上，照常获准；网络照常运行。
+        definition = self.server.definitions.get("endernet:network_baseband_16")
+        original = definition.bandwidth.capacity_quarters
+        try:
+            definition.bandwidth.capacity_quarters = UNCONFIGURED
+            self.server.topology.mark_dirty(bb16.node_key)
+            self.server.tick()
+            self.assertIsNone(self.server.admission.status_of(driver).ok)
+            self.assertTrue(self.server.admission.status_of(self.terminal).ok)
+            self.assertEqual(self.runtime.state(), RunState.RUNNABLE)
+            self.assertEqual(self.from_terminal("denied-in", "insert", DIRT, 1).status, STATUS_BLOCKED)
+            self.assertEqual(self.from_terminal("denied-out", "extract", STONE, 1).status, STATUS_BLOCKED)
+            self.assertEqual(self.storage.query(STONE)["available"], 0)
+            self.assertIsNone(self.storage.reserve("order2", STONE, 1))
+            self.assertEqual(self.storage.reservations_of("order"), ())
+            self.assertEqual(medium.count_of(STONE), 7)
+            self.assertEqual(medium.count_of(DIRT), 0)
+        finally:
+            definition.bandwidth.capacity_quarters = original
 
-        self.server.push(NormalizedEvent.remove(extra.node_key, "endernet:network_baseband_8"))
+        self.server.topology.mark_dirty(bb16.node_key)
         self.server.tick()
         self.assertTrue(self.server.admission.status_of(driver).ok)
         self.assertEqual(self.storage.query(STONE)["available"], 7)
@@ -1357,9 +1369,18 @@ class TestDriverNetworkAccess(unittest.TestCase):
         self.assertEqual(medium.count_of(STONE), 6)
 
     def test_other_driver_load_changes_access_without_a_topology_event(self):
-        first = self.place(key(0, 64, -1), DRIVER_DEVICE_ID)
-        second = self.place(key(0, 63), DRIVER_DEVICE_ID)
-        last = self.place(key(0, 64, 1), DRIVER_DEVICE_ID)
+        """同一条线路上「先到先得」：排在前面的驱动器多插一块盘，挤掉最后那台。
+
+        8 位基带南面一格末影玻璃光缆（8u）。光缆周围按线路的访问顺序依次是一台
+        终端、first、second、last——位置决定先后，与放置先后无关（13 §4.2）。
+        改版前这三台驱动器各贴基带一个面、共享一个 8u 的负载域；改版后各面
+        互不合池，要让它们抢同一份带宽就得挂在同一条线路上。
+        """
+        self.place(key(0, 64, 1), "endernet:ender_glass_cable")
+        self.place(key(-1, 64, 1), "endernet:common_terminal_panel")
+        first = self.place(key(0, 63, 1), DRIVER_DEVICE_ID)
+        second = self.place(key(0, 64, 2), DRIVER_DEVICE_ID)
+        last = self.place(key(0, 65, 1), DRIVER_DEVICE_ID)
         self.fill_slots(last, 10)
         self.assertEqual(self.from_terminal("seed-last", "insert", STONE, 2).status, STATUS_OK)
         self.fill_slots(first, 9)

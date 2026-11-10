@@ -7,14 +7,14 @@ import testsupport  # noqa: F401
 import test_io as fixtures
 from endernet.common.identity import DeviceRef, node_key_text
 from endernet.common.protocol import Reason
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import ContainerEntry, FakeContainer
-from endernet.server.devices.io import (
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import ContainerEntry, FakeContainer
+from endernet.server.devices.bus_io import (
     PortConfig, PortStore, PortRunner, PortGateway, normalize_item_config,
     MODE_BLACKLIST, MODE_WHITELIST, PORT_RECORD_KIND, port_blocker,
 )
 from endernet.server.persistence.repository import MemoryRepository, Record
-from endernet.client.ui.port_config_model import PortConfigModel
+from endernet.client.ui.devices.port_config_model import PortConfigModel
 from endernet.server.adapters.world import ToolDeltaWorldAdapter
 
 
@@ -201,7 +201,7 @@ class IntakeRules(fixtures.PortFixture):
             self.assertIn(node_key_text(self.state.node_key), self.ports.frozen_ports())
 
     def test_connection_view_tracks_container_changes(self):
-        from endernet.server.devices.io import config_view
+        from endernet.server.devices.bus_io import config_view
         self.assertEqual(config_view(self.state, self.policy, self.ports)['facing_status'], '外部容器：已接入')
         self.containers.boxes.pop(self.target_ref.node_key.as_key())
         self.assertEqual(config_view(self.state, self.policy, self.ports)['facing_status'], '外部容器：未接入')

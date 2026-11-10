@@ -36,14 +36,14 @@ from endernet.common.definitions import (
     Value,
 )
 from endernet.common.identity import NodeKey
-from endernet.common.item_codec import item_dict_from_key
+from endernet.common.resources.item_codec import item_dict_from_key
 from endernet.common.protocol import (
     BlockReason,
     Reason,
     STATUS_OK,
 )
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import FakeContainer
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import FakeContainer
 from endernet.server.bootstrap import ServerBootstrap
 from endernet.server.devices.registry import DeviceRegistry
 from endernet.server.network.controller import (

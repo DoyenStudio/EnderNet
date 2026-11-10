@@ -28,7 +28,7 @@ SCRIPTS_ROOT = os.path.join(REPO, "endernet_bp", "endernet_scripts")
 #: 介质物品的贴图**必须**单独一个目录。放进 devices/ 会立刻撞上
 #: `test_assets.TestResourcePackMapping.test_no_unreferenced_device_textures`——
 #: 那条测试拿地形图集的引用去比对该目录下的每张图。
-ITEM_OUT_DIR = os.path.join(REPO, "endernet_rp", "textures", "items")
+ITEM_OUT_DIR = os.path.join(REPO, "endernet_rp", "textures", "endernet", "items")
 
 if SCRIPTS_ROOT not in sys.path:
     sys.path.insert(0, SCRIPTS_ROOT)

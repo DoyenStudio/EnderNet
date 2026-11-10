@@ -15,11 +15,11 @@
 玩家在区块没加载时拔走一块盘，存档还挂着它、网络照旧记账。
 
 介质**内容**仍然不在物品里（`persistence_backend.md` §2.2）：物品只携带
-载体 `userData["endernet:medium"] = {"id", "v"}`（`common/medium_item.py`），
+载体 `userData["endernet:medium"] = {"id", "v"}`（`common/resources/medium_item.py`），
 内容按介质 ID 存世界 ExtraData。因此本层的记录**只剩介质表一份**。
 
 读不到容器时**保留上一次的读数**（区块卸载不等于盘被拔了）。变更检测与
-`memory_slot.py` / `crafting/store.py` 同一套：容器事件只当脏标记，去抖后重读。
+`memory_slot.py` / `crafting/providers/store.py` 同一套：容器事件只当脏标记，去抖后重读。
 
 三条仍然成立的性质：
 
@@ -32,14 +32,14 @@
    也**不**把介质标成孤儿——归属是那件物品本身（见 `StorageDriverStore.drop`）。
 """
 
-from ...common import medium_item
+from ...common.resources import medium_item
 from ...common.definitions import (
     CATEGORY_STORAGE,
     STORAGE_DRIVER_SLOT_COUNT,
     UNCONFIGURED,
 )
 from ...common.identity import DeviceRef, NodeKey, node_key_text  # noqa: F401
-from ...common.item_codec import (
+from ...common.resources import (
     is_empty_item,
     item_dict_from_key,
     item_key_from_dict,
@@ -50,10 +50,10 @@ from ...common.protocol import (
     TransferReceipt,
     TransferStatus,
 )
-from ...common.resource_key import ResourceKey
-from ..persistence.repository import Record
-from ..runtime.lifecycle import ChangeKind
-from ..storage.medium import (
+from ...common.resources import ResourceKey
+from ..persistence import Record
+from ..runtime import ChangeKind
+from ..storage import (
     DIRECTION_READ,
     DIRECTION_WRITE,
     Medium,

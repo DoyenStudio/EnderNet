@@ -1,8 +1,8 @@
 # 万用样板采集器
 
-实现位于 `client/ui/universal_importer.py`，屏幕类 `UniversalImporterScreen`
+实现位于 `client/ui/universal_importer/screen.py`，屏幕类 `UniversalImporterScreen`
 继承 `ToolDeltaScreen`，由 `register_screens()` 登记。资源定义为
-`endernet_universal_importer_ui.main`，已在 `_ui_defs.json` 中加载。
+`endernet_universal_importer.main`，已在 `_ui_defs.json` 中加载。
 `main` 是空白生命周期屏幕，实际显示控件放在独立的 `overlay_panel` 定义中；
 动态挂载只能使用 `overlay_panel`，不能复用已注册为 ScreenNode 的 `main`。
 

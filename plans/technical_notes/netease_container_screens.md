@@ -44,8 +44,8 @@
 > 「容器类走代理、终端类 `PushUI`」这一句是 User 逐字的。
 
 **与既有实测对得上**：§五 1 量出「画了 `netease_container` 集合」的 7 个界面是
-`assemble_chamber_ui` / `bus_item_input_io_ui` / `bus_item_io_ui` / `bus_item_output_io_ui` /
-`bus_template_io_ui` / `memory_slot_ui` / `storage_driver_ui`——**4 台终端一个都不在里面**，
+`endernet_assemble_chamber` / `endernet_bus_item_input_io` / `endernet_bus_item_io` / `endernet_bus_item_output_io` /
+`endernet_bus_template_io` / `endernet_memory_slot` / `endernet_storage_driver`——**4 台终端一个都不在里面**，
 7 个全部落在「容器类」那一侧（当时 7 个里只有 4 台已声明容器组件，3 台是待补的差异；
 **那 3 台已于 2026-09-29 补上**，见 §五 1 与 §二）。
 User 的分类规则独立预测出这个切分，实测恰好相符，两条线索互证。
@@ -75,22 +75,23 @@ User 的分类规则独立预测出这个切分，实测恰好相符，两条线
 
 | 集合名 | 谁填充它 | 在什么通路上用 | 本机可查的样例 |
 | --- | --- | --- | --- |
-| `netease_container` | 引擎，按方块实体的 `Items` | 方块容器（`netease:block_container` + `base_block: netease_container`） | **本仓自己**：`endernet_container_common.json:128` 硬编码 |
+| `netease_container` | 引擎，按方块实体的 `Items` | 方块容器（`netease:block_container` + `base_block: netease_container`） | **本仓自己**：`container_common.json:128` 硬编码 |
 | `container_items` | 引擎，按方块容器 | 原版自定义箱子 | `vanilla_netease/ui/netease_custom_chest_screen.json:13`，且用 `grid_dimension_binding: "#netease_custom_chest_grid_dimension"`（`:12`）逐帧取维度 |
-| `netease_ui_container` | **引擎为 `OpenNeteaseContainer` 打开的界面绑定** | 服务端脚本打开、不依赖方块 | **本仓自带范本**：`endernet_rp/ui/NeteaseContainerUI.json:197`（集合名）与 `:3`（`$item_collection_name`），已登记于 `_ui_defs.json:22` |
+| `netease_ui_container` | **引擎为 `OpenNeteaseContainer` 打开的界面绑定** | 服务端脚本打开、不依赖方块 | **本仓自带范本**：`endernet_rp/ui/endernet/common/netease_container.json:197`（集合名）与 `:3`（`$item_collection_name`），已登记于 `_ui_defs.json:22` |
 
 前两者的差别值得注意：本仓把 `collection_name` 写死在公共模板里，原版则用
 `grid_dimension_binding` 让网格维度随界面变化。这只影响「同一模板给不同格数的设备复用」这一件事。
 
-**命名空间与集合名是两回事，`NeteaseContainerUI.json` 是最好的例子**：它的
-`namespace` 是 `netease_container`（`:5`），而它内部同时用了两个集合——
+**命名空间与集合名是两回事，`netease_container.json` 是最好的例子**：它的
+`namespace` 是 `endernet_netease_container`（`:5`），而它内部同时用了两个集合——
 `netease_custom_container_grid` 用 `netease_container`（`:14`），
 `netease_drop_container_grid` 用 `netease_ui_container`（`:197`），
 两个网格被叠在同一个面板里
 （`netease_custom_container_panel` 的 `:101` 与 `:109`）。
 它的屏幕名是 `netease_custom_container_screen@common.inventory_screen_common`（`:173`），
 **与引擎 `OpenNeteaseContainer` 注释里的示例 screenName
-`"netease_container.netease_custom_container_screen"` 逐字相符**。
+`"netease_container.netease_custom_container_screen"` 只差命名空间**：2026-11-09 本仓把
+命名空间改成 `endernet_netease_container`（避开蔚蓝科技的同名范本），改名前两者逐字相符。
 即：路径甲与路径丙的样例在同一份文件里，且这份文件就在本仓资源包内。
 
 ## 三、路径甲：引擎按方块组件自动打开
@@ -123,7 +124,7 @@ User 的分类规则独立预测出这个切分，实测恰好相符，两条线
 
 | `is_proxy` | 调用 | 用途 |
 | --- | --- | --- |
-| `False`（默认） | `RegisterUI(GetModName(), ui_key, path, bound_ui_name)`（`:71`） | 注册一个**自有**屏幕；本仓通用终端走这条（`client/ui/terminal_panel.py:127`） |
+| `False`（默认） | `RegisterUI(GetModName(), ui_key, path, bound_ui_name)`（`:71`） | 注册一个**自有**屏幕；本仓通用终端走这条（`client/ui/terminal/panel.py:127`） |
 | `True` | `NSManagerIns.RegisterScreenProxy(bound_ui_name, path)`（`:67`） | 挂到**既有原生屏幕**上（`general_screen.py` 的 `_register_as_proxy`） |
 
 两条分支各对应 §零 的一类方块：
@@ -170,7 +171,7 @@ OpenNeteaseContainer(self, screenName, customDescription, isCloseReturnItem=Fals
 与本仓设备界面继承的 `netease_container` 不同，等于本设备的网格要单独写一套，
 物品数据也要自行用 `GetPlayerUIItem` / `SetPlayerUIItem` 维护。
 
-**样例是有的**：本仓 `endernet_rp/ui/NeteaseContainerUI.json` 就是这条路线的范本
+**样例是有的**：本仓 `endernet_rp/ui/endernet/common/netease_container.json` 就是这条路线的范本
 （§二），且它的屏幕名与引擎注释里的示例逐字相符。真正缺的不是样例，而是
 **它没在真机上跑过**，以及它与本模组设备模型如何对齐（方块没了，`node_key` 从哪来）。
 
@@ -180,17 +181,17 @@ OpenNeteaseContainer(self, screenName, customDescription, isCloseReturnItem=Fals
 
 1. **本仓有 7 个界面画了 `netease_container` 集合**（按「实例化了
    `container_grid_items` 或逐槽 `container_grid_item`」判定，不是按界面里出现
-   `collection_name` 字面量判定——见下一条）：`assemble_chamber_ui` /
-   `bus_item_input_io_ui` / `bus_item_io_ui` / `bus_item_output_io_ui` /
-   `bus_template_io_ui` / `memory_slot_ui` / `storage_driver_ui`。
+   `collection_name` 字面量判定——见下一条）：`endernet_assemble_chamber` /
+   `endernet_bus_item_input_io` / `endernet_bus_item_io` / `endernet_bus_item_output_io` /
+   `endernet_bus_template_io` / `endernet_memory_slot` / `endernet_storage_driver`。
    当时声明了容器组件的只有 4 台（`gen_blocks.py`），两边的差是：
-   **画了却没有容器方块＝`bus_item_input_io_ui` / `bus_item_output_io_ui` /
-   `memory_slot_ui` 三个；有容器方块却没画＝空集**
+   **画了却没有容器方块＝`endernet_bus_item_input_io` / `endernet_bus_item_output_io` /
+   `endernet_memory_slot` 三个；有容器方块却没画＝空集**
    （`assemble_chamber` 靠逐槽 `container_grid_item` 渲染，是画了的）。
    **2026-09-29 第二轮后这个差清零**：那三台补上了组件，两个流体口则是
    「有容器但界面刻意不画」的新形态（`endernet_tests/test_assets.py:517`）。
 2. **不能靠字面量 `collection_name` 找这个集合。** 集合名只写死在公共模板
-   `endernet_container_common.json:128` 一处，设备界面一律**继承**它，自己那一行
+   `container_common.json:128` 一处，设备界面一律**继承**它，自己那一行
    不出现该字符串；逐槽写法（`slot@endernet_container_common.container_grid_item`）
    连模板都不写集合名，靠 `$item_collection_name` 的默认值（同文件 `:118`）绑定。
    全仓只有 2 个界面自己写了 `collection_name`：`bus_item_io.json:146`（编辑器残留的
@@ -198,7 +199,7 @@ OpenNeteaseContainer(self, screenName, customDescription, isCloseReturnItem=Fals
    **两个都不是** `netease_container`。只看字面量会得出完全错误的结论。
 3. `netease_ui_container` 在 `D:/MCStudioDownload/game/MinecraftPE_Netease/3.9.0.401155/data/`
    下的**全部 JSON 中零出现**——即**游戏自带**资源包里没有这条通路的样例。
-   但**本仓自己有一份**：`endernet_rp/ui/NeteaseContainerUI.json`（随 `87c4c2e`
+   但**本仓自己有一份**：`endernet_rp/ui/endernet/common/netease_container.json`（随 `87c4c2e`
    以「终端 UI 基座」名义入库，`_ui_defs.json:22` 已登记，`.mcs/editorSave.json`
    引用了它，Python 侧无人引用）。它是路径甲与路径丙共用的范本，见 §二。
 4. 原版范本 `vanilla_netease/ui/netease_custom_chest_screen.json`：命名空间 `chest`，
@@ -230,7 +231,7 @@ OpenNeteaseContainer(self, screenName, customDescription, isCloseReturnItem=Fals
 （样本资格见 §六：`bus_item_io` 已因「没做完」作废，端口才是样本。）
 
 1. **路径乙-A 的注册环节成立**：`/mod-ui --include-registered` 里确有
-   `EnderNet:common_terminal_panel_ui.main → common_terminal_panel_ui.main`，
+   `EnderNet:endernet_common_terminal_panel.main → endernet_common_terminal_panel.main`，
    即 `RegistToolDeltaScreen` 的 `RegisterUI` 真机可用。
 2. **路径乙-A 的创屏环节：屏出来了，Python 侧没接上。** `CommonTerminalPanel.OpenDemo()`
    调 `CreateUI` → `clientApi.CreateUI` 返回 `None` → 上游判 `isinstance` 失败抛
@@ -246,9 +247,9 @@ OpenNeteaseContainer(self, screenName, customDescription, isCloseReturnItem=Fals
    `Can't initialize UBaseCtrl: comp is None`：**脚本路径与 JSON 对不上**——
    `common_terminal_panel.json` 里该控件实际是 `content/inventory`
    （`main/terminal` 是另一片空 panel，其下没有 `inventory`）。
-3. **路径丙实测未成功**：`comp.OpenNeteaseContainer('netease_container.netease_custom_container_screen', ...)`
+3. **路径丙实测未成功**：`comp.OpenNeteaseContainer('endernet_netease_container.netease_custom_container_screen', ...)`（实测时命名空间尚未改名）
    在服务端返回 **`False`**（未打开），且日志里没有对应的引擎报错。范本屏幕就是本仓
-   `NeteaseContainerUI.json`（§二）。**一次失败不足以判这条路不可用**（可能与调用时机、
+   `netease_container.json`（§二）。**一次失败不足以判这条路不可用**（可能与调用时机、
    玩家状态有关），但它今天没有任何成功证据。
 4. **ModSDK `CreateUI` 的屏不在原生 JSON UI 树里**：屏幕开着的时候，`/screens` 与
    `/overview` 都只看得到 `hud.hud_screen`。因此——**路径甲的容器屏可以用
@@ -263,7 +264,7 @@ OpenNeteaseContainer(self, screenName, customDescription, isCloseReturnItem=Fals
    服务端 `tick_errors.count = 0`、错误日志为空（11-07 清单 §九末有探针表）。
    这属于 11 的物品／流体选择链路，不属本文题目。
 6. **方块实体侧的容器是真的（只读补测，不需要右键）**。用与
-   `server/adapters/containers_engine.py:429-440` **完全相同的原语**
+   `server/adapters/containers/engine.py:429-440` **完全相同的原语**
    （`f.CreateItem(GetLevelId()).GetContainerSize(pos, dim)` 与
    `GetContainerItem(pos, slot, dim, True)`）读同一维度里的相邻两台：
 
@@ -310,8 +311,8 @@ OpenNeteaseContainer(self, screenName, customDescription, isCloseReturnItem=Fals
 
 | # | 问题 | 判据 |
 | --- | --- | --- |
-| Q1 | 右键端口方块，屏幕是否打开、是否是 `bus_item_output_io_ui.main` | `get_latest_logs` / `jsonui_debugger` 能看到屏幕与命名空间 |
-| Q2 | 端口自己的格（取货口 5 格／存货口 9 格）是否被引擎填充（不是空网格） | 往格里放一样东西后，用 `execute_code` 读方块实体，读法与 `server/adapters/containers_engine.py:429-440` 一致 |
+| Q1 | 右键端口方块，屏幕是否打开、是否是 `endernet_bus_item_output_io.main` | `get_latest_logs` / `jsonui_debugger` 能看到屏幕与命名空间 |
+| Q2 | 端口自己的格（取货口 5 格／存货口 9 格）是否被引擎填充（不是空网格） | 往格里放一样东西后，用 `execute_code` 读方块实体，读法与 `server/adapters/containers/engine.py:429-440` 一致 |
 | Q3 | 槽位子控件的**运行时**路径（JSON 定义路径 ≠ 运行时路径） | `jsonui_debugger` 的节点查询。**只对路径甲有效**——脚本屏不进原生树（§五 4） |
 | Q4 | 对一个本仓屏幕调 `OpenNeteaseContainer` 会怎样 | 预期因集合名不符而失败或网格为空。**已试一次：返回 `False`**，无引擎报错；不足以定论（§五 3） |
 | Q5 | `PushUI` 打开一个已注册的脚本屏幕 | 代表 `is_proxy=False` 那条路，即终端类。**已试：屏渲染出来了，但 `CreateUI` 返回 `None`**，脚本路径与 JSON 不一致（§五 2） |

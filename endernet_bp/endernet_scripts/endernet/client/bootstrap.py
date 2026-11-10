@@ -5,7 +5,7 @@
 
 终端 UI 在 client/ui 中注册；物品与流体列表已经接上真实网络的会话同步
 （任务 11），终端下半屏渲染的也是**真实玩家背包**（本地读引擎，见
-`ui/backpack_model.py`）。这里保证：
+`ui/terminal/backpack_model.py`）。这里保证：
 
 - 模组在客户端能正常初始化与销毁，不会因为缺少客户端入口而报错；
 - 客户端**不持有任何权威状态**（架构规划 6.6）：它不判断库存、订单完成或能量余额。
@@ -42,11 +42,13 @@ class ClientBootstrap(object):
 
     def diagnostics(self):
         # type: () -> dict
-        from .device_identity import get_device_identity
-        from .slot_display import get_slot_display
+        from .channels import get_cable_intent
+        from .channels import get_device_identity
+        from .channels import get_slot_display
 
         service = get_device_identity()
         slots = get_slot_display()
+        cables = get_cable_intent()
         return {
             "started": self.started,
             "subscriptions": len(self.subscriptions),
@@ -61,6 +63,9 @@ class ClientBootstrap(object):
             # 服务端没回（看服务端 `slot_displays.unknown_requests`）；
             # `set_failures` 涨 = 外观还没就绪就写了变量。
             "slot_display": slots.diagnostics() if slots is not None else None,
+            # 光缆交互意图（阶段 C）。`intercepted` 涨而 `sent` 不涨：看 `ray_failures`
+            # （引擎没有 3.10 的射线接口）与 `deduplicated`（按住时的重复）。
+            "cable_intent": cables.diagnostics() if cables is not None else None,
             "scope_note": "客户端不持有权威状态；界面与订阅属于任务 11。",
         }
 
@@ -74,8 +79,9 @@ def start_client():
     # type: () -> ClientBootstrap
     """由 `modMain.OnClientInited` 调用。"""
     global _CLIENT
-    from .device_identity import start_device_identity
-    from .slot_display import start_slot_display
+    from .channels import start_cable_intent
+    from .channels import start_device_identity
+    from .channels import start_slot_display
     from .ui import register_screens
 
     register_screens()
@@ -87,6 +93,9 @@ def start_client():
     # 否则进世界头一批 `ModBlockEntityLoadedClientEvent` 没人接，那些设备
     # 要等下一次插拔才显示出来。
     start_slot_display()
+    # 光缆交互意图（阶段 C）：点中光缆时取射线、发意图。点按要先记触点，所以与上面
+    # 两条一样在启动时就挂上。
+    start_cable_intent()
     if _CLIENT is not None:
         _CLIENT.stop()
     _CLIENT = ClientBootstrap()
@@ -97,11 +106,13 @@ def start_client():
 def stop_client():
     # type: () -> None
     global _CLIENT
-    from .device_identity import stop_device_identity
-    from .slot_display import stop_slot_display
-    from .ui.universal_importer import close_universal_importer
+    from .channels import stop_cable_intent
+    from .channels import stop_device_identity
+    from .channels import stop_slot_display
+    from .ui.universal_importer.screen import close_universal_importer
 
     close_universal_importer()
+    stop_cable_intent()
     stop_slot_display()
     stop_device_identity()
     if _CLIENT is not None:

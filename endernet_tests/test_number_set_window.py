@@ -55,9 +55,9 @@ class NumberSetWindowTests(unittest.TestCase):
             return module
 
         with patch.dict(sys.modules, modules):
-            cls.module = load("number_set_window")
+            cls.module = load("windows/number_set")
             # 编辑框的绑定写在**宿主的类体**上（11-07），测试因此也要有宿主。
-            cls.bindings_module = load("widgets/list_window_bindings")
+            cls.bindings_module = load("windows/list_bindings")
         cls.Host = type(
             "HostScreen",
             (cls.bindings_module.NumberSetWindowBindingsMixin, NumberScreen),
@@ -238,7 +238,7 @@ class NumberSetWindowTests(unittest.TestCase):
         self.assertFalse(self.screen._vars)
 
     def test_json_control_paths_and_binding_do_not_collide_with_item_search(self):
-        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet_windows.json"),
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common", "windows.json"),
                   encoding="utf-8") as handle:
             data = json.load(handle)
         controls = {key.split("@")[0]: value

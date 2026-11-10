@@ -125,10 +125,10 @@
 - [ ] A（05，可先做）：纯领域摘要、`medium_view()` 诊断与离线测试。不依赖 Lore 身份排除或实际后端，交付不得称为物品详情已实现。
 - [ ] B（12-02 + 资源身份转换）：完成第 2 节的 ID、管理格式、身份投影、还原与迁移契约，覆盖同 ID 仅容量行不同键相等、不同 ID 键不同、其他 Lore/名称仍区分；其他物品的身份算法不受影响。
   （2026-09-29：第 2 节的**契约**部分已由 12-02 定案并实测过标记的字节往返。
-  **2026-10-04（12-03）**：契约已落到代码——`common/medium_item.py` 给出载体
+  **2026-10-04（12-03）**：契约已落到代码——`common/resources/medium_item.py` 给出载体
   编解码、管理行标记与识别、**身份投影**（`project_identity_user_data`）与
   展示写回（`apply_capacity_lines` / `materialize_item_user_data`），
-  `resource_key.py` 的 `_item_identity_tree` 已接上投影。
+  `resources/key.py` 的 `_item_identity_tree` 已接上投影。
   「同 ID 仅容量行不同 → 键相等、不同 ID → 键不同、其他 Lore/名称仍区分、
   无载体物品不受影响」四条**都有离线用例**（`test_resource_key`、
   `test_medium_item`）。

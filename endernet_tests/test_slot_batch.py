@@ -7,9 +7,9 @@ from unittest.mock import patch
 from test_crafting_handlers import Fixture, PLANKS, STICK
 from test_template_handlers import Fixture as TemplateFixture
 from test_terminal_cursor import CursorPrimitives
-from endernet.common.item_codec import item_dict_from_key
+from endernet.common.resources.item_codec import item_dict_from_key
 from endernet.common.protocol import TerminalCommand
-from endernet.server.adapters.containers_engine import EngineInventoryProvider, build_stack_limit
+from endernet.server.adapters.containers.engine import EngineInventoryProvider, build_stack_limit
 
 
 class BatchMixin:

@@ -1,6 +1,6 @@
 # 流体列表窗口
 
-客户端入口：`endernet/client/ui/fluid_list_window.py`。参照物品列表窗口，复用其编辑生命周期，使用独立资源、绑定和流体选择器。
+客户端入口：`endernet/client/ui/windows/fluid_list.py`。参照物品列表窗口，复用其编辑生命周期，使用独立资源、绑定和流体选择器。
 
 ```python
 # 在 endernet/client/ui/ 下已创建的 ToolDeltaScreen 中：

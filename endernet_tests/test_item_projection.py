@@ -22,7 +22,7 @@ import unittest
 import testsupport
 
 from endernet.common.identity import NodeKey
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 
 IRON_BLOCK = ResourceKey.item("minecraft:iron_block")
 IRON = ResourceKey.item("minecraft:iron_ingot")

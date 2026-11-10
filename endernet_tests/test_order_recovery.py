@@ -6,7 +6,7 @@ import test_returns
 
 import testsupport  # noqa: F401
 from endernet.server.bootstrap import ServerBootstrap
-from endernet.server.crafting.jobs import OrderStatus, StepStatus
+from endernet.server.crafting.orders.jobs import OrderStatus, StepStatus
 from endernet.server.network.energy import EnergyPolicy
 from endernet.server.network.services import ServiceId
 from endernet.server.persistence.repository import MemoryRepository, Record

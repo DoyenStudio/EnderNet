@@ -1,0 +1,1042 @@
+{
+    "format_version": "1.21.70",
+    "minecraft:block": {
+        "components": {
+            "minecraft:destructible_by_mining": {
+                "seconds_to_destroy": 2.0
+            },
+            "netease:tier": {
+                "destroy_special": true,
+                "digger": "pickaxe",
+                "level": 1
+            },
+            "minecraft:geometry": {
+                "identifier": "geometry.endernet.ender_cable",
+                "bone_visibility": {
+                    "straight_ew": false,
+                    "straight_ud": false,
+                    "straight_ns": false,
+                    "arm_up": false,
+                    "arm_down": false,
+                    "arm_north": false,
+                    "arm_south": false,
+                    "arm_west": false,
+                    "arm_east": false,
+                    "stub_up": false,
+                    "stub_down": false,
+                    "stub_north": false,
+                    "stub_south": false,
+                    "stub_west": false,
+                    "stub_east": false,
+                    "cap_up": false,
+                    "cap_down": false,
+                    "cap_north": false,
+                    "cap_south": false,
+                    "cap_west": false,
+                    "cap_east": false
+                }
+            },
+            "minecraft:light_dampening": 0,
+            "minecraft:loot": "loot_tables/empty.json",
+            "minecraft:material_instances": {
+                "*": {
+                    "render_method": "opaque",
+                    "texture": "endernet:ender_cable_model"
+                }
+            },
+            "netease:aabb": {
+                "collision": {
+                    "min": [0.375, 0.375, 0.375],
+                    "max": [0.625, 0.625, 0.625]
+                },
+                "clip": {
+                    "min": [0.375, 0.375, 0.375],
+                    "max": [0.625, 0.625, 0.625]
+                }
+            },
+            "netease:block_entity": {
+                "tick": false
+            },
+            "netease:listen_block_remove": {
+                "value": true
+            },
+            "netease:neighborchanged_sendto_script": {
+                "value": true
+            }
+        },
+        "description": {
+            "category": "none",
+            "identifier": "endernet:part_holder",
+            "states": {
+                "endernet:side_up": [0, 2],
+                "endernet:side_down": [0, 2],
+                "endernet:side_north": [0, 2],
+                "endernet:side_south": [0, 2],
+                "endernet:side_west": [0, 2],
+                "endernet:side_east": [0, 2]
+            }
+        },
+        "permutations": [
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.375, 0.375, 0.375],
+                            "max": [0.625, 0.625, 0.625]
+                        },
+                        "clip": {
+                            "min": [0.375, 0.375, 0.375],
+                            "max": [0.625, 0.625, 0.625]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.8125, 0.125, 0.125],
+                            "max": [1.0, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.8125, 0.125, 0.125],
+                            "max": [1.0, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [0.1875, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [0.1875, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [1.0, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [1.0, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.8125],
+                            "max": [0.875, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.8125],
+                            "max": [0.875, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.125],
+                            "max": [1.0, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.125],
+                            "max": [1.0, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [0.875, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [0.875, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [1.0, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [1.0, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [0.875, 0.875, 0.1875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [0.875, 0.875, 0.1875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [1.0, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [1.0, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [0.875, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [0.875, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [1.0, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [1.0, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [0.875, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [0.875, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [1.0, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [1.0, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [0.875, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [0.875, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [1.0, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [1.0, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [0.875, 0.1875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [0.875, 0.1875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [1.0, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [1.0, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [0.875, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [0.875, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [1.0, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [1.0, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [0.875, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [0.875, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [1.0, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [1.0, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [0.875, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [0.875, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [1.0, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [1.0, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [0.875, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [0.875, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [1.0, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [1.0, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [0.875, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [0.875, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [1.0, 0.875, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [1.0, 0.875, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [0.875, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [0.875, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [1.0, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [1.0, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [0.875, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [0.875, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 0 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [1.0, 0.875, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [1.0, 0.875, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.8125, 0.125],
+                            "max": [0.875, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.8125, 0.125],
+                            "max": [0.875, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.125],
+                            "max": [1.0, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.125],
+                            "max": [1.0, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [0.875, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [0.875, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [1.0, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [1.0, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.125],
+                            "max": [0.875, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.125],
+                            "max": [0.875, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.125],
+                            "max": [1.0, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.125],
+                            "max": [1.0, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [0.875, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [0.875, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [1.0, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.125],
+                            "max": [1.0, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [0.875, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [0.875, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [1.0, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [1.0, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [0.875, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [0.875, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [1.0, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [1.0, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [0.875, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [0.875, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [1.0, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.125, 0.0],
+                            "max": [1.0, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [0.875, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [0.875, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 0 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [1.0, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.125, 0.0],
+                            "max": [1.0, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [0.875, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [0.875, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [1.0, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [1.0, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [0.875, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [0.875, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [1.0, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [1.0, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [0.875, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [0.875, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [1.0, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.125],
+                            "max": [1.0, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [0.875, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [0.875, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 0 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [1.0, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.125],
+                            "max": [1.0, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [0.875, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [0.875, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [1.0, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [1.0, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [0.875, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [0.875, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 0 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [1.0, 1.0, 0.875]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [1.0, 1.0, 0.875]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [0.875, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [0.875, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 0 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [1.0, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.125, 0.0, 0.0],
+                            "max": [1.0, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 0",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [0.875, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [0.875, 1.0, 1.0]
+                        }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:side_up') == 2 && q.block_state('endernet:side_down') == 2 && q.block_state('endernet:side_north') == 2 && q.block_state('endernet:side_south') == 2 && q.block_state('endernet:side_west') == 2 && q.block_state('endernet:side_east') == 2",
+                "components": {
+                    "netease:aabb": {
+                        "collision": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [1.0, 1.0, 1.0]
+                        },
+                        "clip": {
+                            "min": [0.0, 0.0, 0.0],
+                            "max": [1.0, 1.0, 1.0]
+                        }
+                    }
+                }
+            }
+        ]
+    }
+}

@@ -1,5 +1,5 @@
 # coding=utf-8
-"""`widgets/control_api.py` 的两个形状（都是 2026-10-03 真机撞出来的）。
+"""`shared/control_api.py` 的两个形状（都是 2026-10-03 真机撞出来的）。
 
 这个文件守的是**控件 API 的形状**——而形状错了在真机上的表现是
 「那一格空着」或「点了没反应」：不报错、不刷屏、日志干净，因此只能靠
@@ -17,7 +17,7 @@ import unittest
 
 import testsupport  # noqa: F401  (放进 sys.path)
 
-from endernet.client.ui.widgets.control_api import on_click, show_item
+from endernet.client.ui.shared.control_api import on_click, show_item
 
 
 class EngineButtonStub(object):

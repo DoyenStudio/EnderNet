@@ -26,7 +26,7 @@ from endernet.common.definitions import (
     PATTERN_TEMPLATES,
     devices_for_mode,
 )
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 from endernet.server.crafting import patterns
 from endernet.server.crafting.patterns import (
     MODE_CRAFTING,

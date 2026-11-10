@@ -27,8 +27,10 @@ TEXTURE_DIR = os.path.join(RP_ROOT, "textures", "endernet", "devices")
 BP_ITEMS = os.path.join(REPO, "endernet_bp", "netease_items_beh")
 RP_ITEMS = os.path.join(RP_ROOT, "netease_items_res")
 RP_ITEM_TEXTURE = os.path.join(RP_ROOT, "textures", "item_texture.json")
-ITEM_TEXTURE_DIR = os.path.join(RP_ROOT, "textures", "items")
+ITEM_TEXTURE_DIR = os.path.join(RP_ROOT, "textures", "endernet", "items")
 RP_UI = os.path.join(RP_ROOT, "ui")
+#: 本模组的界面都在 `ui/endernet/<分组>/` 下；`ui/` 根只留登记表 `_ui_defs.json`。
+RP_UI_ENDERNET = os.path.join(RP_UI, "endernet")
 DRIVER = "endernet:storage_driver"
 
 #: 运行时销毁流程依赖它；缺了引擎不会派发 BlockRemoveServerEvent。
@@ -38,6 +40,16 @@ REQUIRED_COMPONENTS = ("netease:block_entity", "netease:listen_block_remove")
 def read_json(path):
     with io.open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def iter_ui_files():
+    """`(相对 ui/ 的路径, 绝对路径)`：递归枚举 `ui/endernet/**/*.json`。"""
+    for directory, dirnames, filenames in os.walk(RP_UI_ENDERNET):
+        dirnames.sort()
+        for name in sorted(filenames):
+            if name.endswith(".json"):
+                full = os.path.join(directory, name)
+                yield os.path.relpath(full, RP_UI).replace(os.sep, "/"), full
 
 
 def short_name(device_id):
@@ -55,8 +67,8 @@ def item_file_name(item_id):
 
 
 def item_texture_name(item_id):
-    """与 scripts/gen_items.py 保持一致：`endernet_<短名>`。"""
-    return "endernet_" + item_id.split(":", 1)[1]
+    """与 scripts/gen_items.py 保持一致：`<短名>`（目录 `textures/endernet/items/` 已标明归属）。"""
+    return item_id.split(":", 1)[1]
 
 
 #: 界面 JSON 里引用本模组贴图的字符串
@@ -99,9 +111,19 @@ class AssetFixture(unittest.TestCase):
         cls.block_ids = sorted(cls.definitions.devices)
         cls.item_texture = read_json(RP_ITEM_TEXTURE)
         cls.item_texture_data = cls.item_texture.get("texture_data", {})
-        # **两类物品一起查**（介质 + 样板）。分成两份清单的代价是新增一类
-        # 时总有一处漏掉，而漏掉的表现是「游戏里有这件物品、但没人检查它的
-        # 贴图与语言」——一个只在真机上才看得见的空洞。
+        #: 三种光缆、面板底座与四种终端面板的展示方块也是方块（`gen_blocks.build_cable_json`
+        #: / `build_part_holder_json` / `build_part_item_json`），但不按 `BLOCK_LAYOUTS` 出外观：
+        #: 「每个方块都要有 JSON、组件、名字、资源映射」这类覆盖检查查 `all_block_ids`，外观布局
+        #: 那几条仍只查整方块设备 `block_ids`（它们自己的检查在 `test_cable_blocks`）。
+        #: 终端面板 2026-11-10 起是方块物品（方案 B：物品栏显示 3D），不再是普通物品。
+        cls.cable_ids = sorted(cls.definitions.cables)
+        cls.holder_ids = sorted(cls.definitions.part_holders)
+        cls.part_ids = sorted(cls.definitions.parts)
+        cls.part_specs = [cls.definitions.get(part_id) for part_id in cls.part_ids]
+        cls.all_block_ids = sorted(cls.block_ids + cls.cable_ids + cls.holder_ids + cls.part_ids)
+        # **各类物品一起查**（介质 + 样板 + 内存条 + 工具）。分成几份清单的代价是新增一类时
+        # 总有一处漏掉，而漏掉的表现是「游戏里有这件物品、但没人检查它的贴图与语言」——
+        # 一个只在真机上才看得见的空洞。
         cls.item_ids = list(cls.definitions.item_keys())
         cls.item_specs = cls.definitions.item_specs()
 
@@ -123,34 +145,39 @@ class TestBlockJsonCoverage(AssetFixture):
     def test_every_device_has_a_block_json(self):
         missing = [
             device_id
-            for device_id in self.block_ids
+            for device_id in self.all_block_ids
             if not os.path.isfile(self.block_json_path(device_id))
         ]
         self.assertEqual(missing, [], "缺少方块 JSON：%r" % (missing,))
 
     def test_no_orphan_block_json(self):
         """方块目录里不该有定义表之外的方块。"""
-        known = set(block_file_name(d) for d in self.block_ids)
+        known = set(block_file_name(d) for d in self.all_block_ids)
         present = set(
             name for name in os.listdir(BP_BLOCKS) if name.endswith(".json")
         )
         self.assertEqual(present - known, set(), "存在定义表之外的方块 JSON")
 
     def test_identifier_matches_file_name(self):
-        for device_id in self.block_ids:
+        for device_id in self.all_block_ids:
             payload = self.read_block_json(device_id)
             identifier = payload["minecraft:block"]["description"]["identifier"]
             self.assertEqual(identifier, device_id, block_file_name(device_id))
 
+    def placed_block_ids(self):
+        """会被放进世界的方块：整方块设备、光缆、面板底座。终端面板的展示方块只为物品形态而
+        注册、放不下（2026-11-10 方案 B），不需要方块实体与拆除监听。"""
+        return [device_id for device_id in self.all_block_ids if device_id not in self.part_ids]
+
     def test_required_components_present(self):
         """缺少 block_entity 会没有方块实体数据；缺 listen_block_remove 会收不到拆除事件。"""
-        for device_id in self.block_ids:
+        for device_id in self.placed_block_ids():
             components = self.read_block_json(device_id)["minecraft:block"]["components"]
             for required in REQUIRED_COMPONENTS:
                 self.assertIn(required, components, "%s 缺少 %s" % (device_id, required))
 
     def test_block_remove_listener_is_enabled(self):
-        for device_id in self.block_ids:
+        for device_id in self.placed_block_ids():
             components = self.read_block_json(device_id)["minecraft:block"]["components"]
             self.assertTrue(
                 components["netease:listen_block_remove"].get("value"),
@@ -184,7 +211,7 @@ class TestBlockJsonCoverage(AssetFixture):
             self.assertFalse(components["netease:block_entity"].get("tick"), device_id)
 
     def test_textures_component_points_at_terrain_key(self):
-        for device_id in self.block_ids:
+        for device_id in self.all_block_ids:
             components = self.read_block_json(device_id)["minecraft:block"]["components"]
             for face, instance in components["minecraft:material_instances"].items():
                 texture = instance["texture"]
@@ -312,7 +339,7 @@ class TestBlockModels(AssetFixture):
 
 class TestResourcePackMapping(AssetFixture):
     def test_blocks_json_covers_every_device(self):
-        missing = [d for d in self.block_ids if d not in self.blocks_json]
+        missing = [d for d in self.all_block_ids if d not in self.blocks_json]
         self.assertEqual(missing, [], "blocks.json 缺少：%r" % (missing,))
 
     def test_blocks_json_texture_keys_are_registered(self):
@@ -344,10 +371,8 @@ class TestResourcePackMapping(AssetFixture):
         原版贴图（`textures/ui/...`）不在本资源包里，不查。
         """
         missing = []
-        for name in sorted(os.listdir(RP_UI)):
-            if not name.endswith(".json"):
-                continue
-            with io.open(os.path.join(RP_UI, name), encoding="utf-8") as handle:
+        for name, full in iter_ui_files():
+            with io.open(full, encoding="utf-8") as handle:
                 text = handle.read()
             for path in sorted(set(UI_TEXTURE_PATTERN.findall(text))):
                 base = os.path.join(RP_ROOT, *path.split("/"))
@@ -411,19 +436,32 @@ class TestLocalisation(AssetFixture):
     def test_every_block_has_a_display_name(self):
         missing = [
             device_id
-            for device_id in self.block_ids
+            for device_id in self.all_block_ids
             if ("tile.%s.name" % device_id) not in self.lang
         ]
         self.assertEqual(missing, [], "缺少中文名：%r" % (missing,))
 
     def test_display_names_are_not_identifiers(self):
-        for device_id in self.block_ids:
+        for device_id in self.all_block_ids:
             name = self.lang["tile.%s.name" % device_id]
             self.assertTrue(name, device_id)
             self.assertNotEqual(name, device_id, "%s 的名字没有本地化" % device_id)
 
+    def test_part_holder_name_is_the_definition_label(self):
+        """面板底座不进创造栏，玩家只在准星提示、破坏进度里看到它的名字；与定义表同一个叫法。"""
+        self.assertEqual(self.holder_ids, ["endernet:part_holder"])
+        for device_id in self.holder_ids:
+            self.assertEqual(
+                self.lang["tile.%s.name" % device_id], self.definitions.get(device_id).label
+            )
+
+    def test_part_names_are_the_definition_labels(self):
+        """终端面板是方块物品，名字走 `tile.` 键，与定义表同一个叫法。"""
+        for spec in self.part_specs:
+            self.assertEqual(self.lang["tile.%s.name" % spec.id], spec.label, spec.id)
+
     def test_no_orphan_lang_entries(self):
-        known = set("tile.%s.name" % d for d in self.block_ids)
+        known = set("tile.%s.name" % d for d in self.all_block_ids)
         orphans = set(
             key for key in self.lang
             if key.startswith("tile.endernet:") and key not in known
@@ -433,18 +471,30 @@ class TestLocalisation(AssetFixture):
 
 class TestCreativeTab(AssetFixture):
     def test_category_matches_creative_tab_config(self):
-        """方块分类必须与创造栏配置的 name 一致，否则方块不会出现在该分页下。"""
+        """方块分类必须与创造栏配置的 name 一致，否则方块不会出现在该分页下。
+
+        面板底座除外：它没有对应物品、只由脚本放置，**刻意**不进创造栏（见下一条）。
+        """
         tab_path = os.path.join(REPO, "endernet_bp", "netease_tab",
                                 "endernet_category_config.json")
         tab = read_json(tab_path)
         names = set(category["name"] for category in tab["category"])
-        for device_id in self.block_ids:
+        for device_id in self.all_block_ids:
+            if device_id in self.holder_ids:
+                continue
             payload = self.read_block_json(device_id)
             category = payload["minecraft:block"]["description"]["category"]
             self.assertIn(
                 category, names,
                 "%s 的分类 %s 不在创造栏配置里" % (device_id, category),
             )
+
+    def test_part_holder_stays_out_of_the_creative_tab(self):
+        """`"category": "none"`（照 SkyblueTech 的 `skybluetech_flowing_brine.json`）。"""
+        self.assertTrue(self.holder_ids)
+        for device_id in self.holder_ids:
+            payload = self.read_block_json(device_id)
+            self.assertEqual(payload["minecraft:block"]["description"]["category"], "none")
 
 
 def declared_containers():
@@ -463,7 +513,7 @@ def declared_containers():
 
 
 #: 引擎的容器集合名。**只写死在公共模板 `container_grid_items` 里**
-#: （`endernet_container_common.json:128`），各设备界面靠继承拿到它。
+#: （`container_common.json:128`），各设备界面靠继承拿到它。
 ENGINE_CONTAINER_COLLECTION = "netease_container"
 
 #: 渲染该集合的两种模板名：网格模板与逐槽模板。逐槽那种**连模板都不写集合名**，
@@ -503,7 +553,7 @@ def screens_rendering_the_engine_container():
     """`命名空间 -> 界面文件名`：哪些界面画了引擎的 `netease_container` 集合。
 
     **不能靠 grep `collection_name`。** 集合名全仓只出现在公共模板
-    `endernet_container_common.json:128` 一处，设备界面一律继承它；逐槽写法
+    `container_common.json:128` 一处，设备界面一律继承它；逐槽写法
     更是连模板都不写集合名。全仓只有 2 个界面自己写了 `collection_name`
     （`bus_item_io.json:146` 的编辑器残留 `test_grid` 与
     `assemble_chamber.json:108` 的 `source_items`），**两个都不是**这个集合——
@@ -512,10 +562,8 @@ def screens_rendering_the_engine_container():
     只算「界面」：公共模板文件没有 `main` 屏幕，不计入。
     """
     drawn = {}
-    for name in sorted(os.listdir(RP_UI)):
-        if not name.endswith(".json"):
-            continue
-        payload = read_json(os.path.join(RP_UI, name))
+    for name, full in iter_ui_files():
+        payload = read_json(full)
         namespace = payload.get("namespace")
         if not namespace:
             continue
@@ -641,9 +689,9 @@ class TestBlockContainers(AssetFixture):
 
         写错不会报错，只会让玩家右键时打开一个空界面。
 
-        **不能假设界面文件名等于命名空间**：`storage_driver.json` 的命名空间是
-        `storage_driver_ui`（原版同样如此，`NeteaseContainerUI.json` 的命名空间是
-        `netease_container`）。因此按 `_ui_defs.json` 登记的清单逐个找命名空间。
+        **不按文件名拼路径**：文件名虽是命名空间去掉 `endernet_`（`endernet_storage_driver`
+        → `storage_driver.json`），所在的分组目录（`ui/endernet/storage/`）却拼不出来。
+        因此按 `_ui_defs.json` 登记的清单逐个找命名空间。
         """
         registry = read_json(os.path.join(RP_UI, "_ui_defs.json"))
         screens = {}
@@ -789,6 +837,24 @@ class TestItemResources(AssetFixture):
                 spec.id,
             )
 
+    def test_part_items_are_display_blocks(self):
+        """终端面板是方块物品（2026-11-10 方案 B）：没有物品 JSON，只有同名的展示方块；
+        堆叠照方块物品默认的 64，同整方块终端。面板物品不带身份数据，挂上光缆之后的状态按
+        「位置 + 面」记，堆叠不会混掉谁的东西。"""
+        self.assertEqual(len(self.part_ids), 4)
+        for part_id in self.part_ids:
+            self.assertFalse(os.path.isfile(os.path.join(BP_ITEMS, item_file_name(part_id))),
+                             part_id)
+            self.assertFalse(os.path.isfile(os.path.join(RP_ITEMS, item_file_name(part_id))),
+                             part_id)
+            self.assertNotIn(part_id, self.item_texture_data)
+            payload = self.read_block_json(part_id)
+            self.assertNotIn("minecraft:max_stack_size", payload["minecraft:block"]["components"])
+
+    def test_wrench_does_not_stack(self):
+        payload = read_json(os.path.join(BP_ITEMS, item_file_name("endernet:network_wrench")))
+        self.assertEqual(payload["minecraft:item"]["components"]["minecraft:max_stack_size"], 1)
+
     def test_only_factory_template_is_registered_with_stack_limit_64(self):
         """仅注册工厂样板，保留堆叠上限 64。"""
         self.assertFalse(self.definitions.has_template("endernet:crafting_template"))
@@ -801,6 +867,22 @@ class TestItemResources(AssetFixture):
             payload = read_json(os.path.join(BP_ITEMS, item_file_name(item_id)))
             tip = payload["minecraft:item"]["components"]["netease:customtips"]["value"]
             self.assertTrue(tip.strip(), item_id)
+
+    def test_part_items_have_no_tip(self):
+        """四种终端面板不写说明（作者 2026-11-10 定：冗余提示删掉）；展示方块也不写。"""
+        self.assertEqual(len(self.part_ids), 4)
+        for part_id in self.part_ids:
+            components = self.read_block_json(part_id)["minecraft:block"]["components"]
+            self.assertNotIn("netease:custom_tips", components, part_id)
+            self.assertNotIn("netease:customtips", components, part_id)
+
+    def test_wrench_tip_is_the_authors_text(self):
+        """扳手的说明是作者手写的原文，删面板说明时不能连带动它。"""
+        payload = read_json(os.path.join(BP_ITEMS, item_file_name("endernet:network_wrench")))
+        self.assertEqual(
+            payload["minecraft:item"]["components"]["netease:customtips"],
+            {"value": u"\n§7用于对终界网络设备进行维护"},
+        )
 
     def test_resource_json_has_no_category(self):
         """资源侧不写 category，与行为侧的分工不同。"""

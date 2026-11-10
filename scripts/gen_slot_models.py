@@ -33,7 +33,7 @@
     endernet_rp/animations/endernet_slot_modules.animation.json
 
 骨骼 `s<槽>_<名字>` 的显隐由 `variable.s<槽>` 决定，取值规则见
-`endernet/common/slot_display.py`（运行时与本脚本共用）。
+`endernet/common/channels/slot_display.py`（运行时与本脚本共用）。
 """
 
 import argparse
@@ -54,7 +54,7 @@ from _console import use_utf8_stdout  # noqa: E402
 from _png import png_bytes, read_png  # noqa: E402
 
 from endernet.common.definitions import DefinitionSet  # noqa: E402
-from endernet.common.slot_display import (  # noqa: E402
+from endernet.common.channels.slot_display import (  # noqa: E402
     DISK,
     DISPLAY_DEVICES,
     FACING_VARIABLE,
@@ -432,13 +432,20 @@ def outputs(definitions, probe=False):
 
 
 def same_content(path, payload):
-    """磁盘上的文件是否已是这份内容。文本文件忽略换行差异（Windows 检出会转成 CRLF）。"""
+    """磁盘上的文件是否已是这份内容。PNG 逐字节比；JSON 比解析后的内容——作者在 Blockbench 里
+    另存过的几何只是缩进、换行不同，不算变了，也就不会被改回脚本的排版（2026-11-10）；其余文本
+    忽略换行差异（Windows 检出会转成 CRLF）。"""
     if not os.path.isfile(path):
         return False
     with open(path, "rb") as handle:
         existing = handle.read()
     if path.endswith(".png"):
         return existing == payload
+    if path.endswith(".json"):
+        try:
+            return json.loads(existing.decode("utf-8-sig")) == json.loads(payload.decode("utf-8"))
+        except ValueError:
+            return False
     return existing.replace(b"\r\n", b"\n") == payload.replace(b"\r\n", b"\n")
 
 

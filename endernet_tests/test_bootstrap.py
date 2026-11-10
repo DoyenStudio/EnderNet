@@ -13,7 +13,7 @@ import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import DefinitionSet
 from endernet.common.identity import ChunkKey, DeviceRef, NodeKey
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 from endernet.common.protocol import (
     ORDER_SOURCE_FEED_WAITING_INPUTS,
     ORDER_SOURCE_STAGE_DONE,
@@ -32,7 +32,7 @@ from endernet.common.protocol import (
     SyncEnvelope,
     VIEW_ITEM,
 )
-from endernet.server.adapters.containers import FakeContainer
+from endernet.server.adapters.containers.contract import FakeContainer
 from endernet.server.bootstrap import (
     ServerBootstrap,
     _order_memory,
@@ -40,9 +40,9 @@ from endernet.server.bootstrap import (
     _order_source_rows,
 )
 from endernet.server.crafting import patterns
-from endernet.server.crafting.jobs import Order, OrderStep
-from endernet.server.crafting.planner import PlanPolicy, TargetSemantics
-from endernet.server.crafting.store import PATTERN_SETTLE_FRAMES
+from endernet.server.crafting.orders.jobs import Order, OrderStep
+from endernet.server.crafting.planning.planner import PlanPolicy, TargetSemantics
+from endernet.server.crafting.providers.store import PATTERN_SETTLE_FRAMES
 from endernet.server.network.controller import RunState
 from endernet.server.network.runtime import RuntimeChange
 from endernet.server.network.services import AssemblyProfile
@@ -123,7 +123,8 @@ class TestImportability(unittest.TestCase):
         self.assertTrue(callable(bootstrap.stop_client))
 
     def test_adapters_import_without_engine(self):
-        from endernet.server.adapters import containers, events, world
+        from endernet.server.adapters import events, world
+        from endernet.server.adapters.containers import contract as containers
 
         self.assertTrue(hasattr(events, "ServerEventBinder"))
         self.assertTrue(hasattr(world, "ToolDeltaWorldAdapter"))
@@ -1508,7 +1509,7 @@ class TestPatternContainerEvents(unittest.TestCase):
         from endernet.server.crafting.patterns import (
             PatternDefinition, PatternStack, MODE_CRAFTING, MODE_FACTORY,
         )
-        from endernet.common.resource_key import ResourceKey
+        from endernet.common.resources.key import ResourceKey
         self.place("endernet:assemble_chamber", 7)
         iron = ResourceKey.item("minecraft:iron_ingot")
         block = ResourceKey.item("minecraft:iron_block")
@@ -1551,7 +1552,7 @@ class TestPatternContainerEvents(unittest.TestCase):
             self.assertFalse(event.cancelled, name)
 
     def test_player_and_hopper_cannot_put_into_configured_output_columns(self):
-        from endernet.server.devices.io import PortConfig
+        from endernet.server.devices.bus_io import PortConfig
 
         ref = self.place(PASSIVE_IO, 8)
         self.server.ports.configure(ref, PortConfig(slot_items=[None] * 8 + ["minecraft:stone"]))

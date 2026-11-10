@@ -76,9 +76,9 @@ from ...common.protocol import (
     VIEW_ITEM,
     VIEW_ORDER,
 )
-from ...common.resource_sync import ResourceResyncRequired
-from ..network.runtime import RuntimeChange
-from ..network.ticking import RotationCursor
+from ...common.resources import ResourceResyncRequired
+from ..network import RuntimeChange
+from ..network import RotationCursor
 from .device_config import (
     PortConfigSubscriptions,
     build_config_message,
@@ -1699,6 +1699,14 @@ class TerminalSyncHub(object):
     def close_for_device(self, ref, reason=CLOSE_DEVICE_REPLACED):
         # type: (object, str) -> list
         return self._forget_all(self.registry.close_for_device(ref, reason))
+
+    def close_for_part(self, part_key, reason=CLOSE_DEVICE_REPLACED):
+        # type: (object, str) -> list
+        """一块面板被拆下（阶段 D，`ChangeKind.PART_DETACHED`）：关掉指着它的会话并**告诉
+        客户端**——这是服务端单方面注销，与 `_drop_stale_devices` 同一类、同一句话。"""
+        closed = self._forget_all(self.registry.close_for_part(part_key, reason))
+        self._notify_gone(closed, _GONE_DETAILS[CLOSE_DEVICE_REPLACED])
+        return closed
 
     def close_for_network(self, network_id, reason="network_changed"):
         # type: (str, str) -> list

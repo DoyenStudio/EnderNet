@@ -4,7 +4,7 @@
 对应任务 03-01/03-05 的协议部分，以及 13-01 统一容器契约中**与引擎无关**的那一半。
 
 放在 common 层是有意的：转移回执类型会被存储与工厂服务引用，
-若把它写在 `server/adapters/containers.py` 里，领域层为了拿到回执类型
+若把它写在 `server/adapters/containers/contract.py` 里，领域层为了拿到回执类型
 就得 import 一个拖进 `mod.server.*` 的模块，离线测试立刻失效。
 适配器**实现**仍在 adapters 下。
 
@@ -16,7 +16,7 @@
 import json
 
 from .definitions import PATTERN_MODES
-from .resource_key import ResourceKey, _TEXT_TYPES, _require_count
+from .resources.key import ResourceKey, _TEXT_TYPES, _require_count
 from . import settings
 
 # -- 结果状态 --------------------------------------------------------------
@@ -82,27 +82,46 @@ class Reason(object):
     COMPONENT_SPLIT = "component_split"
     COMPONENT_MERGED = "component_merged"
     PROCESSOR_GROUP_UNATTACHED = "processor_group_unattached"
-    PROCESSOR_GROUP_UNRESOLVED = "r03_processor_group_ownership"
+    # 2026-11-09 删去 `PROCESSOR_GROUP_UNRESOLVED`（R03 待定的那一态）：作者确认关闭 R03，
+    # 改版后处理器群与连接器总在同一网络里，归属问题在结构上不再出现。
     PORT_MISMATCH = "port_mismatch"
     UNLOADED_MEMBER = "unloaded_member"
-    #: 异容量网络基带相邻。blocks.md 明确「8/16/32 位基带只与同容量基带
-    #: 直接连通」，不同容量即使贴在一起也不建边、不合并网络与负载域。
-    #: 注意这与「同一控制器分别接两条不同容量的独立分支」是两回事，后者允许。
-    BASEBAND_CAPACITY_MISMATCH = "baseband_capacity_mismatch"
+    # 2026-11-09 删去 `BASEBAND_CAPACITY_MISMATCH`：作者改定异档基带允许混搭
+    # （决策台账 R14），相邻即相连，不再有「异容量不建边」这条拒绝。
 
-    # 带宽（02）
+    # 网络改版的结构判定（2026-11-09，`.claude/13` §3）。基带核心违规与控制器
+    # 不贴核心都让**整网**离线；文案是玩家话，写在 `topology.ComponentInfo`。
+    #: 分量里一块网络基带都没有：没有外露面就没有线路。
+    BASEBAND_NONE = "baseband_none"
+    #: 基带核心的包围盒有一轴超过 7 格（照 AE2 控制器多方块）。
+    BASEBAND_TOO_LARGE = "baseband_too_large"
+    #: 同一网络里有多组互不相连的基带（两组经光缆或设备相连也算）。
+    BASEBAND_SPLIT = "baseband_split"
+    #: 某块基带在两个及以上的轴上两侧都贴着基带（十字形）。
+    BASEBAND_CROSS = "baseband_cross"
+    #: 控制器没有贴着网络基带。控制器只接基带，贴着光缆或设备不算接上。
+    CONTROLLER_DETACHED = "controller_detached"
+    #: 光缆这一面被扳手切断（方块实体 `endernet:cuts`），这一面不对外连。
+    CABLE_FACE_CUT = "cable_face_cut"
+    #: 光缆这一面挂着面板，被占住，这一面不对外连（面板只经同格线芯入网）。
+    CABLE_FACE_OCCUPIED = "cable_face_occupied"
+    #: 面板挂在面板底座上（2026-11-10）：没有线芯，不入网。整格换成光缆就接上了。
+    PART_NOT_ON_CABLE = "part_not_on_cable"
+
+    # 带宽（02；2026-11-09 改为外露面为根的线路分配，13 §4）
     BANDWIDTH_DENIED = "bandwidth_denied"
     BANDWIDTH_UNKNOWN = "bandwidth_unknown"
     BANDWIDTH_UNCONFIGURED = "bandwidth_unconfigured"
     BANDWIDTH_OVERLOADED = "bandwidth_overloaded"
-    #: 单台设备的需求就超过整个负载域的总容量——域**还空着**也放不下它。
-    #: 与 `BANDWIDTH_OVERLOADED`（被别的设备挤掉、域确实满了）是两回事：
-    #: 都拒绝，但界面必须分开说，否则会告诉玩家「已满载」而他看到的是一个空域。
-    BANDWIDTH_DEMAND_EXCEEDS_DOMAIN = "bandwidth_demand_exceeds_domain"
-    NO_BANDWIDTH_DOMAIN = "no_bandwidth_domain"
-    #: 多接入待定（R02）：同一设备同时落在多个互不相连的负载域上，
-    #: 归属未定，不擅自选一个。
-    MULTI_DOMAIN_DEVICE = "r02_multi_domain_device"
+    #: 所在线路有一段已经被先到的设备占满（13 §4.3）。详情点名瓶颈是哪一段，
+    #: 例如「所在线路已满：末影玻璃光缆 8/8 u」。
+    BANDWIDTH_LINE_FULL = "bandwidth_line_full"
+    #: 单台设备的需求就超过所在线路某一段的容量——那一段**还空着**也放不下它。
+    #: 与 `BANDWIDTH_LINE_FULL`（被先到的设备占满）是两回事：都拒绝，但界面必须
+    #: 分开说，否则会告诉玩家「已满」而他看到的是一条空线路。
+    BANDWIDTH_DEMAND_EXCEEDS_LINE = "bandwidth_demand_exceeds_line"
+    #: 设备没有经光缆或设备连到任何一个基带外露面上，不在任何线路里。
+    NO_BANDWIDTH_PATH = "no_bandwidth_path"
 
     # 能源（04）
     BROWNOUT = "brownout"
@@ -289,7 +308,7 @@ class Reason(object):
     #: 在界面上是两句话，混在一起会让玩家去查一个其实还在的订单。
     ORDER_TERMINAL = "order_terminal"
     #: **没有空闲的配方处理槽位**，新任务这一帧派不出去。
-    #: **与 `NO_CAPACITY`（介质容量）和 `BANDWIDTH_*`（负载域带宽）都分开**：
+    #: **与 `NO_CAPACITY`（介质容量）和 `BANDWIDTH_*`（线路带宽）都分开**：
     #: 三者都是「放不下」，但一个要加盘、一个要加处理器、一个要扩基带，
     #: 合并等于把该做的事丢掉。
     #: **它也是可重试的**（在 `executor.RETRYABLE_CODES` 里）：槽位是竞争资源，
@@ -1069,7 +1088,7 @@ SYNC_CHANNEL_S2C = "endernet:terminal_sync"
 #: 玩家右键那一刻查到注册表后推过去，而那一刻**还没有会话**（会话要等屏
 #: 挂上代理、客户端采纳身份之后才开），因此它不能是一条会话内的消息。
 #:
-#: 载荷形状见 `common/device_identity.py`；事件名两侧必须逐字相同。
+#: 载荷形状见 `common/channels/device_identity.py`；事件名两侧必须逐字相同。
 DEVICE_IDENTITY_CHANNEL_S2C = "endernet:device_identity"
 
 #: 视图种类。两种都**是已知种类**，且都已有生产者；与「客户端发来一个我们
@@ -1219,6 +1238,16 @@ def _require_fields(data, required, label):
         raise ValueError("%s 出现未知字段 %r" % (label, sorted(unknown)))
 
 
+def _require_device_ref(data, label):
+    # type: (dict, str) -> None
+    """`DeviceRef.to_dict()` 的严格字段检查：`node_key`、`generation` 必有，`slot` 只在面板
+    引用上出现（阶段 D，13 §7）。其余字段一律拒绝，理由同 `_require_fields`。"""
+    if isinstance(data, dict) and "slot" in data:
+        _require_fields(data, ("node_key", "generation", "slot"), label)
+    else:
+        _require_fields(data, ("node_key", "generation"), label)
+
+
 def _encode_item(descriptions, key, stored, reserved, has_pattern):
     # type: (object, ResourceKey, int, int, bool) -> dict
     """快照与增量**共用**的条目编码，防止两条路径漂移。
@@ -1366,9 +1395,7 @@ class SessionOpen(SyncMessage):
             data, ("kind", "request_id", "device_ref", "dimension"), "session_open"
         )
         require_text(data["request_id"], "request_id")
-        _require_fields(
-            data["device_ref"], ("node_key", "generation"), "session_open.device_ref"
-        )
+        _require_device_ref(data["device_ref"], "session_open.device_ref")
         _require_count(data["dimension"], "dimension")
         return cls(
             data["request_id"],
@@ -1684,7 +1711,7 @@ class CraftStateMessage(SyncMessage):
         return cls(data["revision"], data["slots"], data["recipe"], data["preview"])
 
 
-#: 样板终端的两片虚格各有几格。**与 `template_terminal` 的同名常量是同一个
+#: 样板终端的两片虚格各有几格。**与 `server/crafting/terminals/template.py` 的同名常量是同一个
 #: 数**，这里再写一份的理由与 `CRAFT_SLOT_COUNT` 相同：同步层必须钉住线上
 #: 格数，不能跟着对面变。
 TEMPLATE_SOURCE_CELLS = 9
@@ -3175,7 +3202,7 @@ PORT_CONFIG_FIELDS = (
     "item_filters",
 )
 
-#: 过滤模式的**线上词汇**。同样是镜像：真身是 `server/devices/io.py` 的
+#: 过滤模式的**线上词汇**。同样是镜像：真身是 `server/devices/bus_io.py` 的
 #: `FILTER_MODES`，跨层用例钉住两者相等。下发与回传的 `filter_mode` 都只
 #: 允许这两个词——写错了要当场拒收，而不是让服务端在 `PortConfig` 的
 #: 构造器里抛一个「未知过滤模式」。
@@ -3191,7 +3218,7 @@ class PortConfigMessage(SyncMessage):
     为它建一套版本协调，收益远小于它引入的第二份真相源。
 
     **不含任何版本字段**，理由见 `PORT_CONFIG_FIELDS` 上方与
-    `server/devices/io.py` 的 `config_view`：配置版本今天不存在，而另外两个
+    `server/devices/bus_io.py` 的 `config_view`：配置版本今天不存在，而另外两个
     版本词汇（交易版本、存档结构版本）各有其名，挪用它们会让「按哪个版本
     判断过期」变成猜。
 

@@ -14,6 +14,24 @@
    必须报「未配置」，而不是静默按 0 计费。
 
 规则编号含义见 `plans/tasks/00. 开发流程与任务总览.md` 的决策台账。
+
+**2026-11-09 网络改版**（`.claude/13` §0 的作者定案）：基带收成 AE2 控制器式的
+紧凑核心，每个外露面输出本档带宽；延长与分发交给三种末影光缆；设备透传 8u；
+终端多了挂在光缆上的面板形态；另有网络扳手。表的分工：
+
+- `DEVICES`：整方块设备（`scripts/gen_blocks.py` 按它逐台生成方块，含义不变）；
+- `CABLES`：三种光缆。也是方块，但状态、骨骼可见性与碰撞盒按面生成，
+  归阶段 C 的生成器，因此单列一张表，不混进 `DEVICES`；
+- `TERMINAL_PARTS`：四种终端的面板形态，挂在光缆的一个面上。它的物品形态是同名的展示方块
+  （2026-11-10 方案 B，`scripts/gen_blocks.py` 的 `build_part_item_json`：物品栏显示 3D 面板），
+  玩家放不下它（`server/interaction/guard.py` 的 `panel_item` 规则拦掉放置），挂面板走客户端
+  接管的意图；
+- `PART_HOLDERS`：面板底座（2026-11-10 真机反馈后照 AE2 补上）。面板对着普通方块或
+  空气放时由它承载：只装面板、没有线芯、不入网，最后一块面板拆掉就消失；按面数据与
+  方块状态的维护同光缆一套，因此也不进 `DEVICES`；
+- `TOOLS`：工具物品（网络扳手）。
+
+`DefinitionSet.get()` / `has()` 跨这四张设备表查；`devices` 仍只是整方块那一张。
 """
 
 
@@ -70,17 +88,18 @@ class Value(object):
         )
 
 
-# 带宽取整策略：`(硬盘个数/4)u` 到底进到多少（R02）
-class BandwidthRounding(object):
-    EXACT_QUARTERS = "exact_quarters"  # 默认：以 1/4u 整数记账，无需取整
-    CEIL_TO_U = "ceil_to_u"
-    FLOOR_TO_U = "floor_to_u"
+# 带宽一律以四分之一 u 的整数记账、不取整（2026-11-09 作者定案，13 §0.2）。
+# 此前的 `BandwidthRounding`（R02「负载取整」的替身）随负载域一起退役。
 
 
 # -- 设备分类 --------------------------------------------------------------
 
 CATEGORY_CONTROLLER = "controller"
 CATEGORY_BASEBAND = "baseband"
+#: 末影光缆（13 §2）：载体，按本档容量承载线路，自身不占带宽。
+CATEGORY_CABLE = "cable"
+#: 面板底座（2026-11-10）：只承载面板，不与任何设备相连（连接表里没有它），不入网。
+CATEGORY_PART_HOLDER = "part_holder"
 CATEGORY_BUS = "bus"
 CATEGORY_TERMINAL = "terminal"
 CATEGORY_STORAGE = "storage"
@@ -94,6 +113,31 @@ FE_PER_EN = 2
 ENERGY_INPUT_CAPACITY_FE = 2147483647
 
 CATEGORY_ENERGY_INPUT = "energy_input"
+
+#: 13 §3 连接表里的「设备」：整方块的总线、终端、驱动器、内存槽、装配仓与能源类。
+#: 它们彼此透传（13 §0.5），也都能接基带与光缆。处理器与处理器连接器各有
+#: 自己的一行，**不在其中**。
+DEVICE_CATEGORIES = frozenset(
+    [
+        CATEGORY_BUS,
+        CATEGORY_TERMINAL,
+        CATEGORY_STORAGE,
+        CATEGORY_MEMORY,
+        CATEGORY_ASSEMBLY,
+        CATEGORY_ENERGY_INPUT,
+    ]
+)
+
+#: 设备的形态（13 §2）：整方块，或挂在光缆一个面上的面板。
+FORM_BLOCK = "block"
+FORM_PART = "part"
+FORMS = frozenset([FORM_BLOCK, FORM_PART])
+
+#: 面板的种类（面板骨架，2026-11-10）：决定一块面板挂上以后走哪几条流程。
+#: 目前只有终端（右键开终端屏、库存按整方块终端记账）；往后的总线接口面板、
+#: P2P 面板各加一种，各自的流程按种类分派，不再默认「面板就是终端」。
+PART_KIND_TERMINAL = "terminal"
+PART_KINDS = frozenset([PART_KIND_TERMINAL])
 
 # -- 能力名（与 devices/capabilities.py 的协议一一对应）--------------------
 
@@ -132,29 +176,55 @@ def units_to_quarters(units):
 # -- 连接规则 --------------------------------------------------------------
 
 
-class ConnectionRules(object):
-    """显式的端口白名单。
+def _connection_pairs():
+    # type: () -> frozenset
+    """13 §3 的连接表，逐行展开成分类对（「设备」一词展开成 `DEVICE_CATEGORIES`）。
 
-    相邻**不等于**连通：只有双方类别都在白名单里才建立图边。
-    这条规则直接决定拓扑服务的建图，不能靠「是不是贴在一起」推断。
+    | 一方 | 另一方 |
+    | --- | --- |
+    | 主控 | 基带（只接基带） |
+    | 基带 | 基带（异档也连：R14-b，2026-11-09 作者改定允许混搭）、光缆、设备、处理器连接器 |
+    | 光缆 | 光缆（三种互连）、设备、处理器连接器 |
+    | 设备 | 设备（透传）、处理器连接器 |
+    | 处理器连接器 | 处理器 |
+    | 处理器 | 处理器 |
+
+    面板不在表里：它不是方块，只经同格线芯挂在宿主光缆上，不对外连（拓扑负责）。
+    光缆按面的限制（被切断、被面板占住）是第二层判定，见
+    `server/devices/catalog.py` 的 `DeviceCatalog.face_verdict`。
     """
-
-    #: 允许互相连接的分类对。意图上是对称的，校验时双向都要成立。
-    ALLOWED_PAIRS = frozenset(
+    pairs = set(
         [
             (CATEGORY_BASEBAND, CATEGORY_CONTROLLER),
             (CATEGORY_BASEBAND, CATEGORY_BASEBAND),
-            (CATEGORY_BASEBAND, CATEGORY_BUS),
-            (CATEGORY_BASEBAND, CATEGORY_TERMINAL),
-            (CATEGORY_BASEBAND, CATEGORY_STORAGE),
-            (CATEGORY_BASEBAND, CATEGORY_MEMORY),
-            (CATEGORY_BASEBAND, CATEGORY_ASSEMBLY),
-            (CATEGORY_BASEBAND, CATEGORY_ENERGY_INPUT),
+            (CATEGORY_BASEBAND, CATEGORY_CABLE),
             (CATEGORY_BASEBAND, CATEGORY_PROCESSOR_CONNECTOR),
+            (CATEGORY_CABLE, CATEGORY_CABLE),
+            (CATEGORY_CABLE, CATEGORY_PROCESSOR_CONNECTOR),
             (CATEGORY_PROCESSOR_CONNECTOR, CATEGORY_PROCESSOR),
             (CATEGORY_PROCESSOR, CATEGORY_PROCESSOR),
         ]
     )
+    devices = sorted(DEVICE_CATEGORIES)
+    for index, device in enumerate(devices):
+        pairs.add((CATEGORY_BASEBAND, device))
+        pairs.add((CATEGORY_CABLE, device))
+        pairs.add((device, CATEGORY_PROCESSOR_CONNECTOR))
+        for other in devices[index:]:
+            pairs.add((device, other))
+    return frozenset(pairs)
+
+
+class ConnectionRules(object):
+    """显式的分类白名单（13 §3，2026-11-09 改版）。
+
+    相邻**不等于**连通：只有双方类别都在白名单里才建立图边。
+    这条规则直接决定拓扑服务的建图，不能靠「是不是贴在一起」推断。
+    表外的一律不连，例如主控贴着光缆或设备、处理器贴着基带。
+    """
+
+    #: 允许互相连接的分类对。意图上是对称的，校验时双向都要成立。
+    ALLOWED_PAIRS = _connection_pairs()
 
     @classmethod
     def accepts(cls, category_a, category_b):
@@ -181,26 +251,15 @@ class ConnectionRules(object):
     def reason_for_reject(cls, category_a, category_b):
         # type: (str, str) -> str
         """给出可定位的拒绝原因，而不是笼统的「不连通」。"""
-        if category_a == CATEGORY_PROCESSOR and category_b in (
-            CATEGORY_BASEBAND,
-            CATEGORY_CONTROLLER,
-        ):
-            return "processor_must_use_connector"
-        if category_b == CATEGORY_PROCESSOR and category_a in (
-            CATEGORY_BASEBAND,
-            CATEGORY_CONTROLLER,
-        ):
-            return "processor_must_use_connector"
-        if category_a == CATEGORY_PROCESSOR_CONNECTOR and category_b not in (
-            CATEGORY_PROCESSOR,
-            CATEGORY_BASEBAND,
-        ):
-            return "connector_only_accepts_processor_or_baseband"
-        if category_b == CATEGORY_PROCESSOR_CONNECTOR and category_a not in (
-            CATEGORY_PROCESSOR,
-            CATEGORY_BASEBAND,
-        ):
-            return "connector_only_accepts_processor_or_baseband"
+        for mine, other in ((category_a, category_b), (category_b, category_a)):
+            if mine == CATEGORY_PROCESSOR and other not in (
+                CATEGORY_PROCESSOR,
+                CATEGORY_PROCESSOR_CONNECTOR,
+            ):
+                return "processor_must_use_connector"
+        for mine, other in ((category_a, category_b), (category_b, category_a)):
+            if mine == CATEGORY_CONTROLLER and other != CATEGORY_BASEBAND:
+                return "controller_only_accepts_baseband"
         return "categories_not_connectable"
 
 
@@ -265,13 +324,14 @@ class BandwidthSpec(object):
       即 blocks.md 的 `(硬盘个数/4)u`。
     - `per_memory_quarters`：内存槽按内存条个数计费（当前 blocks.md 给的是
       固定 2u，因此为 None）。
-    - `capacity_quarters`：**只有网络基带使用**。blocks.md 写明
-      「可以接受最多 8/16/32u 的网络负载」，这是基带的承载容量，
-      与设备自身的需求量是两回事，因此单独一个字段而不是复用 `base_quarters`。
-      为 None 表示该设备不承载负载（全部非基带设备）。
-
-    混合 8/16/32 位基带的容量合成、环路与多接入的路径选择仍待定（R02），
-    由 `rounding` 与准入策略承担，不在这里悄悄选一个。
+    - `capacity_quarters`：**载体的容量**，与设备自身的需求量是两回事，
+      因此单独一个字段而不是复用 `base_quarters`。只有两类设备填它
+      （2026-11-09 改版，13 §0）：
+      - 网络基带：**每个外露面**输出的带宽，即本档 8/16/32u。一块基带的
+        几个外露面各出一份，不相加成一个池；
+      - 末影光缆：一格光缆能让多少带宽经过（玻璃 8u、普通 16u、致密 32u）。
+      为 None 表示该设备不是载体。整方块设备的透传容量（R14-a，8u）是全体设备
+      共用的一个数，记在 `DEVICE_PASSTHROUGH_QUARTERS`，不在这里逐台写。
     """
 
     __slots__ = (
@@ -279,7 +339,6 @@ class BandwidthSpec(object):
         "per_disk_quarters",
         "per_memory_quarters",
         "capacity_quarters",
-        "rounding",
     )
 
     def __init__(
@@ -288,18 +347,16 @@ class BandwidthSpec(object):
         per_disk_quarters=None,
         per_memory_quarters=None,
         capacity_quarters=None,
-        rounding=BandwidthRounding.EXACT_QUARTERS,
     ):
-        # type: (object, object, object, object, str) -> None
+        # type: (object, object, object, object) -> None
         self.base_quarters = base_quarters
         self.per_disk_quarters = per_disk_quarters
         self.per_memory_quarters = per_memory_quarters
         self.capacity_quarters = capacity_quarters
-        self.rounding = rounding
 
     def is_carrier(self):
         # type: () -> bool
-        """该设备是否承载网络负载（即是否为网络基带）。"""
+        """该设备是否是载体（网络基带或末影光缆）。"""
         return self.capacity_quarters is not None
 
     def demand_quarters(self, disk_count=0, memory_count=0):
@@ -336,6 +393,17 @@ class DeviceDefinition(object):
     能力 `energy_port` 对应可由线缆写入的 radium FE 端口，
     而创造能量源是**推**式静态电源，两者不是同一个能力；`supply` 已经足以分类，
     再存一份只会分叉。能源服务因此像 `admission` 读带宽那样直接读定义表。
+
+    2026-11-09 网络改版加了三个字段（13 §2）：
+
+    - `form`：`FORM_BLOCK` 整方块，或 `FORM_PART` 面板形态（挂在光缆一个面上）；
+    - `whole_block_id`：面板形态对应的整方块设备。面板的带宽、耗能、界面都与它
+      相同，界面由 `DefinitionSet.terminal_screen_of` 据此查；整方块设备为 None；
+    - `accepts_parts`：光缆能不能挂面板。致密光缆不能，玻璃与普通能；面板底座也能。
+
+    2026-11-10 面板骨架加了一个：
+
+    - `part_kind`：面板的种类（`PART_KINDS`）。面板形态必填，整方块设备必须为 None。
     """
 
     __slots__ = (
@@ -350,6 +418,10 @@ class DeviceDefinition(object):
         "max_stack_slots",
         "disabled_reason",
         "notes",
+        "form",
+        "whole_block_id",
+        "accepts_parts",
+        "part_kind",
     )
 
     def __init__(
@@ -365,7 +437,23 @@ class DeviceDefinition(object):
         max_stack_slots=None,
         disabled_reason=None,
         notes="",
+        form=FORM_BLOCK,
+        whole_block_id=None,
+        accepts_parts=False,
+        part_kind=None,
     ):
+        if form not in FORMS:
+            raise ValueError("未知的设备形态: %r" % (form,))
+        if (form == FORM_PART) != (whole_block_id is not None):
+            raise ValueError(
+                "面板形态必须指明对应的整方块设备，整方块设备不得指明: %s" % (device_id,)
+            )
+        if (form == FORM_PART) != (part_kind is not None):
+            raise ValueError("面板形态必须指明种类，整方块设备不得指明: %s" % (device_id,))
+        if part_kind is not None and part_kind not in PART_KINDS:
+            raise ValueError("未知的面板种类 %r: %s" % (part_kind, device_id))
+        if accepts_parts and category not in (CATEGORY_CABLE, CATEGORY_PART_HOLDER):
+            raise ValueError("只有光缆与面板底座能挂面板: %s" % (device_id,))
         self.id = device_id
         self.label = label
         self.category = category
@@ -381,6 +469,18 @@ class DeviceDefinition(object):
         self.max_stack_slots = max_stack_slots
         self.disabled_reason = disabled_reason
         self.notes = notes
+        self.form = form
+        #: 面板形态对应的整方块设备（带宽、耗能、界面与它相同）；整方块为 None。
+        self.whole_block_id = whole_block_id
+        #: 光缆能否挂面板（13 §0.8：致密不能，玻璃与普通能，一格最多 6 块）。
+        self.accepts_parts = bool(accepts_parts)
+        #: 面板的种类（`PART_KINDS`）；整方块设备为 None。
+        self.part_kind = part_kind
+
+    def is_part(self):
+        # type: () -> bool
+        """是否是面板形态（挂在光缆上，不是方块）。"""
+        return self.form == FORM_PART
 
     def has_capability(self, name):
         # type: (str) -> bool
@@ -459,6 +559,25 @@ class TemplateSpec(object):
         return "TemplateSpec(%s, %s)" % (self.id, self.mode)
 
 
+class ToolSpec(object):
+    """一件工具物品的静态定义（13 §2：网络扳手）。
+
+    **只有标识与名字，没有数值字段，这是有意的。** 扳手的行为——切断光缆的
+    某一面、拆单块面板、潜行拆卸（13 §6）——全在交互层，作者没给任何数值；
+    堆叠上限这类物品属性归物品生成器，与介质、内存条同理。
+    """
+
+    __slots__ = ("id", "label")
+
+    def __init__(self, tool_id, label):
+        # type: (str, str) -> None
+        self.id = tool_id
+        self.label = label
+
+    def __repr__(self):
+        return "ToolSpec(%s)" % (self.id,)
+
+
 class MediumSpec(object):
     """存储介质规格，逐项取自 items.md。"""
 
@@ -526,6 +645,16 @@ class MemorySpec(object):
     def __repr__(self):
         return "MemorySpec(%s, %d B)" % (self.id, self.capacity_bytes)
 
+
+#: 整方块设备的**透传容量**（13 §0.5「设备透传带宽（AE2 式）」，R14-a）：
+#: 线路经过一台设备继续往下走时，这台设备这一段最多能让多少带宽经过。
+#: 2026-11-09 作者定案 **8u**（与 AE2 整方块设备透传 8 频道一致），已定数值，
+#: 不带 `unresolved` 标签、不进 `unresolved_report()`。所有整方块设备共用这一个数；
+#: 面板不透传（它只挂在宿主光缆上，不对外连）。
+DEVICE_PASSTHROUGH_QUARTERS = Value(
+    units_to_quarters(8),
+    note="整方块设备透传容量 8u（R14-a，2026-11-09 作者定案）",
+)
 
 #: 按装置数量计费的规则。基础能耗为 0 是确定的（没有硬盘就不耗能），
 #: 这里给出的是每增加一个单元的增量，供定义表引用与诊断。
@@ -629,7 +758,7 @@ SIX_WAY_ITEM_PORTS = frozenset((
 #: 这个集合」，不比对格数。改完之后它也不会被自动拦住——见 11-07 的 B 组。
 #:
 #: **两端现在都认这 5 格。** 领域层那半边于 2026-09-29 补上（与取货口一并，
-#: 11-07 的 C1）：`server/devices/io.py` 的 `PortStore.ensure` 为 `INTAKE` 建了
+#: 11-07 的 C1）：`server/devices/bus_io.py` 的 `PortStore.ensure` 为 `INTAKE` 建了
 #: `BUFFER_CONTAINER` 形态的 `TransferBuffer`，件数上界由
 #: `PortPolicy.intake_buffer_capacity` 从本值推出。
 #:
@@ -646,7 +775,7 @@ ITEM_INTAKE_PORT_SLOT_COUNT = Value(
 #: 界面 JSON `grid_dimensions = [5, 1]`），这条只是把它收进单一来源表。
 #:
 #: **两端现在都认这 5 格。** 领域层那半边于 2026-09-29 补上（11-07 的 C1）：
-#: `server/devices/io.py` 的 `PortStore.ensure` 为 `OUTPUT` 建了
+#: `server/devices/bus_io.py` 的 `PortStore.ensure` 为 `OUTPUT` 建了
 #: `BUFFER_CONTAINER` 形态的 `TransferBuffer`，件数上界由
 #: `PortPolicy.output_cache_capacity` 从本值推出。
 #:
@@ -831,10 +960,10 @@ def devices_for_mode(mode):
 #:
 #: 值必须与 `@RegistToolDeltaScreen(...)` 注册的键**逐字相同**。
 TERMINAL_SCREENS = {
-    "endernet:common_terminal_panel": "common_terminal_panel_ui.main",
-    "endernet:crafting_terminal_panel": "crafting_terminal_panel_ui.main",
-    "endernet:template_terminal_panel": "template_terminal_panel_ui.main",
-    "endernet:factoric_terminal_panel": "factoric_terminal_panel_ui.main",
+    "endernet:common_terminal_panel": "endernet_common_terminal_panel.main",
+    "endernet:crafting_terminal_panel": "endernet_crafting_terminal_panel.main",
+    "endernet:template_terminal_panel": "endernet_template_terminal_panel.main",
+    "endernet:factoric_terminal_panel": "endernet_factoric_terminal_panel.main",
 }
 
 #: 哪些容器类方块**有挂上去的脚本屏**（11-07）。键是方块 id，值是屏幕名。
@@ -844,7 +973,7 @@ TERMINAL_SCREENS = {
 #: - 终端类：屏幕是本模组自有的，服务端要 `PushUIRequest` 把它**推**开；
 #: - 这一张：屏幕由**引擎**按方块组件自动打开，服务端只推一条**身份**
 #:   （「你打开的这个界面是这台设备」），由屏上的代理自己认领。
-#:   详见 `common/device_identity.py` 与 `plans/technical_notes/netease_container_screens.md`。
+#:   详见 `common/channels/device_identity.py` 与 `plans/technical_notes/netease_container_screens.md`。
 #:
 #: 三条纪律：
 #:
@@ -856,20 +985,20 @@ TERMINAL_SCREENS = {
 #:
 #: 所有已有容器界面的设备都接入状态订阅；配置交互按各自交付范围接入。
 CONTAINER_SCREENS = {
-    "endernet:bus_item_io": "bus_item_io_ui.main",
-    "endernet:memory_slot": "memory_slot_ui.main",
-    "endernet:bus_fluid_input_io": "bus_fluid_input_io_ui.main",
-    "endernet:bus_fluid_output_io": "bus_fluid_output_io_ui.main",
-    "endernet:bus_item_output_io": "bus_item_output_io_ui.main",
-    "endernet:bus_item_input_io": "bus_item_input_io_ui.main",
-    "endernet:bus_template_io": "bus_template_io_ui.main",
-    "endernet:assemble_chamber": "assemble_chamber_ui.main",
+    "endernet:bus_item_io": "endernet_bus_item_io.main",
+    "endernet:memory_slot": "endernet_memory_slot.main",
+    "endernet:bus_fluid_input_io": "endernet_bus_fluid_input_io.main",
+    "endernet:bus_fluid_output_io": "endernet_bus_fluid_output_io.main",
+    "endernet:bus_item_output_io": "endernet_bus_item_output_io.main",
+    "endernet:bus_item_input_io": "endernet_bus_item_input_io.main",
+    "endernet:bus_template_io": "endernet_bus_template_io.main",
+    "endernet:assemble_chamber": "endernet_assemble_chamber.main",
     # 存储驱动器（11-07）。**屏幕是空的**——User 2026-10-03 裁定：介质的
     # 装卸与 Lore 刷新**暂不需要界面**，只保留服务端逻辑，因此本屏只有
     # 状态栏与详情弹窗（`ProxyPanelBase` 给的那两样），不接任何配置控件。
     # 它的 UI 文档 `plans/ui/storage_driver.md` 第 2～8 节仍是空模板，
     # 所以**不能**给它写配置面；这一行登记的是「引擎开着的那张屏由谁接管」。
-    "endernet:storage_driver": "storage_driver_ui.main",
+    "endernet:storage_driver": "endernet_storage_driver.main",
 }
 
 #: 同一个人两次打开终端界面的最小间隔（秒）。窗口内再右键**静默忽略**。
@@ -906,7 +1035,7 @@ DEVICES = (
             "endernet:common_terminal_panel",
             "endernet:crafting_terminal_panel",
         ),
-        notes="不允许自动存货/取货；不支持订单处理。",
+        notes="只接网络基带，须贴着基带核心；不允许自动存货/取货；不支持订单处理。",
     ),
     DeviceDefinition(
         "endernet:tiny_network_endpoint",
@@ -924,7 +1053,7 @@ DEVICES = (
             follows_bandwidth=True,
         ),
         allowed_device_ids=None,
-        notes="允许接入总线类设备；不支持订单处理。",
+        notes="只接网络基带，须贴着基带核心；允许接入总线类设备；不支持订单处理。",
     ),
     # --- 网络传输介质 ---
     DeviceDefinition(
@@ -933,9 +1062,10 @@ DEVICES = (
         CATEGORY_BASEBAND,
         # 基带自身不消耗带宽，而是提供容量；`base_quarters` 保持未配置
         # 以免被误读成「基带要占带宽」，容量写在 capacity_quarters。
+        # 2026-11-09 起容量的含义是**每个外露面**输出本档带宽（13 §0.1）。
         bandwidth=BandwidthSpec(UNCONFIGURED, capacity_quarters=units_to_quarters(8)),
         energy=EnergySpec(),
-        notes="可接受最多 8u 网络负载。",
+        notes="每个外露面输出 8u 带宽。",
     ),
     DeviceDefinition(
         "endernet:network_baseband_16",
@@ -943,7 +1073,7 @@ DEVICES = (
         CATEGORY_BASEBAND,
         bandwidth=BandwidthSpec(UNCONFIGURED, capacity_quarters=units_to_quarters(16)),
         energy=EnergySpec(),
-        notes="可接受最多 16u 网络负载。",
+        notes="每个外露面输出 16u 带宽。",
     ),
     DeviceDefinition(
         "endernet:network_baseband_32",
@@ -951,7 +1081,7 @@ DEVICES = (
         CATEGORY_BASEBAND,
         bandwidth=BandwidthSpec(UNCONFIGURED, capacity_quarters=units_to_quarters(32)),
         energy=EnergySpec(),
-        notes="可接受最多 32u 网络负载。",
+        notes="每个外露面输出 32u 带宽。",
     ),
     # --- 网络接口 ---
     DeviceDefinition(
@@ -1095,7 +1225,8 @@ DEVICES = (
         notes="占用 1 个配方处理槽位。",
     ),
     # --- 其他 ---
-    # 这一组两台都是「能源类设备」：只连基带、不占带宽，不参与负载域。
+    # 这一组两台都是「能源类设备」：不占带宽。2026-11-09 起与其他设备一样
+    # 接基带、光缆或别的设备（透传），不再「只连基带」。
     # 分类复用 CATEGORY_ENERGY_INPUT 而不是再开一个：blocks.md 把它们同放在
     # 「其他」下，连接规则也完全一样；新开分类要同时改 ConnectionRules 与
     # PortRuleSet 两张表（`node.py` 的守卫会因半张表报错），还要补
@@ -1132,14 +1263,152 @@ DEVICES = (
         capabilities=(),
         notes=(
             "供能设备：为网络提供 2147483647 EN/t。不占带宽，"
-            "因此不影响负载域与带宽准入。"
+            "因此不影响线路分配与带宽准入。"
         ),
     ),
 )
 
 
+# -- 末影光缆（13 §2）--------------------------------------------------------
+#
+# 三种光缆互相能连（13 §0.9）；载体容量就是 `capacity_quarters`，自身不占带宽
+# （`base_quarters = 0` 是已定事实：13 §2「载体 8u」，不是缺项）。耗能 blocks.md
+# 没列，按全局约束 7 留 `UNCONFIGURED`（R10），与基带同一处理。
+#
+# 方块本身（状态 `endernet:side_<面>`、骨骼可见性、按排列的碰撞盒、方块实体）
+# 由阶段 C 的生成器出，**不进 `DEVICES`**：`gen_blocks.py` 按 `DEVICES` 逐台生成
+# 标准方块，光缆混进去会被生成成整方块。
+
+CABLES = (
+    DeviceDefinition(
+        "endernet:ender_glass_cable",
+        "末影玻璃光缆",
+        CATEGORY_CABLE,
+        bandwidth=BandwidthSpec(0, capacity_quarters=units_to_quarters(8)),
+        energy=EnergySpec(),
+        accepts_parts=True,
+        notes="载体 8u，自身不占带宽；可挂面板，一格最多 6 块。",
+    ),
+    DeviceDefinition(
+        "endernet:ender_cable",
+        "末影光缆",
+        CATEGORY_CABLE,
+        bandwidth=BandwidthSpec(0, capacity_quarters=units_to_quarters(16)),
+        energy=EnergySpec(),
+        accepts_parts=True,
+        notes="载体 16u，自身不占带宽；可挂面板，一格最多 6 块。",
+    ),
+    DeviceDefinition(
+        "endernet:ender_dense_cable",
+        "致密末影光缆",
+        CATEGORY_CABLE,
+        bandwidth=BandwidthSpec(0, capacity_quarters=units_to_quarters(32)),
+        energy=EnergySpec(),
+        accepts_parts=False,
+        notes="载体 32u，自身不占带宽；不挂面板。",
+    ),
+)
+
+
+# -- 面板底座（2026-11-10 作者定案，照 AE2 的 cable bus 只挂面板）------------------
+#
+# 面板对着普通方块放、或像火把一样放到相邻的空格时，那一格新建一个面板底座：只装面板，
+# 没有线芯与连接臂，不与任何设备相连（连接表里没有这一类），所以不入网；面板的状态栏
+# 原因是「面板没有接在光缆上」。最后一块面板拆掉它就消失；手持玻璃或普通光缆点它，
+# 换成那种光缆（面板与库存标记原样保留）。没有对应物品，自身不掉落。
+#
+# 方块实体数据、方块状态 `endernet:side_<面>`（每面 0 / 2）与光缆同一套，状态维护也是
+# 同一个 `CableStateKeeper`，因此与光缆一样不进 `DEVICES`，由生成器另走一条路出方块。
+# 带宽与耗能都是 0：它不在任何网络里，这是结构性事实，不是缺项。
+
+PART_HOLDER_ID = "endernet:part_holder"
+
+PART_HOLDERS = (
+    DeviceDefinition(
+        PART_HOLDER_ID,
+        "面板底座",
+        CATEGORY_PART_HOLDER,
+        bandwidth=BandwidthSpec(0),
+        energy=EnergySpec(idle=0),
+        accepts_parts=True,
+        notes="只承载面板，不入网；最后一块面板拆掉即消失，手持玻璃或普通光缆点它换成光缆。",
+    ),
+)
+
+
+def _terminal_part(part_id, label, panel_id):
+    # type: (str, str, str) -> DeviceDefinition
+    """按整方块终端生成它的面板形态：带宽、耗能、能力**直接取同一份对象**。
+
+    逐项抄一遍的代价是哪天改了终端的耗能，面板还是旧值——两者在 13 §2 里
+    写明「相同」，那就只能有一份。
+    """
+    panel = None
+    for definition in DEVICES:
+        if definition.id == panel_id:
+            panel = definition
+    if panel is None:
+        raise ValueError("面板形态指向的整方块终端不存在: %s" % (panel_id,))
+    return DeviceDefinition(
+        part_id,
+        label,
+        panel.category,
+        bandwidth=panel.bandwidth,
+        energy=panel.energy,
+        capabilities=panel.capabilities,
+        form=FORM_PART,
+        whole_block_id=panel_id,
+        part_kind=PART_KIND_TERMINAL,
+        notes="面板形态：挂在末影玻璃光缆或末影光缆的一个面上；带宽、耗能、界面与整方块终端相同。",
+    )
+
+
+#: 四种终端的面板形态（13 §2）。与整方块终端 `*_terminal_panel` **并存**
+#: （13 §0.10），显示名 2026-11-10 随作者改的语言文件（与整方块终端同名，不再加「（光缆）」）。面板挂在光缆的一个面上，经同格线芯接入
+#: 网络，拓扑上只连宿主光缆；它的物品形态是同名的展示方块（2026-11-10 方案 B，放不下）。
+TERMINAL_PARTS = (
+    _terminal_part(
+        "endernet:common_terminal_part",
+        "通用终端面板",
+        "endernet:common_terminal_panel",
+    ),
+    _terminal_part(
+        "endernet:crafting_terminal_part",
+        "合成终端面板",
+        "endernet:crafting_terminal_panel",
+    ),
+    _terminal_part(
+        "endernet:template_terminal_part",
+        "样板终端面板",
+        "endernet:template_terminal_panel",
+    ),
+    _terminal_part(
+        "endernet:factoric_terminal_part",
+        "工厂终端面板",
+        "endernet:factoric_terminal_panel",
+    ),
+)
+
+
+# -- 工具（13 §2）------------------------------------------------------------
+
+#: 工具物品规格。网络扳手：切断光缆的某一面、拆单块面板、潜行拆卸（13 §6）。
+#: 贴图为占位，作者后补。
+TOOLS = (ToolSpec("endernet:network_wrench", "网络扳手"),)
+
+#: **已注册为游戏物品**的工具。与 `ITEM_MEDIUMS` 同一地位、同一理由：规格表与
+#: 「已经做成了物品」是两件事。扳手的物品 JSON、图标与语言条目由阶段 C 的
+#: `scripts/gen_items.py` 生成（2026-11-10），从此登记为物品。
+ITEM_TOOLS = ("endernet:network_wrench",)
+
+
 class DefinitionSet(object):
-    """设备与介质的运行时索引，外加未定案数值的守卫。"""
+    """设备与介质的运行时索引，外加未定案数值的守卫。
+
+    设备分四张表（见模块说明）：`devices` 整方块、`cables` 光缆、`parts` 面板形态、
+    `part_holders` 面板底座。`get` / `has` / `category_of` 跨四张表查——拓扑与准入不关心
+    一台设备是哪张表里来的；`devices` 只是整方块那一张，生成器与资产检查按它逐台出方块。
+    """
 
     #: 非设备、非介质的配置项。`iter_values()` 会把它们与设备数值一起报出来，
     #: 因此未定案的配置同样躲不过 `assert_no_silent_unresolved()`——
@@ -1154,6 +1423,7 @@ class DefinitionSet(object):
         "port.fluid_slot_count": FLUID_PORT_SLOT_COUNT,
         "memory_slot.slot_count": MEMORY_SLOT_COUNT,
         "port.pickup_filter_limit": PICKUP_FILTER_LIMIT,
+        "network.device_passthrough_quarters": DEVICE_PASSTHROUGH_QUARTERS,
     }
 
     def __init__(
@@ -1166,12 +1436,27 @@ class DefinitionSet(object):
         item_templates=None,
         memories=None,
         item_memories=None,
+        cables=None,
+        parts=None,
+        tools=None,
+        item_tools=None,
+        part_holders=None,
     ):
-        # type: (tuple, tuple, dict, tuple, tuple, tuple, tuple) -> None
+        # type: (tuple, tuple, dict, tuple, tuple, tuple, tuple, tuple, tuple, tuple, tuple, tuple) -> None
         self.devices = {}
+        #: 末影光缆（方块，由阶段 C 的生成器按面出状态）。
+        self.cables = {}
+        #: 面板形态的设备（不是方块）。
+        self.parts = {}
+        #: 面板底座（方块，按面数据与方块状态同光缆一套；2026-11-10）。
+        self.part_holders = {}
+        #: 三张设备表合起来的索引：`get` / `has` 走它，跨表标识也在这里查重。
+        self._by_id = {}
         self.mediums = {}
         self.templates = {}
         self.memories = {}
+        self.tools = {}
+        self.item_tools = tuple(ITEM_TOOLS if item_tools is None else item_tools)
         self.item_mediums = tuple(
             ITEM_MEDIUMS if item_mediums is None else item_mediums
         )
@@ -1185,6 +1470,24 @@ class DefinitionSet(object):
         self.config.update(config or {})
         for definition in devices if devices is not None else DEVICES:
             self._add_unique(self.devices, definition.id, definition, "设备")
+            self._add_unique(self._by_id, definition.id, definition, "设备")
+        for definition in cables if cables is not None else CABLES:
+            if definition.category != CATEGORY_CABLE:
+                raise ValueError("光缆表里只能放光缆: %s" % (definition.id,))
+            self._add_unique(self.cables, definition.id, definition, "光缆")
+            self._add_unique(self._by_id, definition.id, definition, "设备")
+        for definition in parts if parts is not None else TERMINAL_PARTS:
+            if not definition.is_part():
+                raise ValueError("面板表里只能放面板形态的设备: %s" % (definition.id,))
+            self._add_unique(self.parts, definition.id, definition, "面板")
+            self._add_unique(self._by_id, definition.id, definition, "设备")
+        for definition in part_holders if part_holders is not None else PART_HOLDERS:
+            if definition.category != CATEGORY_PART_HOLDER:
+                raise ValueError("面板底座表里只能放面板底座: %s" % (definition.id,))
+            self._add_unique(self.part_holders, definition.id, definition, "面板底座")
+            self._add_unique(self._by_id, definition.id, definition, "设备")
+        for tool in tools if tools is not None else TOOLS:
+            self._add_unique(self.tools, tool.id, tool, "工具")
         for spec in mediums if mediums is not None else MEDIUMS:
             self._add_unique(self.mediums, spec.id, spec, "介质")
         for template in templates if templates is not None else PATTERN_TEMPLATES:
@@ -1212,6 +1515,19 @@ class DefinitionSet(object):
                     raise ValueError(
                         "已注册为物品的内存条型号不在内存表中: %s" % (memory_id,)
                     )
+        if tools is None:
+            for tool_id in self.item_tools:
+                if tool_id not in self.tools:
+                    raise ValueError("已注册为物品的工具不在工具表中: %s" % (tool_id,))
+        # 面板必须指向一台真实的整方块终端。只在两张表都用默认值时校验，
+        # 理由同上：测试常拿一小份自制设备表构造夹具。
+        if devices is None and parts is None:
+            for definition in self.parts.values():
+                if definition.whole_block_id not in self.devices:
+                    raise ValueError(
+                        "面板 %s 指向的整方块设备不存在: %s"
+                        % (definition.id, definition.whole_block_id)
+                    )
 
     @staticmethod
     def _add_unique(table, key, item, label):
@@ -1223,14 +1539,99 @@ class DefinitionSet(object):
 
     def get(self, device_id):
         # type: (str) -> DeviceDefinition
+        """任一张设备表里的定义（整方块、光缆、面板）。"""
         try:
-            return self.devices[device_id]
+            return self._by_id[device_id]
         except KeyError:
             raise KeyError("未注册的设备标识: %s" % (device_id,))
 
     def has(self, device_id):
         # type: (str) -> bool
-        return device_id in self.devices
+        return device_id in self._by_id
+
+    def all_definitions(self):
+        # type: () -> list
+        """四张设备表的全部定义，按标识排序。"""
+        return [self._by_id[device_id] for device_id in sorted(self._by_id)]
+
+    def is_cable(self, device_id):
+        # type: (str) -> bool
+        return device_id in self.cables
+
+    def is_part(self, device_id):
+        # type: (str) -> bool
+        return device_id in self.parts
+
+    def is_part_holder(self, device_id):
+        # type: (str) -> bool
+        return device_id in self.part_holders
+
+    def has_face_data(self, device_id):
+        # type: (str) -> bool
+        """按面的方块：光缆与面板底座。方块实体带 `endernet:cuts` / `endernet:parts`、方块
+        状态是 `endernet:side_<面>`，读写与状态维护都归 `server/devices/cables.py`。"""
+        return device_id in self.cables or device_id in self.part_holders
+
+    def accepts_parts(self, device_id):
+        # type: (str) -> bool
+        """这一格能不能挂面板：玻璃与普通光缆、面板底座能；致密光缆与其它设备一律不能。"""
+        definition = self.cables.get(device_id) or self.part_holders.get(device_id)
+        return definition is not None and definition.accepts_parts
+
+    def part_kind_of(self, device_id):
+        # type: (str) -> object
+        """面板的种类（`PART_KINDS`）；不是面板返回 None。"""
+        definition = self.parts.get(device_id)
+        return definition.part_kind if definition is not None else None
+
+    def terminal_screen_of(self, device_id):
+        # type: (str) -> object
+        """这台终端打开哪个屏。面板形态用它对应的整方块终端的屏（13 §2）。
+
+        没有屏的设备返回 None。屏幕名的唯一来源仍是 `TERMINAL_SCREENS`。
+        """
+        definition = self._by_id.get(device_id)
+        if definition is None:
+            return None
+        if definition.is_part():
+            return TERMINAL_SCREENS.get(definition.whole_block_id)
+        return TERMINAL_SCREENS.get(device_id)
+
+    def device_passthrough_quarters(self):
+        # type: () -> object
+        """整方块设备的透传容量（四分之一 u），见 `DEVICE_PASSTHROUGH_QUARTERS`。
+
+        缺这一项时返回 `UNCONFIGURED`：未知不等于 0，也不等于不限。
+        """
+        value = self.config_value("network.device_passthrough_quarters")
+        if value is None or value is UNCONFIGURED:
+            return UNCONFIGURED
+        return int(value)
+
+    # -- 工具 ----------------------------------------------------------
+
+    def has_tool(self, tool_id):
+        # type: (str) -> bool
+        return tool_id in self.tools
+
+    def get_tool(self, tool_id):
+        # type: (str) -> ToolSpec
+        try:
+            return self.tools[tool_id]
+        except KeyError:
+            raise KeyError("未注册的工具标识: %s" % (tool_id,))
+
+    def get_item_tool(self, tool_id):
+        # type: (str) -> ToolSpec
+        """取**已注册为游戏物品**的工具规格。与 `get_item_medium` 同一分工。"""
+        if tool_id not in self.item_tools:
+            raise KeyError("工具 %s 尚未注册为游戏物品" % (tool_id,))
+        return self.get_tool(tool_id)
+
+    def item_tool_specs(self):
+        # type: () -> list
+        """已注册为物品的工具规格，顺序与 `item_tools` 一致。"""
+        return [self.get_tool(tool_id) for tool_id in self.item_tools]
 
     def has_medium(self, medium_id):
         # type: (str) -> bool
@@ -1338,6 +1739,7 @@ class DefinitionSet(object):
             self.item_medium_specs()
             + self.item_template_specs()
             + self.item_memory_specs()
+            + self.item_tool_specs()
         )
 
     def item_keys(self):
@@ -1347,6 +1749,7 @@ class DefinitionSet(object):
             tuple(self.item_mediums)
             + tuple(self.item_templates)
             + tuple(self.item_memories)
+            + tuple(self.item_tools)
         )
 
     def item_id_for_template_mode(self, mode):
@@ -1400,9 +1803,10 @@ class DefinitionSet(object):
 
     def devices_in_category(self, category):
         # type: (str) -> frozenset
+        """该分类的全部设备标识，三张设备表一起算（终端分类含面板形态）。"""
         return frozenset(
             device_id
-            for device_id, definition in self.devices.items()
+            for device_id, definition in self._by_id.items()
             if definition.category == category
         )
 
@@ -1420,8 +1824,8 @@ class DefinitionSet(object):
         # type: () -> list
         """产出 (路径, Value) 供守卫与诊断使用。"""
         out = []
-        for device_id in sorted(self.devices):
-            definition = self.devices[device_id]
+        for device_id in sorted(self._by_id):
+            definition = self._by_id[device_id]
             energy = definition.energy
             for state, raw in (("idle", energy.idle), ("work", energy.work)):
                 out.append(
@@ -1465,7 +1869,7 @@ class DefinitionSet(object):
                 )
             )
             if definition.bandwidth.capacity_quarters is not None:
-                # 承载容量（基带）与需求量分开登记，缺项同样要能被诊断看见。
+                # 载体容量（基带的外露面、光缆）与需求量分开登记，缺项同样要能被诊断看见。
                 out.append(
                     (
                         "%s.bandwidth.capacity" % device_id,

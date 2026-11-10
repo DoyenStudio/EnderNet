@@ -22,11 +22,17 @@ from ...common.definitions import (
     TERMINAL_OPEN_LIMIT_SECONDS,
     TERMINAL_SCREENS,
 )
-from ...common.device_identity import identity_payload
+from ...common.channels import identity_payload
 from ...common.rate_limit import PlayerRateLimiter
 from ...common.identity import ChunkKey, NodeKey
-from .device_identity import send_device_identity
-from ..runtime.events import EventKind, NormalizedEvent, WakeSet
+from .channels import send_device_identity
+from ..interaction import BlockUse, Openers, OpenTarget, UseGuard
+from ..runtime import EventKind, NormalizedEvent, WakeSet
+
+#: 服务端再拦一道原版物品使用的规则名（`UseGuard`）：手持物品右键会开界面的东西
+GUARD_OPEN = "open"
+#: 右键开界面的入口名（`Openers`）：整方块终端
+OPENER_TERMINAL = "terminal"
 
 
 def engine_player_dimension(player_id):
@@ -135,11 +141,13 @@ class ToolDeltaEventApi(object):
         # 与能源接入口声明了 `netease:block_entity.tick = true`，
         # `test_assets.py` 正断言这一点。
         self.ServerBlockEntityTickEvent = events_module.ServerBlockEntityTickEvent
-        # 玩家右键方块（11-03 的终端打开入口）。**只用于终端**：其余方块
-        # 的交互都要么没有、要么有专门的容器事件（07 那四条）。
+        # 玩家右键方块（11-03 的终端打开入口；2026-11-10 起整方块终端与面板共用，
+        # `server/interaction/opening.py`）。其余方块的交互都要么没有、要么有专门的
+        # 容器事件（07 那四条）。
         self.ServerBlockUseEvent = events_module.ServerBlockUseEvent
-        # 手持物品对方块使用（11-09）。右键终端时取消它，否则手里的方块会
-        # 被放下、物品会被用掉（做法同蔚蓝科技的 `BaseClicker`）。
+        # 手持物品对方块使用（11-09）。右键开界面时取消它，否则手里的方块会
+        # 被放下、物品会被用掉（做法同蔚蓝科技的 `BaseClicker`）；伪原版交互的
+        # 其余拦截也在这里（`use_guard`）。
         self.ServerItemUseOnEvent = events_module.ServerItemUseOnEvent
 
         # --- 容器变更（任务 07 的样板槽发现）---------------------------
@@ -270,10 +278,20 @@ class ServerEventBinder(object):
         self.unregistered = 0
         #: 注销失败的条目（名字 + 异常文本）。非空说明有监听器没摘干净。
         self.unregister_failures = []
-        #: 终端打开入口的限速器（`_on_block_use`）。**按玩家记**，窗口见
+        #: 右键开界面的限速器（`_on_block_use`）。**按玩家记**，窗口见
         #: `TERMINAL_OPEN_LIMIT_SECONDS`。放在这里而不是模块级：一个进程装了
         #: 几套适配器就各限各的，且 `stop()` 之后不留跨会话的残留计数。
         self._open_limiter = PlayerRateLimiter(TERMINAL_OPEN_LIMIT_SECONDS)
+        #: 右键开界面的入口表（`server/interaction/opening.py`）。整方块终端在这里登记；
+        #: 面板由装配层经 `PanelService.register` 登记。
+        self.openers = Openers()
+        self.openers.add(OPENER_TERMINAL, self._terminal_claim)
+        #: 服务端再拦一道原版物品使用（伪原版交互，`server/interaction/guard.py`）。「点中会开
+        #: 界面的东西」这一条在这里登记，问的就是上面那张入口表；面板的两条由装配层经
+        #: `PanelService.register` 登记。
+        self.use_guard = UseGuard()
+        self.use_guard.forbid(
+            GUARD_OPEN, when=lambda use: self.openers.claim(use) is not None, unless_sneaking=True)
         self.counts = {}
 
     # -- 注册 ----------------------------------------------------------
@@ -325,8 +343,17 @@ class ServerEventBinder(object):
     # -- 绑定 ----------------------------------------------------------
 
     def register_remove_whitelist(self):
-        """把全部本模组方块加入移除事件白名单。启动时必须调用一次。"""
-        self.world.register_block_remove_listener(set(self.definitions.devices.keys()))
+        """把全部本模组方块（整方块设备、三种光缆与面板底座）加入移除事件白名单。启动时必须
+        调用一次。
+
+        光缆与面板底座不在 `devices` 那张表里（`definitions.cables` / `part_holders`），漏了
+        它们拆光缆就无感——邻格的连接臂会一直指着空气，挖掉底座面板也不会掉。
+        """
+        self.world.register_block_remove_listener(
+            set(self.definitions.devices.keys())
+            | set(self.definitions.cables.keys())
+            | set(self.definitions.part_holders.keys())
+        )
 
     def bind(self):
         # type: () -> None
@@ -357,7 +384,8 @@ class ServerEventBinder(object):
         def on_neighbor(event):
             self._on_neighbor(event.dimensionId, event.posX, event.posY, event.posZ,
                               event.neighborPosX, event.neighborPosY,
-                              event.neighborPosZ, event.toBlockName)
+                              event.neighborPosZ, event.toBlockName,
+                              getattr(event, "fromBlockName", None))
 
         @self.listen(api.ChunkLoadedServerEvent)
         def on_chunk_loaded(event):
@@ -387,7 +415,7 @@ class ServerEventBinder(object):
             self._on_block_entity_tick(event.dimension, event.posX, event.posY,
                                        event.posZ, event.blockName)
 
-        # --- 终端打开入口（11-03）--------------------------------------
+        # --- 右键开界面（11-03）与伪原版交互的服务端拦截 ---------------------
 
         @self.listen(api.ServerBlockUseEvent)
         def on_block_use(event):
@@ -526,8 +554,14 @@ class ServerEventBinder(object):
             )
         )
 
-    def _on_neighbor(self, dimension, x, y, z, nx, ny, nz, to_block_name):
+    def _on_neighbor(self, dimension, x, y, z, nx, ny, nz, to_block_name, from_block_name=None):
         self._count("neighbor")
+        if from_block_name is not None and from_block_name == to_block_name:
+            # 邻格还是那个方块、只改了状态（光缆写 `endernet:side_<面>` 本身就会触发邻居
+            # 事件，照蔚蓝过滤）。连接只看方块是谁，状态变化不改拓扑；放行的话每写一格
+            # 光缆都会把六个邻居标脏重建一遍。
+            self._count("neighbor_same_block")
+            return
         node_key = NodeKey(dimension, x, y, z)
         neighbor_key = NodeKey(dimension, nx, ny, nz)
         if not (self.registry.matches_key(node_key) or self.registry.matches_key(neighbor_key)):
@@ -757,22 +791,23 @@ class ServerEventBinder(object):
             "wakes": self.wakes.stats(),
         }
 
-    # -- 终端打开入口（11-03）--------------------------------------------
+    # -- 右键开界面（11-03；2026-11-10 整方块终端与面板收成一个入口）-------------
 
     def _on_block_use(self, event):
-        """玩家右键终端方块 → 推给客户端一条「打开这个界面」。
+        """玩家右键方块（空手或手持任何物品）→ 点中的是会开界面的东西就推一条「打开这个界面」。
 
-        **设备的权威身份只能从注册表取。** 事件给的是方块名与坐标，而客户端
-        开会话时要带一个 `DeviceRef`（位置 + 实例代次）。代次不能由客户端
-        编——它得是注册表里那台**当前**设备的代次，否则 `SessionRegistry`
-        每一帧的 `_check_target` 都会判它过期。按坐标查注册表，查到的
-        `record.ref` 就是唯一答案。
+        容器类设备另走 `_on_container_block_use`（屏幕由引擎开，这里只推身份）。其余的问
+        `openers`（`server/interaction/opening.py`）：整方块终端由 `_terminal_claim` 认，面板由
+        装配层登记的 `PanelService.claim_open` 按射线求交认。认领了：
 
-        查不到记录 = 这台方块还没被发现（区块刚加载），或它压根不是我们认的
-        设备。此时**什么都不做**：编一个代次为 0 的 ref 发过去，客户端会开出
-        一个立刻被服务端关掉的会话，玩家看到的是「界面一闪」。
+        - 潜行：交给原版（贴着它放方块），与蔚蓝科技的机器一致；
+        - 否则取消这次方块交互（手持物品那一半由 `use_guard` 的 `open` 规则在 `_on_item_use_on`
+          取消，问的是同一个 `openers`），按玩家限速，推屏。
 
-        见 `plans/tasks/11-03` 的打开入口决策（D5）。
+        **设备的权威身份只能从注册表取**（见 `_terminal_claim`）。认领了却打不开（设备还没被
+        发现、这种面板没有界面）：照样取消，什么都不推——编一个代次为 0 的 ref 发过去，客户端
+        会开出一个立刻被服务端关掉的会话，玩家看到的是「界面一闪」。见 `plans/tasks/11-03` 的
+        打开入口决策（D5）。
         """
         self._count("block_use")
         block_name = getattr(event, "blockName", "")
@@ -782,64 +817,101 @@ class ServerEventBinder(object):
         if container_key is not None:
             self._on_container_block_use(event, container_key)
             return
-        ui_key = TERMINAL_SCREENS.get(block_name)
-        if ui_key is None:
+        use = self._use_of(event, getattr(event, "playerId", ""))
+        target = self.openers.claim(use)
+        if target is None:
             # 本模组的其它方块或原版方块被右键：正常现象，不计入诊断，
             # 否则 `block_use` 的计数会被无关右键淹没。
-            #
-            # 另三个终端方块（合成/样板/工厂）有意**不在这里**——它们的界面
-            # 是 11-04/11-05 的事，退回通用终端就是替那两项悄悄定案。
             return
-        player_id = getattr(event, "playerId", "")
-        if self._is_sneaking(player_id):
-            # 下蹲右键交给原版（贴着终端放方块），与蔚蓝科技的机器一致。
+        if self._is_sneaking(use.player_id):
             self._count("block_use_sneaking")
             return
-        # 右键终端只开界面：取消这次方块交互（物品那一半见 `_on_item_use_on`）。
         event.cancel()
-        dimension = getattr(event, "dimensionId", 0)
-        node_key = NodeKey(dimension, event.x, event.y, event.z)
-        record = self.registry.get(node_key)
-        if record is None:
+        if not target.opens:
             self._count("block_use_unknown")
             return
         # **限速在推之前。** 引擎的方块使用回调不节流，连点几下就是几条
         # `PushUIRequest`，客户端会把同一次打开做几遍（真的开出好几个界面）。
-        # 窗口见 `TERMINAL_OPEN_LIMIT_SECONDS`（0.2 秒），按玩家记。
+        # 窗口见 `TERMINAL_OPEN_LIMIT_SECONDS`（0.2 秒），按玩家记，整方块终端与面板共用。
         #
-        # 位置在**注册表查出记录之后**：查不到记录的那条路本来就什么都不做，
+        # 位置在**认领出能开的界面之后**：打不开的那条路本来就什么都不做，
         # 拿它去消耗窗口只会让「方块刚加载、玩家连点两下」的第二下被吞。
         # 被限速的那一击单独计数，否则诊断里只看得到 `block_use` 涨、
         # `block_use_opened` 不涨，分不清是限速还是别的原因。
-        if not self._open_limiter.allow(player_id):
+        if not self._open_limiter.allow(use.player_id):
             self._count("block_use_limited")
             return
         self._count("block_use_opened")
-        self._notify_ui(
-            player_id,
-            ui_key,
-            {"device_ref": record.ref.to_dict(), "dimension": dimension},
-        )
+        self._notify_ui(use.player_id, target.ui_key, target.params)
+
+    def _terminal_claim(self, use):
+        # type: (BlockUse) -> object
+        """`openers` 的整方块终端一项：被点的是终端方块就认领。
+
+        事件给的是方块名与坐标，而客户端开会话时要带一个 `DeviceRef`（位置 + 实例代次）。
+        代次不能由客户端编——它得是注册表里那台**当前**设备的代次，否则 `SessionRegistry`
+        每一帧的 `_check_target` 都会判它过期。按坐标查注册表，查到的 `record.ref` 就是唯一
+        答案；查不到（区块刚加载、还没被发现）就是「认领了、这次打不开」。
+
+        另三个终端方块（合成/样板/工厂）的界面键都在 `TERMINAL_SCREENS` 里，没有就不认领——
+        退回通用终端就是替它们悄悄定案。
+        """
+        ui_key = TERMINAL_SCREENS.get(use.block)
+        if ui_key is None:
+            return None
+        record = self.registry.get(use.node_key())
+        if record is None:
+            return OpenTarget()
+        return OpenTarget(ui_key, {"device_ref": record.ref.to_dict(), "dimension": use.dimension})
 
     def _on_item_use_on(self, event):
-        """手持物品右键终端：取消物品的使用（放方块、用物品），只开界面。
+        """手持物品右键方块：命中 `use_guard` 的规则就取消物品的使用（放方块、用物品）。
 
-        `ServerBlockUseEvent` 的取消只拦方块交互，物品那一半要在这里拦
-        （做法同蔚蓝科技 `server/machinery/listeners/event_listener.py`）。
-        下蹲时不拦，与 `_on_block_use` 的口径一致。
+        - 点中会开界面的东西（`GUARD_OPEN`：整方块终端、面板）：只开界面。`ServerBlockUseEvent`
+          的取消只拦方块交互，物品那一半要在这里拦（做法同蔚蓝科技
+          `server/machinery/listeners/event_listener.py`）；
+        - 手持光缆点面板底座（`panels.GUARD_ADD_CABLE`）：客户端已接管成「底座换光缆」，这里以
+          服务端为准再拦一道，原版不会贴着底座再放一格光缆（2026-11-10 真机反馈）；
+        - 手持终端面板（`panels.GUARD_PANEL_ITEM`）：面板的物品形态是展示方块，放不下。
+
+        下蹲时前两条不拦，与 `_on_block_use`、客户端 `action_for` 的口径一致；潜行只在某条规则
+        其余条件都对上时才读。
         """
-        if TERMINAL_SCREENS.get(getattr(event, "blockName", "")) is None:
+        use = self._use_of(event, getattr(event, "entityId", ""))
+        rule = self.use_guard.check(use, lambda: self._is_sneaking(use.player_id))
+        if rule is None:
             return
-        if self._is_sneaking(getattr(event, "entityId", "")):
-            return
-        self._count("item_use_on_terminal")
+        self._count("item_use_on_" + rule)
         event.cancel()
+
+    def _use_of(self, event, player_id):
+        # type: (object, str) -> BlockUse
+        """两条原版事件 → 同一个 `BlockUse`。两条事件的坐标、方块、物品（`item`）与命中点
+        字段同名，玩家字段不同（`playerId` / `entityId`），由调用方取好传进来。"""
+        click = tuple(getattr(event, name, None) for name in ("clickX", "clickY", "clickZ"))
+        return BlockUse(
+            player_id,
+            getattr(event, "dimensionId", 0),
+            (event.x, event.y, event.z),
+            getattr(event, "blockName", ""),
+            item_id=_item_name(getattr(event, "item", None)),
+            click=None if None in click else click,
+            eye=self._player_eye,
+        )
 
     @staticmethod
     def _is_sneaking(player_id):
         # type: (str) -> bool
         from ....tooldelta.api.server.player import IsSneaking
         return bool(IsSneaking(player_id))
+
+    @staticmethod
+    def _player_eye(player_id):
+        # type: (str) -> tuple
+        """玩家眼睛的世界坐标：引擎 `GetPos` 对玩家给的就是眼睛高度（行走、站立、潜行等状态
+        比脚底高 1.62）。右键开界面求交时当射线起点（`opening.BlockUse.ray`）。"""
+        from ....tooldelta.api.server import GetPos
+        return tuple(GetPos(player_id))
 
     def _on_container_block_use(self, event, ui_key):
         """玩家右键一台**容器类**设备 → 推一条「这个界面是哪台设备」。
@@ -884,8 +956,18 @@ class ServerEventBinder(object):
         因此 `ui_key` 必须与 `@RegistToolDeltaScreen` 注册的键逐字相同，
         对不上时那边会抛异常（见 `common/definitions.py` 的 `TERMINAL_SCREENS`）。
         """
-        if not player_id:
-            return
-        from ....tooldelta.events.server.ui import PushUIRequest
+        push_screen(player_id, ui_key, params)
 
-        PushUIRequest(ui_key=ui_key, params=params).send(player_id)
+
+def push_screen(player_id, ui_key, params):
+    # type: (str, str, dict) -> None
+    """把「打开某个界面」推给一个玩家（`ServerEventBinder._notify_ui` 的实现）。
+
+    光缆面板（阶段 D）也走这一条：`_on_block_use` 认领出的面板（`devices/panels.py::claim_open`）
+    同样从这里推，`params` 与整方块终端同形（`device_ref` 是面板引用，多一个 `slot`）。
+    """
+    if not player_id:
+        return
+    from ....tooldelta.events.server.ui import PushUIRequest
+
+    PushUIRequest(ui_key=ui_key, params=params).send(player_id)

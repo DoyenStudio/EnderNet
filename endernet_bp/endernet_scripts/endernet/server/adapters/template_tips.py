@@ -1,7 +1,7 @@
 # coding=utf-8
 """样板提示的资源显示名查询。"""
 
-from ...common.resource_key import KIND_ITEM
+from ...common.resources import KIND_ITEM
 
 
 def resource_display_name(key, item_factory=None):

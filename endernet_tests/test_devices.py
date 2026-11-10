@@ -6,14 +6,28 @@ import unittest
 import testsupport  # noqa: F401  设置 sys.path
 
 from endernet.common.definitions import UNCONFIGURED, DefinitionSet
-from endernet.common.identity import ChunkKey, DeviceRef, NodeKey
+from endernet.common.identity import (
+    FACING_NAMES,
+    ChunkKey,
+    DeviceRef,
+    NodeKey,
+    PartKey,
+    face_mask,
+    faces_of_mask,
+    node_key_text,
+)
 from endernet.common.protocol import Reason
 from endernet.server.devices.capabilities import (
     ALL_CAPABILITIES,
     CapabilityRegistry,
     ITEM_PORT,
 )
-from endernet.server.devices.catalog import DeviceCatalog
+from endernet.server.devices.catalog import (
+    CABLE_CUTS_KEY,
+    CABLE_PARTS_KEY,
+    CableFaces,
+    DeviceCatalog,
+)
 from endernet.server.devices.registry import DeviceRecord, DeviceRegistry
 
 BB8 = "endernet:network_baseband_8"
@@ -26,6 +40,12 @@ BUS = "endernet:bus_item_io"
 PROCESSOR = "endernet:parallel_processor"
 CONNECTOR = "endernet:parallel_processor_connector"
 MEMORY = "endernet:memory_slot"
+BB32 = "endernet:network_baseband_32"
+GLASS = "endernet:ender_glass_cable"
+CABLE16 = "endernet:ender_cable"
+DENSE = "endernet:ender_dense_cable"
+TERM_PART = "endernet:common_terminal_part"
+CRAFT_PART = "endernet:crafting_terminal_part"
 
 
 def key(x, y=64, z=0, dimension=0):
@@ -139,6 +159,93 @@ class TestGeneration(unittest.TestCase):
         self.assertEqual(len(set(generations)), len(generations))
 
 
+class TestPartKey(unittest.TestCase):
+    """13 §7：`PartKey = NodeKey + 槽`。旧接口拿 `NodeKey` 按 center 槽解释。"""
+
+    def setUp(self):
+        self.node = NodeKey(0, 12, 64, -3)
+
+    def test_center_slot_is_the_node_key_itself(self):
+        center = PartKey(self.node)
+        self.assertTrue(center.is_center())
+        self.assertEqual(center, self.node)
+        self.assertEqual(self.node, center)
+        self.assertFalse(center != self.node)
+        self.assertFalse(self.node != center)
+        self.assertEqual(hash(center), hash(self.node))
+        self.assertEqual(center.as_key(), self.node.as_key())
+
+    def test_old_code_keeps_working_with_node_keys(self):
+        """同一个字典或集合里，`NodeKey` 与 center 槽是同一个键。"""
+        table = {PartKey(self.node): "center"}
+        self.assertEqual(table[self.node], "center")
+        self.assertEqual({self.node: 1}[PartKey(self.node)], 1)
+        self.assertEqual(len(set([self.node, PartKey(self.node)])), 1)
+
+    def test_face_slots_are_distinct_keys(self):
+        north = PartKey(self.node, "north")
+        self.assertNotEqual(north, self.node)
+        self.assertNotEqual(self.node, north)
+        self.assertNotEqual(north, PartKey(self.node, "south"))
+        self.assertEqual(north, PartKey(NodeKey(0, 12, 64, -3), "north"))
+        table = dict((PartKey(self.node, face), face) for face in FACING_NAMES)
+        table[self.node] = "center"
+        self.assertEqual(len(table), 7)
+        self.assertNotIn(self.node, set(PartKey(self.node, face) for face in FACING_NAMES))
+
+    def test_text_format(self):
+        """存档文本：center 与 `node_key_text` 逐字相同；面板槽加「@面名」。"""
+        self.assertEqual(PartKey(self.node).to_text(), node_key_text(self.node))
+        self.assertEqual(PartKey(self.node).to_text(), "0,12,64,-3")
+        self.assertEqual(PartKey(self.node, "north").to_text(), "0,12,64,-3@north")
+        for slot in ("center",) + FACING_NAMES:
+            key = PartKey(self.node, slot)
+            self.assertEqual(PartKey.from_text(key.to_text()), key)
+        self.assertEqual(PartKey.from_text("0,12,64,-3"), self.node)
+
+    def test_malformed_text_is_rejected(self):
+        for text in ("0,12,64", "0,12,64,-3@center", "0,12,64,-3@sideways", "a,b,c,d", "0,12,64,-3,1"):
+            with self.assertRaises((ValueError, TypeError)):
+                PartKey.from_text(text)
+
+    def test_dict_round_trip_and_normalisation(self):
+        key = PartKey(self.node, "east")
+        self.assertEqual(PartKey.from_dict(key.to_dict()), key)
+        self.assertEqual(PartKey.from_dict({"node_key": self.node.to_dict()}), self.node)
+        self.assertIs(PartKey.of(key), key)
+        self.assertEqual(PartKey.of(self.node), PartKey(self.node))
+
+    def test_mixed_keys_sort_deterministically(self):
+        keys = [PartKey(self.node, "west"), self.node, PartKey(self.node, "east"), NodeKey(0, 1, 64, 0)]
+        ordered = sorted(keys, key=lambda item: item.as_key())
+        self.assertEqual(
+            ordered,
+            [NodeKey(0, 1, 64, 0), self.node, PartKey(self.node, "east"), PartKey(self.node, "west")],
+        )
+
+    def test_bad_arguments_are_rejected(self):
+        with self.assertRaises(ValueError):
+            PartKey(self.node, "sideways")
+        with self.assertRaises(TypeError):
+            PartKey((0, 1, 2, 3), "up")
+
+    def test_face_mask_round_trip(self):
+        """`endernet:cuts` 的 6 位掩码：第 i 位对应 `FACING_NAMES[i]`。"""
+        self.assertEqual(face_mask([]), 0)
+        self.assertEqual(face_mask(["up"]), 1)
+        self.assertEqual(face_mask(["east"]), 32)
+        self.assertEqual(face_mask(FACING_NAMES), 63)
+        for mask in range(64):
+            self.assertEqual(face_mask(faces_of_mask(mask)), mask)
+        with self.assertRaises(ValueError):
+            face_mask(["sideways"])
+        for bad in (64, -1):
+            with self.assertRaises(ValueError):
+                faces_of_mask(bad)
+        with self.assertRaises(TypeError):
+            faces_of_mask("3")
+
+
 class TestLoadUnload(RegistryFixture):
     """卸载不是拆除：保留记录，不执行掉落。"""
 
@@ -227,8 +334,8 @@ class TestRecordRoundTrip(RegistryFixture):
 class TestCatalogConnectionRules(RegistryFixture):
     """相邻不等于连通。"""
 
-    def test_baseband_connects_to_controller_and_devices(self):
-        for other in (TINY, DRIVER, TERMINAL, BUS, MEMORY, CONNECTOR):
+    def test_baseband_connects_to_controller_cables_and_devices(self):
+        for other in (TINY, DRIVER, TERMINAL, BUS, MEMORY, CONNECTOR, GLASS, CABLE16, DENSE):
             self.assertTrue(
                 self.catalog.can_connect(BB8, other).allowed, "%s 应可连基带" % other
             )
@@ -238,32 +345,21 @@ class TestCatalogConnectionRules(RegistryFixture):
         self.assertTrue(self.catalog.can_connect(BB8, BB8).allowed)
         self.assertTrue(self.catalog.can_connect(BB16, BB16).allowed)
 
-    def test_different_baseband_widths_do_not_connect(self):
-        """blocks.md：8/16/32 位基带只与同容量基带直接连通。
+    def test_different_baseband_tiers_connect(self):
+        """R14-b：2026-11-09 作者改定异档基带允许混搭，相邻即相连。
 
-        异容量即使相邻也不建立连接、不因此合并网络或负载域。
-        （2026-09-24 定的规则；此前实现是「相邻即连通、容量逐段相加」。）
+        改定之前（R02 2026-09-24 定、曾验收）这里断言的是「异容量不连、
+        原因 `baseband_capacity_mismatch`」；那条拒绝与它的原因码一起删除。
         """
-        for other in (BB16, "endernet:network_baseband_32"):
-            verdict = self.catalog.can_connect(BB8, other)
-            self.assertFalse(verdict.allowed, "8 位基带不应与 %s 连通" % (other,))
-            self.assertEqual(verdict.reason, Reason.BASEBAND_CAPACITY_MISMATCH)
-        # 反向与 16/32 组合同样成立，拒绝理由一致。
-        self.assertFalse(
-            self.catalog.can_connect(BB16, "endernet:network_baseband_32").allowed
-        )
-
-    def test_capacity_mismatch_detail_names_both_capacities(self):
-        verdict = self.catalog.can_connect(BB8, BB16)
-        self.assertIn("8u", verdict.detail)
-        self.assertIn("16u", verdict.detail)
+        for first, second in ((BB8, BB16), (BB8, BB32), (BB16, BB32)):
+            for a, b in ((first, second), (second, first)):
+                verdict = self.catalog.can_connect(a, b)
+                self.assertTrue(verdict.allowed, "%s <-> %s" % (a, b))
+                self.assertEqual(verdict.reason, "")
+        self.assertFalse(hasattr(Reason, "BASEBAND_CAPACITY_MISMATCH"))
 
     def test_unconfigured_capacity_does_not_block_the_link(self):
-        """容量未知时不拦：未知不等于 0，也不等于「与对方不同」。
-
-        把缺项判成异容量等于用一个没定过的数值定了案；准入层遇见未知容量
-        会把整个域报成待确认，业务本来就不会放行。
-        """
+        """容量未知时同样相连：连接只看分类，不看档位。"""
         self.registry  # 夹具已建好定义表；这里直接查定义层
         definition = self.defs.get(BB8)
         original = definition.bandwidth.capacity_quarters
@@ -285,21 +381,45 @@ class TestCatalogConnectionRules(RegistryFixture):
         self.assertTrue(self.catalog.can_connect(CONNECTOR, PROCESSOR).allowed)
         self.assertTrue(self.catalog.can_connect(CONNECTOR, BB8).allowed)
 
-    def test_connector_rejects_terminal(self):
-        self.assertFalse(self.catalog.can_connect(CONNECTOR, TERMINAL).allowed)
+    def test_connector_also_reaches_cables_and_devices(self):
+        """13 §3：连接器原来只接基带，现扩到光缆与设备。"""
+        for other in (GLASS, CABLE16, DENSE, TERMINAL, DRIVER, BUS, MEMORY):
+            self.assertTrue(self.catalog.can_connect(CONNECTOR, other).allowed, other)
+
+    def test_connector_does_not_reach_controllers_or_other_connectors(self):
+        self.assertFalse(self.catalog.can_connect(CONNECTOR, TINY).allowed)
+        self.assertEqual(
+            self.catalog.can_connect(CONNECTOR, TINY).reason,
+            "controller_only_accepts_baseband",
+        )
+        self.assertFalse(self.catalog.can_connect(CONNECTOR, CONNECTOR).allowed)
 
     def test_processor_connects_to_processor(self):
         self.assertTrue(self.catalog.can_connect(PROCESSOR, PROCESSOR).allowed)
 
-    def test_devices_do_not_connect_to_each_other(self):
-        self.assertFalse(self.catalog.can_connect(TERMINAL, DRIVER).allowed)
-        self.assertFalse(self.catalog.can_connect(BUS, MEMORY).allowed)
+    def test_devices_pass_through_each_other(self):
+        """13 §0.5：设备之间透传（之前不透传是漏设计）。处理器除外。"""
+        self.assertTrue(self.catalog.can_connect(TERMINAL, DRIVER).allowed)
+        self.assertTrue(self.catalog.can_connect(BUS, MEMORY).allowed)
+        self.assertTrue(self.catalog.can_connect(TERMINAL, TERMINAL).allowed)
+        for other in (TERMINAL, DRIVER, BUS, MEMORY, GLASS):
+            verdict = self.catalog.can_connect(PROCESSOR, other)
+            self.assertFalse(verdict.allowed, other)
+            self.assertEqual(verdict.reason, "processor_must_use_connector")
+
+    def test_cables_interconnect_and_reach_devices(self):
+        """13 §0.9：三种光缆互相能连；光缆接基带、设备与连接器。"""
+        for first in (GLASS, CABLE16, DENSE):
+            for second in (GLASS, CABLE16, DENSE, BB8, TERMINAL, DRIVER, CONNECTOR):
+                self.assertTrue(self.catalog.can_connect(first, second).allowed, (first, second))
 
     def test_controller_connects_physically_only_to_baseband(self):
-        """blocks.md：控制器直接与基带连接，不直接贴着驱动器或终端。"""
+        """13 §0.6：主控只接基带——贴着光缆、驱动器或总线都不连。"""
         self.assertTrue(self.catalog.can_connect(DOS, BB8).allowed)
-        self.assertFalse(self.catalog.can_connect(DOS, DRIVER).allowed)
-        self.assertFalse(self.catalog.can_connect(DOS, BUS).allowed)
+        for other in (DRIVER, BUS, GLASS, DENSE, TINY):
+            verdict = self.catalog.can_connect(DOS, other)
+            self.assertFalse(verdict.allowed, other)
+            self.assertEqual(verdict.reason, "controller_only_accepts_baseband")
 
     def test_dos_controller_service_scope_rejects_bus(self):
         """功能范围与物理连接是两件事：DOS 控制器不认总线。"""
@@ -329,6 +449,90 @@ class TestCatalogConnectionRules(RegistryFixture):
     def test_verdict_is_falsy_when_denied(self):
         self.assertTrue(self.catalog.can_connect(BB8, DRIVER))
         self.assertFalse(self.catalog.can_connect(PROCESSOR, BB8))
+
+
+class TestCableFaces(RegistryFixture):
+    """光缆按面的判定接口（13 §3）：切断的面、被面板占住的面不连。
+
+    数据从光缆记录的 `config` 读（离线替身，阶段 C 从方块实体
+    `endernet:cuts` / `endernet:parts` 写进来）。
+    """
+
+    def record(self, position, device_id, cuts=None, parts=None):
+        config = {}
+        if cuts is not None:
+            config[CABLE_CUTS_KEY] = cuts
+        if parts is not None:
+            config[CABLE_PARTS_KEY] = parts
+        self.registry.register(position, device_id, config=config)
+        return self.registry.get(position)
+
+    def test_open_faces_by_default(self):
+        cable = self.record(key(0), GLASS)
+        for face in ("up", "down", "north", "south", "west", "east"):
+            self.assertTrue(self.catalog.face_verdict(cable, face).allowed, face)
+
+    def test_cut_face_is_closed(self):
+        cable = self.record(key(0), GLASS, cuts=face_mask(["east", "up"]))
+        verdict = self.catalog.face_verdict(cable, "east")
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(verdict.reason, Reason.CABLE_FACE_CUT)
+        self.assertFalse(self.catalog.face_verdict(cable, "up").allowed)
+        self.assertTrue(self.catalog.face_verdict(cable, "west").allowed)
+
+    def test_panel_occupies_its_face(self):
+        cable = self.record(key(0), CABLE16, parts={"north": TERM_PART})
+        verdict = self.catalog.face_verdict(cable, "north")
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(verdict.reason, Reason.CABLE_FACE_OCCUPIED)
+        self.assertIn(TERM_PART, verdict.detail)
+
+    def test_devices_have_no_face_restrictions(self):
+        """切断与面板只对光缆有意义；写在别的设备记录上也不生效。"""
+        terminal = self.record(key(0), TERMINAL, cuts=face_mask(["east"]))
+        self.assertTrue(self.catalog.face_verdict(terminal, "east").allowed)
+
+    def test_link_needs_both_faces_open(self):
+        left = self.record(key(0), GLASS)
+        right = self.record(key(1), GLASS, cuts=face_mask(["west"]))
+        verdict = self.catalog.link_verdict(left, "east", right, "west")
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(verdict.reason, Reason.CABLE_FACE_CUT)
+        self.assertFalse(self.catalog.link_verdict(right, "west", left, "east").allowed)
+
+    def test_link_still_checks_categories_first(self):
+        cable = self.record(key(0), GLASS)
+        controller = self.record(key(1), TINY)
+        verdict = self.catalog.link_verdict(cable, "east", controller, "west")
+        self.assertEqual(verdict.reason, "controller_only_accepts_baseband")
+
+    def test_parts_are_listed_in_face_order_and_filtered(self):
+        cable = self.record(
+            key(0), GLASS,
+            parts={"east": CRAFT_PART, "up": TERM_PART, "west": TERMINAL, "nowhere": TERM_PART},
+        )
+        self.assertEqual(self.catalog.parts_of(cable), [("up", TERM_PART), ("east", CRAFT_PART)])
+
+    def test_dense_cable_holds_no_parts(self):
+        """13 §0.8：致密光缆不挂面板；写进去的既不算面板，也不占面。"""
+        cable = self.record(key(0), DENSE, parts={"up": TERM_PART})
+        self.assertEqual(self.catalog.parts_of(cable), [])
+        self.assertTrue(self.catalog.face_verdict(cable, "up").allowed)
+
+    def test_unreadable_cut_data_closes_every_face(self):
+        """读不懂的切断数据按六面全切断：把坏数据读成「连着」会让切断的面悄悄连回去。"""
+        for raw in ("east", 99, -1, 1.5, True):
+            faces = CableFaces.from_record(self.record(key(0), GLASS, cuts=raw))
+            self.assertEqual(len(faces.cut), 6, raw)
+
+    def test_neighbors_respect_cut_faces(self):
+        self.record(key(0), BB8)
+        self.record(key(1), GLASS, cuts=face_mask(["east"]))
+        self.record(key(2), TERMINAL)
+        self.assertEqual(
+            [n[0] for n in self.catalog.connected_neighbors(self.registry, key(1))], [key(0)]
+        )
+        self.assertEqual(self.catalog.connected_neighbors(self.registry, key(2)), [])
 
 
 class TestCatalogNeighbors(RegistryFixture):

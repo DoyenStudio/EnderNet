@@ -272,7 +272,7 @@ flowchart TD
 
 状态诊断会话在验证玩家权限、维度、距离和设备实例后即可读取，不要求网络先可工作。未收到有效快照、状态过期或重建期间，状态栏显示红色“离线”，详情解释“等待状态确认/网络重建中”；不得显示第三种状态栏文本或保留过期绿色结果。窗口可在离线时打开，并随同一设备的新快照更新；连点只打开一个实例，关闭设备界面、设备被替换或玩家离开时关闭详情并清理订阅。控制器界面不自动挂载这套设备状态栏和弹窗流程。
 
-2026-09-24 已检查现有资源：`storage_driver.json` 和 `bus_item_io.json` 都在 `content/root_panel/bg/main` 下实例化 `stat_bar`；公共模板含 `stat_icon`、`stat_text`、`interact_btn`。`endernet_windows.json` 已在 `_ui_defs.json` 登记，详情控件是 panel，内有 `controller_conn_stat`、`network_conn_stat` 和关闭按钮，但尚未实例化到这两个设备界面。当前状态文本/颜色是静态占位，按钮使用编辑器占位事件，客户端也尚无对应 UI 处理类。后续按任务 11 补充实际挂载和 ToolDelta 绑定；代码检查不等于游戏内交互验证。
+2026-09-24 已检查现有资源：`storage_driver.json` 和 `bus_item_io.json` 都在 `content/root_panel/bg/main` 下实例化 `stat_bar`；公共模板含 `stat_icon`、`stat_text`、`interact_btn`。`windows.json` 已在 `_ui_defs.json` 登记，详情控件是 panel，内有 `controller_conn_stat`、`network_conn_stat` 和关闭按钮，但尚未实例化到这两个设备界面。当前状态文本/颜色是静态占位，按钮使用编辑器占位事件，客户端也尚无对应 UI 处理类。后续按任务 11 补充实际挂载和 ToolDelta 绑定；代码检查不等于游戏内交互验证。
 
 原版容器、其他模组物品接口、流体接口、transferlib（radium）公共 FE 接口都放在适配层。流体和 FE 的接入协议、转换比例不能从 AE2 推导，也不能认为 ToolDelta 已提供全部能力。
 
@@ -295,12 +295,14 @@ flowchart TD
 
 ## 8. 建议目录
 
+> 2026-11 注：下面是 09-25 的建议目录，已被 2026-11 目录重组取代；现行目录以 [script_architecture.md](technical_notes/script_architecture.md) §2 为准（含旧路径 → 新路径对照）。
+
 脚本业务全部位于用户指定的 `endernet_bp/endernet_scripts/endernet`；外层 `modMain.py` 只负责注册和启动。下列为目标边界，可随功能逐步建立，不要求首版一次性创建所有文件；各 Python 包补充 `__init__.py`。2026-09-25 的设备侧细化以 [设备脚本架构与存储驱动器实施交接](technical_notes/script_architecture.md) 为准，包含当前文件状态、权威数据归属、真实适配器边界和开工／评审清单。
 
 ```text
 endernet/
   common/
-    resource_key.py          # 无端侧依赖的资源身份和整数单位
+    resources/key.py          # 无端侧依赖的资源身份和整数单位
     definitions.py           # 设备、介质、负载、能耗配置
     protocol.py              # 请求、响应、增量消息定义
   server/
@@ -335,8 +337,8 @@ endernet/
       returns.py            # 按实际数量独占分配回流
     adapters/
       events.py             # 网易/ToolDelta 事件归一化
-      containers.py        # 纯容器契约、核对逻辑与测试替身
-      containers_engine.py # 真实背包与容器的引擎实现
+      containers/contract.py        # 纯容器契约、核对逻辑与测试替身
+      containers/engine.py # 真实背包与容器的引擎实现
       messages.py          # 消息收发与可信玩家身份提取
       persistence_engine.py # 经验证的真实存档后端
       fluids.py            # 其他模组流体接口
@@ -354,7 +356,7 @@ endernet/
     bootstrap.py
     network_client.py      # 命令与同步接收
     ui/                    # 沿用当前目录，不另建 screens/slots/render
-      terminal_panel.py    # 终端基类与通用终端
+      terminal/panel.py    # 终端基类与通用终端
       storage_driver.py    # 驱动器介质槽与容量信息
       inventory_model.py   # 背包显示与交互状态
       item_list_model.py   # 网络物品摘要、搜索与排序

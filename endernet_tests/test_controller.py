@@ -582,18 +582,23 @@ class TestChainRouting(ControllerFixture):
 
 
 class TestMasterLoaded(ControllerFixture):
-    def test_topology_still_allows_when_the_master_chunk_is_unloaded(self):
-        """先钉住 02 的行为：这正是 03 必须补上的那个缝隙。
+    def test_topology_refuses_when_the_master_chunk_is_unloaded(self):
+        """2026-11-09 作者改定：成员（含主控）所在区块未加载，整网离线。
 
-        控制器区块卸载而目标设备仍加载时，`validate()` 依然放行——
-        那是有意的（不把「暂时访问不到」当成「已拆除」）。如果哪天 02
-        改成拒绝，这条会失败，提醒我们第 5 条可以简化。
+        此前这里钉住的是 02 的有意放宽：控制器区块卸载而目标设备仍加载时
+        `validate()` 依然放行，由 03 的第 5 条补上那道缝。放宽作废之后拓扑
+        自己就拒绝；第 5 条照旧先报 `master_unloaded`（下一条用例）。
+        区块 (1,0) 里有基带 B 与控制器两台，所以说的是「2 台」。
         """
         self.unload_chunk(self.CONTROLLER)
         self.assertFalse(self.master().is_loaded())
         self.assertTrue(self.server.registry.get_by_ref(self.target_ref()).loaded)
         verdict = self.server.topology.validate(self.target_ref(), None)
-        self.assertTrue(verdict.allowed, "02 的 validate 在有意的放宽下应当放行")
+        self.assertFalse(verdict.allowed)
+        self.assertIn(Reason.UNLOADED_MEMBER, verdict.reason_codes())
+        self.assertIn(
+            "网络中有 2 台设备所在区块未加载", [reason.detail for reason in verdict.reasons]
+        )
 
     def test_command_is_blocked_when_the_master_chunk_is_unloaded(self):
         """但业务必须停下。这条与上一条成对，缺一不可。"""

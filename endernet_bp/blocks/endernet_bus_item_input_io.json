@@ -24,7 +24,7 @@
             },
             "netease:block_container": {
                 "custom_description": "总线物品存货口",
-                "screen_name": "bus_item_input_io_ui.main",
+                "screen_name": "endernet_bus_item_input_io.main",
                 "container_size": 5
             },
             "netease:custom_tips": {

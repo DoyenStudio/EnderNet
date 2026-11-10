@@ -1,7 +1,7 @@
 # coding=utf-8
 """11-09 验收：稳定资源键的长列表模型（条目、顺序、批次、查询代次、选择）。
 
-本文件不装假引擎：`client/ui/item_list_model.py` 与 `inventory_model.py`
+本文件不装假引擎：`client/ui/terminal/item_list_model.py` 与 `inventory_model.py`
 一样是纯领域，输入只有已经解码好的 `(资源键, 已存, 已预留)`。这正是它
 能被离线钉住的原因——列表跳行、旧结果盖新结果、点错格子这三类问题在实机上
 都表现为「有时候」，只有在这里才谈得上逐条断言。
@@ -11,7 +11,7 @@ import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
 
-from endernet.client.ui.item_list_model import (
+from endernet.client.ui.terminal.item_list_model import (
     SORT_COUNT,
     SORT_KIND,
     SORT_NAME,
@@ -19,7 +19,7 @@ from endernet.client.ui.item_list_model import (
     ListResyncRequired,
     StaleQuery,
 )
-from endernet.common.resource_key import ResourceKey
+from endernet.common.resources.key import ResourceKey
 
 STONE = ResourceKey.item("minecraft:stone")
 DIRT = ResourceKey.item("minecraft:dirt")

@@ -23,13 +23,16 @@ from endernet.common.definitions import (
     ConnectionRules,
     DefinitionSet,
 )
-from endernet.common.identity import DeviceRef, NodeKey
+from endernet.common.identity import DeviceRef, NodeKey, PartKey, face_mask
 from endernet.common.protocol import Reason
-from endernet.server.devices.catalog import DeviceCatalog
+from endernet.server.devices.catalog import CABLE_CUTS_KEY, CABLE_PARTS_KEY, DeviceCatalog
 from endernet.server.devices.registry import DeviceRegistry
 from endernet.server.network.node import ALL_FACES, PortKind, PortRuleSet, opposite_face
 from endernet.server.network.topology import (
+    CORE_MAX_SPAN,
+    BasebandState,
     ControllerState,
+    LineKind,
     MigrationKind,
     ProcessorOwnership,
     TopologyService,
@@ -47,6 +50,10 @@ BUS = "endernet:bus_item_io"
 CONNECTOR = "endernet:parallel_processor_connector"
 PROCESSOR = "endernet:parallel_processor"
 MEMORY = "endernet:memory_slot"
+GLASS = "endernet:ender_glass_cable"
+CABLE16 = "endernet:ender_cable"
+DENSE = "endernet:ender_dense_cable"
+TERM_PART = "endernet:common_terminal_part"
 
 
 def key(x, y=64, z=0, dimension=0):
@@ -215,31 +222,27 @@ class TestComponentBuilding(NetworkFixture):
         self.settle()
         self.assertEqual(len(self.component_of(key(0)).members), 5)
 
-    def test_different_capacity_basebands_are_two_components(self):
-        """异容量基带相邻也只是两条不相干的网络带。
+    def test_different_tier_basebands_join_one_core(self):
+        """R14-b：2026-11-09 作者改定异档基带允许混搭。
 
-        blocks.md：8/16/32 位基带只与同容量基带直接连通，不同容量即使
-        相邻也不建立连接、不因此合并网络或负载域。因此这两个位置各自
-        成一条分量，而不是被并成一条。
+        改定之前（R02 曾验收）这三块是三条互不相干的分量；现在相邻即相连，
+        组成同一个核心，每块的外露面各出本档带宽。
         """
         self.place(key(0), BB8)
         self.place(key(1), BB16)
         self.place(key(2), BB8)
         self.settle()
 
-        left = self.component_of(key(0))
-        right = self.component_of(key(2))
-        self.assertNotEqual(left.component_id, right.component_id)
-        self.assertEqual(set(left.members), set([key(0)]))
-        self.assertEqual(set(right.members), set([key(2)]))
-        # 中间那段 16 位基带自成一条，不被两侧的 8 位基带拉过去。
-        self.assertEqual(set(self.component_of(key(1)).members), set([key(1)]))
+        component = self.component_of(key(0))
+        self.assertEqual(set(component.members), set([key(0), key(1), key(2)]))
+        self.assertEqual(component.core.groups, 1)
+        self.assertEqual(component.baseband_state, BasebandState.VALID)
 
-    def test_controller_can_bridge_two_capacities_as_separate_domains(self):
-        """同一控制器分别接 8 位与 16 位分支是允许的。
+    def test_controller_between_two_baseband_groups_is_a_split_core(self):
+        """控制器夹在两段基带之间：图是一个分量，但基带是两组——整网离线。
 
-        blocks.md 明确这不属于「基带直接混联」；两段基带彼此不相邻，
-        经控制器桥接后仍必须是两个各自独立的负载域。
+        改版前这是「同一控制器分别接两条独立分支、各算各的」的正常形态；
+        13 §0.7 改成基带核心违规整网离线（包括两组经控制器相连）。
         """
         self.place(key(0), BB8)
         self.place(key(1), BB8)
@@ -248,17 +251,13 @@ class TestComponentBuilding(NetworkFixture):
         self.place(key(4), BB16)
         self.settle()
 
-        # 控制器把两段都连上，分量是一个（同一张图、同一个主控）。
         component = self.component_of(key(0))
         self.assertEqual(len(component.members), 5)
-        # 但两段基带是两个负载域，各算各的容量。
-        snapshot = self.topology.snapshot()
-        self.assertEqual(len(snapshot.domain_ids_of(key(0))), 1)
-        self.assertEqual(len(snapshot.domain_ids_of(key(4))), 1)
-        self.assertNotEqual(
-            list(snapshot.domain_ids_of(key(0)))[0],
-            list(snapshot.domain_ids_of(key(4)))[0],
-        )
+        self.assertEqual(component.controller_state, ControllerState.SINGLE)
+        self.assertEqual(component.baseband_state, BasebandState.SPLIT)
+        self.assertEqual(component.core.groups, 2)
+        self.assertFalse(component.is_runnable())
+        self.assertEqual(component.state_code(), Reason.BASEBAND_SPLIT)
 
     def test_branch_is_one_component(self):
         self.place(key(0), BB8)
@@ -300,14 +299,22 @@ class TestComponentBuilding(NetworkFixture):
         )
 
     def test_adjacency_without_rule_does_not_connect(self):
-        """驱动器与终端贴在一起也不连通：相邻不等于连通。"""
-        self.place(key(0), DRIVER)
+        """处理器与终端贴在一起也不连通：相邻不等于连通。"""
+        self.place(key(0), PROCESSOR)
         self.place(key(1), TERM)
         self.settle()
         snapshot = self.topology.snapshot()
         self.assertNotEqual(
             snapshot.component_id_of(key(0)), snapshot.component_id_of(key(1))
         )
+
+    def test_devices_pass_through_each_other(self):
+        """13 §0.5：设备之间透传（之前不透传是漏设计）。驱动器与终端贴着就相连。"""
+        self.place(key(0), DRIVER)
+        self.place(key(1), TERM)
+        self.place(key(2), BUS)
+        self.settle()
+        self.assertEqual(len(self.component_of(key(0)).members), 3)
 
     def test_controller_connects_only_to_baseband(self):
         self.place(key(0), BB8)
@@ -394,6 +401,7 @@ class TestLinkDiagnostics(NetworkFixture):
         self.place(key(0, 63), TINY)
         self.place(key(0, 65), DRIVER)
         self.place(key(1, 65), TERM)
+        self.place(key(-1, 65), PROCESSOR)
         self.settle()
 
         state = self.topology.link_state(key(0, 65))
@@ -401,9 +409,11 @@ class TestLinkDiagnostics(NetworkFixture):
         self.assertIsNotNone(state.component_id)
         self.assertTrue(state.runnable)
         self.assertIn(key(0), state.linked)
-        # 驱动器与终端贴在一起，但按分类规则不允许连接
+        # 设备之间透传：驱动器与终端贴着就相连
+        self.assertIn(key(1, 65), state.linked)
+        # 处理器贴着驱动器，但按分类规则不允许连接
         others = [(item[1], item[2]) for item in state.rejected]
-        self.assertIn((TERM, "categories_not_connectable"), others)
+        self.assertIn((PROCESSOR, "processor_must_use_connector"), others)
 
     def test_link_state_reports_port_level_rejection(self):
         """端口层面被拒时给的是端口原因，不是笼统的「不连通」。"""
@@ -630,25 +640,44 @@ class TestProcessorGroups(NetworkFixture):
             snapshot.processor_group_of(key(1, 66)).group_id, group.group_id
         )
 
-    def test_group_across_two_domains_is_unresolved(self):
-        """R03 未定：连接器接到互不相连的两个域时不擅自选一个。"""
-        # 两段基带隔一格，中间放连接器——连接器本身不是基带，
-        # 因此两段基带仍然是**两个**互不相连的负载域。
-        self.place(key(0, 64, 0), BB8)
-        self.place(key(0, 64, 2), BB8)
-        self.place(key(1, 64, 0), TINY)
-        self.place(key(0, 64, 1), CONNECTOR)
-        self.place(key(0, 65, 1), PROCESSOR)
+    def test_group_reaching_two_lines_is_attached_once(self):
+        """连接器分别贴着两个外露面：群跨两条线路照常贡献槽位，只计一次。
+
+        改版前这是 R03 的「接到两个互不相连的负载域、归属待定」。改版后线路只是
+        带宽的分配单位，群与它的连接器总在同一个分量里，R03 已于 2026-11-09
+        由作者确认关闭。
+        """
+        self.simple_network()
+        self.place(key(0, 65, 0), CONNECTOR)  # 贴着基带 (0,64,0) 的上面
+        self.place(key(0, 64, 1), CONNECTOR)  # 贴着基带 (0,64,0) 的南面
+        self.place(key(0, 65, 1), PROCESSOR)  # 同时贴着两台连接器
         self.settle()
 
         group = self.topology.snapshot().processor_group_of(key(0, 65, 1))
-        self.assertEqual(group.ownership, ProcessorOwnership.UNRESOLVED)
+        self.assertEqual(group.ownership, ProcessorOwnership.ATTACHED)
         self.assertEqual(len(group.domain_ids), 2)
-        self.assertFalse(group.contributes_slots())
-        self.assertIn(
-            Reason.PROCESSOR_GROUP_UNRESOLVED,
-            [reason.code for reason in group.reasons],
-        )
+        self.assertEqual(group.slots, 1)
+        self.assertTrue(group.contributes_slots())
+        self.assertEqual(group.reasons, ())
+
+    def test_r03_is_closed(self):
+        """2026-11-09 作者确认关闭 R03：「归属待定」这一态与它的原因码都不存在了。"""
+        self.assertFalse(hasattr(ProcessorOwnership, "UNRESOLVED"))
+        self.assertFalse(hasattr(Reason, "PROCESSOR_GROUP_UNRESOLVED"))
+
+    def test_connector_on_a_cable_or_device_attaches_the_group(self):
+        """13 §3：连接器原来只接基带，现扩到光缆与设备。"""
+        self.simple_network()
+        self.place(key(0, 64, 1), GLASS)
+        self.place(key(0, 64, 2), CONNECTOR)
+        self.place(key(1, 64, 1), TERM)
+        self.place(key(1, 64, 2), CONNECTOR)
+        self.place(key(0, 64, 3), PROCESSOR)
+        self.place(key(1, 64, 3), PROCESSOR)
+        self.settle()
+        group = self.topology.snapshot().processor_group_of(key(0, 64, 3))
+        self.assertEqual(group.ownership, ProcessorOwnership.ATTACHED)
+        self.assertEqual(group.connectors, frozenset([key(0, 64, 2), key(1, 64, 2)]))
 
     def test_processor_never_links_to_baseband(self):
         """处理器直接贴着基带时，两者仍分属不同分量。"""
@@ -671,53 +700,42 @@ class TestProcessorGroups(NetworkFixture):
         )
 
 
-class TestLoadDomains(NetworkFixture):
-    """02-05：业务网络与基带负载域分开建模。"""
+class TestLines(NetworkFixture):
+    """13 §4：负载域退役，带宽按「外露面为根的线路」分；一块基带的各面互不合池。"""
 
-    def test_baseband_chain_is_one_domain(self):
+    def test_each_exposed_face_is_its_own_line(self):
         for x in range(3):
             self.place(key(x), BB8)
+        self.place(key(0, 63), TINY)
         self.place(key(1, 65), TERM)
+        self.place(key(1, 63), DRIVER)
         self.settle()
         snapshot = self.topology.snapshot()
-        self.assertEqual(len(snapshot.domains), 1)
-        expected = snapshot.domain_ids_of(key(0))
-        self.assertEqual(snapshot.domain_ids_of(key(2)), expected)
-        self.assertEqual(snapshot.domain_ids_of(key(1, 65)), expected)
+        self.assertEqual(snapshot.domain_ids_of(key(1, 65)), ("line:0:1,64,0:up",))
+        self.assertEqual(snapshot.domain_ids_of(key(1, 63)), ("line:0:1,64,0:down",))
+        self.assertEqual(
+            snapshot.domain_ids_of(key(1)), ("line:0:1,64,0:down", "line:0:1,64,0:up")
+        )
+        self.assertEqual(snapshot.domain_ids_of(key(0)), ())
+        self.assertEqual(snapshot.summary()["lines"], 2)
 
-    def test_two_disjoint_branches_under_one_controller(self):
-        """同一控制器接出的互不相连基带分别计算（blocks.md 明写的情形）。"""
-        self.place(key(0, 64, 0), TINY)
-        self.place(key(0, 65, 0), BB8)
-        self.place(key(0, 63, 0), BB8)
-        self.place(key(0, 66, 0), TERM)
-        self.place(key(0, 62, 0), DRIVER)
-        self.settle()
+    def test_line_ids_are_derived_from_position_and_face(self):
+        self.place(key(5, 70, -3), BB8)
+        self.build(key(5, 70, -2), TERM)
+        self.assertEqual(
+            self.topology.snapshot().line_of(key(5, 70, -2)), "line:0:5,70,-3:south"
+        )
 
-        snapshot = self.topology.snapshot()
-        controller_domains = snapshot.domain_ids_of(key(0, 64, 0))
-        upper = snapshot.domain_ids_of(key(0, 66, 0))
-        lower = snapshot.domain_ids_of(key(0, 62, 0))
-
-        self.assertEqual(len(snapshot.domains), 2, "两段互不相连的基带应各自成域")
-        self.assertEqual(len(controller_domains), 2, "控制器同时属于两个域")
-        self.assertEqual(len(upper), 1)
-        self.assertEqual(len(lower), 1)
-        self.assertNotEqual(upper, lower)
-        # 图仍然是一个分量、一个控制器
-        self.assertEqual(len(self.component_of(key(0, 64, 0)).members), 5)
-        self.assertEqual(self.state_of(key(0, 64, 0)), ControllerState.SINGLE)
-
-    def test_device_touching_two_domains_reports_both(self):
-        """多接入（R02）：一台设备同时贴着两段互不相连的基带。"""
+    def test_line_of_a_device_off_the_core_follows_the_cable(self):
         self.place(key(0), BB8)
-        self.place(key(2), BB8)
-        self.place(key(1), TERM)
-        self.settle()
-        self.assertEqual(len(self.topology.snapshot().domain_ids_of(key(1))), 2)
+        self.place(key(1), GLASS)
+        self.place(key(2), GLASS)
+        self.build(key(3), TERM)
+        snapshot = self.topology.snapshot()
+        self.assertEqual(snapshot.line_of(key(3)), "line:0:0,64,0:east")
+        self.assertEqual(snapshot.line_of(key(1)), "line:0:0,64,0:east")
 
-    def test_domain_holds_only_its_own_devices(self):
-        """一个域只包含自己这段基带上的设备。"""
+    def test_lines_of_two_networks_are_separate(self):
         self.place(key(0), BB8)
         self.place(key(0, 65), TERM)
         self.place(key(9), BB8)
@@ -727,7 +745,541 @@ class TestLoadDomains(NetworkFixture):
         upper = snapshot.domain_ids_of(key(0, 65))
         lower = snapshot.domain_ids_of(key(9, 65))
         self.assertNotEqual(upper, lower)
-        self.assertNotIn(key(9, 65), snapshot.domains[upper[0]].device_keys)
+        tree = snapshot.line_tree_of(key(0))
+        self.assertNotIn(key(9, 65), tree.keys_of(upper[0]))
+
+
+class TestBasebandCore(NetworkFixture):
+    """13 §3：基带核心——包围盒每轴 ≤ 7、只有一组结构、没有十字（照 AE2 控制器）。"""
+
+    def row(self, count, axis="x", device_id=BB8):
+        positions = []
+        for index in range(count):
+            if axis == "x":
+                positions.append(key(index))
+            elif axis == "y":
+                positions.append(key(0, 64 + index))
+            else:
+                positions.append(key(0, 64, index))
+        for position in positions:
+            self.place(position, device_id)
+        return positions
+
+    def codes_and_texts(self, component):
+        return [(reason.code, reason.detail) for reason in component.reason_list()]
+
+    def test_exactly_seven_is_valid(self):
+        self.row(7)
+        self.build(key(0, 65), TINY)
+        component = self.component_of(key(0))
+        self.assertEqual(component.baseband_state, BasebandState.VALID)
+        self.assertEqual(component.core.span, (7, 1, 1))
+        self.assertTrue(component.is_runnable())
+
+    def test_eight_is_too_large_on_every_axis(self):
+        for axis, controller in (("x", key(0, 65)), ("y", key(1, 64)), ("z", key(1, 64))):
+            self.setUp()
+            self.row(8, axis)
+            self.build(controller, TINY)
+            component = self.component_of(key(0))
+            self.assertEqual(component.baseband_state, BasebandState.TOO_LARGE, axis)
+            self.assertFalse(component.is_runnable(), axis)
+            self.assertIn(
+                (Reason.BASEBAND_TOO_LARGE, "网络基带超出 7×7×7 的范围"),
+                self.codes_and_texts(component),
+            )
+            self.assertEqual(max(component.core.span), CORE_MAX_SPAN + 1)
+
+    def test_l_and_t_shapes_are_valid(self):
+        """拐角与 T 字口：每块基带至多在一个轴上两侧都贴着基带。"""
+        for position in (key(0), key(1), key(2), key(2, 65), key(2, 66), key(1, 64, 1)):
+            self.place(position, BB8)
+        self.build(key(0, 65), TINY)
+        component = self.component_of(key(0))
+        self.assertEqual(component.baseband_state, BasebandState.VALID)
+        self.assertEqual(component.core.crosses, ())
+
+    def test_a_two_by_two_square_is_valid(self):
+        for position in (key(0), key(1), key(0, 65), key(1, 65)):
+            self.place(position, BB8)
+        self.build(key(0, 63), TINY)
+        self.assertEqual(self.component_of(key(0)).baseband_state, BasebandState.VALID)
+
+    def test_cross_is_invalid(self):
+        center = key(1)
+        for position in (key(0), center, key(2), key(1, 65), key(1, 63)):
+            self.place(position, BB8)
+        self.build(key(0, 64, 1), TINY)
+        component = self.component_of(center)
+        self.assertEqual(component.baseband_state, BasebandState.CROSS)
+        self.assertEqual(component.core.crosses, (center,))
+        self.assertIn(
+            (Reason.BASEBAND_CROSS, "网络基带不能摆成十字形"), self.codes_and_texts(component)
+        )
+        self.assertFalse(component.is_runnable())
+
+    def test_three_dimensional_cross_through_two_axes_is_invalid(self):
+        center = key(0, 64, 0)
+        for position in (center, key(0, 65), key(0, 63), key(0, 64, 1), key(0, 64, -1)):
+            self.place(position, BB8)
+        self.build(key(1), TINY)
+        self.assertEqual(self.component_of(center).core.crosses, (center,))
+
+    def test_two_groups_joined_by_a_cable_are_split(self):
+        self.place(key(0), BB8)
+        self.place(key(1), GLASS)
+        self.place(key(2), BB8)
+        self.build(key(0, 65), TINY)
+        component = self.component_of(key(0))
+        self.assertEqual(component.component_id, self.component_of(key(2)).component_id)
+        self.assertEqual(component.baseband_state, BasebandState.SPLIT)
+        self.assertEqual(component.core.groups, 2)
+        self.assertIn(
+            (Reason.BASEBAND_SPLIT, "网络里有多组互不相连的网络基带"),
+            self.codes_and_texts(component),
+        )
+        self.assertFalse(component.is_runnable())
+
+    def test_two_groups_joined_by_a_device_are_split(self):
+        self.place(key(0), BB8)
+        self.place(key(1), TERM)
+        self.place(key(2), BB8)
+        self.build(key(0, 65), TINY)
+        self.assertEqual(self.component_of(key(1)).baseband_state, BasebandState.SPLIT)
+
+    def test_size_is_judged_per_group(self):
+        """两组各自很小、相隔很远：报的是「多组」，不是「超出范围」。"""
+        self.place(key(0), BB8)
+        for x in range(1, 12):
+            self.place(key(x), GLASS)
+        self.place(key(12), BB8)
+        self.build(key(0, 65), TINY)
+        self.assertEqual(self.component_of(key(0)).baseband_state, BasebandState.SPLIT)
+
+    def test_mixed_tiers_form_one_core(self):
+        """R14-b（2026-11-09 作者改定）：异档基带相邻即相连，组成同一个核心。"""
+        self.place(key(0), BB8)
+        self.place(key(1), BB16)
+        self.place(key(2), BB32)
+        self.build(key(0, 65), TINY)
+        component = self.component_of(key(0))
+        self.assertEqual(component.baseband_state, BasebandState.VALID)
+        self.assertEqual(component.core.groups, 1)
+        self.assertEqual(len(component.basebands), 3)
+
+    def test_no_baseband_is_reported(self):
+        self.place(key(0), GLASS)
+        self.build(key(1), TERM)
+        component = self.component_of(key(0))
+        self.assertEqual(component.baseband_state, BasebandState.NONE)
+        self.assertIn(
+            (Reason.BASEBAND_NONE, "网络中没有网络基带"), self.codes_and_texts(component)
+        )
+        # 没有控制器同样成立，两条都列出来；状态码先说控制器（03 以来的口径）。
+        self.assertEqual(component.state_code(), Reason.NO_CONTROLLER)
+
+    def test_unloaded_member_does_not_confirm_absence_of_baseband(self):
+        """未知不等于没有：边界没确认时，一块基带都没看到也只报未知。"""
+        self.place(key(0), GLASS)
+        self.build(key(1), GLASS)
+        self.registry.mark_unloaded(key(1))
+        self.topology.mark_dirty(key(1))
+        self.settle()
+        component = self.component_of(key(0))
+        self.assertTrue(component.partial)
+        self.assertEqual(component.baseband_state, BasebandState.UNKNOWN)
+        self.assertNotIn(Reason.BASEBAND_NONE, [r.code for r in component.reason_list()])
+
+    def test_verdict_is_in_the_diagnostics(self):
+        self.row(3)
+        self.build(key(0, 65), TINY)
+        payload = self.component_of(key(0)).to_dict()
+        self.assertEqual(payload["baseband_state"], BasebandState.VALID)
+        self.assertEqual(payload["core"]["span"], [3, 1, 1])
+        self.assertTrue(payload["controller_attached"])
+
+
+class TestControllerAttachment(NetworkFixture):
+    """13 §3：主控恰好一台，并且贴着基带核心。"""
+
+    def test_zero_one_two_controllers(self):
+        self.place(key(0), BB8)
+        self.build(key(1), BB8)
+        component = self.component_of(key(0))
+        self.assertEqual(component.controller_state, ControllerState.NONE)
+        self.assertIn(
+            (Reason.NO_CONTROLLER, "网络中没有控制器"),
+            [(r.code, r.detail) for r in component.reason_list()],
+        )
+        self.assertFalse(component.is_runnable())
+
+        self.build(key(0, 65), TINY)
+        component = self.component_of(key(0))
+        self.assertEqual(component.controller_state, ControllerState.SINGLE)
+        self.assertTrue(component.controller_attached)
+        self.assertTrue(component.is_runnable())
+
+        self.build(key(1, 65), DOS)
+        component = self.component_of(key(0))
+        self.assertEqual(component.controller_state, ControllerState.CONFLICT)
+        self.assertIn(
+            (Reason.CONTROLLER_CONFLICT, "网络中有 2 个控制器，只能保留一个"),
+            [(r.code, r.detail) for r in component.reason_list()],
+        )
+        self.assertFalse(component.is_runnable())
+
+    def test_controller_without_a_baseband_is_not_attached(self):
+        self.build(key(0), TINY)
+        component = self.component_of(key(0))
+        self.assertEqual(component.controller_state, ControllerState.SINGLE)
+        self.assertIs(component.controller_attached, False)
+        codes = [(r.code, r.detail) for r in component.reason_list()]
+        self.assertIn((Reason.CONTROLLER_DETACHED, "控制器没有贴着网络基带"), codes)
+        self.assertIn((Reason.BASEBAND_NONE, "网络中没有网络基带"), codes)
+        self.assertFalse(component.is_runnable())
+        verdict = self.topology.validate(self.registry.get(key(0)).ref)
+        self.assertFalse(verdict.allowed)
+        self.assertIn(Reason.CONTROLLER_DETACHED, verdict.reason_codes())
+
+    def test_controller_touching_only_a_cable_stays_outside(self):
+        """主控只接基带：贴着光缆不算接上，网络那边仍然没有控制器。"""
+        self.place(key(0), BB8)
+        self.place(key(1), GLASS)
+        self.build(key(2), TINY)
+        network = self.component_of(key(0))
+        alone = self.component_of(key(2))
+        self.assertNotEqual(network.component_id, alone.component_id)
+        self.assertEqual(network.controller_state, ControllerState.NONE)
+        self.assertIs(alone.controller_attached, False)
+
+    def test_runnable_network_passes_validation(self):
+        self.place(key(0), BB8)
+        self.place(key(0, 65), TINY)
+        terminal = self.build(key(0, 63), TERM)
+        verdict = self.topology.validate(terminal.ref)
+        self.assertTrue(verdict.allowed)
+        self.assertEqual(verdict.domain_ids, ("line:0:0,64,0:down",))
+
+
+class TestCables(NetworkFixture):
+    """13 §3：三种光缆互连；切断的面、被面板占住的面不连。"""
+
+    def test_three_kinds_interconnect(self):
+        self.place(key(0), BB32)
+        self.place(key(0, 65), TINY)
+        self.place(key(1), DENSE)
+        self.place(key(2), CABLE16)
+        self.place(key(3), GLASS)
+        self.build(key(4), TERM)
+        component = self.component_of(key(4))
+        self.assertEqual(component.component_id, self.component_of(key(0)).component_id)
+        self.assertTrue(component.is_runnable())
+        tree = self.topology.snapshot().line_tree_of(key(4))
+        self.assertEqual(
+            tree.path_of(key(4)), (key(3), key(2), key(1), "line:0:0,64,0:east")
+        )
+        self.assertEqual(
+            [tree.capacity_of(segment) for segment in tree.path_of(key(4))],
+            [8 * 4, 16 * 4, 32 * 4, 32 * 4],
+        )
+
+    def test_cable_reaches_connectors_but_not_controllers_or_processors(self):
+        self.place(key(0), GLASS)
+        self.place(key(1), CONNECTOR)
+        self.place(key(0, 65), TINY)
+        self.place(key(0, 63), PROCESSOR)
+        self.settle()
+        state = self.topology.link_state(key(0))
+        self.assertEqual(list(state.linked), [key(1)])
+        reasons = dict((item[0], item[2]) for item in state.rejected)
+        self.assertEqual(reasons[key(0, 65)], "controller_only_accepts_baseband")
+        self.assertEqual(reasons[key(0, 63)], "processor_must_use_connector")
+
+    def test_cut_face_disconnects(self):
+        self.place(key(0), BB8)
+        self.place(key(1), GLASS, config={CABLE_CUTS_KEY: face_mask(["east"])})
+        self.build(key(2), TERM)
+        self.assertNotEqual(
+            self.component_of(key(1)).component_id, self.component_of(key(2)).component_id
+        )
+        rejected = self.topology.link_state(key(1)).rejected
+        self.assertEqual(
+            [(item[0], item[2]) for item in rejected], [(key(2), Reason.CABLE_FACE_CUT)]
+        )
+        explained = self.topology.explain_link(key(2), key(1))
+        self.assertEqual(explained["reason"], Reason.CABLE_FACE_CUT)
+
+    def test_a_cut_on_either_side_is_enough(self):
+        self.place(key(0), GLASS)
+        self.build(key(1), GLASS, config={CABLE_CUTS_KEY: face_mask(["west"])})
+        self.assertNotEqual(
+            self.component_of(key(0)).component_id, self.component_of(key(1)).component_id
+        )
+
+    def test_cutting_takes_effect_after_mark_dirty(self):
+        """阶段 C 的接线约定：写好 `config` 之后对该格标脏。"""
+        self.place(key(0), BB8)
+        cable = self.place(key(1), GLASS)
+        self.build(key(2), TERM)
+        self.assertEqual(
+            self.component_of(key(1)).component_id, self.component_of(key(2)).component_id
+        )
+        cable.config[CABLE_CUTS_KEY] = face_mask(["east"])
+        self.topology.mark_dirty(key(1))
+        self.settle()
+        self.assertNotEqual(
+            self.component_of(key(1)).component_id, self.component_of(key(2)).component_id
+        )
+
+    def test_unreadable_cut_data_isolates_the_cable(self):
+        """读不懂的切断数据按六面全切断处理，不按「连着」。"""
+        self.place(key(0), BB8)
+        self.build(key(1), GLASS, config={CABLE_CUTS_KEY: "east"})
+        self.assertEqual(len(self.component_of(key(1)).members), 1)
+
+    def test_panel_occupies_its_face(self):
+        self.place(key(0), BB8)
+        self.place(key(1), GLASS, config={CABLE_PARTS_KEY: {"east": TERM_PART}})
+        self.build(key(2), TERM)
+        self.assertNotEqual(
+            self.component_of(key(1)).component_id, self.component_of(key(2)).component_id
+        )
+        rejected = self.topology.link_state(key(1)).rejected
+        self.assertEqual(
+            [(item[0], item[2]) for item in rejected], [(key(2), Reason.CABLE_FACE_OCCUPIED)]
+        )
+
+    def test_dense_cable_carries_no_panels(self):
+        """13 §0.8：致密光缆不挂面板。写进去的面板既不占面、也不进线路。"""
+        self.place(key(0), BB8)
+        self.place(key(1), DENSE, config={CABLE_PARTS_KEY: {"east": TERM_PART, "up": TERM_PART}})
+        self.build(key(2), TERM)
+        self.assertEqual(
+            self.component_of(key(1)).component_id, self.component_of(key(2)).component_id
+        )
+        tree = self.topology.snapshot().line_tree_of(key(1))
+        self.assertEqual(tree.hosted, {})
+
+
+class TestUnloadedMembers(NetworkFixture):
+    """2026-11-09 作者改定：网络里任何成员所在区块未加载，整网离线（13 §3）。
+
+    取代 01/03「只阻塞那台设备与主控」的放宽；后续另行调研主动加载区块。
+    """
+
+    def network(self):
+        self.place(key(0), BB8)
+        self.place(key(0, 65), TINY)
+        self.place(key(0, 63), TERM)
+        self.build(key(1), DRIVER)
+        self.assertTrue(self.component_of(key(0)).is_runnable())
+
+    def test_an_unloaded_device_takes_the_whole_network_offline(self):
+        self.network()
+        self.registry.mark_unloaded(key(1))
+        self.topology.mark_dirty(key(1))
+        self.settle()
+        component = self.component_of(key(0))
+        self.assertTrue(component.partial)
+        self.assertEqual(component.controller_state, ControllerState.SINGLE)
+        self.assertFalse(component.is_runnable())
+        self.assertEqual(component.state_code(), Reason.UNLOADED_MEMBER)
+        self.assertIn(
+            (Reason.UNLOADED_MEMBER, "网络中有 1 台设备所在区块未加载"),
+            [(r.code, r.detail) for r in component.reason_list()],
+        )
+        # 终端自己是加载着的，照样不能动业务。
+        verdict = self.topology.validate(self.registry.get(key(0, 63)).ref)
+        self.assertFalse(verdict.allowed)
+        self.assertIn(Reason.UNLOADED_MEMBER, verdict.reason_codes())
+        self.assertFalse(self.topology.link_state(key(0, 63)).runnable)
+
+    def test_reloading_brings_the_network_back(self):
+        self.network()
+        self.registry.mark_unloaded(key(1))
+        self.topology.mark_dirty(key(1))
+        self.settle()
+        self.registry.mark_loaded(key(1))
+        self.topology.mark_dirty(key(1))
+        self.settle()
+        component = self.component_of(key(0))
+        self.assertFalse(component.partial)
+        self.assertTrue(component.is_runnable())
+        self.assertTrue(self.topology.validate(self.registry.get(key(0, 63)).ref).allowed)
+
+    def test_zero_known_controllers_still_reads_as_unknown(self):
+        """没有加载完时，零控制器仍只能说「未知」（02-03），不再另报一遍未加载。"""
+        self.place(key(0), BB8)
+        self.build(key(1), BB8)
+        self.registry.mark_unloaded(key(1))
+        self.topology.mark_dirty(key(1))
+        self.settle()
+        codes = [r.code for r in self.component_of(key(0)).reason_list()]
+        self.assertEqual(codes.count(Reason.TOPOLOGY_UNKNOWN), 1)
+        self.assertNotIn(Reason.UNLOADED_MEMBER, codes)
+
+
+class TestPanelsInTopology(NetworkFixture):
+    """面板节点挂在宿主光缆下面，不对外连（13 §3、§7）。"""
+
+    def test_panels_hang_under_their_host(self):
+        self.place(key(0), BB8)
+        self.place(key(0, 65), TINY)
+        self.build(key(1), GLASS, config={CABLE_PARTS_KEY: {"up": TERM_PART, "south": TERM_PART}})
+        snapshot = self.topology.snapshot()
+        tree = snapshot.line_tree_of(key(1))
+        for face in ("up", "south"):
+            part = PartKey(key(1), face)
+            node = tree.node(part)
+            self.assertEqual(node.kind, LineKind.PART)
+            self.assertEqual(node.parent, key(1))
+            self.assertEqual(node.device_id, TERM_PART)
+            self.assertEqual(snapshot.line_of(part), snapshot.line_of(key(1)))
+            self.assertEqual(snapshot.domain_ids_of(part), snapshot.domain_ids_of(key(1)))
+            self.assertEqual(
+                snapshot.component_id_of(part), snapshot.component_id_of(key(1))
+            )
+            self.assertFalse(snapshot.is_pending(part))
+        # 面板跟在宿主后面，按面序：先 up 后 south。
+        order = list(tree.order)
+        self.assertEqual(
+            order[order.index(key(1)) + 1:order.index(key(1)) + 3],
+            [PartKey(key(1), "up"), PartKey(key(1), "south")],
+        )
+        # 面板不是分量成员：分量只有方块。
+        self.assertNotIn(PartKey(key(1), "up"), self.component_of(key(1)).members)
+
+    def test_hosted_lists_panels_on_unreached_cables(self):
+        self.build(key(0), GLASS, config={CABLE_PARTS_KEY: {"up": TERM_PART}})
+        tree = self.topology.snapshot().line_tree_of(key(0))
+        self.assertEqual(tree.hosted, {PartKey(key(0), "up"): TERM_PART})
+        self.assertIsNone(tree.node(PartKey(key(0), "up")))
+
+    def test_only_known_panels_on_real_faces_count(self):
+        self.build(
+            key(0), GLASS,
+            config={CABLE_PARTS_KEY: {
+                "up": TERM_PART,
+                "sideways": TERM_PART,
+                "down": "endernet:not_a_part",
+                "east": TERM,
+            }},
+        )
+        tree = self.topology.snapshot().line_tree_of(key(0))
+        self.assertEqual(sorted(tree.hosted), [PartKey(key(0), "up")])
+
+
+class TestLineTree(NetworkFixture):
+    """13 §4.1～4.2：外露面为根；分层 BFS（32u → 16u → 8u → 设备），层内按距离与位置。"""
+
+    def test_roots_are_exposed_faces_only(self):
+        """贴着基带或主控的面不算外露面。"""
+        self.place(key(0), BB8)
+        self.place(key(1), BB16)
+        self.place(key(0, 65), TINY)
+        self.build(key(0, 63), TERM)
+        tree = self.topology.snapshot().line_tree_of(key(0))
+        self.assertEqual(tree.root_ids(), ["line:0:0,64,0:down"])
+        self.assertEqual(tree.root("line:0:0,64,0:down").capacity_quarters, 8 * 4)
+        self.assertIsNone(tree.node(key(0)))
+        self.assertIsNone(tree.node(key(0, 65)))
+        self.assertEqual(
+            self.topology.snapshot().domain_ids_of(key(0)), ("line:0:0,64,0:down",)
+        )
+
+    def test_dense_is_walked_before_glass(self):
+        """玻璃那条路更短，但致密先走：设备挂在致密那一侧（AE2 同一口径）。"""
+        self.place(key(0, 64, 0), BB8)
+        self.place(key(0, 63, 0), TINY)
+        self.place(key(1, 64, 0), GLASS)
+        for position in (key(0, 65, 0), key(1, 65, 0), key(2, 65, 0)):
+            self.place(position, DENSE)
+        self.build(key(2, 64, 0), TERM)
+        tree = self.topology.snapshot().line_tree_of(key(2, 64, 0))
+        self.assertEqual(
+            tree.path_of(key(2, 64, 0)),
+            (key(2, 65, 0), key(1, 65, 0), key(0, 65, 0), "line:0:0,64,0:up"),
+        )
+
+    def test_same_depth_is_ordered_by_position(self):
+        self.place(key(0, 64, 0), BB8)
+        self.place(key(0, 63, 0), TINY)
+        self.place(key(1, 64, 0), GLASS)
+        for position in (key(1, 65, 0), key(1, 64, 1), key(1, 64, -1), key(1, 63, 0), key(2, 64, 0)):
+            self.place(position, TERM)
+        self.settle()
+        tree = self.topology.snapshot().line_tree_of(key(1))
+        self.assertEqual(
+            list(tree.order),
+            [key(1, 64, 0), key(1, 63, 0), key(1, 64, -1), key(1, 64, 1), key(1, 65, 0), key(2, 64, 0)],
+        )
+
+    def test_devices_pass_the_line_through(self):
+        self.place(key(0), BB8)
+        self.place(key(0, 63), TINY)
+        for x in (1, 2, 3):
+            self.place(key(x), TERM)
+        self.settle()
+        tree = self.topology.snapshot().line_tree_of(key(3))
+        self.assertEqual(tree.path_of(key(3)), (key(2), key(1), "line:0:0,64,0:east"))
+        self.assertEqual(tree.node(key(2)).kind, LineKind.DEVICE)
+        self.assertEqual(tree.capacity_of(key(2)), 8 * 4)
+
+    def test_a_cell_touching_two_faces_belongs_to_one_line(self):
+        """L 形核心的内角那一格贴着两块基带：只归排在前面的那个根（不再有多接入）。"""
+        self.place(key(0), BB8)
+        self.place(key(0, 65), BB8)
+        self.place(key(1, 65), BB8)
+        self.place(key(0, 63), TINY)
+        self.build(key(1), TERM)
+        snapshot = self.topology.snapshot()
+        self.assertEqual(snapshot.domain_ids_of(key(1)), ("line:0:0,64,0:east",))
+        tree = snapshot.line_tree_of(key(1))
+        self.assertIn("line:0:1,65,0:down", tree.root_ids())
+        self.assertEqual(tree.keys_of("line:0:1,65,0:down"), ())
+
+    def test_a_processor_group_hangs_under_its_connector_as_one_unit(self):
+        """处理器组整组一次挂在连接器下面：最先访问到的那台是代表，其余沿组内连接挂。"""
+        self.place(key(0, 64, 0), BB8)
+        self.place(key(0, 63, 0), TINY)
+        self.place(key(0, 65, 0), CONNECTOR)
+        for position in (key(0, 66, 0), key(0, 67, 0), key(1, 67, 0)):
+            self.place(position, PROCESSOR)
+        self.settle()
+        tree = self.topology.snapshot().line_tree_of(key(0))
+        lead = tree.node(key(0, 66, 0))
+        self.assertEqual((lead.kind, lead.group, lead.parent), (LineKind.PROCESSOR, key(0, 66, 0), key(0, 65, 0)))
+        self.assertEqual(tree.node(key(0, 67, 0)).parent, key(0, 66, 0))
+        self.assertEqual(tree.node(key(1, 67, 0)).parent, key(0, 67, 0))
+        self.assertTrue(all(tree.node(k).group == key(0, 66, 0) for k in (key(0, 67, 0), key(1, 67, 0))))
+        self.assertEqual(tree.group_size(key(0, 66, 0)), 3)
+        root = "line:0:0,64,0:up"
+        self.assertEqual(tree.consumers_of(root), [key(0, 65, 0), key(0, 66, 0)])
+        self.assertEqual(
+            tree.reported_of(root), [key(0, 65, 0), key(0, 66, 0), key(0, 67, 0), key(1, 67, 0)]
+        )
+        self.assertIsNone(tree.capacity_of(key(0, 67, 0)))
+
+    def test_line_tree_phase_is_framed(self):
+        """线路树同样按步数预算分帧，结果与一次走完相同。"""
+        layout = [(key(0), BB8), (key(0, 63), TINY)]
+        layout += [(key(x), GLASS) for x in range(1, 25)]
+        layout += [(key(x, 65), TERM) for x in range(1, 25)]
+        for position, device_id in layout:
+            self.place(position, device_id)
+        self.settle()
+        expected = list(self.topology.snapshot().line_tree_of(key(0)).order)
+
+        self.topology.mark_all_dirty()
+        reports = []
+        while not self.topology.is_idle():
+            reports.append(self.topology.advance(4))
+            self.assertLess(len(reports), 200)
+        self.assertTrue(all(report.steps <= 4 for report in reports))
+        self.assertGreater(len(reports), 10)
+        self.assertEqual(list(self.topology.snapshot().line_tree_of(key(0)).order), expected)
+        self.assertGreater(self.topology.stats["line_visits"], 0)
+
 
 
 class TestBoundedRebuild(NetworkFixture):
@@ -863,7 +1415,7 @@ class TestPublication(NetworkFixture):
 
         **原来这里验的是「发得对」**（连接器一拆，清单上出现一条
         `before_slots=1 / after_slots=0`）。那条清单从发布到删除**一个消费者
-        都没有**——09 的槽位容量每帧从快照重算（`crafting/capacity.py` 的
+        都没有**——09 的槽位容量每帧从快照重算（`crafting/orders/capacity.py` 的
         `slot_capacity`），从不订阅发布。留着它，下一个人会以为槽位变更
         「必须」被消费，于是再建一套推送与拉取并存的账。
 

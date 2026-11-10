@@ -3,37 +3,40 @@
     "texture_name": "atlas.items",
     "texture_data": {
         "endernet:factorical_template": {
-            "textures": "textures/items/endernet_factorical_template"
+            "textures": "textures/endernet/items/factorical_template"
         },
         "endernet:memory_128b": {
-            "textures": "textures/items/endernet_memory_128b"
+            "textures": "textures/endernet/items/memory_128b"
         },
         "endernet:memory_16k": {
-            "textures": "textures/items/endernet_memory_16k"
+            "textures": "textures/endernet/items/memory_16k"
         },
         "endernet:memory_1k": {
-            "textures": "textures/items/endernet_memory_1k"
+            "textures": "textures/endernet/items/memory_1k"
         },
         "endernet:memory_256b": {
-            "textures": "textures/items/endernet_memory_256b"
+            "textures": "textures/endernet/items/memory_256b"
         },
         "endernet:memory_256k": {
-            "textures": "textures/items/endernet_memory_256k"
+            "textures": "textures/endernet/items/memory_256k"
         },
         "endernet:memory_4k": {
-            "textures": "textures/items/endernet_memory_4k"
+            "textures": "textures/endernet/items/memory_4k"
         },
         "endernet:memory_512b": {
-            "textures": "textures/items/endernet_memory_512b"
+            "textures": "textures/endernet/items/memory_512b"
         },
         "endernet:memory_64k": {
-            "textures": "textures/items/endernet_memory_64k"
+            "textures": "textures/endernet/items/memory_64k"
+        },
+        "endernet:network_wrench": {
+            "textures": "textures/endernet/items/network_wrench"
         },
         "endernet:singleside_tape": {
-            "textures": "textures/items/endernet_singleside_tape"
+            "textures": "textures/endernet/items/singleside_tape"
         },
         "endernet:softdisk_1k": {
-            "textures": "textures/items/endernet_softdisk_1k"
+            "textures": "textures/endernet/items/softdisk_1k"
         }
     }
 }

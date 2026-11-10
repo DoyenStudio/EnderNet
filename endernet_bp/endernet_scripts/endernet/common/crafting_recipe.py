@@ -63,7 +63,7 @@
 
 import zlib
 
-from .resource_key import canonical_tree, tree_text
+from .resources import canonical_tree, tree_text
 
 try:  # pragma: no cover - 仅在 Python 2 下成立
     _TEXT_TYPES = (str, unicode)  # noqa: F821

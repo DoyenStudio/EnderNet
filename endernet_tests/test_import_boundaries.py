@@ -43,6 +43,7 @@ DOMAIN_PREFIXES = (
     "server/sync/",
     "server/storage/",
     "server/crafting/",
+    "server/interaction/",
 )
 
 
@@ -149,6 +150,23 @@ def find_module_level_engine_imports(path, relative=None):
     return _scan_nodes(path, relative, lambda tree: tree.body)
 
 
+def adapter_files():
+    # type: () -> list
+    """`server/adapters/` 下全部 `.py`，**含子包**。
+
+    2026-11 起适配器分进 `containers/` `compat/` `channels/` 子包。只扫一层的话，
+    分进子包的适配器会静默脱离「模块顶层不许 import 引擎」这条守卫——门禁照样全绿。
+    """
+    directory = os.path.join(ENDERNET_ROOT, "server", "adapters")
+    out = []
+    for dirpath, dirnames, filenames in os.walk(directory):
+        dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+        for name in sorted(filenames):
+            if name.endswith(".py"):
+                out.append(os.path.join(dirpath, name))
+    return out
+
+
 class TestDomainLayerIsEngineFree(unittest.TestCase):
     def test_domain_files_do_not_import_engine(self):
         violations = []
@@ -189,16 +207,12 @@ class TestDomainLayerIsEngineFree(unittest.TestCase):
         没有 `mod.server.*` 的环境里就断了——而那些只查「目录对不对」的
         守卫一条都不会响，**测试会全绿**。
 
-        **逐文件扫整个 `server/adapters/`，不是只看 `events.py`。**
+        **逐文件扫整个 `server/adapters/`（含子包），不是只看 `events.py`。**
         「哪些文件算适配器」是会长大的：新加 `messages.py` 时它同样是适配器，
         同样要受这条约束，而只审一个文件的写法不会发现它。
         """
         offenders = []
-        directory = os.path.join(ENDERNET_ROOT, "server", "adapters")
-        for name in sorted(os.listdir(directory)):
-            if not name.endswith(".py"):
-                continue
-            path = os.path.join(directory, name)
+        for path in adapter_files():
             relative = relative_path(path)
             for lineno, module in find_module_level_engine_imports(path, relative):
                 offenders.append("%s:%d %s" % (relative, lineno, module))
@@ -211,8 +225,7 @@ class TestDomainLayerIsEngineFree(unittest.TestCase):
 
     def test_there_are_adapters_to_check(self):
         """守卫本身要有东西可守。"""
-        directory = os.path.join(ENDERNET_ROOT, "server", "adapters")
-        files = [n for n in os.listdir(directory) if n.endswith(".py")]
+        files = adapter_files()
         self.assertGreater(len(files), 2)
 
     def test_module_level_scan_ignores_imports_inside_methods(self):

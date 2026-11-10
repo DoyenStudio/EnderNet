@@ -5,8 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import testsupport  # noqa: F401
-from endernet.common.resource_key import ResourceKey
-from endernet.client.ui import stack_size, terminal_hover, terminal_input
+from endernet.common.resources.key import ResourceKey
+from endernet.client.ui.shared import stack_size
+from endernet.client.ui.terminal import hover as terminal_hover, input as terminal_input
 
 
 class TestTerminalHover(unittest.TestCase):

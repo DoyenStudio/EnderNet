@@ -1,6 +1,6 @@
 # 通用流体选择窗口
 
-客户端入口：`endernet/client/ui/select_fluid_window.py`。
+客户端入口：`endernet/client/ui/windows/select_fluid.py`。
 
 ```python
 # 在 endernet/client/ui/ 下的 ToolDeltaScreen 脚本中：
@@ -53,8 +53,8 @@ def OnDestroy(self):
 `tooldelta.api.server.item.ItemExists`（封装 `LookupItemByName`）。为避免客户端
 导入服务端 API，复用现有 `UiInitFinishedEvent` 后的一次目录请求：
 
-1. 服务端 `server/adapters/item_catalog.py` 调用 `GetLoadItems(True)`。
-2. 对原始目录调用 `common/fluid_catalog.py` 的 `build_fluid_catalog`，
+1. 服务端 `server/adapters/channels/item_catalog.py` 调用 `GetLoadItems(True)`。
+2. 对原始目录调用 `common/channels/fluid_catalog.py` 的 `build_fluid_catalog`，
    按上述规则调用 `ItemExists`，生成全部流体列表及桶到流体的映射。
 3. 原有物品目录继续按 `GetBasicInfo().itemCategory` 过滤；流体识别在此过滤前
    完成，不受 `""`、`"command"`、`"none"` 分类影响。

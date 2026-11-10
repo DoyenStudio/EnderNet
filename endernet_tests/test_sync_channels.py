@@ -58,8 +58,8 @@ from endernet.common.protocol import (
     SyncError,
     TerminalCommand,
 )
-from endernet.common.resource_key import ResourceKey
-from endernet.common.resource_sync import ResourceDescriptions
+from endernet.common.resources.key import ResourceKey
+from endernet.common.resources.sync import ResourceDescriptions
 from endernet.server.adapters import messages
 
 MESSAGES_PATH = os.path.join(

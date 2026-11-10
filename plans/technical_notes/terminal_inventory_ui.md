@@ -32,7 +32,7 @@
 > （手势属 R12）。**全部只离线验证过，真机没跑。**
 > 见 [Task 11](../tasks/11.%20终端与客户端同步.md) 文末补充段与 [欠账台账](../tasks/00-欠账台账.md)。
 
-代码：`endernet_bp/endernet_scripts/endernet/client/ui/`。`TerminalPanelBase` 继承 ToolDeltaScreen，`CommonTerminalPanel` 注册为 `common_terminal_panel_ui.main`，由客户端 bootstrap 导入注册。
+代码：`endernet_bp/endernet_scripts/endernet/client/ui/`。`TerminalPanelBase` 继承 ToolDeltaScreen，`CommonTerminalPanel` 注册为 `endernet_common_terminal_panel.main`，由客户端 bootstrap 导入注册。
 
 **下半屏渲染的是真实玩家背包**（2026-09-30 起）。它由客户端**本地读引擎**
 （`GetLocalPlayerHotbarAndInvItems(get_user_data=True)`，不新增协议），搬运则全部
@@ -115,7 +115,7 @@ backpack = screen.GetBackpackItems()      # [(资源名, 数量) | None] × 36�
 `item_id_aux`（int）、`selected`（bool）、`item_count`（string），名字由
 `slot_binding(前缀, 后缀)` 拼出，前缀 `backpack` / `hotbar`；点击那条同法拼
 `slot_binding(前缀, "click")`。界面侧是 `endernet_windows.item_can_be_selected` 的
-两个实例（`endernet_terminal_inventory.json`），覆盖六个 `$` 变量，视觉结构不动。
+两个实例（`terminal_inventory.json`），覆盖六个 `$` 变量，视觉结构不动。
 
 **为什么不用控件路径**：grid 的格子要到**渲染**时才生成，滚动时还会被回收换出。
 早先的实现按 `grid.GetGridItem(x, y)` 逐格取、缓存子控件（`CustomSlotView`），
@@ -205,7 +205,7 @@ _slots ←───────┘  + _pending（还没被真值兑现的本地�
 - `test_terminal_panel.py::TestBackpackHandoff`：有选中发 `inv_take`、无选中仍发
   `inv_put`、回执按 `request_id` 清选中、被拒时清选中并重读。
   > **2026-09-30 更正**：本条原写「`slot_version` 发 `None`」——**已过期**。
-  > S-15 之后 `inv_take` 发的是**服务端真实槽版本**（`terminal_panel.py:696` 取
+  > S-15 之后 `inv_take` 发的是**服务端真实槽版本**（`terminal/panel.py:696` 取
   > `view["slot_version"]`，用例断言 `== 7`），无匹配快照时等待同步、不发命令。
   > 顶部 S-15 引用块记的就是这次变更，这一行当时漏改。
 - `test_terminal_panel.py::TestBackpackCellBindings`：八个集合绑定的名字/旗标/集合同

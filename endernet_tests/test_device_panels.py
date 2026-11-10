@@ -193,19 +193,15 @@ def _install_stubs():
 
 _install_stubs()
 
-from endernet_bp.endernet_scripts.endernet.client import (  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.channels import (  # noqa: E402
     device_identity as client_identity,
 )
 from endernet_bp.endernet_scripts.endernet.client.network_client import (  # noqa: E402
     NetworkClient,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui import (  # noqa: E402
-    device_panels, proxy_panel,
-)
-from endernet_bp.endernet_scripts.endernet.client.ui.widgets import (  # noqa: E402
-    device_status, device_status_bindings,
-)
-from endernet_bp.endernet_scripts.endernet.common import device_identity  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.devices import panels as device_panels, proxy_panel  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.device_status import model as device_status, bindings as device_status_bindings  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.common.channels import device_identity  # noqa: E402
 from endernet_bp.endernet_scripts.endernet.common import protocol  # noqa: E402
 from endernet_bp.endernet_scripts.endernet.common.definitions import (  # noqa: E402
     CONTAINER_SCREENS, TERMINAL_SCREENS,
@@ -217,17 +213,28 @@ from endernet_bp.endernet_scripts.endernet.common.identity import (  # noqa: E40
 RP_UI = os.path.join(ROOT, "endernet_rp", "ui")
 
 
+def _ui_path(name):
+    """界面文件名 → 路径；找不到返回 None。
+
+    界面按分组放在 `ui/endernet/<分组>/` 下，文件名全仓唯一，所以按文件名找。
+    """
+    for directory, _dirnames, filenames in os.walk(os.path.join(RP_UI, "endernet")):
+        if name in filenames:
+            return os.path.join(directory, name)
+    return None
+
+
 def _load_ui(name):
-    with open(os.path.join(RP_UI, name), encoding="utf-8") as handle:
+    with open(_ui_path(name), encoding="utf-8") as handle:
         return json.load(handle)
 
 
 def ui_file_of(device_id):
-    """方块 id → 资源包里的界面文件名。
+    """方块 id → 资源包里的界面文件名（不含分组目录，路径由 `_ui_path` 查）。
 
-    **不能用 namespace 拼**：namespace 是 `bus_item_output_io_ui`，而文件名是
-    `bus_item_output_io.json`（`_ui` 后缀是资源那侧加的）。方块 id 冒号后半段
-    才是文件名——这一条与 `gen_blocks` 的产物命名规则同源。
+    文件名是 namespace 去掉 `endernet_`：namespace 是 `endernet_bus_item_output_io`，
+    文件是 `bus/bus_item_output_io.json`。方块 id 冒号后半段就是文件名——这一条
+    与 `gen_blocks` 的产物命名规则同源。
     """
     return device_id.split(":", 1)[1] + ".json"
 
@@ -377,7 +384,7 @@ class TestPortConfigPanels(unittest.TestCase):
         ):
             self.assertEqual(
                 panel_cls.SETTINGS_DEFINITION,
-                ui_file_of(device_id)[:-5] + "_ui.settings_window",
+                "endernet_" + ui_file_of(device_id)[:-5] + ".settings_window",
             )
         # 取货口与存货口各是各的文件，串了就会去开另一台的设置窗。
         self.assertNotEqual(self.OUTPUT.SETTINGS_DEFINITION,
@@ -534,7 +541,7 @@ class TestPortConfigPanelLifecycle(unittest.TestCase):
 
 class TestItemPickerSearch(unittest.TestCase):
     def test_port_search_binding_filters_localized_item_names(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import select_item_window
+        from endernet_bp.endernet_scripts.endernet.client.ui.windows import select_item as select_item_window
         from test_select_item_window import ItemStub as SearchItem
 
         for panel_cls in (device_panels.BusItemInputPanel, device_panels.BusItemOutputPanel):
@@ -675,16 +682,16 @@ class TestIdentityLatch(unittest.TestCase):
         self.ref = DeviceRef(NodeKey(0, 1, 2, 3), 7)
         self.latch = client_identity.DeviceIdentityLatch()
 
-    def payload(self, key="bus_item_output_io_ui.main", ref=None):
+    def payload(self, key="endernet_bus_item_output_io.main", ref=None):
         return device_identity.identity_payload(
             key, ref if ref is not None else self.ref, 0)
 
     def test_offer_then_take_consumes_the_entry(self):
         self.assertTrue(self.latch.offer(self.payload()))
-        self.assertEqual(self.latch.take("bus_item_output_io_ui.main"),
+        self.assertEqual(self.latch.take("endernet_bus_item_output_io.main"),
                          (self.ref, 0))
         # **取出即消费**：留着它，下一次开屏会认到一台可能已被拆掉的设备。
-        self.assertIsNone(self.latch.take("bus_item_output_io_ui.main"))
+        self.assertIsNone(self.latch.take("endernet_bus_item_output_io.main"))
         # **空手而归不计数**：屏每帧来问一次，数它只会让诊断里出现一个
         # 「等了多久（帧）」的数，而不是「有几条身份没人接」。
         self.assertEqual(self.latch.stats["taken"], 1)
@@ -693,13 +700,13 @@ class TestIdentityLatch(unittest.TestCase):
         other = DeviceRef(NodeKey(0, 9, 9, 9), 3)
         self.latch.offer(self.payload())
         self.latch.offer(self.payload(ref=other))
-        self.assertEqual(self.latch.take("bus_item_output_io_ui.main"), (other, 0))
+        self.assertEqual(self.latch.take("endernet_bus_item_output_io.main"), (other, 0))
         self.assertEqual(self.latch.stats["accepted"], 2)
 
     def test_unknown_key_takes_nothing(self):
         self.latch.offer(self.payload())
-        self.assertIsNone(self.latch.take("bus_template_io_ui.main"))
-        self.assertEqual(self.latch.pending(), ("bus_item_output_io_ui.main",))
+        self.assertIsNone(self.latch.take("endernet_bus_template_io.main"))
+        self.assertEqual(self.latch.pending(), ("endernet_bus_item_output_io.main",))
 
     def test_malformed_payloads_are_counted_not_raised(self):
         broken = (
@@ -733,7 +740,7 @@ class TestIdentityLatch(unittest.TestCase):
 
     def test_clear_and_diagnostics(self):
         self.latch.offer(self.payload())
-        self.assertEqual(self.latch.pending(), ("bus_item_output_io_ui.main",))
+        self.assertEqual(self.latch.pending(), ("endernet_bus_item_output_io.main",))
         self.latch.clear()
         self.assertEqual(self.latch.pending(), ())
         report = self.latch.diagnostics()
@@ -1071,9 +1078,7 @@ class TestSharedStatusHandler(unittest.TestCase):
                     self.assertIsNone(panel.status)
 
     def test_terminals_and_proxies_inherit_the_same_status_handler(self):
-        from endernet_bp.endernet_scripts.endernet.client.ui import (
-            terminal_panel, crafting_panel,
-        )
+        from endernet_bp.endernet_scripts.endernet.client.ui.terminal import panel as terminal_panel, crafting_panel
         shared = device_status_bindings.DeviceStatusBindingsMixin._make_status_handler
         for panel_cls in (terminal_panel.CommonTerminalPanel,
                           crafting_panel.CraftingPanel, proxy_panel.ProxyPanelBase):
@@ -1194,7 +1199,7 @@ class TestServerSidePush(unittest.TestCase):
         self.assertEqual(binder.counts["block_use_container_unknown"], 1)
 
     def test_send_device_identity_skips_a_missing_recipient(self):
-        from endernet_bp.endernet_scripts.endernet.server.adapters import (
+        from endernet_bp.endernet_scripts.endernet.server.adapters.channels import (
             device_identity as server_identity,
         )
         sent = []
@@ -1445,7 +1450,7 @@ class TestJsonContract(unittest.TestCase):
             if not filename.startswith("endernet_") or not filename.endswith(".json"):
                 continue
             ui_file = filename[len("endernet_"):]
-            if not os.path.isfile(os.path.join(RP_UI, ui_file)):
+            if _ui_path(ui_file) is None:
                 continue
             document = _load_ui(ui_file)
             self.assertEqual(count_stat_bars(document["content"]), 1, ui_file)

@@ -2,7 +2,7 @@
 """下单预览窗：显示模型与控制器（11 增量，客户端半边）。
 
 **全部离线**：模型是纯数据，控制器只对一个假客户端说话。窗口控件是宿主
-面板 JSON 里的一个实例，绑定在类体里（`widgets/order_preview.py`），
+面板 JSON 里的一个实例，绑定在类体里（`order_preview/model.py`），
 因此这里碰不到引擎。
 
 守的是契约里几条「错了也看不出来」的：
@@ -18,8 +18,8 @@ import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
 
-from endernet.client.ui import order_preview_window
-from endernet.client.ui.widgets import order_preview
+from endernet.client.ui.order_preview import window as order_preview_window
+from endernet.client.ui.order_preview import model as order_preview
 from endernet.common.protocol import (
     BlockReason,
     CommandResult,
@@ -460,7 +460,7 @@ def ui(name):
     import json
     import os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(root, "endernet_rp", "ui", name)
+    path = os.path.join(root, "endernet_rp", "ui", "endernet", *name.split("/"))
     from ui_terminal_templates import inline_terminal_controls
     with _io.open(path, encoding="utf-8") as handle:
         return inline_terminal_controls(json.load(handle))
@@ -491,7 +491,7 @@ class TestWindowJson(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.windows = ui("endernet_windows.json")
+        cls.windows = ui("common/windows.json")
 
     def test_the_binding_names_match_the_python_constants(self):
         row = bindings_of(self.windows["order_preview_src_item"])
@@ -583,7 +583,7 @@ class TestWindowJson(unittest.TestCase):
         两处各写一个数的话，服务端多给的行会被网格静默丢掉——而「只显示了
         一部分」与「就这么多」在界面上长得一样。
         """
-        from endernet.server.crafting.preview import PreviewPolicy
+        from endernet.server.crafting.planning.preview import PreviewPolicy
 
         grid = self.windows["order_preview_src_items"]
         self.assertEqual(grid["maximum_grid_items"], PreviewPolicy().max_rows)
@@ -593,8 +593,8 @@ class TestWindowJson(unittest.TestCase):
 class TestPanelInstances(unittest.TestCase):
     """三块终端屏都实例化了预览窗。**只实例化，不新建模板**（同 11-07）。"""
 
-    PANELS = ("common_terminal_panel.json", "crafting_terminal_panel.json",
-              "template_terminal_panel.json")
+    PANELS = ("terminal/common_terminal_panel.json", "terminal/crafting_terminal_panel.json",
+              "terminal/template_terminal_panel.json")
 
     #: 控件实例名。与 `plate` 一起进 JSON —— 模板仍然只有
     #: `endernet_windows` 里那一份。

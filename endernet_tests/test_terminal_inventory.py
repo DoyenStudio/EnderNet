@@ -35,7 +35,7 @@ if ROOT not in sys.path:
 
 import testsupport  # noqa: E402  设置 sys.path，并提供引擎物品字典的实测形状
 
-from endernet_bp.endernet_scripts.endernet.client.ui.inventory_model import (  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.terminal.inventory_model import (  # noqa: E402
     InventoryModel, SLOT_COUNT, item_key,
 )
 
@@ -211,10 +211,10 @@ class ScreenTests(unittest.TestCase):
         # `setUpClass` 上炸，而全量跑时它可能被前一个文件缓存的模块盖住。
         ui.RegistToolDeltaScreen = (
             lambda name, is_proxy=False: lambda screen: screen)
-        prefix_path = "endernet.client.ui."
+        prefix_path = "endernet.client.ui.terminal."
         path = os.path.join(ROOT, "endernet_bp", "endernet_scripts", "endernet", "client", "ui")
         spec = importlib.util.spec_from_file_location(
-            prefix + prefix_path + "terminal_panel", os.path.join(path, "terminal_panel.py"))
+            prefix + prefix_path + "panel", os.path.join(path, "terminal", "panel.py"))
         cls.module = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, {ui.__name__: ui, item.__name__: item}):
             spec.loader.exec_module(cls.module)
@@ -247,7 +247,7 @@ class ScreenTests(unittest.TestCase):
 
     def test_json_grids_and_registration(self):
         ui = os.path.join(ROOT, "endernet_rp", "ui")
-        with open(os.path.join(ui, "endernet_terminal_inventory.json"), encoding="utf-8") as handle:
+        with open(os.path.join(ui, "endernet", "common", "terminal_inventory.json"), encoding="utf-8") as handle:
             data = json.load(handle)
         controls = dict(entry for control in data["inventory"]["controls"] for entry in control.items())
         for name, count, dimensions in (("backpack", 27, [9, 3]), ("hotbar", 9, [9, 1])):
@@ -261,7 +261,7 @@ class ScreenTests(unittest.TestCase):
             self.assertEqual(self.slot(data, name)["$item_collection_name"],
                              controls[name]["collection_name"])
         with open(os.path.join(ui, "_ui_defs.json"), encoding="utf-8") as handle:
-            self.assertIn("ui/endernet_terminal_inventory.json", json.load(handle)["ui_defs"])
+            self.assertIn("ui/endernet/common/terminal_inventory.json", json.load(handle)["ui_defs"])
 
     def test_each_slot_wrapper_overrides_every_variable_the_shared_template_uses(self):
         """两段的薄包装只覆盖变量，视觉结构一个字不动。
@@ -274,9 +274,9 @@ class ScreenTests(unittest.TestCase):
         引擎只是查不到绑定、安静地给假值——界面上什么都不会发生。
         """
         ui = os.path.join(ROOT, "endernet_rp", "ui")
-        with open(os.path.join(ui, "endernet_terminal_inventory.json"), encoding="utf-8") as handle:
+        with open(os.path.join(ui, "endernet", "common", "terminal_inventory.json"), encoding="utf-8") as handle:
             data = json.load(handle)
-        with open(os.path.join(ui, "endernet_windows.json"), encoding="utf-8") as handle:
+        with open(os.path.join(ui, "endernet", "common", "windows.json"), encoding="utf-8") as handle:
             shared = json.load(handle)["item_can_be_selected"]
         declared = set(key.split("|")[0] for key in shared if key.startswith("$"))
         #: `$item_*` 变量名与绑定名后缀**不是同一个拼法**（`$item_id_aux_binding`
@@ -319,7 +319,7 @@ class ScreenTests(unittest.TestCase):
         16×16 铺满（整块类物品是不透明的），标签在它下面就被数字被图标
         盖掉——这条同样是真机上看出来的。
         """
-        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet_windows.json"),
+        with open(os.path.join(ROOT, "endernet_rp", "ui", "endernet", "common", "windows.json"),
                   encoding="utf-8") as handle:
             shared = json.load(handle)["item_can_be_selected"]
         label = dict(entry for control in shared["controls"]

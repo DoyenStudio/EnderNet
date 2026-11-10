@@ -37,7 +37,7 @@ JSON 能确认双按有独立动作。双按间隔、第一次单按是否也派
 | 按住时显示进度与数量 | `progress_bar_renderer` 读 `#progress_bar_visible`、`#progress_bar_total_amount`、`#progress_bar_current_amount`。容器屏幕还挂载 `stack_splitting_overlay`，分别控制 Classic/Pocket 浮层，把 `#progressive_select_bar_ratio` 映射到 `#clip_ratio`，用 `#progressive_select_text` 显示数量。`ui_common.json:3374–3396, 3406–3444, 5607–5635, 6776–6779`。 |
 | 拆堆与拖动有各自的时间设置 | UI 调试区有 `#stack_splitting_trigger_time` 与 `#dwell_before_drag_time` 两个滑杆。这些声明引用引擎提供的值，源码中没有给出具体时长。`settings_sections/general_section.json:10045, 10579–10604`。 |
 
-全目录的 `mapping_type` 未出现 `long_pressed`、`held` 或 `released`，也没找到给任意按钮填一个时长就派发动作的原版例子。这里的 `pressed_control` 指定按住时显示的子控件。EnderNet 的样板面板已有“按住够久就打开数量窗”的实现。它记录格子与按下时刻，逐帧检查，达到阈值时触发一次，抬起时补判并避免再执行短按。这个阈值由项目自己设置。见项目 `endernet_bp/endernet_scripts/endernet/client/ui/template_panel.py:464–518`。
+全目录的 `mapping_type` 未出现 `long_pressed`、`held` 或 `released`，也没找到给任意按钮填一个时长就派发动作的原版例子。这里的 `pressed_control` 指定按住时显示的子控件。EnderNet 的样板面板已有“按住够久就打开数量窗”的实现。它记录格子与按下时刻，逐帧检查，达到阈值时触发一次，抬起时补判并避免再执行短按。这个阈值由项目自己设置。见项目 `endernet_bp/endernet_scripts/endernet/client/ui/terminal/template_panel.py:464–518`。
 
 **拖动有另一套原版例子。** 结构编辑器的 `input_panel` 将 `menu_select` 映射到 `button.turn_structure`，同时用它作 `gesture_tracking_button`。子控件 `3d_structure_renderer` 通过 `view` 从面板读 `#gesture_mouse_delta_x`、`#gesture_mouse_delta_y` 及来源。需要跟踪按住后的位移时，这个例子比拆堆进度条更直接。见 `structure_editor_screen.json:1875–1898, 1942–1957`。
 

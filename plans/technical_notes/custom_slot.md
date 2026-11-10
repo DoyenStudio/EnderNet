@@ -4,14 +4,14 @@
 > 引擎的集合绑定驱动，走共享模板 `endernet_windows.item_can_be_selected`
 > （见 [终端背包 UI](terminal_inventory_ui.md)）。原因不是风格：grid 的格子要到
 > **渲染**时才生成、滚动时还会被回收换出，按控件路径取到的引用会过期。
-> 文中那个示例类 `CustomSlotView` **曾是**生产代码（`client/ui/terminal_panel.py`），
+> 文中那个示例类 `CustomSlotView` **曾是**生产代码（`client/ui/terminal/panel.py`），
 > 现已删除——**它在这里只是写法示例，不要当成现成接口**。
 > 本模板仍被 `crafting_terminal_panel.json`、`template_terminal_panel.json` 与
-> `endernet_ui_common.json` 引用，下面的控件接口说明仍然有效。
+> `ui_common.json` 引用，下面的控件接口说明仍然有效。
 
 ## 定义与职责
 
-控件定义：`endernet_rp/ui/endernet_container_common.json` 中的 `endernet_container_common.custom_slot`。该文件已在 `_ui_defs.json` 注册。
+控件定义：`endernet_rp/ui/endernet/common/container_common.json` 中的 `endernet_container_common.custom_slot`。该文件已在 `_ui_defs.json` 注册。
 
 槽位大小为 18×18，物品渲染区域为 16×16。布局参考原版 `common.grid_item_for_inventory`，使用模组槽位底图和选中框，但没有原版背包集合绑定。所有显示状态由客户端 Python 主动更新。
 

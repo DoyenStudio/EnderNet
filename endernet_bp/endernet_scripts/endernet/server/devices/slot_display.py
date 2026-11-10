@@ -1,7 +1,7 @@
 # coding=utf-8
 """槽位模块显示的服务端一侧：从驱动器 / 内存槽的读数算出每槽的模型取值，变了就发。
 
-规则（取值、变量名、载荷）在 `common/slot_display.py`；本模块只做两件事：
+规则（取值、变量名、载荷）在 `common/channels/slot_display.py`；本模块只做两件事：
 
 1. **算**：驱动器看 `DriverState.occupied()` 里每块介质的型号
    （`StorageDriverStore.medium(id).model_id`），内存槽看 `MemorySlotState.entries`
@@ -18,9 +18,22 @@
 调用路径（帧尾 `advance` 与放置时的 `ensure`），在两处各插一个回调容易漏一处。
 这里每帧逐台比一次整数，代价是「设备台数次属性读」——与两份 `advance()`
 本来就要做的「遍历一遍状态表」同一量级。
+
+### 光缆面板（阶段 D）
+
+面板没有带 `revision` 的状态表，读数就是宿主光缆记录的 `config["parts"]`（`panels`
+回调，生产实现 `PanelService.display_values`）。光缆可能成千上万格，不能每帧逐格比，
+所以改成**有人说变了才比**：按面数据被改过的格子由启动层 `mark_panels`（钩在
+`CableStateKeeper.on_faces_changed` 与光缆的拆除上），下一次 `advance()` 比一次、变了才广播。
+
+- 只记「挂着面板」的格子上一次的读数（`_panel_sent`）；一面都没有的不记——外观初值就是
+  全空，长线光缆加载时不会为每一格各广播一次；
+- 单点请求回答了非空读数也记下（这一格没有待比的标记时才记：有标记说明读数刚变、还没
+  广播，记了会让其他已加载它的玩家错过这次变化）——否则「区块加载时就挂着面板、后来全
+  拆了」那一次会被当成「从没挂过」而不广播。
 """
 
-from ...common.slot_display import (
+from ...common.channels import (
     DISK,
     EMPTY,
     MEMORY,
@@ -31,12 +44,16 @@ from ...common.slot_display import (
     update_payload,
 )
 
+#: 面板读数「这一格没挂任何面板」的判据
+_NO_PANEL = EMPTY
+
 
 class SlotDisplayTracker(object):
     """槽位模块读数的发布者。由启动层持有。"""
 
-    def __init__(self, definitions, drivers, memory_slots, facing_of=None, publish=None):
-        # type: (object, object, object, object, object) -> None
+    def __init__(self, definitions, drivers, memory_slots, facing_of=None, publish=None,
+                 panels=None):
+        # type: (object, object, object, object, object, object) -> None
         self.definitions = definitions
         self.drivers = drivers
         self.memory_slots = memory_slots
@@ -52,7 +69,20 @@ class SlotDisplayTracker(object):
             DISK: model_items(definitions, DISK),
             MEMORY: model_items(definitions, MEMORY),
         }
-        self.stats = {"published": 0, "answered": 0, "unknown_requests": 0, "errors": 0}
+        #: 光缆面板（阶段 D）：`node_key -> 六面取值 | None`（不是显示面板的光缆为 None）。
+        self.panels = panels
+        #: `node_key.as_key() -> 上次发出去（或答出去）的六面取值`，只记挂着面板的格子
+        self._panel_sent = {}
+        #: 按面数据刚变过、等下一次 `advance()` 比一次的格子（`NodeKey`）
+        self._panel_marks = set()
+        self.stats = {
+            "published": 0,
+            "answered": 0,
+            "unknown_requests": 0,
+            "errors": 0,
+            "panels_published": 0,
+            "empty_panels": 0,
+        }
         self.last_error = ""
 
     # -- 计算 ----------------------------------------------------------
@@ -139,7 +169,66 @@ class SlotDisplayTracker(object):
         for key in [key for key in self._entries if key not in seen]:
             # 设备没了（拆除、换代次之前的那一份）：忘掉，免得表只增不减。
             del self._entries[key]
+        marks, self._panel_marks = self._panel_marks, set()
+        for node_key in sorted(marks, key=lambda item: item.as_key()):
+            try:
+                if self._advance_panels(node_key):
+                    published += 1
+            except Exception as error:
+                self.stats["errors"] += 1
+                self.last_error = "%s: %s" % (type(error).__name__, error)
         return published
+
+    # -- 光缆面板（阶段 D）----------------------------------------------
+
+    def mark_panels(self, node_key):
+        # type: (object) -> None
+        """这格光缆的面板可能变了（挂上、拆下、方块实体重读、光缆没了）：下一次 `advance()` 比一次。"""
+        self._panel_marks.add(node_key)
+
+    def _panel_values(self, node_key):
+        # type: (object) -> object
+        if self.panels is None:
+            return None
+        return self.panels(node_key)
+
+    def _advance_panels(self, node_key):
+        # type: (object) -> bool
+        key = node_key.as_key()
+        values = self._panel_values(node_key)
+        before = self._panel_sent.get(key)
+        if values is None:
+            # 光缆没了（或换成了别的方块）：忘掉
+            self._panel_sent.pop(key, None)
+            return False
+        values = tuple(values)
+        if before is None and not any(value != _NO_PANEL for value in values):
+            # 从没挂过、现在也没有：客户端的外观初值就是全空，不必广播
+            return False
+        if values == before:
+            return False
+        if any(value != _NO_PANEL for value in values):
+            self._panel_sent[key] = values
+        else:
+            self._panel_sent.pop(key, None)
+        if self._publish(update_payload(node_key, "", values)):
+            self.stats["panels_published"] += 1
+            return True
+        return False
+
+    def _answer_panels(self, node_key):
+        # type: (object) -> object
+        values = self._panel_values(node_key)
+        if values is None:
+            return None
+        values = tuple(values)
+        if not any(value != _NO_PANEL for value in values):
+            self.stats["empty_panels"] += 1
+            return None
+        if node_key not in self._panel_marks:
+            self._panel_sent[node_key.as_key()] = values
+        self.stats["answered"] += 1
+        return update_payload(node_key, "", values)
 
     def _advance_one(self, kind, state):
         # type: (str, object) -> bool
@@ -155,9 +244,13 @@ class SlotDisplayTracker(object):
 
     def _send(self, node_key, entry):
         # type: (object, dict) -> bool
+        return self._publish(
+            update_payload(node_key, self._facing(entry, node_key), entry["slots"]))
+
+    def _publish(self, payload):
+        # type: (dict) -> bool
         if self.publish is None:
             return False
-        payload = update_payload(node_key, self._facing(entry, node_key), entry["slots"])
         try:
             self.publish(payload)
         except Exception as error:
@@ -183,9 +276,18 @@ class SlotDisplayTracker(object):
             return update_payload(
                 node_key, self._facing(entry, node_key), self.slots_of(kind, state)
             )
+        if self._panel_values(node_key) is not None:
+            # 显示面板的光缆：一面都没挂的不回答（外观初值就是全空）
+            return self._answer_panels(node_key)
         self.stats["unknown_requests"] += 1
         return None
 
     def diagnostics(self):
         # type: () -> dict
-        return dict(self.stats, tracked=len(self._entries), last_error=self.last_error)
+        return dict(
+            self.stats,
+            tracked=len(self._entries),
+            panel_cables=len(self._panel_sent),
+            panel_marks=len(self._panel_marks),
+            last_error=self.last_error,
+        )

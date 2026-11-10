@@ -7,7 +7,7 @@
 
 from copy import deepcopy
 
-from ...common.resource_key import ResourceKey, _require_count
+from ...common.resources.key import ResourceKey, _require_count
 from ...common import settings
 
 

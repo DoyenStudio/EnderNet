@@ -1,7 +1,7 @@
 # coding=utf-8
 """JSON UI 速读工具：只打印开发需要的那几行。
 
-    python scripts/ui_dump.py tree endernet_rp/ui/assemble_chamber.json
+    python scripts/ui_dump.py tree endernet_rp/ui/endernet/crafting/assemble_chamber.json
     python scripts/ui_dump.py tree <文件> --root content/root_panel --layout
     python scripts/ui_dump.py tree <文件> --all --depth 2
     python scripts/ui_dump.py find <正则> [--file <文件>]
@@ -234,10 +234,7 @@ class Registry(object):
 
     def load_repo(self):
         # type: () -> None
-        for path in sorted(os.listdir(RP_UI)):
-            if not path.endswith(".json"):
-                continue
-            full = os.path.join(RP_UI, path)
+        for full in iter_all_files():
             try:
                 payload = read_json(full)
             except ValueError as error:
@@ -611,8 +608,16 @@ def command_tree(args):
 
 def iter_all_files():
     # type: () -> list
-    return [os.path.join(RP_UI, name) for name in sorted(os.listdir(RP_UI))
-            if name.endswith(".json")]
+    """本仓库的全部界面文件：递归枚举 `endernet_rp/ui/endernet/**/*.json`。
+
+    登记表 `ui/_ui_defs.json` 不是界面，不在其中。
+    """
+    out = []
+    for directory, dirnames, names in os.walk(os.path.join(RP_UI, "endernet")):
+        dirnames.sort()
+        out.extend(os.path.join(directory, name) for name in sorted(names)
+                   if name.endswith(".json"))
+    return out
 
 
 def matched_props(props, pattern):

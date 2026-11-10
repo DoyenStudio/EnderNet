@@ -161,7 +161,10 @@ class NetworkService(object):
 
     def note_domain_change(self, node, from_domain_ids, to_domain_ids):
         # type: (object, tuple, tuple) -> bool
-        """负载域归属变了，但分量没变（迁移通知的 `DOMAIN` 种类）。
+        """带宽域归属变了，但分量没变（迁移通知的 `DOMAIN` 种类）。
+
+        2026-11-09 网络改版后「带宽域」就是设备所在的线路（基带外露面为根，
+        见 `topology.LineTree`），接口名沿用旧称。
 
         单独一个入口而不是复用 `add_node`：域变了不等于设备换了，
         服务可能要迁移的是「这个节点占用了哪个域的多少槽位/容量」，
@@ -556,12 +559,12 @@ def default_builders():
     `_storage_builder()` / `_factory_builder()` 注入。
 
     **导入写在函数体里是有意的。** 本模块是契约层，`ticking.py`、`energy.py`、
-    `storage/service.py` 与 `crafting/executor.py` 是实现层，它们在模块级
+    `storage/service.py` 与 `crafting/orders/executor.py` 是实现层，它们在模块级
     import 本模块；若在这里也模块级 import 回去就成环了。而
     `default_builders()` 只在构造工厂/注册表时被调用，不在导入期，
     因此函数内导入不引入环——**不要把它提到模块顶部**。
     """
-    from ..crafting.executor import FactoryService
+    from ..crafting.orders import FactoryService
     from ..storage.service import StorageService
     from .energy import EnergyService
     from .ticking import SchedulerService

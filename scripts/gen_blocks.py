@@ -10,12 +10,26 @@
 **外观元数据（破坏耗时、挖掘等级、贴图名）放在本文件**，因为它们决定的是
 资源产出，不是运行时玩法数值——把两者混在一起会让 `definitions.py`
 背上大量与本模组规则无关的美术参数。
+
+**三种末影光缆**（`definitions.cables`，2026-11-09 网络改版阶段 C）另走一条路
+（`build_cable_json`）：不进 `BLOCK_LAYOUTS`，没有朝向；每面一个整数状态
+`endernet:side_<面>`（0 无、1 连接臂、2 面板，致密只取 0 / 1），骨骼按状态显示，
+每个排列一个 `netease:aabb` 外包盒。状态名、骨骼清单与显示条件（`cable_shapes.bone_visibility`）
+与部件尺寸都取自 `common/cable_shapes.py`——几何体（`gen_cable_models.py`）与运行时的
+精确交互用的是同一份。玻璃光缆整根 `blend`（填充面、芯另有材质实例，2026-11-10 美术重做），
+其余 `opaque`。
+
+**面板底座**（`definitions.part_holders`，2026-11-10 作者定案）也走这条路
+（`build_part_holder_json`）：每面只取 0 / 2（64 种），没有线芯与连接臂，方块网格
+借普通光缆的几何体、骨骼全部隐藏，外观全靠面板的方块实体外观；不进创造栏，
+自身不掉落（原版的空战利品表），面板由脚本掉。
 """
 
 import argparse
 import io
 import json
 import os
+import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -37,6 +51,7 @@ from endernet.common.definitions import (  # noqa: E402
     CATEGORY_ASSEMBLY,
     CATEGORY_BASEBAND,
     CATEGORY_BUS,
+    CATEGORY_CABLE,
     CATEGORY_CONTROLLER,
     CATEGORY_ENERGY_INPUT,
     CATEGORY_MEMORY,
@@ -51,10 +66,27 @@ from endernet.common.definitions import (  # noqa: E402
     PASSIVE_PORT_SLOT_COUNT,
     SIX_WAY_ITEM_PORTS,
     STORAGE_DRIVER_SLOT_COUNT,
+    QUARTERS_PER_UNIT,
     TEMPLATE_CONTAINER_SLOT_COUNT,
     DefinitionSet,
 )
-from endernet.common.slot_display import DISPLAY_DEVICES  # noqa: E402
+from endernet.common.channels.slot_display import DISPLAY_DEVICES  # noqa: E402
+from endernet.common.channels.cable_intent import WRENCH_ID  # noqa: E402
+from endernet.common.cable_shapes import (  # noqa: E402
+    HOLDER_SIDE_VALUES,
+    MATERIAL_FIBER,
+    MATERIAL_GLASS,
+    PANEL_ENTITY_ID,
+    bone_visibility,
+    cable_bones,
+    core_px_of,
+    geometry_id,
+    is_glass,
+    side_state,
+    side_values,
+    unit_hull,
+)
+from endernet.common.identity import FACING_NAMES  # noqa: E402
 
 #: 方块 JSON 的 format_version。与同环境可正常运行的 SkyblueTech 保持一致：
 #: `netease:tier` 与 traits 需要较新的格式。
@@ -62,6 +94,10 @@ FORMAT_VERSION = "1.21.70"
 
 #: 创造栏分类，需与 endernet_bp/netease_tab/endernet_category_config.json 的 name 一致
 CREATIVE_CATEGORY = "endernet"
+
+#: 不进创造栏的方块的分类（面板底座：没有对应物品，只由脚本放置）。写法照同环境可运行的
+#: SkyblueTech（`netease_blocks/liquid/skybluetech_flowing_brine.json` 的 `"category": "none"`）。
+HIDDEN_CATEGORY = "none"
 
 #: 方块的外观分三种，写法全部照同环境可运行的 SkyblueTech：
 #:
@@ -77,6 +113,8 @@ CREATIVE_CATEGORY = "endernet"
 #:   它不吃 `permutations` 里的朝向旋转，2026-11-05 加过一版，物品栏图标背面朝外；
 #:   改成转 180° 的物品几何体后正常，但 User 2026-11-06 判定那份是多余的模型，删掉。
 #:   （若哪天图标又不对：先看 `client_entity.hand_model_use_client_entity`。）
+#:   光缆不同：它没有朝向旋转，物品形态要显示一段直通而不是方块的默认状态（只有线芯），
+#:   所以光缆写 `item_visual`，指向 `gen_cable_models.py` 出的专用物品几何（2026-11-10）。
 LAYOUT_UNIFORM = "uniform"
 LAYOUT_FRONT = "front"
 LAYOUT_MODEL = "model"
@@ -212,28 +250,28 @@ TICKING = {
 #:   **这与上面两个流体口不矛盾**：那两台是 User 单独点名的占位，这台不是。
 #:   不要因为「都是流体」就顺手补齐。
 CONTAINERS = {
-    "endernet:storage_driver": ("storage_driver_ui.main", STORAGE_DRIVER_SLOT_COUNT),
-    "endernet:bus_item_io": ("bus_item_io_ui.main", PASSIVE_PORT_SLOT_COUNT),
-    "endernet:bus_template_io": ("bus_template_io_ui.main", TEMPLATE_CONTAINER_SLOT_COUNT),
+    "endernet:storage_driver": ("endernet_storage_driver.main", STORAGE_DRIVER_SLOT_COUNT),
+    "endernet:bus_item_io": ("endernet_bus_item_io.main", PASSIVE_PORT_SLOT_COUNT),
+    "endernet:bus_template_io": ("endernet_bus_template_io.main", TEMPLATE_CONTAINER_SLOT_COUNT),
     "endernet:assemble_chamber": (
-        "assemble_chamber_ui.main",
+        "endernet_assemble_chamber.main",
         ASSEMBLE_CHAMBER_SLOT_COUNT,
     ),
     "endernet:bus_item_input_io": (
-        "bus_item_input_io_ui.main",
+        "endernet_bus_item_input_io.main",
         ITEM_INTAKE_PORT_SLOT_COUNT,
     ),
     "endernet:bus_item_output_io": (
-        "bus_item_output_io_ui.main",
+        "endernet_bus_item_output_io.main",
         ITEM_OUTPUT_PORT_SLOT_COUNT,
     ),
-    "endernet:memory_slot": ("memory_slot_ui.main", MEMORY_SLOT_COUNT),
+    "endernet:memory_slot": ("endernet_memory_slot.main", MEMORY_SLOT_COUNT),
     "endernet:bus_fluid_input_io": (
-        "bus_fluid_input_io_ui.main",
+        "endernet_bus_fluid_input_io.main",
         FLUID_PORT_SLOT_COUNT,
     ),
     "endernet:bus_fluid_output_io": (
-        "bus_fluid_output_io_ui.main",
+        "endernet_bus_fluid_output_io.main",
         FLUID_PORT_SLOT_COUNT,
     ),
 }
@@ -263,6 +301,8 @@ DIRECTIONAL = {
 #: 破坏耗时（秒）。基带更脆，其余设备按机器处理。
 DESTROY_SECONDS = {
     CATEGORY_BASEBAND: 2.0,
+    # 光缆与基带同为传输介质，先照基带（阶段 C 的占位口径，待作者定）
+    CATEGORY_CABLE: 2.0,
 }
 DEFAULT_DESTROY_SECONDS = 3.0
 
@@ -270,6 +310,7 @@ DEFAULT_DESTROY_SECONDS = 3.0
 DIGGER = "pickaxe"
 TIER_LEVEL = {
     CATEGORY_BASEBAND: 1,
+    CATEGORY_CABLE: 1,
     CATEGORY_CONTROLLER: 2,
     CATEGORY_PROCESSOR: 2,
 }
@@ -412,19 +453,40 @@ def plural_dumps(payload):
     return json.dumps(payload, indent=4, ensure_ascii=False) + "\n"
 
 
+#: 缩进写法里一个纯数字数组（`[\n 0.375,\n 1.0\n]`）
+_NUMBER_ARRAY = re.compile(r"\[\s+(-?[0-9.]+(?:,\s+-?[0-9.]+)*)\s+\]")
+
+
+def compact_dumps(payload):
+    """同 `plural_dumps`，只把纯数字数组写在一行（`[0.375, 0.375, 0.375]`）。
+
+    给光缆方块用：729 个排列各有两个碰撞盒，逐个数字占一行的话一个文件近 1 MB，
+    写成一行小一半，逐条也好看。其余方块仍用 `plural_dumps`，不动已有产物。
+    """
+    return _NUMBER_ARRAY.sub(
+        lambda match: "[" + ", ".join(part.strip() for part in match.group(1).split(",")) + "]",
+        plural_dumps(payload),
+    )
+
+
+def mining_components(category):
+    # type: (str) -> dict
+    """破坏耗时与挖掘等级：设备与光缆共用同一套口径（按分类查表）。"""
+    return {
+        "minecraft:destructible_by_mining": {
+            "seconds_to_destroy": DESTROY_SECONDS.get(category, DEFAULT_DESTROY_SECONDS)
+        },
+        "netease:tier": {
+            "destroy_special": True,
+            "digger": DIGGER,
+            "level": TIER_LEVEL.get(category, DEFAULT_TIER_LEVEL),
+        },
+    }
+
+
 def build_block_json(device_id, definition):
     """生成单个方块的行为包定义。"""
-    category = definition.category
-    components = {}
-
-    components["minecraft:destructible_by_mining"] = {
-        "seconds_to_destroy": DESTROY_SECONDS.get(category, DEFAULT_DESTROY_SECONDS)
-    }
-    components["netease:tier"] = {
-        "destroy_special": True,
-        "digger": DIGGER,
-        "level": TIER_LEVEL.get(category, DEFAULT_TIER_LEVEL),
-    }
+    components = mining_components(definition.category)
     layout = layout_of(device_id)
     if layout != LAYOUT_UNIFORM and not DIRECTIONAL.get(device_id):
         raise ValueError(
@@ -508,6 +570,292 @@ def build_block_json(device_id, definition):
     }
 
 
+# -- 末影光缆（13 §2、§5）--------------------------------------------------
+
+
+def cable_texture(device_id):
+    # type: (str) -> tuple
+    """光缆的模型贴图 `(图集键, 路径)`，与模型方块同一约定：`textures/endernet/models/<短名>`、
+    图集键 `endernet:<短名>_model`。贴图本身由 `gen_cable_models.py` 生成。"""
+    base = short_name(device_id)
+    return ("endernet:" + base + "_model", MODEL_TEXTURE_DIR + "/" + base)
+
+
+def cable_geometry_file(device_id):
+    # type: (str) -> str
+    return os.path.join(RP_ROOT, "models", "blocks", short_name(device_id) + ".geo.json")
+
+
+def side_combinations(values):
+    # type: (tuple) -> list
+    """每面取 `values` 之一的全部排列：每项 `{面名: 状态值}`，按 `FACING_NAMES` 逐位、
+    取值从小到大枚举。"""
+    combinations = [{}]
+    for face in FACING_NAMES:
+        combinations = [
+            dict(sides, **{face: value})
+            for sides in combinations
+            for value in values
+        ]
+    return combinations
+
+
+def cable_side_combinations(accepts_parts):
+    # type: (bool) -> list
+    """光缆的全部排列：能挂面板的光缆 3⁶ = 729 种，致密 2⁶ = 64 种（13 §2）。"""
+    return side_combinations(side_values(accepts_parts))
+
+
+def cable_condition(sides):
+    # type: (dict) -> str
+    """一个排列的条件：六面状态全部写明（`&&` 连接）。"""
+    return " && ".join(
+        "q.block_state('%s') == %d" % (side_state(face), sides[face]) for face in FACING_NAMES
+    )
+
+
+def cable_aabb(device_id, sides):
+    # type: (str, dict) -> dict
+    """`netease:aabb`：线芯 + 状态 1 的臂 + 状态 2 的面板的外包盒，碰撞与选取同一个盒（照蔚蓝）。
+
+    面板底座也用它：`core_px_of` 给 None，外包盒只算面板框与背板，一块面板都没有时是
+    `cable_shapes.EMPTY_HULL_PX` 的居中小盒。
+    """
+    low, high = unit_hull(core_px_of(device_id), sides)
+    box = {"min": list(low), "max": list(high)}
+    return {"collision": box, "clip": dict(box)}
+
+
+def cable_material_instances(device_id):
+    # type: (str) -> dict
+    """光缆的 `minecraft:material_instances`，三个实例同一张模型贴图。
+
+    玻璃光缆整根 `blend`：一个方块的所有材质实例必须同一种 `render_method`（BedrockWiki），
+    外框与芯靠贴图 alpha = 255 显得不透明。几何体里逐面写的实例（`cable_shapes` 的
+    `MATERIAL_GLASS` 填充面、`MATERIAL_FIBER` 芯）在这里另配：填充不做环境光遮蔽，芯另外
+    不随朝向变暗（各方向一样亮，像在发光）。其余光缆 `opaque`，只写 `*`。
+    """
+    texture = cable_texture(device_id)[0]
+    if not is_glass(device_id):
+        return {"*": {"render_method": "opaque", "texture": texture}}
+    return {
+        "*": {"render_method": "blend", "texture": texture},
+        MATERIAL_GLASS: {"render_method": "blend", "texture": texture, "ambient_occlusion": False},
+        MATERIAL_FIBER: {"render_method": "blend", "texture": texture, "face_dimming": False,
+                         "ambient_occlusion": False},
+    }
+
+
+def cable_tip(definition, definitions):
+    # type: (object, object) -> str
+    """光缆的方块说明。带宽、能否挂面板与扳手的名字都取自定义表，不在这里另写一份。"""
+    units = definition.bandwidth.capacity_quarters / float(QUARTERS_PER_UNIT)
+    parts = "可在各面挂终端面板" if definition.accepts_parts else "不能挂终端面板"
+    wrench = definitions.get_tool(WRENCH_ID).label
+    return "每格最多传输 %gu 网络带宽，%s。\n§7%s右键可切断或恢复某一面，潜行右键拆下。" % (
+        units, parts, wrench)
+
+
+def build_cable_json(device_id, definition, definitions):
+    """一种光缆的行为包定义（照蔚蓝管道：几何体 + 骨骼显示 + 每个排列一个碰撞盒）。
+
+    - 方块实体：拓扑与方块状态要从方块实体数据读切断面与面板（`endernet:cuts` /
+      `endernet:parts`），区块加载时也靠方块实体名单发现它；不逐 tick。
+    - `netease:neighborchanged_sendto_script`：邻居变化要通知脚本（运行时过滤
+      `from == to`：改状态本身也会触发邻居事件）。
+    - 骨骼显示：每根骨骼一条 molang（`cable_shapes.bone_visibility`，只用 `side_<面>`）。
+    - 渲染：不挡光；玻璃整根 `blend`，其余 `opaque`（`cable_material_instances`）。
+    - 掉落是方块本身（不写 loot，与其它方块相同）。
+    """
+    accepts_parts = definition.accepts_parts
+    if core_px_of(device_id) is None:
+        # `cable_aabb` 对没有线芯的方块按面板底座算盒；光缆漏登记线芯时在这里拦下
+        raise KeyError("%s 没有在 cable_shapes.CORE_PX 里登记线芯边长" % (device_id,))
+    components = mining_components(definition.category)
+    components["minecraft:geometry"] = {
+        "identifier": geometry_id(short_name(device_id)),
+        "bone_visibility": bone_visibility(device_id, accepts_parts),
+    }
+    # 物品形态：一段直通（`gen_cable_models.build_cable_item`），材质与方块同一套
+    components["minecraft:item_visual"] = {
+        "geometry": geometry_id(short_name(device_id) + "_item"),
+        "material_instances": cable_material_instances(device_id),
+    }
+    components["minecraft:light_dampening"] = 0
+    components["minecraft:material_instances"] = cable_material_instances(device_id)
+    # 默认（全 0）就是只有线芯；每个排列另写自己的盒
+    components["netease:aabb"] = cable_aabb(device_id, {})
+    components["netease:block_entity"] = {"tick": False}
+    components["netease:listen_block_remove"] = {"value": True}
+    components["netease:neighborchanged_sendto_script"] = {"value": True}
+    components["netease:custom_tips"] = {"value": "\n§7" + cable_tip(definition, definitions)}
+    description = {
+        "category": CREATIVE_CATEGORY,
+        "identifier": device_id,
+        "states": dict(
+            (side_state(face), list(side_values(accepts_parts))) for face in FACING_NAMES
+        ),
+    }
+    permutations = [
+        {
+            "condition": cable_condition(sides),
+            "components": {"netease:aabb": cable_aabb(device_id, sides)},
+        }
+        for sides in cable_side_combinations(accepts_parts)
+    ]
+    return {
+        "format_version": FORMAT_VERSION,
+        "minecraft:block": {
+            "components": components,
+            "description": description,
+            "permutations": permutations,
+        },
+    }
+
+
+def build_cable_blocks_entry(definition):
+    # type: (object) -> dict
+    """资源包 blocks.json 里一种光缆（或面板底座）的条目。
+
+    模型方块不写 textures（同 `build_blocks_json`）。能挂面板的两种绑定面板的方块实体外观
+    （照驱动器的写法，手持仍用方块几何）；致密不挂面板，不绑。面板底座 `accepts_parts`
+    为真，同样绑定——它的外观全靠这个实体。
+    """
+    entry = {"sound": "stone"}
+    if definition.accepts_parts:
+        entry["client_entity"] = {
+            "hand_model_use_client_entity": False,
+            "identifier": PANEL_ENTITY_ID,
+        }
+    return entry
+
+
+# -- 面板底座（2026-11-10 作者定案）--------------------------------------------
+
+#: 面板底座借这种光缆的几何体与模型贴图。方块网格总得有一个几何体（不写的话引擎把
+#: `material_instances` 的贴图画满一整块），骨骼全部隐藏后它什么也不画；贴图键给破坏粒子
+#: 与引擎一个已登记的值，图集不必为底座新增条目。借普通光缆（`opaque`、21 根骨骼）：
+#: 玻璃光缆 2026-11-10 起是 `blend` + 逐面材质实例、73 根骨骼，不适合拿来什么都不画。
+HOLDER_LOOKS_LIKE = "endernet:ender_cable"
+
+#: 面板底座的战利品表：原版行为包自带的空表 `loot_tables/empty.json`（内容 `{}`，原版的
+#: 玩家、NPC、tripod_camera 也指向它）。2026-11-10 用 mcdk 的 `assets empty --bp` 核实原版
+#: 有这个文件，因此本模组不另写一份。底座自身不掉落，面板由脚本掉。
+EMPTY_LOOT_TABLE = "loot_tables/empty.json"
+
+
+def holder_bone_visibility(definitions):
+    # type: (object) -> dict
+    """面板底座的骨骼显示：借来的几何体里**全部**骨骼一律隐藏（直通、连接臂、短接线、空面）。
+
+    骨骼清单取 `cable_shapes.cable_bones`（几何体就是照它出的），不在这里另写骨骼名。
+    取值写布尔 `false` 而不是 Molang `"false"`：`bone_visibility` 最早就只收布尔，Molang
+    条件是后来加的扩展；这里是与方块状态无关的常量，用不着按排列求值。几何体里的骨骼都是
+    顶层骨骼（没有 `parent`），逐个写明，不依赖「父骨骼隐藏时子骨骼跟着隐藏」。
+    骨骼清单与几何体文件逐个对得上由 `test_cable_blocks` 检查。
+    """
+    looks = definitions.get(HOLDER_LOOKS_LIKE)
+    bones = cable_bones(HOLDER_LOOKS_LIKE, looks.accepts_parts)
+    return dict((bone.name, False) for bone in bones)
+
+
+def build_part_holder_json(device_id, definition, definitions):
+    """面板底座的行为包定义（照光缆：每面一个整数状态、每个排列一个碰撞盒）。
+
+    - 状态 `endernet:side_<面>` 每面只取 0 / 2（`HOLDER_SIDE_VALUES`，2⁶ = 64 种），没有连接臂；
+    - 碰撞盒是面板框与背板的外包盒（`unit_hull(None, sides)`），一块面板都没有时是小盒；
+    - 方块网格什么也不画（`holder_bone_visibility`），外观全靠资源包 `blocks.json` 绑定的
+      面板方块实体外观（`build_cable_blocks_entry`，与能挂面板的光缆同一条）；
+    - 挖掘耗时与等级照光缆（`mining_components(CATEGORY_CABLE)`）：底座上的面板与光缆上的
+      面板是同一种东西，挖起来不该一快一慢，也不为它在 `DESTROY_SECONDS` / `TIER_LEVEL`
+      另立一行；
+    - 方块实体、移除事件、邻居事件与光缆同一套（同一个 `CableStateKeeper` 维护状态）；
+    - 不进创造栏（`HIDDEN_CATEGORY`），自身不掉落（`EMPTY_LOOT_TABLE`）；不写方块说明——
+      没有对应物品，玩家拿不到它。
+    """
+    if not definition.accepts_parts:
+        raise ValueError("%s 是面板底座却不能挂面板" % (device_id,))
+    if HOLDER_LOOKS_LIKE not in definitions.cables:
+        raise KeyError("面板底座借外观的 %s 不在光缆表里" % (HOLDER_LOOKS_LIKE,))
+    components = mining_components(CATEGORY_CABLE)
+    components["minecraft:geometry"] = {
+        "identifier": geometry_id(short_name(HOLDER_LOOKS_LIKE)),
+        "bone_visibility": holder_bone_visibility(definitions),
+    }
+    components["minecraft:light_dampening"] = 0
+    components["minecraft:loot"] = EMPTY_LOOT_TABLE
+    components["minecraft:material_instances"] = cable_material_instances(HOLDER_LOOKS_LIKE)
+    # 默认（全 0）是一块面板都没有的小盒；每个排列另写自己的盒
+    components["netease:aabb"] = cable_aabb(device_id, {})
+    components["netease:block_entity"] = {"tick": False}
+    components["netease:listen_block_remove"] = {"value": True}
+    components["netease:neighborchanged_sendto_script"] = {"value": True}
+    description = {
+        "category": HIDDEN_CATEGORY,
+        "identifier": device_id,
+        "states": dict(
+            (side_state(face), list(HOLDER_SIDE_VALUES)) for face in FACING_NAMES
+        ),
+    }
+    permutations = [
+        {
+            "condition": cable_condition(sides),
+            "components": {"netease:aabb": cable_aabb(device_id, sides)},
+        }
+        for sides in side_combinations(HOLDER_SIDE_VALUES)
+    ]
+    return {
+        "format_version": FORMAT_VERSION,
+        "minecraft:block": {
+            "components": components,
+            "description": description,
+            "permutations": permutations,
+        },
+    }
+
+
+# -- 面板物品的展示方块（2026-11-10 作者定方案 B）---------------------------------
+
+#: 面板图集在地形图集里的键。图集文件由 `gen_cable_models.py` 生成（方块实体外观也用它）。
+PANEL_ITEM_TEXTURE_KEY = "endernet:ender_cable_panels"
+
+
+def panel_item_texture():
+    # type: () -> tuple
+    """面板图集 `(图集键, 路径)`。路径取自 `gen_cable_models`（图集是它出的）；它在模块顶层
+    导入本模块，所以这里用时才导入。"""
+    from gen_cable_models import PANEL_TEXTURE_DIR, PANELS
+    return PANEL_ITEM_TEXTURE_KEY, PANEL_TEXTURE_DIR + "/" + PANELS
+
+
+def build_part_item_json(part_id):
+    """一种面板物品的展示方块：只为让物品栏、手持、掉落物显示 3D 面板而注册，玩家放不下它。
+
+    基岩版普通物品在物品栏里只能画 2D 图标（`.claude/15` §2），所以四种 `*_terminal_part`
+    改成同名方块，物品形态就是方块形态：
+    - 几何 `geometry.endernet.<面板短名>`（`gen_cable_models.build_panel_item`：居中、屏幕朝南）。
+      没有方块状态、没有排列，不写 `item_visual`；
+    - 材质：面板图集，`alpha_test`（对应方块实体外观的 `entity_alphatest`）；
+    - 进 `endernet` 创造栏；不写说明（作者 2026-11-10 删掉了面板的冗余提示）；
+    - 放置由服务端 `ServerEntityTryPlaceBlockEvent` 拦掉（`server/adapters/events.py`），挂面板走
+      客户端接管的意图；万一被放下也不掉东西（`EMPTY_LOOT_TABLE`），不挡光。
+    """
+    return {
+        "format_version": FORMAT_VERSION,
+        "minecraft:block": {
+            "components": {
+                "minecraft:geometry": geometry_id(short_name(part_id)),
+                "minecraft:light_dampening": 0,
+                "minecraft:loot": EMPTY_LOOT_TABLE,
+                "minecraft:material_instances": {
+                    "*": {"render_method": "alpha_test", "texture": PANEL_ITEM_TEXTURE_KEY},
+                },
+            },
+            "description": {"category": CREATIVE_CATEGORY, "identifier": part_id},
+        },
+    }
+
+
 def build_blocks_json(definitions):
     """资源包的 blocks.json：方块标识 -> 贴图。
 
@@ -539,6 +887,12 @@ def build_blocks_json(definitions):
         else:
             entry["textures"] = faces["*"]
         payload[device_id] = dict(sorted(entry.items(), key=lambda kv: kv[0] != "textures"))
+    for device_id in sorted(definitions.cables) + sorted(definitions.part_holders):
+        payload[device_id] = build_cable_blocks_entry(definitions.get(device_id))
+    for part_id in sorted(definitions.parts):
+        # 面板展示方块：模型方块，不写 textures（同上）
+        payload[part_id] = {"sound": "stone"}
+    payload = dict(sorted(payload.items()))
     payload["format_version"] = [1, 1, 0]
     return payload
 
@@ -548,6 +902,8 @@ def build_terrain_texture(existing, definitions):
 
     设备 / 模型目录下的条目**不沿用旧值**：换布局后旧键留在图集里会指向
     已删除的文件，游戏里不报错、`test_every_referenced_texture_file_exists` 却会红。
+
+    面板底座不新增条目：它用的是 `HOLDER_LOOKS_LIKE` 那种光缆的键，已在光缆一节登记。
     """
     prefixes = (DEVICE_TEXTURE_DIR + "/", MODEL_TEXTURE_DIR + "/")
     texture_data = dict(
@@ -558,6 +914,11 @@ def build_terrain_texture(existing, definitions):
     for device_id in sorted(definitions.devices):
         for key, path in textures_of(device_id):
             texture_data[key] = {"textures": path}
+    for device_id in sorted(definitions.cables):
+        key, path = cable_texture(device_id)
+        texture_data[key] = {"textures": path}
+    key, path = panel_item_texture()
+    texture_data[key] = {"textures": path}
     payload = dict(existing)
     payload["resource_pack_name"] = existing.get("resource_pack_name", "vanilla")
     payload["texture_name"] = existing.get("texture_name", "atlas.terrain")
@@ -572,8 +933,8 @@ def read_json(path, default=None):
         return json.load(handle)
 
 
-def write_json(path, payload, check_only):
-    text = plural_dumps(payload)
+def write_json(path, payload, check_only, dumps=plural_dumps):
+    text = dumps(payload)
     if os.path.isfile(path):
         with io.open(path, "r", encoding="utf-8") as handle:
             if handle.read() == text:
@@ -601,6 +962,23 @@ def missing_textures(definitions):
             geo = model_geometry_file(device_id)
             if not os.path.isfile(geo):
                 out.append((device_id, geo, MODELS[device_id][0]))
+    for device_id in sorted(definitions.cables):
+        key, path = cable_texture(device_id)
+        full = os.path.join(RP_ROOT, *(path + ".png").split("/"))
+        if not os.path.isfile(full):
+            out.append((device_id, full, key))
+        geo = cable_geometry_file(device_id)
+        if not os.path.isfile(geo):
+            out.append((device_id, geo, geometry_id(short_name(device_id))))
+    for device_id in sorted(definitions.part_holders):
+        # 底座借 `HOLDER_LOOKS_LIKE` 的几何体与贴图；光缆缺了也在这里替底座报一次
+        key, path = cable_texture(HOLDER_LOOKS_LIKE)
+        full = os.path.join(RP_ROOT, *(path + ".png").split("/"))
+        if not os.path.isfile(full):
+            out.append((device_id, full, key))
+        geo = cable_geometry_file(HOLDER_LOOKS_LIKE)
+        if not os.path.isfile(geo):
+            out.append((device_id, geo, geometry_id(short_name(HOLDER_LOOKS_LIKE))))
     return out
 
 
@@ -619,6 +997,25 @@ def main(argv=None):
         if write_json(path, build_block_json(device_id, definition), args.check):
             changed.append(os.path.relpath(path, REPO))
 
+    for device_id in sorted(definitions.cables):
+        definition = definitions.get(device_id)
+        path = os.path.join(BP_BLOCKS, block_file_name(device_id))
+        payload = build_cable_json(device_id, definition, definitions)
+        if write_json(path, payload, args.check, dumps=compact_dumps):
+            changed.append(os.path.relpath(path, REPO))
+
+    for device_id in sorted(definitions.part_holders):
+        definition = definitions.get(device_id)
+        path = os.path.join(BP_BLOCKS, block_file_name(device_id))
+        payload = build_part_holder_json(device_id, definition, definitions)
+        if write_json(path, payload, args.check, dumps=compact_dumps):
+            changed.append(os.path.relpath(path, REPO))
+
+    for part_id in sorted(definitions.parts):
+        path = os.path.join(BP_BLOCKS, block_file_name(part_id))
+        if write_json(path, build_part_item_json(part_id), args.check):
+            changed.append(os.path.relpath(path, REPO))
+
     if write_json(RP_BLOCKS, build_blocks_json(definitions), args.check):
         changed.append(os.path.relpath(RP_BLOCKS, REPO))
 
@@ -627,6 +1024,10 @@ def main(argv=None):
         changed.append(os.path.relpath(RP_TERRAIN, REPO))
 
     missing = missing_textures(definitions)
+    block_count = (
+        len(definitions.devices) + len(definitions.cables) + len(definitions.part_holders)
+        + len(definitions.parts)
+    )
 
     if args.check:
         if changed:
@@ -634,10 +1035,10 @@ def main(argv=None):
             for path in changed:
                 print("  " + path)
             return 1
-        print("方块 JSON 与资源映射已是最新（%d 个方块）" % len(definitions.devices))
+        print("方块 JSON 与资源映射已是最新（%d 个方块）" % block_count)
         return 0
 
-    print("已生成 %d 个方块定义，更新 %d 个文件" % (len(definitions.devices), len(changed)))
+    print("已生成 %d 个方块定义，更新 %d 个文件" % (block_count, len(changed)))
     if missing:
         print("仍缺文件（%d 个）；贴图可先用 scripts/gen_device_textures.py 补占位：" % len(missing))
         for device_id, path, key in missing:

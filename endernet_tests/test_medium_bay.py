@@ -18,14 +18,14 @@ import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
 
-from endernet.common import medium_item
+from endernet.common.resources import medium_item
 from endernet.common.definitions import DefinitionSet
 from endernet.common.identity import NodeKey
-from endernet.common.item_codec import item_key_from_dict
-from endernet.common.medium_item import CARRIER_VERSION
+from endernet.common.resources.item_codec import item_key_from_dict
+from endernet.common.resources.medium_item import CARRIER_VERSION
 from endernet.common.protocol import Reason
-from endernet.common.resource_key import ResourceKey
-from endernet.server.adapters.containers import ContainerEntry, FakeContainer
+from endernet.common.resources.key import ResourceKey
+from endernet.server.adapters.containers.contract import ContainerEntry, FakeContainer
 from endernet.server.devices.registry import DeviceRegistry
 from endernet.server.devices.storage_driver import (
     DRIVER_DEVICE_ID,
