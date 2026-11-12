@@ -18,6 +18,8 @@
 滑了多远，并摆跟手的图标，不和回调坐标混用。
 """
 
+from ..shared.item_count import format_item_count
+
 from ..shared import slot_layout
 
 #: 大数字进度条里填充条的宽度（UI 像素），滑过这么远 = 整叠（原版 `stack_progress_bar_fill` 64×10）。
@@ -254,7 +256,7 @@ class TouchGesture(object):
             icon.SetVisible(key is not None)
         if label is not None:
             if key is not None and count > 1:
-                label.asLabel().SetText(str(count))
+                label.asLabel().SetText(format_item_count(count, hide_one=False))
             label.SetVisible(key is not None and count > 1)
 
     def _show_split(self, state):
@@ -283,7 +285,7 @@ class TouchGesture(object):
                 if fill is not None:
                     fill.asImage().SetSpriteClipRatio(1.0 - float(count) / total)
                 if label is not None:
-                    label.asLabel().SetText(str(count))
+                    label.asLabel().SetText(format_item_count(count, hide_one=False))
             variant.SetVisible(name == shown)
         overlay.SetVisible(True)
 

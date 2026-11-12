@@ -52,6 +52,7 @@
 from functools import partial
 
 from .....tooldelta.ui import Binder, RegistToolDeltaScreen
+from ..shared.item_count import format_item_count
 from ..shared import slot_layout, stack_size
 from ..universal_importer import config as universal_importer_config
 from ..windows.number_set import WINDOW_ATTRIBUTE as NUMBER_WINDOW_ATTRIBUTE
@@ -348,11 +349,11 @@ class TemplateView(object):
 
     def count_text(self, surface, index):
         # type: (str, object) -> str
-        """数量标签。**1 留空**（同终端列表与背包）：满屏的「1」只是噪声。"""
+        """有效物品槽使用统一的千进位数量标签；空槽留空。"""
         cell = self.screen.slot_input.preview_cell(surface, index) or self.cell(surface, index)
-        if cell is None or cell["count"] <= 1:
+        if cell is None:
             return ""
-        return str(cell["count"])
+        return format_item_count(cell["count"])
 
     def is_selected(self, surface, index):
         # type: (str, object) -> bool

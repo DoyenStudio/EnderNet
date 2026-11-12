@@ -447,7 +447,7 @@ class PanelFixture(unittest.TestCase):
         self.client = NetworkClient(port=self.port)
         self.cache = TerminalCache(client=self.client)
         self.screen = Screen()
-        # 三行的**可用数各占一种情形**：36（正常显示）、1（留空）、0（留空）。
+        # 三行的**可用数各占一种情形**：36（正常显示）、1（留空）、0（显示）。
         # 只放「正常显示」的话，`<= 1` 那一支在离线永远是绿的。
         self._batch_serial = 0
         self.feed(SessionReady(7, SNAPSHOT_VERSION))
@@ -674,11 +674,11 @@ class TestBindings(PanelFixture):
         """
         stone = self.names().index("minecraft:stone")
         self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", stone), "36")
-        # 可用数 ≤ 1 时留空：满屏的「1」只是噪声。
+        # 可用数 1 隐藏，0 原样显示。
         sand = self.names().index("minecraft:sand")
         self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", sand), "")
         dirt = self.names().index("minecraft:dirt")
-        self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", dirt), "")
+        self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", dirt), "0")
 
     def test_unavailable_mask_follows_the_session(self):
         self.assertFalse(self.bind(BinderStub.BF_BindBool, "unavailable"))
@@ -705,7 +705,7 @@ class TestBindings(PanelFixture):
 class TestPatternMarkedCounts(PanelFixture):
     """带样板的条目：`stored+` / `+`（契约第 1 节）。
 
-    无样板的条目**一条都不改**——它们仍按可用数显示，可用数 ≤ 1 留空。
+    无样板的条目**一条都不改**——它们仍按可用数显示，可用数 1 留空，0 显示。
     两套口径混在一起是这一步最容易出的错：把 `+` 的口径套到所有行上，
     表现是满屏「0+」；把可用数的口径套到样板行上，表现是零库存的样板行
     看起来跟空行一样，玩家根本不知道能下单。
@@ -749,6 +749,15 @@ class TestPatternMarkedCounts(PanelFixture):
             self.cell(BinderStub.BF_BindString, "item_count", stone), "1+"
         )
 
+    def test_large_counts_keep_stock_and_available_semantics(self):
+        self.snapshot([(STONE, 1000000, 1, True), (SAND, 1000000, 1, False)])
+        self.cache.tick()
+        self.view.refresh()
+        stone = self.names().index("minecraft:stone")
+        sand = self.names().index("minecraft:sand")
+        self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", stone), "1.0M+")
+        self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", sand), "999.9k")
+
     def test_a_pattern_only_row_shows_a_bare_plus(self):
         """零库存有样板：`+`，**不是 `0+`**，而且这一行必须还在。"""
         sand = self.names().index("minecraft:sand")
@@ -758,19 +767,19 @@ class TestPatternMarkedCounts(PanelFixture):
         self.assertTrue(self.cell(BinderStub.BF_BindBool, "has_item", sand))
 
     def test_rows_without_a_pattern_keep_the_available_number(self):
-        """无样板的老口径一字未改：可用数 5 显示 5，可用数 ≤ 1 留空。"""
+        """无样板的老口径一字未改：可用数 5 显示 5，可用数 1 留空，0 显示。"""
         dirt = self.names().index("minecraft:dirt")
         self.assertEqual(
             self.cell(BinderStub.BF_BindString, "item_count", dirt), "5"
         )
-        # 夹具原有的三行里 SAND 可用数为 1、DIRT 可用数为 0，都留空。
+        # 夹具原有的三行里 SAND 可用数为 1、DIRT 可用数为 0，分别显示空串与 0。
         self.snapshot([(SAND, 1, 0, False), (DIRT, 2, 2, False)])
         self.cache.tick()
         self.view.refresh()
         sand = self.names().index("minecraft:sand")
         dirt = self.names().index("minecraft:dirt")
         self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", sand), "")
-        self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", dirt), "")
+        self.assertEqual(self.cell(BinderStub.BF_BindString, "item_count", dirt), "0")
 
     def test_a_pattern_only_row_sorts_as_zero_and_survives_a_counting_sort(self):
         """`+` 单独存在的行按 0 排序，不能因为没有数量就被排到最后之外。"""

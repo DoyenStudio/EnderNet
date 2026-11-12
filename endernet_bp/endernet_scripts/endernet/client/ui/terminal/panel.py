@@ -46,6 +46,7 @@ except ImportError:
     # 是同一手法。
     OnKeyPressInGame = None
 from ..windows.lifecycle import close_windows
+from ..shared.item_count import format_item_count
 from ..shared import flying_item, slot_layout, stack_size
 from ..shared.button_utils import button_content_paths
 from ..order_preview import window as order_preview_window
@@ -278,7 +279,7 @@ def _bind_recipe_cell(cell, field, flag):
             return bool(entry and entry.get("name"))
         if field == "count":
             count = entry.get("count", 0) if entry else 0
-            return str(count) if count > 1 else ""
+            return format_item_count(count) if entry else ""
         return stack_size.id_aux(entry["name"], entry.get("aux") or 0) if entry else 0
     name = "%s_%d" % (field, cell)
     read_cell.__name__ = "recipe_" + name
@@ -593,14 +594,13 @@ class TerminalPanelBase(order_preview_bindings.OrderPreviewBindingsMixin,
 
     def _slot_item_count(self, segment, index):
         # type: (tuple, object) -> str
-        """堆叠数标签。**1 与 0 都留空**（同上半屏的 `get_item_count`）：
-        满屏的「1」只是噪声。"""
+        """有效物品槽显示统一数量标签，空槽留空。"""
         preview = self.slot_input.preview_cell("bag", self._slot_index(segment, index))
         if preview:
-            return str(preview["count"]) if preview["count"] > 1 else ""
+            return format_item_count(preview["count"])
         entry = self._slot_entry(segment, index)
         count = entry.count() if entry is not None else 0
-        return str(count) if count > 1 else ""
+        return format_item_count(count) if entry else ""
 
     # -- 每帧与点击 ----------------------------------------------------
 
@@ -1146,13 +1146,13 @@ class TerminalListView(object):
         # type: (object) -> str
         """数量标签。**有样板与没样板是两套口径**（契约第 1 节）。
 
-        - **有样板**：`stored` 的十进制文本后加 `+`（`256+`，1 个也是 `1+`）；
+        - **有样板**：`stored` 的缩写文本后加 `+`（`256+`，1 个也是 `1+`）；
           `stored` 为 0 时只显示 `+`，**不显示 `0+`**。用的是 `stored`
           而不是可用数——User 指定的是「库存数量」，而预留不该让 `256+`
           变成 `254+`。**但取物仍然只能用 `available`**（见 `on_select`），
           `+` 不是可取量的凭据。
         - **没有样板**：沿用决策 D4 的可用数口径（`stored - reserved`），
-          为 1 时留空——物品种类多的时候满屏的「1」只是噪声。
+          0～999 原样显示（1 隐藏），更大数量按千进位缩写。
 
         两套口径共用「`stored` 才是排序依据」这一条（决策 D7），
         因此这一列显示的数与排序依据并不总是同一个量，那是已知差异，
@@ -1164,11 +1164,9 @@ class TerminalListView(object):
         if entry.has_pattern:
             if entry.stored <= 0:
                 return "+"
-            return "%d+" % (entry.stored,)
+            return format_item_count(entry.stored, hide_one=False) + "+"
         available = entry.stored - entry.reserved
-        if available <= 1:
-            return ""
-        return str(available)
+        return format_item_count(max(0, available))
 
     # -- 排序 ----------------------------------------------------------
 

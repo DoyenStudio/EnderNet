@@ -1,6 +1,8 @@
 # coding=utf-8
 """Desktop slot gestures. Collection indices are resolved before commands queue."""
 import math
+from ..shared.item_count import format_item_count
+
 from collections import deque
 
 from ..shared import slot_layout, stack_size
@@ -221,7 +223,7 @@ class TerminalInput(object):
             return
         if key is not None and count:
             self.cursor_icon.asItemRenderer().SetUiItem(key.name, key.aux or 0)
-            self.cursor_count.asLabel().SetText(str(count))
+            self.cursor_count.asLabel().SetText(format_item_count(count, hide_one=False))
         self.cursor_icon.SetVisible(key is not None and count > 0)
         self.cursor_count.SetVisible(key is not None and count > 1)
         self.cursor_signature = signature

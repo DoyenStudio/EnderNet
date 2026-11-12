@@ -43,6 +43,7 @@ User 交接的 `crafting_grid` 引用 `endernet_container_common.custom_slot`，
 from functools import partial
 
 from .....tooldelta.ui import Binder, RegistToolDeltaScreen
+from ..shared.item_count import format_item_count
 from ..shared import slot_layout, stack_size
 from ..windows.select_item import (
     WINDOW_ATTRIBUTE as PICKER_WINDOW_ATTRIBUTE,
@@ -294,11 +295,11 @@ class CraftingView(object):
 
     def cell_count(self, index):
         # type: (object) -> str
-        """数量标签。**1 留空**（同终端列表与背包）：满屏的「1」只是噪声。"""
+        """有效物品槽使用统一的千进位数量标签；空槽留空。"""
         cell = self.screen.slot_input.preview_cell("grid", index) or self.cell(index)
-        if cell is None or cell["count"] <= 1:
+        if cell is None:
             return ""
-        return str(cell["count"])
+        return format_item_count(cell["count"])
 
     def output_visible(self):
         # type: () -> bool
@@ -326,7 +327,7 @@ class CraftingView(object):
         count = self.preview.get("count")
         if isinstance(count, bool) or not isinstance(count, INTEGER_TYPES):
             return ""
-        return str(count) if count > 1 else ""
+        return format_item_count(count) if count >= 0 else ""
 
     def is_unavailable(self):
         # type: () -> bool
