@@ -40,6 +40,10 @@ TERMINAL_INVENTORY_FIELD = "endernet_terminal_inventory_id"
 #: `endernet:part_config_<面名>`，值是一张字符串键的字典。挂上一块新面板时清空。
 PART_CONFIG_FIELD = "endernet:part_config"
 
+#: 无线连接器的配对（2026-11-13）：对端的 `"维度,x,y,z,实例标记"`，没配对为空串。实例标记就是
+#: 这台连接器自己的 `TERMINAL_INVENTORY_FIELD`（`terminal_inventory_id`，新方块 = 新标记）。
+WIRELESS_LINK_FIELD = "endernet:wireless_link"
+
 #: 方块原地换型（面板底座 ↔ 光缆）时要搬到新方块实体里的「按面」字段前缀
 _PER_FACE_FIELDS = (TERMINAL_INVENTORY_FIELD, PART_CONFIG_FIELD)
 
@@ -387,6 +391,30 @@ class ToolDeltaWorldAdapter(object):
         payload = dict((engine_text(key), value) for key, value in dict(data).items())
         entity[field] = payload
         return entity[field] is not None
+
+    # -- 无线连接器（2026-11-13）-------------------------------------------
+
+    def wireless_link(self, node_key):
+        # type: (NodeKey) -> object
+        """无线连接器方块实体里的配对文本；没配对为 `""`，方块实体拿不到返回 None。"""
+        from ....tooldelta.api.server.block import GetBlockEntityData
+
+        entity = GetBlockEntityData(node_key.dimension, node_key.as_tuple())
+        if entity is None:
+            return None
+        value = entity[WIRELESS_LINK_FIELD]
+        return value if value is not None else ""
+
+    def write_wireless_link(self, node_key, text):
+        # type: (NodeKey, str) -> bool
+        """写无线连接器的配对文本（空串 = 解除）。写不进去、读回不一致返回 False。"""
+        from ....tooldelta.api.server.block import GetBlockEntityData
+
+        entity = GetBlockEntityData(node_key.dimension, node_key.as_tuple())
+        if entity is None:
+            return False
+        entity[WIRELESS_LINK_FIELD] = engine_text(text)
+        return (entity[WIRELESS_LINK_FIELD] or "") == text
 
     def give_items(self, player_id, item_ids):
         # type: (str, list) -> list

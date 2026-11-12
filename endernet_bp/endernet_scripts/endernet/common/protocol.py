@@ -122,6 +122,11 @@ class Reason(object):
     BANDWIDTH_DEMAND_EXCEEDS_LINE = "bandwidth_demand_exceeds_line"
     #: 设备没有经光缆或设备连到任何一个基带外露面上，不在任何线路里。
     NO_BANDWIDTH_PATH = "no_bandwidth_path"
+    #: 设备的线路经过一条 P2P 隧道，而这条隧道进出两端里有一端的隧道面板没有获准带宽、或它的
+    #: 宿主网络不能运行（2026-11-13）。隧道两侧照样算同一张网，只是隧道后面的设备不准入。
+    TUNNEL_OFFLINE = "tunnel_offline"
+    #: P2P 隧道面板自己的线路就经过一条隧道（嵌套，同 AE2 `NESTED_P2P_TUNNEL`）：不准入。
+    TUNNEL_NESTED = "tunnel_nested"
 
     # 能源（04）
     BROWNOUT = "brownout"

@@ -466,6 +466,19 @@ def f_creative():
     return t
 
 
+def f_wireless():
+    """无线连接器：中央天线 + 两侧三层信号弧（占位，作者后补正式贴图）。"""
+    t = chassis(gap=True)
+    t.v(7, 5, 8, "net2").v(8, 5, 8, "k0")
+    t.rect(6, 4, 4, 2, "net1").set(7, 4, "net0")
+    t.h(5, 13, 6, "k4")
+    for offset, token in ((2, "net0"), (3, "net1"), (4, "net2")):
+        t.v(7 - offset - 1, 6 - offset // 2, 3 + offset, token)
+        t.v(8 + offset + 1, 6 - offset // 2, 3 + offset, token)
+    t.set(3, 12, "S:net")
+    return t
+
+
 #: 设备 -> 功能图形。`uniform` 画进 `<短名>_all`，`front` 画进 `<短名>_front`；
 #: 存储驱动器是模型，不在表里。
 #:
@@ -494,6 +507,7 @@ DESIGNS = {
     "endernet:memory_slot": f_memory_slot,
     "endernet:energy_input_interface": f_energy_input,
     "endernet:creative_energy_source": f_creative,
+    "endernet:wireless_connector": f_wireless,
 }
 
 #: 通用机壳三面的占位画法

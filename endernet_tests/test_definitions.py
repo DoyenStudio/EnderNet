@@ -20,7 +20,12 @@ from endernet.common.definitions import (
     FORM_BLOCK,
     FORM_PART,
     ITEM_TOOLS,
+    PART_KIND_TUNNEL,
     TERMINAL_PARTS,
+    TUNNEL_CAPACITY_QUARTERS,
+    TUNNEL_PARTS,
+    WIRELESS_MAX_DISTANCE,
+    wireless_distance_units,
     TERMINAL_SCREENS,
     TOOLS,
     ToolSpec,
@@ -64,7 +69,7 @@ DOCUMENTED_CONTROLLERS = {
     "endernet:tiny_network_endpoint",
 }
 
-#: blocks.md 列出的全部 23 个方块
+#: blocks.md 列出的全部 24 个方块（无线连接器 2026-11-13 加入）
 DOCUMENTED_BLOCKS = {
     "endernet:dos_network_endpoint",
     "endernet:tiny_network_endpoint",
@@ -89,6 +94,7 @@ DOCUMENTED_BLOCKS = {
     "endernet:assemble_chamber",
     "endernet:energy_input_interface",
     "endernet:creative_energy_source",
+    "endernet:wireless_connector",
 }
 
 
@@ -825,7 +831,8 @@ class TestNetworkRedesignDefinitions(unittest.TestCase):
             "endernet:template_terminal_part": ("样板终端面板", "endernet:template_terminal_panel"),
             "endernet:factoric_terminal_part": ("工厂终端面板", "endernet:factoric_terminal_panel"),
         }
-        self.assertEqual(set(self.defs.parts), set(expected))
+        self.assertEqual(set(definition.id for definition in TERMINAL_PARTS), set(expected))
+        self.assertEqual(set(self.defs.parts), set(expected) | set(d.id for d in TUNNEL_PARTS))
         self.assertEqual(len(TERMINAL_PARTS), 4)
         for part_id, (label, panel_id) in expected.items():
             part = self.defs.get(part_id)
@@ -849,6 +856,10 @@ class TestNetworkRedesignDefinitions(unittest.TestCase):
     def test_parts_open_the_same_screen_as_their_whole_block(self):
         for part_id in self.defs.parts:
             panel_id = self.defs.get(part_id).whole_block_id
+            if panel_id is None:
+                # P2P 隧道没有整方块对应物，也没有界面
+                self.assertIsNone(self.defs.terminal_screen_of(part_id), part_id)
+                continue
             self.assertEqual(self.defs.terminal_screen_of(part_id), TERMINAL_SCREENS[panel_id])
         self.assertEqual(
             self.defs.terminal_screen_of("endernet:common_terminal_panel"),
@@ -864,9 +875,20 @@ class TestNetworkRedesignDefinitions(unittest.TestCase):
         self.assertEqual(len(terminals), 8)
 
     def test_wrench_is_registered_as_an_item(self):
-        """扳手的物品 JSON 与图标由阶段 C 的 gen_items 生成：规格与物品登记都在。"""
-        self.assertEqual([(tool.id, tool.label) for tool in TOOLS], [("endernet:network_wrench", "网络扳手")])
-        self.assertEqual(ITEM_TOOLS, ("endernet:network_wrench",))
+        """扳手的物品 JSON 与图标由 gen_items 生成：规格与物品登记都在。配置卡与无线连接工具
+        （2026-11-13）同一张表。"""
+        self.assertEqual(
+            [(tool.id, tool.label) for tool in TOOLS],
+            [
+                ("endernet:network_wrench", "网络扳手"),
+                ("endernet:config_card", "配置卡"),
+                ("endernet:wireless_link_tool", "无线连接工具"),
+            ],
+        )
+        self.assertEqual(
+            ITEM_TOOLS,
+            ("endernet:network_wrench", "endernet:config_card", "endernet:wireless_link_tool"),
+        )
         self.assertTrue(self.defs.has_tool("endernet:network_wrench"))
         self.assertIsInstance(self.defs.get_tool("endernet:network_wrench"), ToolSpec)
         self.assertIn("endernet:network_wrench", self.defs.item_keys())
@@ -881,6 +903,44 @@ class TestNetworkRedesignDefinitions(unittest.TestCase):
         self.assertEqual([spec.id for spec in defs.item_tool_specs()], ["endernet:network_wrench"])
         with self.assertRaises(ValueError):
             DefinitionSet(item_tools=("endernet:no_such_tool",))
+
+    def test_tunnel_is_a_part_without_a_whole_block(self):
+        """P2P 网络隧道（2026-11-13）：只有面板形态，占宿主 1u、2 EN/t，物品形态与终端面板一样是
+        展示方块（不登记为普通物品）。"""
+        tunnel = self.defs.get("endernet:p2p_network_tunnel")
+        self.assertTrue(tunnel.is_part())
+        self.assertIsNone(tunnel.whole_block_id)
+        self.assertEqual(tunnel.part_kind, PART_KIND_TUNNEL)
+        self.assertEqual(tunnel.label, "P2P 网络隧道")
+        self.assertEqual(tunnel.bandwidth.demand_quarters(), 4)
+        self.assertEqual(tunnel.energy.value_for_state("idle"), 2)
+        self.assertNotIn("endernet:p2p_network_tunnel", self.defs.item_keys())
+        self.assertNotIn("endernet:p2p_network_tunnel", self.defs.devices)
+        self.assertEqual(self.defs.tunnel_capacity_quarters(), 32 * 4)
+        self.assertTrue(TUNNEL_CAPACITY_QUARTERS.is_settled())
+
+    def test_wireless_connector_is_a_32u_carrier(self):
+        """无线连接器（2026-11-13）：整方块载体 32u，不占带宽；接光缆、基带、设备，不接主控。"""
+        connector = self.defs.get("endernet:wireless_connector")
+        self.assertEqual(connector.bandwidth.capacity_quarters, 32 * 4)
+        self.assertEqual(connector.bandwidth.demand_quarters(), 0)
+        self.assertEqual(connector.energy.value_for_state("idle", 0), 4)
+        self.assertEqual(connector.energy.value_for_state("idle", 3), 7)
+        self.assertTrue(ConnectionRules.accepts("wireless", CATEGORY_CABLE))
+        self.assertTrue(ConnectionRules.accepts("wireless", CATEGORY_BASEBAND))
+        self.assertTrue(ConnectionRules.accepts("wireless", CATEGORY_STORAGE))
+        self.assertTrue(ConnectionRules.accepts("wireless", "wireless"))
+        self.assertFalse(ConnectionRules.accepts("wireless", CATEGORY_CONTROLLER))
+        self.assertFalse(ConnectionRules.accepts("wireless", CATEGORY_PROCESSOR))
+        self.assertEqual(self.defs.wireless_max_distance(), 256)
+        self.assertTrue(WIRELESS_MAX_DISTANCE.is_settled())
+
+    def test_wireless_distance_energy_curve(self):
+        """每台 4 + ceil(0.025 × 距离^1.5) EN/t：没配对 0 个单位，64 格 13 个，256 格 103 个。"""
+        self.assertEqual(wireless_distance_units(0), 0)
+        self.assertEqual(wireless_distance_units(1), 1)
+        self.assertEqual(wireless_distance_units(64), 13)
+        self.assertEqual(wireless_distance_units(256), 103)
 
     def test_passthrough_is_a_settled_8u(self):
         """R14-a：2026-11-09 作者定案 8u。已定数值，不进 unresolved 报告。"""

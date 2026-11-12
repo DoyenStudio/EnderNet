@@ -52,7 +52,8 @@
 
     endernet_rp/models/blocks/<光缆>.geo.json              每种光缆一份：直通 / 连接臂 / 短接线 / 空面
     endernet_rp/models/blocks/<光缆>_item.geo.json         光缆物品：一段直通（方块 JSON 的 item_visual 指向它）
-    endernet_rp/models/blocks/<面板>.geo.json              面板物品：居中、屏幕朝南的单块面板（面板展示方块的几何）
+    endernet_rp/models/blocks/<面板>.geo.json              面板物品：居中、屏幕朝南的单块面板（面板展示方块的几何；
+                                                           没有自己屏幕的 P2P 网络隧道用默认面板那块屏幕）
     endernet_rp/models/entity/ender_cable_panels.geo.json  一格 6 面 × 每种面板（方块实体外观）
     endernet_rp/models/entity/ender_cable_panel.geo.json   单块朝北（同上的北面那组骨骼，给 Blockbench 画图）
     endernet_rp/entity/ender_cable_panels.entity.json      方块实体外观（玻璃与普通光缆在 blocks.json 引用它）
@@ -171,6 +172,7 @@ from endernet.common.cable_shapes import (  # noqa: E402
     short_name,
 )
 from endernet.common.cable_shapes import stub_length as shape_stub_length  # noqa: E402
+from endernet.common.cable_shapes import PANEL_PART_IDS  # noqa: E402
 
 # -- 尺寸参数（单位 px，1 格 = 16 px）------------------------------------------
 #
@@ -1190,8 +1192,15 @@ def panel_item_offset(vector):
     return tuple(offset)
 
 
-def build_panel_item(kind, atlas):
-    """一种面板的物品几何：一根骨骼，面板框 + 背板 + 这一种的屏幕，挪到方块中心、屏幕朝南。"""
+def default_screen_parts():
+    """没有自己那块屏幕的面板（P2P 网络隧道）：物品几何用默认面板的屏幕，与它挂在光缆上时
+    （外观取值「认不出的种类」，画 `DEFAULT_PANEL`）显示的一样，图集不加分区。"""
+    return sorted(part_id for part_id in DefinitionSet().parts if part_id not in PANEL_PART_IDS)
+
+
+def build_panel_item(kind, atlas, name=None):
+    """一种面板的物品几何：一根骨骼，面板框 + 背板 + 这一种的屏幕，挪到方块中心、屏幕朝南。
+    `name` 是几何名（缺省按种类取 `<短名>_terminal_part`）。"""
     vector = dict(DIRECTIONS)[PANEL_ITEM_FACE]
     frame, back = panel_shell_faces(vector)
     offset = panel_item_offset(vector)
@@ -1200,7 +1209,7 @@ def build_panel_item(kind, atlas):
         cube(back_box(vector), back, atlas, offset),
         cube(screen_box(vector), {PANEL_ITEM_FACE: "screen"}, atlas, offset, kind),
     ]}]
-    return geometry(panel_item_name(kind), atlas.size, bones, BLOCK_BOUNDS)
+    return geometry(name or panel_item_name(kind), atlas.size, bones, BLOCK_BOUNDS)
 
 
 def visibility_rules():
@@ -1452,6 +1461,9 @@ def outputs(probe=False):
     ])
     for kind, _terminal in PANEL_KINDS:
         documents.append((block_file(panel_item_name(kind)), build_panel_item(kind, panels)))
+    for part_id in default_screen_parts():
+        name = short_name(part_id)
+        documents.append((block_file(name), build_panel_item(DEFAULT_PANEL, panels, name)))
     textures.append((texture_file(PANEL_TEXTURE_DIR, PANELS), panels.size, placeholder(panels)))
     return [(path, json_bytes(payload)) for path, payload in documents], textures
 

@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 1,
+            "netease:customtips": {
+                "value": "\n§7潜行右键 P2P 隧道设为输入并记下频率，右键其他隧道设为同频率的输出；潜行右键别处清空"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:config_card"
+        }
+    }
+}

@@ -52,9 +52,15 @@
 | `dismantle`（拆面板或光缆） | 手持扳手、潜行，点光缆或面板底座 | 扳手 |
 | `place_panel`（挂一块面板） | 手持面板物品点**任何**方块：不潜行时右键会开界面的本模组设备除外；潜行时连它们（以及箱子等原版会开界面的方块）也挂（2026-11-10） | 那块面板物品 |
 | `add_cable`（面板底座换成光缆） | 手持光缆物品、不潜行，点面板底座 | 光缆物品（致密的由服务端静默不放） |
+| `tunnel_input`（隧道设为输入 / 清空配置卡） | 手持配置卡、潜行，点任何方块 | 配置卡 |
+| `tunnel_output`（隧道设为输出） | 手持配置卡、不潜行，点光缆或面板底座 | 配置卡 |
+| `wireless_link`（选中 / 配对无线连接器） | 手持无线连接工具、不潜行，点无线连接器 | 无线连接工具 |
+| `wireless_unlink`（解除配对 / 清空工具） | 手持无线连接工具、潜行，点任何方块 | 无线连接工具 |
 
-后两条的处理函数在 `server/devices/panels.py`，经 `CableIntentService.register` 登记。挂面板的
-放置规则（照 AE2，2026-11-10）见 `panels.py`。
+`place_panel` / `add_cable` 的处理函数在 `server/devices/panels.py`，配置卡两条在
+`server/devices/tunnels.py`，无线连接工具两条在 `server/devices/wireless.py`，都经
+`CableIntentService.register` 登记。挂面板的放置规则（照 AE2，2026-11-10）见 `panels.py`。
+配置卡、无线连接工具潜行点到别处时清空自己记着的东西（点空气没有方块事件，不接管）。
 
 **打开面板不是意图**（2026-11-10 收拢）：空手或手持别的东西右键面板，与右键整方块终端走同一个
 服务端入口（`server/interaction/opening.py`），原版那次放方块一并取消。点没点中面板只有服务端
@@ -80,10 +86,14 @@ import math
 
 from ..definitions import (
     CABLES,
+    CONFIG_CARD_ID,
     CONTAINER_SCREENS,
     PART_HOLDERS,
-    TERMINAL_PARTS,
+    PARTS,
     TERMINAL_SCREENS,
+    WIRELESS_CONNECTOR_ID,
+    WIRELESS_LINK_TOOL_ID,
+    WRENCH_ID,
 )
 from ..identity import FACING_NAMES
 from ..protocol import _require_fields
@@ -98,6 +108,11 @@ ACTION_CUT = "cut"
 ACTION_DISMANTLE = "dismantle"
 ACTION_PLACE_PANEL = "place_panel"
 ACTION_ADD_CABLE = "add_cable"
+#: 配置卡与无线连接工具（2026-11-13）
+ACTION_TUNNEL_INPUT = "tunnel_input"
+ACTION_TUNNEL_OUTPUT = "tunnel_output"
+ACTION_WIRELESS_LINK = "wireless_link"
+ACTION_WIRELESS_UNLINK = "wireless_unlink"
 
 #: 引擎 `Facing` 枚举（Down 0、Up 1、North 2、South 3、West 4、East 5）→ 面名。
 #: `ClientItemUseOnEvent.face` 是这个枚举，线上一律传面名。
@@ -120,10 +135,6 @@ def engine_facing_of(face):
     return ENGINE_FACING_NAMES.index(face)
 
 
-#: 网络扳手的物品标识（13 §2；`definitions.TOOLS` 里那一件）
-WRENCH_ID = "endernet:network_wrench"
-
-
 try:  # pragma: no cover - 仅在 Python 2 下成立
     _TEXT_TYPES = (str, unicode)
     _INT_TYPES = (int, long)
@@ -132,8 +143,10 @@ except NameError:  # pragma: no cover - 仅在 Python 3 下成立
     _INT_TYPES = (int,)
 
 
-#: 面板物品（13 §2，`*_terminal_part`）
-PANEL_ITEM_IDS = frozenset(definition.id for definition in TERMINAL_PARTS)
+#: 面板物品（13 §2：`*_terminal_part`；2026-11-13 加 P2P 网络隧道）
+PANEL_ITEM_IDS = frozenset(definition.id for definition in PARTS)
+#: 无线连接器（工具只对它配对）
+WIRELESS_CONNECTOR_IDS = frozenset([WIRELESS_CONNECTOR_ID])
 #: 光缆（方块标识，也是它的物品标识）
 CABLE_IDS = frozenset(definition.id for definition in CABLES)
 #: 面板底座（2026-11-10）
@@ -161,7 +174,11 @@ def action_for(item_id, sneaking, block=None):
     - 面板物品：任何方块都拦下来挂面板（放在哪由服务端照 AE2 定）。不潜行时右键会开界面的
       本模组设备除外（照旧开界面）；**潜行时也挂**（2026-11-10，作者确认按推荐），这样能贴到
       终端、箱子这类会开界面的方块上——AE2 同样潜行能挂；
-    - 光缆物品（不潜行）点面板底座：换成光缆。
+    - 光缆物品（不潜行）点面板底座：换成光缆；
+    - 配置卡：潜行点任何方块（点中隧道设为输入，别处清空卡）；不潜行只对光缆与面板底座
+      （点中隧道设为输出）；
+    - 无线连接工具：不潜行只对无线连接器（选中或配对）；潜行点任何方块（连接器解除配对，
+      别处清空工具）。
 
     空手与别的物品一律不管：右键面板开界面由服务端的原版事件判（模块说明「打开面板不是意图」）。
     """
@@ -171,6 +188,14 @@ def action_for(item_id, sneaking, block=None):
         return ACTION_DISMANTLE if sneaking else ACTION_CUT
     if block is None:
         return None
+    if item_id == CONFIG_CARD_ID:
+        if sneaking:
+            return ACTION_TUNNEL_INPUT
+        return ACTION_TUNNEL_OUTPUT if block in FACED_BLOCK_IDS else None
+    if item_id == WIRELESS_LINK_TOOL_ID:
+        if sneaking:
+            return ACTION_WIRELESS_UNLINK
+        return ACTION_WIRELESS_LINK if block in WIRELESS_CONNECTOR_IDS else None
     if item_id in PANEL_ITEM_IDS:
         if sneaking:
             return ACTION_PLACE_PANEL

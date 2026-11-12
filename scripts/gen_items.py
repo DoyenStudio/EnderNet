@@ -12,8 +12,9 @@
   因此游戏内提示里的数字不可能与领域层的规格分叉；
 - 样板的用途说明从 `TemplateSpec.usage` 读出（items.md 的原文）；
 - 内存条的容量从 `MemorySpec.capacity_bytes` 读出，同理不会分叉；
-- 工具（网络扳手）由 `ITEM_TOOLS` 决定，说明写在本文件的 `TOOL_TIPS`；
-- 四种终端面板（定义表的 `parts`，`*_terminal_part`）**不在这里**：2026-11-10 作者定方案 B，
+- 工具（网络扳手、配置卡、无线连接工具）由 `ITEM_TOOLS` 决定，说明取定义表的 `ToolSpec.tip`
+  （服务端改写物品实例的说明时也以它开头，两处同源）；
+- 面板（定义表的 `parts`：四种终端面板与 P2P 网络隧道）**不在这里**：2026-11-10 作者定方案 B，
   它们注册成同名的展示方块（`gen_blocks.py` 的 `build_part_item_json`），物品栏里显示 3D 面板，
   物品形态是方块物品，不占物品 JSON 与物品图集。
 
@@ -74,12 +75,6 @@ ITEM_FORMAT_VERSION = "1.10"
 #: 一叠，两块不同配置的样板会互相覆盖。安全的机制是「引擎本就按 `userData`
 #: 分堆」。见 `plans/items.md` 的样板一节与 `plans/tasks/11-交付说明.md`。
 ITEM_MAX_STACK_SIZE = 1
-
-#: 工具的物品说明。每件登记为物品的工具都要有一条，缺了生成时报错（不写一条
-#: 空说明了事）。扳手这条是作者 2026-11-10 在物品 JSON 里定的原文。
-TOOL_TIPS = {
-    "endernet:network_wrench": "用于对终界网络设备进行维护",
-}
 
 
 def max_stack_size_of(spec):
@@ -151,10 +146,11 @@ def memory_tip(spec):
 
 def tool_tip(spec):
     # type: (object) -> str
-    """工具说明：取 `TOOL_TIPS`，没写的工具直接报错。"""
-    if spec.id not in TOOL_TIPS:
-        raise KeyError("工具 %s 没有在 TOOL_TIPS 里写说明" % (spec.id,))
-    return "\n§7" + TOOL_TIPS[spec.id]
+    """工具说明：取 `ToolSpec.tip`。每件登记为物品的工具都要有一条，没写的直接报错（不写
+    一条空说明了事）。"""
+    if not spec.tip:
+        raise KeyError("工具 %s 没有在定义表里写说明（ToolSpec.tip）" % (spec.id,))
+    return "\n§7" + spec.tip
 
 
 def build_behavior_json(spec, tip):
@@ -240,7 +236,7 @@ def item_tips(definitions):
     # type: (object) -> list
     """`(规格, 提示文本)` 清单：**本脚本生成的全部物品**。各类的提示规则不同，但只有
     这一处分派：介质给容量与读写速度，样板给用途与「放进哪台设备」，内存条给字节容量，
-    工具给 `TOOL_TIPS`。终端面板不在这里（2026-11-10 起是同名展示方块，见模块说明）。"""
+    工具给 `ToolSpec.tip`。面板不在这里（2026-11-10 起是同名展示方块，见模块说明）。"""
     out = []
     for spec in definitions.item_medium_specs():
         out.append((spec, medium_tip(spec)))

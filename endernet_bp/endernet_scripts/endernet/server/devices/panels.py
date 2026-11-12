@@ -110,7 +110,8 @@ class PartKindHooks(object):
     """一种面板的流程（面板骨架）：界面（右键点中它开什么）与正面那一格变了。都可缺。
 
     - `screen_of(record, face, part_id) -> OpenTarget`（`server/interaction/opening.py`）；
-      缺了 = 这种面板没有界面：点中它照样只认领、不推屏，原版交互一样取消；
+      缺了 = 这种面板没有界面（P2P 隧道）：点中它不认领，原版交互照常——手里拿着方块就贴着
+      这一面放下去，与点光缆别处一样；
     - `on_front_changed(part_key, part_id, front_key) -> None`。
     """
 
@@ -384,8 +385,8 @@ class PanelService(object):
 
         只看能挂面板的方块（玻璃、普通光缆、面板底座）。射线是玩家眼睛 → 引擎给的命中点，与该格
         **当前的方块状态**求交，与意图同一个求交（`CableIntentService.pick_at`）。点中面板 → 它那
-        一种的 `screen_of`（终端：`_terminal_screen`）；这种面板没有界面 → 认领、打不开。没点中
-        面板、这格还没加载好、射线读不到 → 不认领，原版照常（贴着光缆放方块之类）。
+        一种的 `screen_of`（终端：`_terminal_screen`）。这种面板没有界面（隧道）、没点中面板、这格
+        还没加载好、射线读不到 → 不认领，原版照常（贴着光缆或面板放方块之类）。
         """
         if use.block not in PANEL_HOST_IDS or self.intents is None:
             return None
@@ -407,7 +408,7 @@ class PanelService(object):
             return None
         hooks = self.hooks_of(part_id)
         if hooks is None or hooks.screen_of is None:
-            return OpenTarget()
+            return None
         return hooks.screen_of(record, hit.face, part_id)
 
     def _terminal_screen(self, record, face, part_id):

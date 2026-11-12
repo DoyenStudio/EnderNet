@@ -37,6 +37,7 @@ from ...common.definitions import (
     CATEGORY_PROCESSOR_CONNECTOR,
     CATEGORY_STORAGE,
     CATEGORY_TERMINAL,
+    CATEGORY_WIRELESS,
 )
 from ...common.identity import FACING_NAMES
 
@@ -140,6 +141,7 @@ class PortRuleSet(object):
         CATEGORY_MEMORY: frozenset([PortKind.NETWORK]),
         CATEGORY_ASSEMBLY: frozenset([PortKind.NETWORK]),
         CATEGORY_ENERGY_INPUT: frozenset([PortKind.NETWORK]),
+        CATEGORY_WIRELESS: frozenset([PortKind.NETWORK]),
         CATEGORY_PROCESSOR_CONNECTOR: frozenset(
             [PortKind.DEVICE_LINK, PortKind.PROCESSOR]
         ),

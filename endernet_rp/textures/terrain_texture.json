@@ -90,6 +90,9 @@
         },
         "endernet:tiny_network_endpoint_all": {
             "textures": "textures/endernet/devices/tiny_network_endpoint_all"
+        },
+        "endernet:wireless_connector_all": {
+            "textures": "textures/endernet/devices/wireless_connector_all"
         }
     },
     "texture_name": "atlas.terrain"

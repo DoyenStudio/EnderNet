@@ -47,6 +47,8 @@ from endernet.common.definitions import (
     CATEGORY_TERMINAL,
     FORM_PART,
     PART_KIND_TERMINAL,
+    PART_KIND_TUNNEL,
+    TUNNEL_PART_ID,
     PATTERN_MODE_FACTORY,
     DefinitionSet,
     DeviceDefinition,
@@ -303,8 +305,11 @@ class TestPanelReferences(unittest.TestCase):
 
 class TestPanelKinds(unittest.TestCase):
     def test_kinds_are_the_registered_parts(self):
+        """外观种类表是终端面板（各有一块屏）；P2P 隧道不在表里，外观取默认面板。"""
         definitions = DefinitionSet()
-        self.assertEqual(sorted(PANEL_PART_IDS), sorted(definitions.parts))
+        terminals = [part_id for part_id in definitions.parts
+                     if definitions.part_kind_of(part_id) == PART_KIND_TERMINAL]
+        self.assertEqual(sorted(PANEL_PART_IDS), sorted(terminals))
         for (kind, terminal), part_id in zip(PANEL_KINDS, PANEL_PART_IDS):
             self.assertEqual(part_id, panel_part_id(kind))
             self.assertEqual(definitions.get(part_id).whole_block_id, terminal)
@@ -1597,11 +1602,18 @@ class TestPanelFramework(unittest.TestCase):
     def test_every_panel_has_a_kind(self):
         definitions = DefinitionSet()
         for part_id in definitions.parts:
-            self.assertEqual(definitions.part_kind_of(part_id), PART_KIND_TERMINAL, part_id)
+            expected = PART_KIND_TUNNEL if part_id == TUNNEL_PART_ID else PART_KIND_TERMINAL
+            self.assertEqual(definitions.part_kind_of(part_id), expected, part_id)
         self.assertIsNone(definitions.part_kind_of(GLASS))
         with self.assertRaises(ValueError):
             DeviceDefinition("endernet:x_part", "x", CATEGORY_TERMINAL, form=FORM_PART,
                              whole_block_id=COMMON_TERMINAL)
+        with self.assertRaises(ValueError):
+            # 终端面板必须指明整方块终端；没有整方块对应物的只有隧道
+            DeviceDefinition("endernet:x_part", "x", CATEGORY_TERMINAL, form=FORM_PART,
+                             part_kind=PART_KIND_TERMINAL)
+        with self.assertRaises(ValueError):
+            DeviceDefinition("endernet:x", "x", CATEGORY_TERMINAL, whole_block_id=COMMON_TERMINAL)
         with self.assertRaises(ValueError):
             DeviceDefinition("endernet:x_part", "x", CATEGORY_TERMINAL, form=FORM_PART,
                              whole_block_id=COMMON_TERMINAL, part_kind="bus")
@@ -1641,16 +1653,24 @@ class TestPanelFramework(unittest.TestCase):
         rig.act(key(0), GLASS, ACTION_PLACE_PANEL, CENTER, "up", item=CRAFT_PART)
         self.assertEqual(panels.part_config(PartKey(key(0), "up")), {}, "同一面再挂一块不继承")
 
-    def test_a_kind_without_a_screen_is_claimed_but_does_not_open(self):
-        """点中的是面板，只是这种面板没有界面：照样认领，原版交互一样取消，不推屏。"""
+    def test_a_kind_without_a_screen_leaves_the_click_to_vanilla(self):
+        """点中的是面板，只是这种面板没有界面（P2P 隧道）：不认领，原版交互照常——手里的方块
+        贴着这一面放下去。"""
+        rig = PanelRig()
+        rig.place(key(0), GLASS, parts={"east": TUNNEL_PART_ID})
+        rig.step(2)
+        block, item = rig.use(key(0), GLASS, CENTER, "east", item=STONE)
+        self.assertFalse(block.cancelled or item.cancelled)
+        self.assertEqual(rig.opened, [])
+
+    def test_a_kind_registered_without_a_screen_is_not_claimed_either(self):
         rig = PanelRig()
         rig.place(key(0), GLASS, parts={"east": CRAFT_PART})
         rig.step(2)
         rig.panels.register_kind(PART_KIND_TERMINAL)
         block, item = rig.use(key(0), GLASS, CENTER, "east", item=STONE)
-        self.assertTrue(block.cancelled and item.cancelled)
+        self.assertFalse(block.cancelled or item.cancelled)
         self.assertEqual(rig.opened, [])
-        self.assertEqual(rig.binder.counts["block_use_unknown"], 1)
 
     def test_front_change_without_a_hook_is_only_counted(self):
         rig = PanelRig()

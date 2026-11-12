@@ -25,6 +25,13 @@ R02 的「基带负载域」。拓扑（`topology.py`）给出**结构**——�
 5. **处理器组整组只算一次**（2026-11-09 作者定案，同 AE2 合成 CPU）：经连接器连成的
    一组处理器按一个消费者计带宽，需求取定义表里一台并行处理器的 4u，由组里最先被
    访问到的那台代表；其余几台不计，结论随代表；组内连接不受透传容量限制。
+6. **P2P 隧道把关**（2026-11-13，`.claude/17` §4.3 的 T1）：线路经过隧道段
+   （`topology.TunnelSegment`）的消费者，除了逐段核容量，还要这条隧道进出两端都「接通」——
+   那一端正面对着它的隧道面板里，至少一块自己获准了带宽、而且宿主网络能运行（问
+   `set_tunnels` 给的隧道服务 `endpoints_at`）。不满足就拒绝，原因 `TUNNEL_OFFLINE`，占用照算。
+   隧道面板自己的线路经过隧道（嵌套）一律拒绝，原因 `TUNNEL_NESTED`；因此隧道面板的结论
+   从不依赖别的隧道，刷新时先算它们、再算其余消费者，不会循环。隧道面板的「接通」变了，
+   这一组隧道段所在线路上的设备随即重算。
 
 三条纪律保留：
 
@@ -39,11 +46,13 @@ from ...common.definitions import (
     CATEGORY_BASEBAND,
     CATEGORY_CABLE,
     CATEGORY_CONTROLLER,
+    CATEGORY_WIRELESS,
+    PART_KIND_TUNNEL,
     UNCONFIGURED,
 )
 from ...common.identity import PartKey, is_part_ref
 from ...common.protocol import BlockReason, DeviceStatusChanged, Reason
-from .topology import LineKind
+from .topology import LineKind, TunnelSegment
 
 
 def _u_text(quarters):
@@ -85,12 +94,13 @@ class BandwidthRole(object):
     UNKNOWN = "unknown"
 
 
-#: 不参与准入的三个分类。显式列出，不从「有没有写带宽」反推——
+#: 不参与准入的分类。显式列出，不从「有没有写带宽」反推——
 #: 控制器与基带的 `base_quarters` 是 UNCONFIGURED（未列出），
-#: 与「未列出所以是 0」是两回事，这里必须自己声明。
+#: 与「未列出所以是 0」是两回事，这里必须自己声明。无线连接器与光缆一样是载体。
 NON_CONSUMER_ROLES = {
     CATEGORY_BASEBAND: BandwidthRole.CARRIER,
     CATEGORY_CABLE: BandwidthRole.CARRIER,
+    CATEGORY_WIRELESS: BandwidthRole.CARRIER,
     CATEGORY_CONTROLLER: BandwidthRole.CORE,
 }
 
@@ -584,6 +594,10 @@ class AdmissionService(object):
         #: 判定可能变了、下次刷新要重算结果的消费者。
         self._dirty = set()
         self._listeners = []
+        #: 隧道服务（`set_tunnels`）：`endpoints_at(频率, 正面格)`、`endpoint(PartKey)`
+        self.tunnels = None
+        #: 隧道面板 PartKey -> (频率, 是否接通)：上一次刷新时的样子，变了就重算它那一组
+        self._tunnel_live = {}
         self.stats = {
             "refreshes": 0,
             #: 结构没变、原样保留的线路次数。
@@ -603,6 +617,12 @@ class AdmissionService(object):
         # 否则第一次查询会落到「未知」。
         snapshot = topology.snapshot()
         self._sync(snapshot, sorted(snapshot.line_trees))
+
+    def set_tunnels(self, tunnels):
+        # type: (object) -> None
+        """接上 P2P 隧道服务（`server/devices/tunnels.TunnelService`）。没接时线路上不会有
+        隧道段（拓扑没有隧道的远程连边），把关恒通过。"""
+        self.tunnels = tunnels
 
     # -- 订阅拓扑 ------------------------------------------------------
 
@@ -929,16 +949,147 @@ class AdmissionService(object):
             ):
                 keys.add(key)
         changes = []
-        for key in sorted(keys, key=_sort_key):
-            if not self._cacheable(snapshot, key):
-                changes.extend(self._drop(key))
-                continue
-            changes.extend(self._store(key, self._device_result(snapshot, key)))
+        ordered = sorted(keys, key=_sort_key)
+        # 隧道面板先算：别的设备的隧道把关要读它们的结论（见模块说明第 6 条）
+        tunnel_keys = [
+            key for key in ordered
+            if key in self._tunnel_live or self._is_tunnel_part(snapshot, key)
+        ]
+        first = set(tunnel_keys)
+        for key in tunnel_keys:
+            changes.extend(self._refresh_key(snapshot, key))
+        rest = [key for key in ordered if key not in first]
+        flipped = self._update_tunnel_live(snapshot, tunnel_keys)
+        if flipped:
+            extra = set()
+            for tree in snapshot.line_trees.values():
+                for via in flipped:
+                    root_id = tree.tunnel_line(via)
+                    if root_id is not None:
+                        extra.update(tree.reported_of(root_id))
+            rest = sorted(set(rest) | (extra - first), key=_sort_key)
+        for key in rest:
+            changes.extend(self._refresh_key(snapshot, key))
         self.stats["refreshes"] += 1
         if changes:
             self.stats["changes_emitted"] += len(changes)
             self._emit(changes)
         return len(changes)
+
+    def _refresh_key(self, snapshot, key):
+        # type: (object, object) -> list
+        if not self._cacheable(snapshot, key):
+            return self._drop(key)
+        return self._store(key, self._device_result(snapshot, key))
+
+    # -- P2P 隧道 --------------------------------------------------------
+
+    def _is_tunnel_part(self, snapshot, key):
+        # type: (object, object) -> bool
+        if not _is_part(key):
+            return False
+        tree = snapshot.line_tree_of(key)
+        part_id = tree.hosted.get(key) if tree is not None else None
+        return part_id is not None and self.definitions.part_kind_of(part_id) == PART_KIND_TUNNEL
+
+    def _update_tunnel_live(self, snapshot, keys):
+        # type: (object, list) -> set
+        """记下这些隧道面板现在的 `(频率, 是否接通)`，返回变了的频率（前后两边都算）。"""
+        flipped = set()
+        for key in keys:
+            before = self._tunnel_live.get(key)
+            after = None
+            endpoint = self.tunnels.endpoint(key) if self.tunnels is not None else None
+            if endpoint is not None and key in self._results:
+                after = (endpoint[0], self._endpoint_live(snapshot, key))
+            if after is None:
+                self._tunnel_live.pop(key, None)
+            else:
+                self._tunnel_live[key] = after
+            if before != after:
+                for entry in (before, after):
+                    if entry is not None:
+                        flipped.add(entry[0])
+        return flipped
+
+    def _endpoint_live(self, snapshot, part_key):
+        # type: (object, PartKey) -> bool
+        return self._endpoint_problem(snapshot, part_key) is None
+
+    def _endpoint_problem(self, snapshot, part_key):
+        # type: (object, PartKey) -> object
+        """这块隧道面板为什么没接通（短语，状态栏一行放得下，接在坐标后面）；接通了返回 None。
+
+        接通 = 自己获准了带宽（隧道面板与别的设备一样，挂的那格光缆要经光缆连到网络基带，
+        占 1u；同 AE2 每块隧道自己占 1 个频道），而且它所在的网络能运行。
+        """
+        result = self._results.get(part_key)
+        if result is None:
+            # 不在任何线路上的面板不缓存（`_cacheable`），按需现算（纯函数）
+            result = self._device_result(snapshot, part_key)
+        if result.state == BandwidthState.UNKNOWN:
+            return "带宽确认中"
+        if result.state != BandwidthState.GRANTED or result.ok is not True:
+            codes = result.reason_codes()
+            if Reason.NO_BANDWIDTH_PATH in codes:
+                return "未接入网络"
+            if Reason.TUNNEL_NESTED in codes:
+                return "隧道嵌套"
+            return "带宽不足"
+        component = snapshot.component_of(part_key)
+        if snapshot.is_pending(part_key) or component is None or component.pending:
+            return "网络刷新中"
+        if not component.is_runnable():
+            return "所在网络离线"
+        return None
+
+    def _front_problem(self, snapshot, via, front):
+        # type: (object, str, object) -> object
+        """隧道段这一端（正面对着 `front` 的那几块隧道）接通没有：有一块接通就算通，返回 None；
+        都不通返回 `(那块隧道, 原因)`，没有已加载的隧道时那块隧道是 None。"""
+        if self.tunnels is None:
+            return None
+        first = None
+        for part_key in self.tunnels.endpoints_at(via, front):
+            problem = self._endpoint_problem(snapshot, part_key)
+            if problem is None:
+                return None
+            if first is None:
+                first = (part_key, problem)
+        return first if first is not None else (None, "隧道未加载")
+
+    def _tunnel_block(self, snapshot, key, device_id, path):
+        # type: (object, object, str, tuple) -> object
+        """线路经过隧道段时的把关：不通过返回原因（`BlockReason`），通过返回 None。
+
+        `path` 是父链（不含自己，最后一个是根）。隧道段的父节点是进入隧道的那一端正面格，
+        父链上排在它前面的那一项（没有就是自己）是出来的那一端正面格。
+        """
+        segments = [
+            (index, segment_id) for index, segment_id in enumerate(path)
+            if isinstance(segment_id, TunnelSegment)
+        ]
+        if not segments:
+            return None
+        if _is_part(key) and self.definitions.part_kind_of(device_id) == PART_KIND_TUNNEL:
+            return BlockReason(
+                Reason.TUNNEL_NESTED, "P2P 隧道不能嵌套（频率 #%s）" % (segments[0][1].via,))
+        for index, segment_id in segments:
+            exit_front = path[index - 1] if index > 0 else key
+            entry_front = path[index + 1]
+            for front in (entry_front, exit_front):
+                found = self._front_problem(snapshot, segment_id.via, front)
+                if found is None:
+                    continue
+                # 坐标给那块隧道挂的那一格（要去修的地方）；那一端没有隧道就给正面格
+                part_key, problem = found
+                at = part_key.node_key if part_key is not None else front
+                return BlockReason(
+                    Reason.TUNNEL_OFFLINE,
+                    "P2P 隧道（频率 #%s）未接通：(%d, %d, %d) %s"
+                    % (segment_id.via, at.x, at.y, at.z, problem),
+                )
+        return None
 
     def _cacheable(self, snapshot, key):
         # type: (object, object) -> bool
@@ -1058,6 +1209,18 @@ class AdmissionService(object):
             tight = state.tightest(key)
             granted_demand = state.demand.get(key, demand)
             notes = list(group_notes)
+            blocked = self._tunnel_block(snapshot, key, device_id, state.paths.get(key, ()))
+            if blocked is not None:
+                # 线路上的占用照算（判定没有变），只是隧道没接通，这台设备不准入
+                return AdmissionResult(
+                    key, record.ref, device_id, BandwidthRole.CONSUMER,
+                    BandwidthState.DENIED, False, granted_demand, 0,
+                    domain_ids=(root_id,),
+                    segment=tight,
+                    version=self.version,
+                    reasons=[blocked],
+                    notes=notes,
+                )
             ok = True
             if tight is not None:
                 ok = self.policy.saturation_ok(True, tight.used_quarters, tight.capacity_quarters)

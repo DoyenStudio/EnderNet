@@ -137,6 +137,7 @@ BLOCK_LAYOUTS = {
     "endernet:bus_template_io": LAYOUT_UNIFORM,
     "endernet:parallel_processor_connector": LAYOUT_UNIFORM,
     "endernet:energy_input_interface": LAYOUT_UNIFORM,
+    "endernet:wireless_connector": LAYOUT_UNIFORM,
     # 正面 + 通用机壳
     "endernet:assemble_chamber": LAYOUT_FRONT,
     "endernet:common_terminal_panel": LAYOUT_FRONT,
@@ -341,6 +342,7 @@ TIPS = {
     "endernet:assemble_chamber": "为网络提供自动合成能力。",
     "endernet:energy_input_interface": "将蔚蓝科技的 RF 转换为本模组的 EN。",
     "endernet:creative_energy_source": "为网络提供 2147483647 EN/t 的能源功率。不占带宽。",
+    "endernet:wireless_connector": "用无线连接工具与另一台配对，两端合成一张网（同维度、256 格内）。",
 }
 
 
@@ -831,8 +833,8 @@ def panel_item_texture():
 def build_part_item_json(part_id):
     """一种面板物品的展示方块：只为让物品栏、手持、掉落物显示 3D 面板而注册，玩家放不下它。
 
-    基岩版普通物品在物品栏里只能画 2D 图标（`.claude/15` §2），所以四种 `*_terminal_part`
-    改成同名方块，物品形态就是方块形态：
+    基岩版普通物品在物品栏里只能画 2D 图标（`.claude/15` §2），所以四种 `*_terminal_part` 与
+    P2P 网络隧道都改成同名方块，物品形态就是方块形态（隧道用默认面板那块屏幕）：
     - 几何 `geometry.endernet.<面板短名>`（`gen_cable_models.build_panel_item`：居中、屏幕朝南）。
       没有方块状态、没有排列，不写 `item_visual`；
     - 材质：面板图集，`alpha_test`（对应方块实体外观的 `entity_alphatest`）；

@@ -115,7 +115,8 @@ class AssetFixture(unittest.TestCase):
         #: / `build_part_holder_json` / `build_part_item_json`），但不按 `BLOCK_LAYOUTS` 出外观：
         #: 「每个方块都要有 JSON、组件、名字、资源映射」这类覆盖检查查 `all_block_ids`，外观布局
         #: 那几条仍只查整方块设备 `block_ids`（它们自己的检查在 `test_cable_blocks`）。
-        #: 终端面板 2026-11-10 起是方块物品（方案 B：物品栏显示 3D），不再是普通物品。
+        #: 终端面板 2026-11-10 起是方块物品（方案 B：物品栏显示 3D），不再是普通物品；P2P 网络
+        #: 隧道（2026-11-13）同样是展示方块，屏幕取默认面板那一块。
         cls.cable_ids = sorted(cls.definitions.cables)
         cls.holder_ids = sorted(cls.definitions.part_holders)
         cls.part_ids = sorted(cls.definitions.parts)
@@ -837,11 +838,21 @@ class TestItemResources(AssetFixture):
                 spec.id,
             )
 
+    def test_tunnel_is_a_display_block_with_the_default_screen(self):
+        """P2P 网络隧道与终端面板一样是展示方块（物品栏显示 3D 面板），几何用默认面板的屏幕。"""
+        tunnel = "endernet:p2p_network_tunnel"
+        self.assertIn(tunnel, self.part_ids)
+        components = self.read_block_json(tunnel)["minecraft:block"]["components"]
+        self.assertEqual(components["minecraft:geometry"], "geometry.endernet.p2p_network_tunnel")
+        self.assertTrue(os.path.isfile(os.path.join(RP_ROOT, "models", "blocks",
+                                                    "p2p_network_tunnel.geo.json")))
+        self.assertFalse(os.path.isfile(os.path.join(BP_ITEMS, item_file_name(tunnel))))
+
     def test_part_items_are_display_blocks(self):
         """终端面板是方块物品（2026-11-10 方案 B）：没有物品 JSON，只有同名的展示方块；
         堆叠照方块物品默认的 64，同整方块终端。面板物品不带身份数据，挂上光缆之后的状态按
-        「位置 + 面」记，堆叠不会混掉谁的东西。"""
-        self.assertEqual(len(self.part_ids), 4)
+        「位置 + 面」记，堆叠不会混掉谁的东西。P2P 网络隧道同样（2026-11-13）。"""
+        self.assertEqual(len(self.part_ids), 5)
         for part_id in self.part_ids:
             self.assertFalse(os.path.isfile(os.path.join(BP_ITEMS, item_file_name(part_id))),
                              part_id)
@@ -869,8 +880,8 @@ class TestItemResources(AssetFixture):
             self.assertTrue(tip.strip(), item_id)
 
     def test_part_items_have_no_tip(self):
-        """四种终端面板不写说明（作者 2026-11-10 定：冗余提示删掉）；展示方块也不写。"""
-        self.assertEqual(len(self.part_ids), 4)
+        """面板不写说明（作者 2026-11-10 定：冗余提示删掉）；展示方块也不写。"""
+        self.assertEqual(len(self.part_ids), 5)
         for part_id in self.part_ids:
             components = self.read_block_json(part_id)["minecraft:block"]["components"]
             self.assertNotIn("netease:custom_tips", components, part_id)

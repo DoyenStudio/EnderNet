@@ -81,6 +81,22 @@ MEMORY_GLYPH = (
 )
 
 
+#: 工具（配置卡、无线连接工具）的占位配色与图形。第四套，
+#: 用末影紫，图形画成一块带芯片触点的卡片。网络扳手已有自己的图标（`gen_cable_models.py
+#: --icons`），文件在就跳过。
+TOOL_PALETTE = ("#5B3F8B", "#2E2050", "#C9A3E0")
+TOOL_GLYPH = (
+    "########",
+    "#......#",
+    "#.##...#",
+    "#.##...#",
+    "#......#",
+    "#.####.#",
+    "#......#",
+    "########",
+)
+
+
 def parse_color(text):
     text = text.lstrip("#")
     return (
@@ -152,6 +168,11 @@ def build_memory_pixels(index_in_items):
     return render_pixels(MEMORY_PALETTE, MEMORY_GLYPH, index_in_items)
 
 
+def build_tool_pixels(index_in_items):
+    """工具的占位图。"""
+    return render_pixels(TOOL_PALETTE, TOOL_GLYPH, index_in_items)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="生成 EnderNet 物品占位贴图")
     parser.add_argument("--force", action="store_true", help="覆盖已存在的贴图")
@@ -171,6 +192,7 @@ def main(argv=None):
         (definitions.item_mediums, build_item_pixels),
         (definitions.item_templates, build_template_pixels),
         (definitions.item_memories, build_memory_pixels),
+        (definitions.item_tools, build_tool_pixels),
     )
     for item_ids, painter in item_groups:
         for index, item_id in enumerate(item_ids):

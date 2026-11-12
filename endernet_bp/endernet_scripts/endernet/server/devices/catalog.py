@@ -142,10 +142,10 @@ class DeviceCatalog(object):
         """面板形态 → 它对应的整方块终端（13 §2）；其余设备原样返回。
 
         「面板的行为与对应整方块终端完全相同」（全局约束 9）的判据都按它：工作台、样板槽、
-        终端库存表、控制器支持范围。
+        终端库存表、控制器支持范围。没有整方块对应物的面板（P2P 隧道）原样返回。
         """
         definition = self.definitions.get(device_id)
-        if definition.is_part():
+        if definition.is_part() and definition.whole_block_id is not None:
             return definition.whole_block_id
         return device_id
 

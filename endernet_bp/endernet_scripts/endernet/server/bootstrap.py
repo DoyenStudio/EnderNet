@@ -40,6 +40,7 @@ from ..common.definitions import (
     CATEGORY_ASSEMBLY,
     CATEGORY_MEMORY,
     CATEGORY_PROCESSOR,
+    CATEGORY_WIRELESS,
     PART_KIND_TERMINAL,
     PATTERN_MODE_CRAFTING,
     DefinitionSet,
@@ -76,6 +77,7 @@ from .adapters import EngineRecipeSource
 from .adapters import ToolDeltaWorldAdapter
 from .application import ApplicationService
 from .devices import CableIntentService, CableStateKeeper, DeviceCatalog, PanelService
+from .devices import TunnelService, WirelessService
 from .interaction import ItemExchange, PlaceFeedback
 from .crafting.orders import OrderPolicy
 from .crafting.orders import AbsentReturns, FactoryService
@@ -652,7 +654,13 @@ class ServerBootstrap(object):
             self.world,
             clock=self.clock,
         )
-        self.lifecycle.set_config_reader(self.cables.read_config)
+        #: 无线连接器（2026-11-13）：配对数据在方块实体里，注册时与光缆一样经生命周期的 config
+        #: 读口读进记录；配对成立的两台是拓扑的一条远程连边。工具的两个动作在意图服务建好后登记。
+        self.wireless = WirelessService(
+            self.definitions, self.registry, self.topology, self.world, clock=self.clock
+        )
+        self.lifecycle.set_config_reader(self._read_device_config)
+        self.topology.add_remote_links(self.wireless)
         self.admission = AdmissionService(self.definitions, self.registry, self.topology)
         #: 每帧给运行时的服务推进预算。与图重建预算分开计：两者消耗的
         #: 是同一帧的时间，但一个是节点展开、一个是业务工作，不能混在一起。
@@ -1158,6 +1166,21 @@ class ServerBootstrap(object):
         )
         self.slot_displays.panels = self.panels.display_values
         self.cables.on_faces_changed = self._on_cable_faces_changed
+        #: P2P 网络隧道（2026-11-13）：频率索引是拓扑的另一份远程连边，准入按它把关隧道后面的
+        #: 设备；配置卡的两个动作登记进同一张意图分派表。无线连接工具同一张表。
+        self.tunnels = TunnelService(
+            self.definitions,
+            self.registry,
+            self.catalog,
+            self.topology,
+            self.panels,
+            items=self.item_exchange,
+        )
+        self.tunnels.register(self.cable_intents)
+        self.topology.add_remote_links(self.tunnels)
+        self.admission.set_tunnels(self.tunnels)
+        self.wireless.items = self.item_exchange
+        self.wireless.register(self.cable_intents)
         # 运行时状态变化的消费者（任务 11）。挂在这里而不是让 sync 自己订阅：
         # `_emit` 的订阅者顺序按注册先后走，而这一步在**装配期**完成，
         # 与 04/05 那些消费者一样是固定的、可复现的顺序。
@@ -1353,6 +1376,8 @@ class ServerBootstrap(object):
         # 光缆的方块状态紧跟拓扑发布（13 §5「拓扑重建发布后」）：事实来源是拓扑，
         # 方块状态只是外观；按帧限量，只在变了时写。
         cable_cells = self.cables.advance(self.clock.current_tick())
+        # 无线连接器的方块实体重读（区块刚加载时读不到的那几台），同光缆的节奏
+        self.wireless.advance(self.clock.current_tick())
         # 唤醒投递必须夹在**重建之后、推进之前**：放前面会丢掉「本帧刚放下、
         # 运行时还没同步成员」的设备（它的 lane 还不存在）；放后面则本帧
         # 白等一帧。集合为空时 `take_wakes()` 是 O(1)，空闲帧几乎不花钱。
@@ -1937,6 +1962,9 @@ class ServerBootstrap(object):
             return {"unit_count": self.memory_slots.unit_count_of(ref)}
         if category == CATEGORY_ASSEMBLY:
             return {"state": DEVICE_WORK if self.patterns.assembly.is_working(ref) else DEVICE_IDLE}
+        if category == CATEGORY_WIRELESS:
+            # 按配对距离的耗能单位（2026-11-13）：没配对为 0，方块实体还没读到为 None（待确认）
+            return {"unit_count": self.wireless.distance_units(ref)}
         if category == CATEGORY_PROCESSOR:
             factory = runtime.services.get(ServiceId.FACTORY)
             if not isinstance(factory, FactoryService):
@@ -2561,6 +2589,9 @@ class ServerBootstrap(object):
             # 光缆的方块状态维护也从**同一批变化**推导（阶段 C）：放下、区块加载、
             # 邻居变化、面板离开各自决定哪格什么时候重算。
             self.cables.observe(change)
+            # P2P 隧道的频率索引与无线连接器的方块实体重读也从同一批变化推导（2026-11-13）
+            self.tunnels.observe(change)
+            self.wireless.observe(change)
             # 驱动器状态与接口状态也从**同一批变化**推导，不另开观察者通道——
             # 两条路径分叉就会出「拓扑知道设备没了、驱动器/接口还以为在」。
             self.drivers.observe(change)
@@ -2655,8 +2686,17 @@ class ServerBootstrap(object):
         """光缆的按面数据刚被改过（`CableStateKeeper.on_faces_changed`）：外观下一帧比一次，
         新出现的面板核对终端库存身份（接了存档时）。"""
         self.slot_displays.mark_panels(node_key)
+        self.tunnels.refresh_host(node_key)
         if self.persistence_enabled:
             self._discover_panels(self.registry.get(node_key))
+
+    def _read_device_config(self, node_key, device_id):
+        # type: (object, str) -> object
+        """生命周期注册时读 config 的口子：光缆与面板底座读按面数据，无线连接器读配对数据，
+        别的设备没有（None）。"""
+        if self.definitions.has_face_data(device_id):
+            return self.cables.read_config(node_key, device_id)
+        return self.wireless.read_config(node_key, device_id)
 
     def _discover_panels(self, record):
         # type: (object) -> None
@@ -2731,6 +2771,9 @@ class ServerBootstrap(object):
             ),
             #: 光缆面板（阶段 D）：挂上、打开、退还、挖掉时掉出的件数
             "panels": self.panels.diagnostics(),
+            #: P2P 隧道的频率组与无线连接器的方块实体读写（2026-11-13）
+            "tunnels": self.tunnels.diagnostics(),
+            "wireless": self.wireless.diagnostics(),
             "plan": self.plan_diagnostics(),
             "order": self.order_diagnostics(),
             "energy": self.energy_diagnostics(),
