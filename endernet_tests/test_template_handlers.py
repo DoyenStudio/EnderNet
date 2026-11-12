@@ -231,10 +231,10 @@ class Fixture(unittest.TestCase):
             by_input={"minecraft:oak_planks": [STICK_RECIPE]},
         )
         self.service = self.stand.service
-        self.service.templates = self.store
-        self.service.recipes = self.recipes
+        self.service.terminal.templates = self.store
+        self.service.terminal.recipes = self.recipes
         self.service.inventories = FakeProviders(self.inventory)
-        self.service.template_policy = TemplatePolicy()
+        self.service.terminal.template_policy = TemplatePolicy()
 
     # -- 公共前缀 ------------------------------------------------------
 
@@ -320,9 +320,9 @@ class TestClear(Fixture):
 
     def test_crafting_clear_removes_inputs_and_detected_output(self):
         self.fill_source((0, PLANKS, 1), (3, PLANKS, 1))
-        self.assertIsNotNone(self.service._template_detect(self.state)[0])
+        self.assertIsNotNone(self.service.terminal._template_detect(self.state)[0])
         self.assertTrue(self.send({"action": "template_clear"}).is_applied())
-        self.assertEqual((None, None), self.service._template_detect(self.state))
+        self.assertEqual((None, None), self.service.terminal._template_detect(self.state))
 
     def test_stale_clear_keeps_config(self):
         self.fill_source((0, LOG, 1))
@@ -633,7 +633,7 @@ class TestRealSlots(Fixture):
     def test_the_policy_can_limit_the_put_to_one(self):
         class OneAtATime(TemplatePolicy):
             device_slot_put_count = PUT_COUNT_ONE
-        self.service.template_policy = OneAtATime()
+        self.service.terminal.template_policy = OneAtATime()
         self.put_factory(5)
         self.assertEqual(1, self.slots.count_at(INPUT_SLOT))
         self.assertEqual(4, self.inventory.count_of(FACTORY))
@@ -704,13 +704,13 @@ class TestRealSlots(Fixture):
 class TestWiring(Fixture):
 
     def test_an_unwired_service_is_not_ready_rather_than_empty(self):
-        self.service.templates = None
+        self.service.terminal.templates = None
         result = self.send({"action": "template_mode", "target": "factory"})
         self.assertEqual([Reason.SERVICE_NOT_READY], self.reasons(result))
 
     def test_a_block_without_template_slots_is_unsupported(self):
         self.store = TemplateStore(accepts=lambda ref: False)
-        self.service.templates = self.store
+        self.service.terminal.templates = self.store
         result = self.send({"action": "template_mode", "target": "factory"})
         self.assertEqual([Reason.UNSUPPORTED], self.reasons(result))
 
@@ -769,7 +769,7 @@ class TestRecipeImport(Fixture):
                       self.reasons(self.import_recipe(slot_version=99)))
         self.assertIn(Reason.CRAFT_NO_RECIPE,
                       self.reasons(self.import_recipe(recipe="missing")))
-        self.config.set_mode(patterns.PATTERN_MODE_FACTORY, self.service.template_policy)
+        self.config.set_mode(patterns.PATTERN_MODE_FACTORY, self.service.terminal.template_policy)
         self.assertIn(Reason.TEMPLATE_CELL_LOCKED, self.reasons(self.import_recipe()))
 
 

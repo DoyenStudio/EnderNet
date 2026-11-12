@@ -384,7 +384,7 @@ class TestAssembly(ReturnsFixture):
         self.drive_until(lambda: slot_read(self.port_box, 9)["count"] == 1)
         ref = self.ref_at(PORT_KEY)
         command = DeviceCommand(
-            "repeat-assembly", CommandKind.STORAGE,
+            "repeat-assembly", CommandKind.ORDER,
             CommandSource(None, ref, 0, distance_ok=True),
             payload={"action": "assembly_advance", "order_id": self.current().order_id,
                      "execution_id": self.instance().execution_id},
@@ -401,10 +401,18 @@ class TestAssembly(ReturnsFixture):
         self.seed(IRON, 2)
         self.submit_order()
         self.drive_until(lambda: slot_read(self.port_box, 9)["count"] == 1)
-        result = self.storage("spoof", "assembly_advance", ref=self.ref_at(PORT_KEY),
+        ref = self.ref_at(PORT_KEY)
+        result = self.server.submit_command(DeviceCommand(
+            "spoof", CommandKind.ORDER, CommandSource("p1", ref, 0),
+            payload={"action": "assembly_advance", "order_id": self.current().order_id,
+                     "execution_id": self.instance().execution_id},
+            topology_version=self.server.topology.version, device_ref=ref))
+        self.assertIn(Reason.BAD_PARAMETER, result.reason_codes())
+        # 装配推进是工厂的事：存储服务那条路已经不认这个动作。
+        result = self.storage("spoof-storage", "assembly_advance", ref=self.ref_at(PORT_KEY),
                               order_id=self.current().order_id,
                               execution_id=self.instance().execution_id)
-        self.assertIn(Reason.BAD_PARAMETER, result.reason_codes())
+        self.assertIn(Reason.UNSUPPORTED, result.reason_codes())
         self.assertEqual(slot_read(self.port_box, 9)["count"], 1)
 
     def test_replaced_chamber_cannot_consume_old_batch(self):
