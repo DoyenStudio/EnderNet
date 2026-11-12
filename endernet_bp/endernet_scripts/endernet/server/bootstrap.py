@@ -77,7 +77,7 @@ from .adapters import EngineRecipeSource
 from .adapters import ToolDeltaWorldAdapter
 from .application import ApplicationService
 from .devices import CableIntentService, CableStateKeeper, DeviceCatalog, PanelService
-from .devices import TunnelService, WirelessService
+from .devices import StatusLooks, TunnelService, WirelessService
 from .interaction import ItemExchange, PlaceFeedback
 from .crafting.orders import OrderPolicy
 from .crafting.orders import AbsentReturns, FactoryService
@@ -135,7 +135,7 @@ from .network import (
     ServiceRegistry,
 )
 from .network import SchedulerService
-from .network import TopologyService
+from .network import ControllerState, TopologyService
 from .runtime import EventKind, EventQueue
 from .runtime import ChangeKind, DeviceLifecycle
 from .runtime import LogicalClock, SchedulerPolicy
@@ -1181,6 +1181,22 @@ class ServerBootstrap(object):
         self.admission.set_tunnels(self.tunnels)
         self.wireless.items = self.item_exchange
         self.wireless.register(self.cable_intents)
+        #: 设备的在线 / 离线外观（2026-11-13）：整方块设备写方块状态 `endernet:status`，面板换离线
+        #: 屏幕（面板外观读数加偏移）。结论取设备状态，与设备界面同一个；拓扑、带宽、运行时一变就全部
+        #: 重算，此外每帧轮转复查几台（够不够电没有通知）。
+        self.status_looks = StatusLooks(
+            self.definitions,
+            self.registry,
+            self.catalog,
+            self.world,
+            status_of=self.runtimes.device_status,
+            conflict_of=self._controller_conflict,
+            mark_panels=self.slot_displays.mark_panels,
+        )
+        self.panels.offline_of = self.status_looks.panel_offline
+        self.topology.add_listener(self.status_looks.mark_all)
+        self.admission.add_listener(self.status_looks.mark_all)
+        self.runtimes.add_listener(self.status_looks.mark_all)
         # 运行时状态变化的消费者（任务 11）。挂在这里而不是让 sync 自己订阅：
         # `_emit` 的订阅者顺序按注册先后走，而这一步在**装配期**完成，
         # 与 04/05 那些消费者一样是固定的、可复现的顺序。
@@ -1390,6 +1406,9 @@ class ServerBootstrap(object):
         network_states_applied = self._apply_archived_network_states()
         self._settle_input_power()
         service_steps = self.runtimes.tick(self.runtime_budget, self._tick_context())
+        # 在线 / 离线外观紧跟运行时推进：本帧的网络状态算完了再写方块状态；面板外观的变化
+        # 由帧尾的槽位模块显示发出去
+        looks = self.status_looks.advance()
         # 发布窗口**紧跟运行时推进**（任务 11-02）：提交发生在 `runtimes.tick`
         # 内，取脏键放其后，窗口才看得见本帧提交。放前面会让本帧的提交等到
         # 下一帧才发布——那不是错，只是白慢一拍；放后面则更快。位置不能挪。
@@ -1436,6 +1455,8 @@ class ServerBootstrap(object):
             #: 本帧重算了几格光缆的方块状态（阶段 C）。恒为 0 是正常的——只在放下、
             #: 区块加载、邻居变化与扳手操作之后才有。
             "cable_cells": cable_cells,
+            #: 本帧算了几格设备外观（在线 / 离线，2026-11-13）
+            "status_looks": looks,
             #: 本帧服务推进消耗的工作量（03）。受 `runtime_budget` 约束；
             #: 调度器落地后它不再恒为 0——有到期任务时才会有消耗。
             "service_steps": service_steps,
@@ -2592,6 +2613,8 @@ class ServerBootstrap(object):
             # P2P 隧道的频率索引与无线连接器的方块实体重读也从同一批变化推导（2026-11-13）
             self.tunnels.observe(change)
             self.wireless.observe(change)
+            # 在线 / 离线外观跟踪哪几格也从同一批变化推导
+            self.status_looks.observe(change)
             # 驱动器状态与接口状态也从**同一批变化**推导，不另开观察者通道——
             # 两条路径分叉就会出「拓扑知道设备没了、驱动器/接口还以为在」。
             self.drivers.observe(change)
@@ -2687,8 +2710,15 @@ class ServerBootstrap(object):
         新出现的面板核对终端库存身份（接了存档时）。"""
         self.slot_displays.mark_panels(node_key)
         self.tunnels.refresh_host(node_key)
+        self.status_looks.refresh_host(node_key)
         if self.persistence_enabled:
             self._discover_panels(self.registry.get(node_key))
+
+    def _controller_conflict(self, node_key):
+        # type: (object) -> bool
+        """这一格所在的网络是不是控制器冲突（不止一台控制器），控制器的冲突外观用。"""
+        component = self.topology.snapshot().component_of(node_key)
+        return component is not None and component.controller_state == ControllerState.CONFLICT
 
     def _read_device_config(self, node_key, device_id):
         # type: (object, str) -> object
@@ -2774,6 +2804,8 @@ class ServerBootstrap(object):
             #: P2P 隧道的频率组与无线连接器的方块实体读写（2026-11-13）
             "tunnels": self.tunnels.diagnostics(),
             "wireless": self.wireless.diagnostics(),
+            #: 在线 / 离线外观（2026-11-13）：跟踪几格、写了几次、面板变了几次
+            "status_looks": self.status_looks.diagnostics(),
             "plan": self.plan_diagnostics(),
             "order": self.order_diagnostics(),
             "energy": self.energy_diagnostics(),

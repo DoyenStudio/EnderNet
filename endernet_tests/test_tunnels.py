@@ -164,6 +164,8 @@ class TestConfigCard(TunnelFixture):
         self.assertIsNotNone(parse_freq(freq))
         self.assertEqual(rig.world.part_configs[INPUT], {"freq": freq, "role": "input"})
         self.assertIn("频率 #%s" % (freq,), rig.hand.tips[CONFIG_CARD_ID])
+        # 实例说明整段盖掉物品 JSON 的那一份：第一行得是物品名占位，不能空着（真机反馈）
+        self.assertTrue(rig.hand.tips[CONFIG_CARD_ID].startswith("%name%\n§7"))
         self.assertIn("已设为输入", result.message)
 
     def test_sneak_clicking_the_input_again_only_reads_its_frequency(self):
@@ -183,6 +185,7 @@ class TestConfigCard(TunnelFixture):
         self.assertEqual(result.reason, REASON_CARD_CLEARED)
         self.assertIsNone(rig.card_freq())
         self.assertNotIn("频率 #", rig.hand.tips[CONFIG_CARD_ID])
+        self.assertTrue(rig.hand.tips[CONFIG_CARD_ID].startswith("%name%\n§7"))
 
     def test_an_empty_card_cannot_set_an_output(self):
         rig = self.rig

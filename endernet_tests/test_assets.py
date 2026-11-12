@@ -266,7 +266,11 @@ class TestBlockJsonCoverage(AssetFixture):
         expected = {"south": 180, "north": 0, "east": -90, "west": 90}
         for device_id in self.block_ids:
             block = self.read_block_json(device_id)["minecraft:block"]
-            permutations = block.get("permutations", [])
+            # 外观状态（在线 / 离线）的排列另有用例，这里只看朝向那几条
+            permutations = [
+                permutation for permutation in block.get("permutations", [])
+                if "minecraft:cardinal_direction" in permutation["condition"]
+            ]
             if declared_layouts()[device_id] == "uniform":
                 self.assertEqual(permutations, [], device_id)
                 continue

@@ -10,6 +10,9 @@
                 "digger": "pickaxe",
                 "level": 2
             },
+            "minecraft:geometry": {
+                "identifier": "minecraft:geometry.full_block"
+            },
             "minecraft:material_instances": {
                 "*": {
                     "render_method": "opaque",
@@ -42,7 +45,26 @@
                     ],
                     "y_rotation_offset": 180.0
                 }
+            },
+            "states": {
+                "endernet:status": [
+                    0,
+                    1
+                ]
             }
-        }
+        },
+        "permutations": [
+            {
+                "condition": "q.block_state('endernet:status') == 1",
+                "components": {
+                    "minecraft:material_instances": {
+                        "*": {
+                            "render_method": "opaque",
+                            "texture": "endernet:bus_item_input_io_all_offline"
+                        }
+                    }
+                }
+            }
+        ]
     }
 }

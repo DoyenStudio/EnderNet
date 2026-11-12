@@ -670,6 +670,22 @@ class MemorySpec(object):
         return "MemorySpec(%s, %d B)" % (self.id, self.capacity_bytes)
 
 
+# -- 设备的在线 / 离线外观（2026-11-13，作者画的离线材质）---------------------------
+
+#: 整方块设备的外观状态（方块状态）：0 在线、1 离线、2 冲突（只有控制器有：多台控制器连在一张网，
+#: 照 AE2 控制器冲突变红）。默认是 0：物品栏图标与刚放下的样子都是在线外观，服务端随即按设备
+#: 状态写（`server/devices/status_looks.py`）。生成器按它给方块加状态与贴图切换。
+STATUS_STATE = "endernet:status"
+STATUS_ONLINE = 0
+STATUS_OFFLINE = 1
+STATUS_CONFLICT = 2
+
+#: 没有离线外观的整方块设备：创造能量源是电源（作者画的离线图与在线图一样）。
+NO_STATUS_LOOK = frozenset([
+    "endernet:creative_energy_source",
+])
+
+
 #: 整方块设备的**透传容量**（13 §0.5「设备透传带宽（AE2 式）」，R14-a）：
 #: 线路经过一台设备继续往下走时，这台设备这一段最多能让多少带宽经过。
 #: 2026-11-09 作者定案 **8u**（与 AE2 整方块设备透传 8 频道一致），已定数值，
@@ -1725,6 +1741,17 @@ class DefinitionSet(object):
         if value is None or value is UNCONFIGURED:
             return UNCONFIGURED
         return int(value)
+
+    def status_values_of(self, device_id):
+        # type: (str) -> tuple
+        """这台整方块设备的外观状态能取哪几个值：控制器 `(0, 1, 2)`，其余有离线外观的 `(0, 1)`，
+        没有离线外观的（`NO_STATUS_LOOK`、光缆、面板、面板底座）为空。面板的离线走面板外观读数，
+        不在这里。"""
+        if device_id not in self.devices or device_id in NO_STATUS_LOOK:
+            return ()
+        if self.devices[device_id].category == CATEGORY_CONTROLLER:
+            return (STATUS_ONLINE, STATUS_OFFLINE, STATUS_CONFLICT)
+        return (STATUS_ONLINE, STATUS_OFFLINE)
 
     def tunnel_capacity_quarters(self):
         # type: () -> object

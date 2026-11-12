@@ -57,11 +57,12 @@
   一份（`endernet:part_config_<面>`），挂上新面板时清空、原地换方块时随面板搬走。
 
 **外观**：`display_values(node_key)` 给 `SlotDisplayTracker` 当面板读数（六面取值，顺序
-`FACING_NAMES`，种类序号同 `cable_shapes.PANEL_KINDS`）。
+`FACING_NAMES`，种类序号同 `cable_shapes.PANEL_KINDS`）。面板离线（`offline_of`，装配层接
+`StatusLooks.panel_offline`，2026-11-13）时那一面取值加 `slot_display.OFFLINE_OFFSET`，画离线屏幕。
 """
 
 from ...common.cable_shapes import PANEL_PART_IDS, PART_PANEL
-from ...common.channels import PANEL, kind_of, model_value
+from ...common.channels import OFFLINE_OFFSET, PANEL, kind_of, model_value
 from ...common.channels.cable_intent import (
     ACTION_ADD_CABLE,
     ACTION_PLACE_PANEL,
@@ -149,6 +150,8 @@ class PanelService(object):
         self.intents = None
         #: 面板种类 → `PartKindHooks`
         self._kinds = {}
+        #: `offline_of(PartKey) -> bool`：这块面板离线没有（外观换离线屏幕）；没接就一律按在线画
+        self.offline_of = None
         self.register_kind(PART_KIND_TERMINAL, screen_of=self._terminal_screen)
         self.stats = dict.fromkeys(
             (
@@ -431,7 +434,13 @@ class PanelService(object):
         if record is None or kind_of(record.device_id) != PANEL:
             return None
         parts = dict(self.catalog.parts_of(record))
-        return tuple(model_value(PANEL_PART_IDS, parts.get(face)) for face in FACING_NAMES)
+        values = []
+        for face in FACING_NAMES:
+            value = model_value(PANEL_PART_IDS, parts.get(face))
+            if value and self.offline_of is not None and self.offline_of(PartKey(node_key, face)):
+                value += OFFLINE_OFFSET
+            values.append(value)
+        return tuple(values)
 
     # -- 宿主上的面板 ----------------------------------------------------
 

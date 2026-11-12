@@ -5,7 +5,7 @@
             "description": {
                 "identifier": "geometry.endernet.p2p_network_tunnel",
                 "texture_width": 64,
-                "texture_height": 32,
+                "texture_height": 64,
                 "visible_bounds_width": 2,
                 "visible_bounds_height": 2.5,
                 "visible_bounds_offset": [
@@ -165,8 +165,8 @@
                             "uv": {
                                 "south": {
                                     "uv": [
-                                        0,
-                                        0
+                                        48,
+                                        24
                                     ],
                                     "uv_size": [
                                         12,

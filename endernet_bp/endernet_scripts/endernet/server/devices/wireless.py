@@ -45,7 +45,7 @@ from ...common.definitions import (
     wireless_distance_units,
 )
 from ...common.identity import NodeKey
-from ..interaction import ItemExchange
+from ..interaction import ItemExchange, instance_tips
 from ..runtime import ChangeKind
 from .cable_intents import IntentResult
 
@@ -422,11 +422,12 @@ class WirelessService(object):
     def _write_tool(self, context, record):
         # type: (object, object) -> bool
         """工具记下 `record` 那台（None = 清空），物品说明随之改写。"""
-        tip = "\n§7" + self.definitions.get_tool(WIRELESS_LINK_TOOL_ID).tip
         value = None
+        pending = ""
         if record is not None:
             value = {TOOL_LINK: link_text(record.node_key, record.config[CONFIG_MARK])}
-            tip += "\n§b待配对：%s" % (position_text(record.node_key),)
+            pending = "§b待配对：%s" % (position_text(record.node_key),)
+        tip = instance_tips("§7" + self.definitions.get_tool(WIRELESS_LINK_TOOL_ID).tip, pending)
         return self.items.set_held_data(
             context.player_id, WIRELESS_LINK_TOOL_ID, TOOL_DATA_KEY, value, tip)
 

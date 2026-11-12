@@ -69,6 +69,7 @@
 
 import math
 
+from .definitions import TUNNEL_PART_ID
 from .identity import FACING_NAMES, FACING_OFFSETS
 
 # -- 尺寸（单位 px，1 格 = 16 px）--------------------------------------------
@@ -172,8 +173,17 @@ def panel_part_id(kind):
     return "endernet:%s_terminal_part" % (kind,)
 
 
-#: 面板设备标识，按 `PANEL_KINDS` 的顺序——也就是外观取值的顺序
-PANEL_PART_IDS = tuple(panel_part_id(kind) for kind, _terminal in PANEL_KINDS)
+#: P2P 网络隧道的屏幕（2026-11-13）：隧道不是终端，不在 `PANEL_KINDS` 里，另有一块屏幕
+TUNNEL_SCREEN = "tunnel"
+
+#: 有专属屏幕的面板：`(屏幕名, 面板标识)`，终端在前（`PANEL_KINDS` 的顺序）、隧道在后。顺序就是
+#: 外观取值的顺序，生成器的屏幕骨骼与面板物品几何也按它出
+PANEL_SCREENS = tuple((kind, panel_part_id(kind)) for kind, _terminal in PANEL_KINDS) + (
+    (TUNNEL_SCREEN, TUNNEL_PART_ID),
+)
+
+#: 面板设备标识，按 `PANEL_SCREENS` 的顺序——也就是外观取值的顺序
+PANEL_PART_IDS = tuple(part_id for _screen, part_id in PANEL_SCREENS)
 
 #: 部件种类
 PART_CORE = "core"

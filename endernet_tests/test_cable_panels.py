@@ -34,6 +34,7 @@ from endernet.common.channels.slot_display import (
     EMPTY,
     FACING_VARIABLE,
     FIRST_MODEL,
+    OFFLINE_OFFSET,
     PANEL,
     PANEL_DEVICES,
     has_facing,
@@ -305,11 +306,14 @@ class TestPanelReferences(unittest.TestCase):
 
 class TestPanelKinds(unittest.TestCase):
     def test_kinds_are_the_registered_parts(self):
-        """外观种类表是终端面板（各有一块屏）；P2P 隧道不在表里，外观取默认面板。"""
+        """外观种类表是四种终端面板，P2P 隧道另有一块屏幕排在最后（`PANEL_SCREENS`）；合起来就是
+        全部面板。"""
         definitions = DefinitionSet()
         terminals = [part_id for part_id in definitions.parts
                      if definitions.part_kind_of(part_id) == PART_KIND_TERMINAL]
-        self.assertEqual(sorted(PANEL_PART_IDS), sorted(terminals))
+        self.assertEqual(sorted(PANEL_PART_IDS[:len(PANEL_KINDS)]), sorted(terminals))
+        self.assertEqual(PANEL_PART_IDS[len(PANEL_KINDS):], (TUNNEL_PART_ID,))
+        self.assertEqual(sorted(PANEL_PART_IDS), sorted(definitions.parts))
         for (kind, terminal), part_id in zip(PANEL_KINDS, PANEL_PART_IDS):
             self.assertEqual(part_id, panel_part_id(kind))
             self.assertEqual(definitions.get(part_id).whole_block_id, terminal)
@@ -1566,8 +1570,9 @@ class TestHolderThroughTheServer(unittest.TestCase):
                          ["open", "add_cable", "panel_item"])
         self.assertEqual(rig.server.event_binder.openers.names(), ["terminal", "panel"])
         payload = rig.server.slot_displays.answer(key(0, z=-1))
+        # 底座上的面板不入网，外观是离线屏幕（2026-11-13）
         self.assertEqual(parse_update(payload)[2][FACING_NAMES.index("south")],
-                         FIRST_MODEL + PANEL_PART_IDS.index(COMMON_PART))
+                         FIRST_MODEL + PANEL_PART_IDS.index(COMMON_PART) + OFFLINE_OFFSET)
         self.assert_not_on_a_cable(rig.ref("south", host=key(0, z=-1)))
 
     def test_digging_a_holder_drops_its_panels_and_not_itself(self):

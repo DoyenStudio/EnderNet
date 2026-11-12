@@ -70,6 +70,12 @@
                     ],
                     "y_rotation_offset": 180.0
                 }
+            },
+            "states": {
+                "endernet:status": [
+                    0,
+                    1
+                ]
             }
         },
         "permutations": [
@@ -118,6 +124,17 @@
                             90,
                             0
                         ]
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:status') == 1",
+                "components": {
+                    "minecraft:material_instances": {
+                        "*": {
+                            "render_method": "opaque",
+                            "texture": "endernet:memory_slot_model_offline"
+                        }
                     }
                 }
             }

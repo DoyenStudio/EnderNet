@@ -57,7 +57,7 @@ from ...common.definitions import (
     ConnectionRules,
 )
 from ...common.identity import FACING_NAMES, PartKey, opposite_face
-from ..interaction import ItemExchange
+from ..interaction import ItemExchange, instance_tips
 from ..runtime import ChangeKind
 from .cable_intents import IntentResult
 from .cables import is_pending
@@ -475,11 +475,11 @@ class TunnelService(object):
 
     def card_tip(self, freq):
         # type: (object) -> str
-        """配置卡的物品说明：原说明（`ToolSpec.tip`），记着频率时再加一行。"""
-        tip = "\n§7" + self.definitions.get_tool(CONFIG_CARD_ID).tip
-        if freq is not None:
-            tip += "\n§b频率 #%s" % (freq,)
-        return tip
+        """配置卡的物品说明：物品名、原说明（`ToolSpec.tip`），记着频率时再加一行。"""
+        return instance_tips(
+            "§7" + self.definitions.get_tool(CONFIG_CARD_ID).tip,
+            "§b频率 #%s" % (freq,) if freq is not None else "",
+        )
 
     def _new_frequency(self):
         # type: () -> object

@@ -44,8 +44,10 @@
 - 方块实体外观是 `cable_shapes.PANEL_ENTITY_ID`，「槽」是六个面，顺序 = `FACING_NAMES`；
 - 变量是 `variable.p<面序号>`（`variable_of`），不是 `variable.s<槽号>`；没有朝向角
   （面板贴的是世界方位，`has_facing` 为假，客户端不写 `facing_yaw`）；
-- 取值照上表：`0` 这一面没有面板，`2 + i` = `cable_shapes.PANEL_KINDS` 第 `i` 种
-  （`model_items` 给的就是 `PANEL_PART_IDS`，与 `gen_cable_models.py` 的骨骼同源）。
+- 取值照上表：`0` 这一面没有面板，`2 + i` = `cable_shapes.PANEL_SCREENS` 第 `i` 种（四种终端在前、
+  P2P 网络隧道在后；`model_items` 给的就是 `PANEL_PART_IDS`，与 `gen_cable_models.py` 的骨骼同源）；
+- 面板离线（2026-11-13，设备状态不在线）时取值再加 `OFFLINE_OFFSET`，画那一种的离线屏幕
+  （颜色照作者终端的离线图：彩色换成同亮度的灰）。
 
 读数来自宿主光缆记录的 `config["parts"]`（经 `DeviceCatalog.parts_of`），服务端在
 面板增减、方块实体重读时广播，回答请求时单发；一面都没挂的光缆不回答（外观初值就是 0）。
@@ -81,6 +83,9 @@ PANEL_DEVICES = dict(
 EMPTY = 0
 UNKNOWN = 1
 FIRST_MODEL = 2
+#: 面板离线时取值加的数：`UNKNOWN + OFFLINE_OFFSET` 是离线的默认面板，`FIRST_MODEL + i +
+#: OFFLINE_OFFSET` 是第 i 种的离线屏幕。比任何在线取值都大，种类再多也不重叠。
+OFFLINE_OFFSET = 16
 
 #: 朝向角变量。实体整体按它绕 Y 轴转（动画 `animation.endernet.slot_modules.facing`）。
 FACING_VARIABLE = "variable.facing_yaw"

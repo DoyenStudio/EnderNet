@@ -158,6 +158,7 @@ class TestPairing(WirelessFixture):
         mark = rig.server.registry.get(A).config[CONFIG_MARK]
         self.assertEqual(rig.selection(), link_text(A, mark))
         self.assertIn("待配对：(2, 64, 0)", rig.hand.tips[WIRELESS_LINK_TOOL_ID])
+        self.assertTrue(rig.hand.tips[WIRELESS_LINK_TOOL_ID].startswith("%name%\n§7"))
 
     def test_pairing_joins_the_far_side_into_one_network(self):
         rig = self.rig

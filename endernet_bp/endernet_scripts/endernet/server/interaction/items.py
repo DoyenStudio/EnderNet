@@ -16,6 +16,16 @@ import math
 
 from ...common.resources import ResourceKey
 
+#: 物品实例说明里的物品名占位（网易 `customTips` 的自带格式：物品名，前面不带换行）
+NAME_PLACEHOLDER = "%name%"
+
+
+def instance_tips(*lines):
+    # type: (str) -> str
+    """物品实例的说明（`customTips`）。实例说明会整段盖掉物品 JSON 的 `netease:customtips`，连物品名
+    那一行都要自己写，所以开头放引擎的 `%name%`，再逐行接上（空行跳过）。"""
+    return NAME_PLACEHOLDER + "".join("\n" + line for line in lines if line)
+
 
 class Withdrawal(object):
     """扣下的一件：`charged` 为假是创造模式（没扣，失败时也不退）。"""

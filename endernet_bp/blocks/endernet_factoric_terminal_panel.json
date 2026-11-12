@@ -63,6 +63,12 @@
                     ],
                     "y_rotation_offset": 180.0
                 }
+            },
+            "states": {
+                "endernet:status": [
+                    0,
+                    1
+                ]
             }
         },
         "permutations": [
@@ -111,6 +117,41 @@
                             90,
                             0
                         ]
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:status') == 1",
+                "components": {
+                    "minecraft:material_instances": {
+                        "*": {
+                            "render_method": "opaque",
+                            "texture": "endernet:common_device_side_offline"
+                        },
+                        "down": {
+                            "render_method": "opaque",
+                            "texture": "endernet:common_device_bottom_offline"
+                        },
+                        "east": {
+                            "render_method": "opaque",
+                            "texture": "endernet:common_device_side_offline"
+                        },
+                        "north": {
+                            "render_method": "opaque",
+                            "texture": "endernet:factoric_terminal_panel_front_offline"
+                        },
+                        "south": {
+                            "render_method": "opaque",
+                            "texture": "endernet:common_device_side_offline"
+                        },
+                        "up": {
+                            "render_method": "opaque",
+                            "texture": "endernet:common_device_top_offline"
+                        },
+                        "west": {
+                            "render_method": "opaque",
+                            "texture": "endernet:common_device_side_offline"
+                        }
                     }
                 }
             }

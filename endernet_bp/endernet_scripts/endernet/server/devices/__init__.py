@@ -32,6 +32,7 @@ from .memory_slot import MemorySlotStore
 from .panels import PanelService
 from .registry import DeviceRegistry
 from .slot_display import SlotDisplayTracker
+from .status_looks import StatusLooks
 from .storage_driver import DRIVER_DEVICE_ID, DriverPolicy, StorageDriverStore, is_storage_driver
 from .tunnels import TunnelService
 from .wireless import WirelessService
@@ -68,6 +69,7 @@ __all__ = [
     "DriverPolicy",
     "StorageDriverStore",
     "is_storage_driver",
+    "StatusLooks",
     "TunnelService",
     "WirelessService",
 ]
