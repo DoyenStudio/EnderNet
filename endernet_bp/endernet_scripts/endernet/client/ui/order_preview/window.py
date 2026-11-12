@@ -25,7 +25,7 @@
 """
 
 from . import model as order_preview
-from ....common.protocol import MSG_COMMAND_RESULT, MSG_ERROR, STATUS_OK
+from ....common.protocol import MSG_COMMAND_RESULT, MSG_ERROR, STATUS_OK, Reason
 
 #: 数量窗的标题。与 `number_set_window.DEFAULT_TITLE`（「设置数量」）不同：
 #: 这一处的数量是**订单目标数量**，玩家按「设置数量」理解会以为是在改
@@ -102,10 +102,16 @@ class OrderPreviewWindow(object):
                     if self._submitting:
                         model.close()
                 else:
+                    reasons = result.get("reasons", ())
                     details = [reason.get("detail", "")
-                               for reason in result.get("reasons", ())]
-                    model.fail(u"\n".join(detail for detail in details if detail)
-                               or order_preview.DETAIL_FAILED)
+                               for reason in reasons]
+                    if any(reason.get("code") == Reason.CONTROLLER_DOES_NOT_SERVE
+                           for reason in reasons):
+                        # 回执由终端列表送到底部文本；收起弹窗，避免遮住提示。
+                        model.close()
+                    else:
+                        model.fail(u"\n".join(detail for detail in details if detail)
+                                   or order_preview.DETAIL_FAILED)
                     self._accept_preview = False
                 self.request_id = ""
                 self._submitting = False

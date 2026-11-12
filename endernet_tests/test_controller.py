@@ -859,6 +859,41 @@ class TestControllerServes(ControllerFixture):
         self.assertRejected(result, Reason.CONTROLLER_DOES_NOT_SERVE)
 
 
+class TestDosTerminalOrders(ControllerFixture):
+    controller_device = DOS
+    target_device = "endernet:common_terminal_panel"
+
+    def builders(self):
+        builders = ControllerFixture.builders(self)
+        builders[ServiceId.FACTORY] = lambda runtime: RecordingService(ServiceId.FACTORY)
+        return builders
+
+    def test_dos_refuses_preview_and_submit_from_supported_terminals(self):
+        for terminal in ("endernet:common_terminal_panel", "endernet:crafting_terminal_panel"):
+            self.remove(self.TARGET, self.target_device)
+            self.place(self.TARGET, terminal)
+            self.target_device = terminal
+            for action in ("preview_request", "submit"):
+                result = self.submit(kind=CommandKind.ORDER, request_id=terminal + action,
+                                     payload={"action": action})
+                self.assertRejected(result, Reason.CONTROLLER_DOES_NOT_SERVE)
+                self.assertEqual(result.reasons[0].detail, u"§6当前网络控制器§c不支持订单处理功能")
+        self.assertEqual(self.service(ServiceId.FACTORY).calls, [])
+
+    def test_dos_still_allows_terminal_storage(self):
+        result = self.submit()
+        self.assertEqual(result.status, STATUS_OK, result.to_dict())
+
+    def test_tiny_controller_still_admits_terminal_orders(self):
+        self.remove(self.CONTROLLER, DOS)
+        self.place(self.CONTROLLER, TINY)
+        for action in ("preview_request", "submit"):
+            result = self.submit(kind=CommandKind.ORDER, request_id=action,
+                                 payload={"action": action})
+            self.assertEqual(result.status, STATUS_OK, result.to_dict())
+        self.assertEqual(self.service(ServiceId.FACTORY).calls, ["preview_request", "submit"])
+
+
 # -- 第 10 条：装配档位 ----------------------------------------------------
 
 

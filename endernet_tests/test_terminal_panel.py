@@ -860,6 +860,27 @@ class TestLongPressOrder(PanelFixture):
         self.assertEqual(command["key"]["name"], STONE.name)
         self.assertTrue(self.view.preview.model.loading(), "预览窗立刻进入 loading")
 
+    def test_unsupported_order_receipt_shows_bottom_text_without_modal(self):
+        from endernet.common.protocol import Reason
+
+        self.press(self.index_of(STONE.name), hold=self.HOLD)
+        self.opened[0]["callback"](7)
+        request_id = self.take_command()["request_id"]
+        result = self.rejected(request_id)
+        result["reasons"] = [{"code": Reason.CONTROLLER_DOES_NOT_SERVE,
+                              "detail": u"§6当前网络控制器§c不支持订单处理功能"}]
+        controls = [Mock(), Mock(), Mock()]
+        details = self.panel.slot_input.details
+        details.controls = controls
+        self.feed(CommandResultMessage(request_id, result))
+        self.view._drain_receipts()
+        self.assertFalse(self.view.preview.model.visible)
+        self.assertFalse(self.panel.top_modal())
+        details.tick(None, None)
+        controls[2].asLabel().SetText.assert_called_with(
+            u"§6当前网络控制器§c不支持订单处理功能".encode("utf-8"))
+        controls[0].SetVisible.assert_called_with(True)
+
     def test_a_short_press_on_a_plus_row_is_still_a_plain_click(self):
         """按一下就松开还是**选中**：长按是另一个手势，不能顺手接管短按。"""
         index = self.index_of(STONE.name)

@@ -1204,6 +1204,18 @@ class MasterController(object):
                 version,
             )
 
+        # DOS 能使用普通/合成终端，但不支持它们发出的订单与预览请求。
+        if (record.device_id == "endernet:dos_network_endpoint"
+                and command.kind == CommandKind.ORDER):
+            return None, CommandResult.rejected(
+                request_id,
+                [BlockReason(
+                    Reason.CONTROLLER_DOES_NOT_SERVE,
+                    u"§6当前网络控制器§c不支持订单处理功能",
+                )],
+                version,
+            )
+
         # 10 装配档位。放在带宽之前是有意的：正式档下带宽数值本身来自
         #    未定案的策略，先报「没带宽」等于把替身数值当成了正式结果。
         if self.profile == AssemblyProfile.PRODUCTION and self.policy is not None:

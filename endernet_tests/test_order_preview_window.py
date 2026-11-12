@@ -342,6 +342,23 @@ class TestController(unittest.TestCase):
         self.assertFalse(self.window.model.loading())
         self.assertEqual(self.window.model.detail, u"订单执行异常")
 
+    def test_unsupported_controller_closes_preview_and_submit_for_bottom_notice(self):
+        for submitting in (False, True):
+            if submitting:
+                request_id = self.ready_submit()
+            else:
+                self.window.request(STONE, 4)
+                request_id = self.window.request_id
+            self.deliver(CommandResultMessage(request_id, CommandResult.rejected(
+                request_id, [BlockReason(Reason.CONTROLLER_DOES_NOT_SERVE,
+                                         u"§6当前网络控制器§c不支持订单处理功能")]
+            ).to_dict()))
+            self.assertFalse(self.window.model.visible)
+            self.assertFalse(self.window.model.can_submit())
+            self.assertEqual(self.window.request_id, "")
+            self.deliver(state(status="complete", submit_ok=True))
+            self.assertFalse(self.window.model.visible)
+
     def test_session_rejection_stops_loading_after_client_drops_session(self):
         request_id = self.ready_submit()
         self.client.session = False
