@@ -317,7 +317,7 @@
                         0,
                         0
                     ],
-                    "$pressed_button_name": "%netease_editor_template_namespace.click",
+                    "$pressed_button_name": "#EnderNetCraft.fill",
                     "$pressed_texture": "textures/endernet/ui/button_pressed",
                     "$texture_layer": 2,
                     "anchor_from": "top_left",
@@ -331,7 +331,13 @@
                         14.0
                     ],
                     "layer": 2,
-                    "button_mappings": [],
+                    "button_mappings": [
+                        {
+                            "to_button_id": "$pressed_button_name",
+                            "from_button_id": "button.menu_select",
+                            "mapping_type": "pressed"
+                        }
+                    ],
                     "default_control": "default",
                     "hover_control": "hover",
                     "is_handle_button_move_event": true,

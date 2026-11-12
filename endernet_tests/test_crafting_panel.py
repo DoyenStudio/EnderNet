@@ -909,10 +909,26 @@ class TestTakeAndClear(CraftingFixture):
         self.craft.on_clear()
         self.assertEqual(self.commands()[-1]["action"], "craft_clear")
 
+    def test_fill_button_sends_one_command_with_grid_revision(self):
+        self.state(craft_slots((0, STONE, 1)), revision=12)
+        self.button("fill")
+        self.assertEqual(len(self.commands()), 1)
+        command = self.commands()[0]
+        self.assertEqual("craft_fill", command["action"])
+        self.assertEqual({"grid_revision": 12}, command["config"])
+
+    def test_fill_waits_for_state_and_ignores_closed_panel(self):
+        self.assertIsNone(self.craft.on_fill())
+        self.state()
+        self.craft.close()
+        self.assertIsNone(self.craft.on_fill())
+        self.assertEqual([], self.commands())
+
     def test_both_need_a_session(self):
         self.client.drop_session()
         self.assertIsNone(self.craft.on_take())
         self.assertIsNone(self.craft.on_clear())
+        self.assertIsNone(self.craft.on_fill())
         self.assertEqual(self.commands(), [])
 
     def test_clicking_a_grid_cell_does_nothing_at_all(self):
@@ -1426,18 +1442,15 @@ class TestJsonContract(unittest.TestCase):
         self.assertEqual(mask["controls"][0]["mask_img"]["anchor_from"],
                          "top_left")
 
-    def test_the_two_action_buttons_are_wired(self):
+    def test_the_three_action_buttons_are_wired(self):
         content = self.content()
         for button, binding in (("load_recipe_btn", crafting_panel.IMPORT_BINDING),
-                                ("clear_items_btn", crafting_panel.CLEAR_BINDING)):
+                                ("clear_items_btn", crafting_panel.CLEAR_BINDING),
+                                ("put_items_btn", crafting_panel.FILL_BINDING)):
             self.assertEqual(content[button]["$pressed_button_name"], binding)
             self.assertEqual(
                 content[button]["button_mappings"][0]["to_button_id"],
                 "$pressed_button_name")
-        # 「摆满」本次不处理：**不接任何绑定**，它的动作由 User 定（UI 文档 1 节）。
-        self.assertEqual(content["put_items_btn"]["$pressed_button_name"],
-                         "%netease_editor_template_namespace.click")
-        self.assertEqual(content["put_items_btn"]["button_mappings"], [])
 
     def test_every_real_pressed_name_in_this_file_has_a_button_mapping(self):
         """只在本文件里再扫一遍：**新加的那两个名字**是本轮引入的，出问题时

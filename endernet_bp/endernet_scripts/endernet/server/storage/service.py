@@ -1599,6 +1599,7 @@ class StorageService(NetworkService):
             "craft_import": self._cmd_craft_import,
             "craft_take": self._cmd_craft_take,
             "craft_clear": self._cmd_craft_clear,
+            "craft_fill": self._cmd_craft_fill,
             # 样板终端（11-05）
             "template_mode": self._cmd_template_mode,
             "template_cell_put": self._cmd_template_cell_put,
@@ -2700,6 +2701,56 @@ class StorageService(NetworkService):
                 "%s:undo%d" % (op_id, index), sent_key, count)
             if receipt.moved < count:
                 self.craft_undo_failures += 1
+
+    def _cmd_craft_fill(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """仅从网络补满已有槽；同身份原料按实际取出量优先补齐较少的堆叠。"""
+        grid, refusal = self._workbench_for(command)
+        if refusal is not None:
+            return refusal
+        revision = (payload.get("config") or {}).get("grid_revision")
+        if (isinstance(revision, bool) or not isinstance(revision, INTEGER_TYPES)
+                or revision != grid.revision):
+            return self._reject(command, Reason.STALE_VERSION, "原料格已变化")
+        container = WorkbenchContainer(grid, limit_of=self.grid_stack_limit)
+        groups = {}
+        for slot in grid.occupied_slots():
+            groups.setdefault(grid.key_at(slot), []).append(slot)
+        moved = 0
+        movements = []
+        for key, slots in sorted(groups.items(), key=lambda pair: pair[1][0]):
+            limit = container.limit_of(key)
+            counts = dict((slot, grid.count_at(slot)) for slot in slots
+                          if grid.count_at(slot) < limit)
+            wanted = sum(limit - count for count in counts.values())
+            if not wanted:
+                continue
+            # 一种材料只取一次，再分配实际回执数量；预留与带宽限制由网络处理。
+            receipt = self.commit_extract(
+                "%s:fill:%d" % (command.scoped_request_id(), slots[0]), key, wanted)
+            remaining = receipt.moved
+            while remaining > 0:
+                lowest = min(counts.values())
+                low_slots = sorted(slot for slot in counts if counts[slot] == lowest)
+                next_level = min([limit] + [count for count in counts.values()
+                                           if count > lowest])
+                amount = min(remaining, (next_level - lowest) * len(low_slots))
+                each, extra = divmod(amount, len(low_slots))
+                for index, slot in enumerate(low_slots):
+                    counts[slot] += each + (1 if index < extra else 0)
+                remaining -= amount
+            for slot in sorted(counts):
+                added = counts[slot] - grid.count_at(slot)
+                if added > 0:
+                    # 主线程内已核对同种槽位及容量，直接落到设备实物库存。
+                    grid.add_at(slot, key, added)
+                    moved += added
+                    movements.append({"from": "network", "to": "grid",
+                                      "cell": slot, "key": key.to_dict()})
+        return CommandResult.ok(command.request_id, {
+            "action": "craft_fill", "moved": moved, "movements": movements,
+            "grid": self._craft_grid_payload(grid),
+        })
 
     def _cmd_craft_clear(self, command, payload):
         # type: (object, dict) -> CommandResult

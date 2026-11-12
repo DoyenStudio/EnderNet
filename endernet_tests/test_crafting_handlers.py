@@ -169,6 +169,8 @@ STICK_BIRCH = recipe(["A", "A"], {"A": (stack("minecraft:birch_planks"),)},
 
 class Fixture(unittest.TestCase):
 
+    medium_model = "endernet:singleside_tape"
+
     def setUp(self):
         from endernet.server.crafting.terminals.workbench import WorkbenchStore
 
@@ -177,7 +179,7 @@ class Fixture(unittest.TestCase):
         # **先把盘装上再接入网络**：没有盘就没有容量，`seed` 会被
         # 容量拒掉；而 `attach()` 是服务认识这台节点的那一刻，
         # 盘必须在它之前就位。
-        self.stand.new_medium()
+        self.stand.new_medium(self.medium_model)
         self.stand.attach()
         self.stand.seed(PLANKS, 16)
         self.stand.seed(BIRCH, 16)
@@ -224,6 +226,111 @@ class Fixture(unittest.TestCase):
         self.assertTrue(result.is_applied(), result.to_dict())
         self.assertEqual(1, self.grid.count_at(0))
         self.assertEqual(1, self.grid.count_at(3))
+
+
+class TestFill(Fixture):
+
+    medium_model = "endernet:softdisk_4k"
+
+    def setUp(self):
+        Fixture.setUp(self)
+        self.service.grid_stack_limit = lambda key: 64
+
+    def fill(self, request_id="fill1", revision=None):
+        return self.send({"action": "craft_fill", "config": {
+            "grid_revision": self.grid.revision if revision is None else revision,
+        }}, request_id)
+
+    def test_equal_slots_share_scarce_stock_and_keep_empty_cells(self):
+        for slot in (0, 3, 6):
+            self.grid.set_slot(slot, PLANKS, 1)
+        result = self.fill()
+        self.assertTrue(result.is_applied(), result.to_dict())
+        self.assertEqual([7, 6, 6], [self.grid.count_at(i) for i in (0, 3, 6)])
+        self.assertEqual((0, 3, 6), self.grid.occupied_slots())
+        self.assertEqual(0, self.service.query(PLANKS)["stored"])
+        self.assertEqual(16, result.payload["moved"])
+        self.assertEqual([], self.recipes.calls)
+
+    def test_smaller_stacks_are_topped_up_first(self):
+        self.grid.set_slot(0, PLANKS, 20)
+        self.grid.set_slot(3, PLANKS, 1)
+        self.fill()
+        self.assertEqual([20, 17], [self.grid.count_at(i) for i in (0, 3)])
+
+    def test_existing_counts_participate_in_balancing(self):
+        self.grid.set_slot(0, PLANKS, 10)
+        self.grid.set_slot(3, PLANKS, 2)
+        self.fill()
+        self.assertEqual([14, 14], [self.grid.count_at(i) for i in (0, 3)])
+
+    def test_stack_limits_and_different_materials(self):
+        self.service.grid_stack_limit = lambda key: 16 if key == BIRCH else 64
+        self.grid.set_slot(0, PLANKS, 60)
+        self.grid.set_slot(1, PLANKS, 63)
+        self.grid.set_slot(3, BIRCH, 14)
+        self.fill()
+        self.assertEqual([64, 64, 16], [self.grid.count_at(i) for i in (0, 1, 3)])
+        self.assertEqual(11, self.service.query(PLANKS)["stored"])
+        self.assertEqual(14, self.service.query(BIRCH)["stored"])
+
+    def test_full_nonstackable_and_empty_grids_are_noops(self):
+        revision = self.grid.revision
+        self.assertEqual(0, self.fill().payload["moved"])
+        self.assertEqual(revision, self.grid.revision)
+        self.service.grid_stack_limit = lambda key: 1
+        self.grid.set_slot(0, PLANKS, 1)
+        revision = self.grid.revision
+        self.assertEqual(0, self.fill("fill2").payload["moved"])
+        self.assertEqual(revision, self.grid.revision)
+        self.assertEqual(16, self.service.query(PLANKS)["stored"])
+
+    def test_no_backpack_fallback_and_exact_item_identity(self):
+        named = ResourceKey.item(PLANKS.name, custom_tips="named")
+        variant = ResourceKey.item(PLANKS.name, aux=1)
+        self.grid.set_slot(0, named, 1)
+        self.grid.set_slot(1, variant, 1)
+        self.inventory.slots[0] = (named, 64)
+        self.grid.set_recipe("retained", {"name": STICK.name, "aux": 0})
+        before = self.grid.to_dict()
+        self.fill()
+        self.assertEqual(before, self.grid.to_dict())
+        self.assertEqual(64, self.inventory.count_of(named))
+        self.assertEqual(16, self.service.query(PLANKS)["stored"])
+
+    def test_reserved_material_is_not_taken(self):
+        self.service.reserve("other_order", PLANKS, 13)
+        self.grid.set_slot(0, PLANKS, 1)
+        self.grid.set_slot(3, PLANKS, 1)
+        self.fill()
+        self.assertEqual([3, 2], [self.grid.count_at(i) for i in (0, 3)])
+        self.assertEqual(13, self.service.query(PLANKS)["stored"])
+
+    def test_rate_limited_extraction_is_still_evenly_shared(self):
+        self.stand.seed(PLANKS, 32)
+        self.service.advance_clock(self.stand.next_tick + 10)
+        self.service.commit_extract("use_quota", BIRCH, 16)
+        self.service.commit_extract("use_more_quota", PLANKS, 13)
+        self.grid.set_slot(0, PLANKS, 1)
+        self.grid.set_slot(3, PLANKS, 1)
+        result = self.fill()
+        self.assertEqual(3, result.payload["moved"])
+        self.assertEqual([3, 2], [self.grid.count_at(i) for i in (0, 3)])
+        self.assertEqual(32, self.service.query(PLANKS)["stored"])
+
+    def test_stale_and_duplicate_requests_do_not_move_items(self):
+        self.grid.set_slot(0, PLANKS, 1)
+        revision = self.grid.revision
+        self.fill(revision=revision)
+        before = self.grid.to_dict()
+        for request in ("fill1", "fill2"):
+            result = self.fill(request, revision=revision)
+            self.assertIn(Reason.STALE_VERSION, self.reasons(result))
+            self.assertEqual(before, self.grid.to_dict())
+
+    def test_non_crafting_device_is_refused(self):
+        self.service.workbench = WorkbenchStore(accepts=lambda ref: False)
+        self.assertIn(Reason.UNSUPPORTED, self.reasons(self.fill()))
 
 
 class TestImport(Fixture):

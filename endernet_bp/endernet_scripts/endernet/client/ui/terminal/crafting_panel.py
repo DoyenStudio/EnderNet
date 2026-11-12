@@ -9,8 +9,8 @@
    `craft_state`（`CraftStateMessage`），**客户端不自己算配方**：摆在格子里
    的是真实物品，能不能合成只有服务端说了算（`plans/ui/crafting_terminal_panel.md`
    第 5 节）。
-2. 三个操作：导入（`craft_import`）、点输出槽（`craft_take`）、清空
-   （`craft_clear`），各一条 `TerminalCommand`。
+2. 四个操作：导入（`craft_import`）、点输出槽（`craft_take`）、清空
+   （`craft_clear`）、摆满（`craft_fill`），各一条 `TerminalCommand`。
 
 ## 为什么九宫格换了模板
 
@@ -103,13 +103,15 @@ OUTPUT_TAKE_BINDING = BINDING_PREFIX + "take"
 
 IMPORT_BINDING = BINDING_PREFIX + "import"
 CLEAR_BINDING = BINDING_PREFIX + "clear"
+FILL_BINDING = BINDING_PREFIX + "fill"
 
-#: 三个动作名，**与 `StorageService.handle` 的动作表逐字相同**。这里不另立
+#: 动作名，**与 `StorageService.handle` 的动作表逐字相同**。这里不另立
 #: 一套词汇再映射一次：映射写错了的表现是命令被服务端回一句「不认识」，
 #: 而那只有真机上看得见。
 ACTION_IMPORT = "craft_import"
 ACTION_TAKE = "craft_take"
 ACTION_CLEAR = "craft_clear"
+ACTION_FILL = "craft_fill"
 
 #: 面给玩家的失败原因。**只列界面必须点出来的那几条**（11-04 的交接要求），
 #: 其余原因退化成空串——不是「没有原因」，而是这一轮没有能显示它的控件
@@ -423,6 +425,16 @@ class CraftingView(object):
         if self.closed or not self.client.has_session():
             return None
         return self._send(ACTION_CLEAR)
+
+    def on_fill(self, params=None):
+        # type: (object) -> object
+        """按服务端当前九宫格从网络均摊补料。"""
+        if self.closed or not self.client.has_session() or self.revision < 0:
+            return None
+        request = self.client.send_command(
+            ACTION_FILL, config={"grid_revision": self.revision})
+        self._requests[request] = ACTION_FILL
+        return request
 
     def on_grid_click(self, params=None):
         # type: (object) -> None
@@ -947,6 +959,12 @@ class CraftingPanel(RecipeChoiceBindings, TerminalPanelBase):
         # type: (object) -> None
         if self.craft is not None:
             self.craft.on_clear(params)
+
+    @Binder.binding(Binder.BF_ButtonClickUp, FILL_BINDING)
+    def OnCraftFill(self, params=None):
+        # type: (object) -> None
+        if self.craft is not None:
+            self.craft.on_fill(params)
 
     def OnCreate(self):
         TerminalPanelBase.OnCreate(self)
