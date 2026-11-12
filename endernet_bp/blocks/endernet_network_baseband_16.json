@@ -32,6 +32,14 @@
         "description": {
             "category": "endernet",
             "identifier": "endernet:network_baseband_16",
+            "traits": {
+                "minecraft:placement_position": {
+                    "enabled_states": [
+                        "minecraft:block_face",
+                        "minecraft:vertical_half"
+                    ]
+                }
+            },
             "states": {
                 "endernet:status": [
                     0,
@@ -41,7 +49,7 @@
         },
         "permutations": [
             {
-                "condition": "q.block_state('endernet:status') == 1",
+                "condition": "q.block_state('endernet:status') == 0 && !(q.block_state('minecraft:block_face') == 'down' && q.block_state('minecraft:vertical_half') == 'bottom')",
                 "components": {
                     "minecraft:material_instances": {
                         "*": {

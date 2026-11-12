@@ -3,17 +3,28 @@
 
 ## 整方块设备
 
-有离线外观的（`DefinitionSet.status_values_of` 非空）多一个方块状态 `endernet:status`：0 在线、
-1 离线、2 冲突（只有控制器有：所在网络里不止一台控制器，照 AE2 控制器冲突变红）。结论取设备状态
-（`RuntimeManager.device_status`），与设备界面上的「在线 / 离线」是同一个。只在变了时写；第一次写
-之前先读世界里现在的值（方块状态随存档留着上次的），一样就不写。贴图切换在方块 JSON 的排列里
-（`scripts/gen_blocks.py`）。
+有离线外观的（`DefinitionSet.status_values_of` 非空）多一个方块状态 `endernet:status`：0 离线
+（默认值，刚放下就是它）、1 在线、2 冲突（只有控制器有：所在网络里不止一台控制器，照 AE2 控制器冲突
+变红）。结论取设备状态（`RuntimeManager.device_status`），与设备界面上的「在线 / 离线」是同一个。
+只在变了时写；第一次写之前先读世界里现在的值（方块状态随存档留着上次的），一样就不写。贴图切换在
+方块 JSON 的排列里（`scripts/gen_blocks.py`）。
+
+物品栏图标画的是没放过的默认组合（放置痕迹，`definitions.PLACED_FACE_STATE`），那一套是在线外观。
+玩家放下的方块不会是这个组合；`/setblock`、结构与旧存档放出的会是，第一次写时连同 `PLACED_HALF`
+一起写，把它变成放过的，之后只看外观状态。
 
 ## 面板
 
 面板没有自己的方块，离线走面板外观读数：`PanelService.display_values` 问 `panel_offline`，离线的那一面
 取值加 `slot_display.OFFLINE_OFFSET`，画那一种的离线屏幕。这里记着每块面板上次的结论，变了就让外观
-重比一次（`mark_panels`）。只跟踪挂着面板的那几格。
+重比一次（`mark_panels`）。还没算过的面板按离线画，与整方块设备的默认值一致。只跟踪挂着面板的那几格。
+
+## 结论还没出来时沿用上一次
+
+接入一台设备、拆一段光缆，整网都要重建；重建、带宽与能源确认、控制器恢复都可能跨好几帧，这期间
+设备状态是「待确认」，按字面画就是整网先灭一下再亮。所以设备状态带着 `HOLD_CODES` 里的原因时外观
+不动：画着在线的继续在线，刚放下还没写过的继续是默认的离线。最多沿用 `hold_ticks` 帧，过了还没
+结论就照实画离线，免得卡在待确认里的网络一直亮着。
 
 ## 什么时候重算
 
@@ -28,17 +39,35 @@
 from collections import deque
 
 from ...common.definitions import (
+    PLACED_HALF,
+    PLACED_HALF_STATE,
     STATUS_CONFLICT,
     STATUS_OFFLINE,
     STATUS_ONLINE,
     STATUS_STATE,
+    looks_unplaced,
 )
 from ...common.identity import DeviceRef, PartKey
+from ...common.protocol import Reason, reason_code
 from ..runtime import ChangeKind
 
 #: 跟踪的两种格子：有离线外观的整方块设备、挂着面板的光缆或面板底座
 BLOCK = "block"
 PANELS = "panels"
+
+#: 只说明「结论还没出来」的原因：网络刷新中、控制器恢复中、带宽或能源确认中、网络功能启动中。设备状态
+#: 带着其中任何一个时外观沿用上一次（见模块说明）。比 `network.controller.PENDING_CODES` 窄：没有
+#: 控制器、拓扑未知、未配置这些会一直持续，照常画离线。
+HOLD_CODES = frozenset([
+    Reason.REBUILDING,
+    Reason.MASTER_RECOVERING,
+    Reason.BANDWIDTH_UNKNOWN,
+    Reason.ENERGY_UNAVAILABLE,
+    Reason.SERVICE_NOT_READY,
+])
+
+#: 外观沿用的上限（帧）：5 秒
+HOLD_TICKS = 100
 
 
 def _as_key(key):
@@ -55,7 +84,7 @@ class StatusLooks(object):
     """
 
     def __init__(self, definitions, registry, catalog, world, status_of, conflict_of=None,
-                 mark_panels=None, budget=32, sweep=8):
+                 mark_panels=None, budget=32, sweep=8, hold_ticks=HOLD_TICKS):
         self.definitions = definitions
         self.registry = registry
         self.catalog = catalog
@@ -65,6 +94,9 @@ class StatusLooks(object):
         self.mark_panels = mark_panels
         self.budget = int(budget)
         self.sweep = int(sweep)
+        self.hold_ticks = int(hold_ticks)
+        #: 推进过几帧（`advance` 每帧一次），沿用外观按它计时
+        self._ticks = 0
         #: NodeKey -> BLOCK / PANELS
         self._tracked = {}
         #: 待算（先进先出，不重复）
@@ -77,9 +109,11 @@ class StatusLooks(object):
         self._written = {}
         #: PartKey -> 上次的结论（True = 离线）
         self._panels = {}
+        #: (NodeKey, 面或 None) -> 从哪一帧起在沿用外观
+        self._holding = {}
         self.stats = dict.fromkeys(
-            ("evaluated", "written", "already", "write_failures", "status_errors",
-             "panel_changes"),
+            ("evaluated", "written", "already", "unplaced", "write_failures", "status_errors",
+             "panel_changes", "held"),
             0,
         )
 
@@ -126,6 +160,7 @@ class StatusLooks(object):
             self._order = None
         self._written.pop(node_key, None)
         self._queued.discard(node_key)
+        self._drop_holding(node_key, keep=())
         if self._drop_panels(node_key, keep=()) and self.mark_panels is not None:
             self.mark_panels(node_key)
 
@@ -146,6 +181,7 @@ class StatusLooks(object):
     def advance(self):
         # type: () -> int
         """算一帧：待算的先，再轮转复查 `sweep` 台，合计不超过 `budget`。返回算了几格。"""
+        self._ticks += 1
         done = 0
         while self._queue and done < self.budget:
             node_key = self._queue.popleft()
@@ -179,14 +215,30 @@ class StatusLooks(object):
         else:
             self._evaluate_panels(record)
 
-    def _online(self, ref):
-        # type: (object) -> object
-        """设备状态的在线结论；问不到（抛了）返回 None，这次不改外观。"""
+    def _online(self, ref, slot=None):
+        # type: (object, object) -> object
+        """设备状态的在线结论。问不到（抛了）、或结论还没出来且没沿用满 `hold_ticks` 帧，返回
+        None：这次不改外观。`slot` 是面板的那一面，整方块设备为 None。"""
         try:
-            return bool(self.status_of(ref).is_online)
+            status = self.status_of(ref)
         except Exception:
             self.stats["status_errors"] += 1
             return None
+        hold_key = (ref.node_key, slot)
+        if status.is_online or not _settling(status):
+            self._holding.pop(hold_key, None)
+            return bool(status.is_online)
+        since = self._holding.setdefault(hold_key, self._ticks)
+        if self._ticks - since < self.hold_ticks:
+            self.stats["held"] += 1
+            return None
+        return False
+
+    def _drop_holding(self, node_key, keep):
+        # type: (object, object) -> None
+        for hold_key in [hold_key for hold_key in self._holding
+                         if hold_key[0] == node_key and hold_key[1] not in keep]:
+            del self._holding[hold_key]
 
     # -- 整方块设备 ------------------------------------------------------
 
@@ -219,9 +271,14 @@ class StatusLooks(object):
         if value is None or self._written.get(node_key) == value:
             return
         current = None
+        changes = {STATUS_STATE: value}
         if node_key not in self._written:
             current = self._read_states(node_key)
-            if current is not None and current.get(STATUS_STATE) == value:
+            if current is not None and looks_unplaced(current):
+                # 还是没放过的默认组合（画的是图标那一套）：改成放过的，外观才跟着状态走
+                changes[PLACED_HALF_STATE] = PLACED_HALF
+                self.stats["unplaced"] += 1
+            elif current is not None and current.get(STATUS_STATE) == value:
                 self._written[node_key] = value
                 self.stats["already"] += 1
                 return
@@ -229,7 +286,7 @@ class StatusLooks(object):
         ok = False
         if writer is not None:
             try:
-                ok = bool(writer(node_key, {STATUS_STATE: value}, current))
+                ok = bool(writer(node_key, changes, current))
             except Exception:
                 ok = False
         if ok:
@@ -262,13 +319,14 @@ class StatusLooks(object):
         faces = set()
         for face, _part_id in parts:
             faces.add(face)
-            online = self._online(DeviceRef(node_key, record.generation, face))
+            online = self._online(DeviceRef(node_key, record.generation, face), face)
             if online is None:
                 continue
             part_key = PartKey(node_key, face)
             if self._panels.get(part_key) != (not online):
                 self._panels[part_key] = not online
                 changed = True
+        self._drop_holding(node_key, keep=faces)
         if self._drop_panels(node_key, keep=faces):
             changed = True
         if changed:
@@ -286,10 +344,17 @@ class StatusLooks(object):
 
     def panel_offline(self, part_key):
         # type: (object) -> bool
-        """这块面板上次算出来是不是离线（`PanelService.display_values` 用）；没算过按在线画。"""
-        return bool(self._panels.get(PartKey.of(part_key), False))
+        """这块面板上次算出来是不是离线（`PanelService.display_values` 用）；没算过按离线画。"""
+        return bool(self._panels.get(PartKey.of(part_key), True))
 
     def diagnostics(self):
         # type: () -> dict
         return dict(self.stats, tracked=len(self._tracked), queued=len(self._queue),
-                    offline_panels=sum(1 for offline in self._panels.values() if offline))
+                    offline_panels=sum(1 for offline in self._panels.values() if offline),
+                    holding=len(self._holding))
+
+
+def _settling(status):
+    # type: (object) -> bool
+    """设备状态是不是「结论还没出来」：原因里有 `HOLD_CODES` 的。"""
+    return any(reason_code(reason) in HOLD_CODES for reason in status.reasons)

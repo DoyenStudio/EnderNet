@@ -672,13 +672,33 @@ class MemorySpec(object):
 
 # -- 设备的在线 / 离线外观（2026-11-13，作者画的离线材质）---------------------------
 
-#: 整方块设备的外观状态（方块状态）：0 在线、1 离线、2 冲突（只有控制器有：多台控制器连在一张网，
-#: 照 AE2 控制器冲突变红）。默认是 0：物品栏图标与刚放下的样子都是在线外观，服务端随即按设备
-#: 状态写（`server/devices/status_looks.py`）。生成器按它给方块加状态与贴图切换。
+#: 整方块设备的外观状态（方块状态）：0 离线、1 在线、2 冲突（只有控制器有：多台控制器连在一张网，
+#: 照 AE2 控制器冲突变红）。默认是列表里的第一个值，即 0 离线：刚放下的方块先是离线外观，服务端确认
+#: 在线后再写成在线（`server/devices/status_looks.py`），不会先亮一下再灭。生成器按它给方块加状态与
+#: 贴图切换。
 STATUS_STATE = "endernet:status"
-STATUS_ONLINE = 0
-STATUS_OFFLINE = 1
+STATUS_OFFLINE = 0
+STATUS_ONLINE = 1
 STATUS_CONFLICT = 2
+
+#: 放置痕迹：有离线外观的设备另带原版特征 `minecraft:placement_position` 的两个状态，放下时由引擎填
+#: （点的是哪一面、落在格子的上半还是下半）。物品栏图标与放下的方块画的都是物品带的那一份状态，
+#: 只能靠放置时引擎改写的状态把两者分开：没放过的默认组合是 (down, bottom)，玩家放置放不出来（点
+#: 方块底面放下时一定落在上半），所以「状态 0 且还是默认组合」画在线外观（图标），其余状态 0 画离线。
+#: `/setblock`、结构与加这个特征之前的旧存档放出的方块也是默认组合，服务端第一次写外观时顺手把
+#: 下半改成上半（`PLACED_HALF`）。
+PLACED_FACE_STATE = "minecraft:block_face"
+PLACED_HALF_STATE = "minecraft:vertical_half"
+UNPLACED_FACE = "down"
+UNPLACED_HALF = "bottom"
+PLACED_HALF = "top"
+
+
+def looks_unplaced(states):
+    # type: (dict) -> bool
+    """方块状态是不是还带着没放过的默认组合（见 `PLACED_FACE_STATE`）；读不到这两个状态算放过。"""
+    return (states.get(PLACED_FACE_STATE) == UNPLACED_FACE
+            and states.get(PLACED_HALF_STATE) == UNPLACED_HALF)
 
 #: 没有离线外观的整方块设备：创造能量源是电源（作者画的离线图与在线图一样）。
 NO_STATUS_LOOK = frozenset([
@@ -1744,14 +1764,14 @@ class DefinitionSet(object):
 
     def status_values_of(self, device_id):
         # type: (str) -> tuple
-        """这台整方块设备的外观状态能取哪几个值：控制器 `(0, 1, 2)`，其余有离线外观的 `(0, 1)`，
-        没有离线外观的（`NO_STATUS_LOOK`、光缆、面板、面板底座）为空。面板的离线走面板外观读数，
-        不在这里。"""
+        """这台整方块设备的外观状态能取哪几个值（第一个是默认值）：控制器 `(0, 1, 2)`，其余有离线
+        外观的 `(0, 1)`，没有离线外观的（`NO_STATUS_LOOK`、光缆、面板、面板底座）为空。面板的离线
+        走面板外观读数，不在这里。"""
         if device_id not in self.devices or device_id in NO_STATUS_LOOK:
             return ()
         if self.devices[device_id].category == CATEGORY_CONTROLLER:
-            return (STATUS_ONLINE, STATUS_OFFLINE, STATUS_CONFLICT)
-        return (STATUS_ONLINE, STATUS_OFFLINE)
+            return (STATUS_OFFLINE, STATUS_ONLINE, STATUS_CONFLICT)
+        return (STATUS_OFFLINE, STATUS_ONLINE)
 
     def tunnel_capacity_quarters(self):
         # type: () -> object

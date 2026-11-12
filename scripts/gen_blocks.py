@@ -19,6 +19,18 @@
 精确交互用的是同一份。玻璃光缆整根 `blend`（填充面、芯另有材质实例，2026-11-10 美术重做），
 其余 `opaque`。
 
+**在线 / 离线外观**（2026-11-13，作者画的离线材质）：有离线外观的整方块设备
+（`DefinitionSet.status_values_of`）多一个方块状态 `endernet:status`（0 离线、1 在线，控制器另有
+2 冲突），贴图是 `<贴图>_offline` / `<贴图>` / `<贴图>_conflict`（正面布局连通用机壳三面一起换，
+模型布局换模型贴图）。默认值 0 离线，为的是放下的那一刻不先亮一下：方块先按离线画，服务端确认在线
+才写成 1。物品栏图标画的也是物品带的默认状态，要它是在线外观，另加放置痕迹（原版特征
+`minecraft:placement_position`，见 `definitions.PLACED_FACE_STATE`）：`components` 里是在线那一套，
+离线排列的条件是「状态 0 且不是没放过的默认组合 (down, bottom)」，冲突一条排列。
+**排列里换贴图只在声明了几何体的方块上生效**：不声明 `minecraft:geometry` 时引擎按资源包
+`blocks.json` 的贴图画整块，排列里的 `material_instances` 不起作用（作者真机反馈：只有正面布局的
+终端换了；蔚蓝科技按状态换贴图的 26 个方块都声明了 `minecraft:geometry.full_block`），所以有离线
+外观的六面同图方块也声明 `full_block`。
+
 **面板底座**（`definitions.part_holders`，2026-11-10 作者定案）也走这条路
 （`build_part_holder_json`）：每面只取 0 / 2（64 种），没有线芯与连接臂，方块网格
 借普通光缆的几何体、骨骼全部隐藏，外观全靠面板的方块实体外观；不进创造栏，
@@ -64,10 +76,18 @@ from endernet.common.definitions import (  # noqa: E402
     ITEM_OUTPUT_PORT_SLOT_COUNT,
     MEMORY_SLOT_COUNT,
     PASSIVE_PORT_SLOT_COUNT,
+    PLACED_FACE_STATE,
+    PLACED_HALF_STATE,
     SIX_WAY_ITEM_PORTS,
+    STATUS_CONFLICT,
+    STATUS_OFFLINE,
+    STATUS_ONLINE,
+    STATUS_STATE,
     STORAGE_DRIVER_SLOT_COUNT,
     QUARTERS_PER_UNIT,
     TEMPLATE_CONTAINER_SLOT_COUNT,
+    UNPLACED_FACE,
+    UNPLACED_HALF,
     DefinitionSet,
 )
 from endernet.common.channels.slot_display import DISPLAY_DEVICES  # noqa: E402
@@ -393,6 +413,17 @@ def uniform_texture(device_id):
     return _device_texture(short_name(device_id) + "_all")
 
 
+#: 外观状态 -> 贴图名后缀（`<短名>_all_offline`、`common_device_side_offline`、`<短名>_all_conflict`）
+STATUS_SUFFIXES = {STATUS_ONLINE: "", STATUS_OFFLINE: "_offline", STATUS_CONFLICT: "_conflict"}
+
+
+def status_texture(texture, status):
+    # type: (tuple, int) -> tuple
+    """`(图集键, 路径)` 换成某个外观状态的那一张。"""
+    suffix = STATUS_SUFFIXES[status]
+    return texture[0] + suffix, texture[1] + suffix
+
+
 def front_texture(device_id):
     # type: (str) -> tuple
     """正面：`(图集键, 路径)`，文件名 `<短名>_front`。"""
@@ -417,37 +448,57 @@ def model_geometry_file(device_id):
     return os.path.join(RP_ROOT, "models", "blocks", MODELS[device_id][1] + ".geo.json")
 
 
-def face_textures(device_id):
-    # type: (str) -> dict
-    """`material_instances` 的面名 -> 图集键。"""
+def face_textures(device_id, status=STATUS_ONLINE):
+    # type: (str, int) -> dict
+    """`material_instances` 的面名 -> 图集键（`status` 是外观状态，见模块说明）。"""
     layout = layout_of(device_id)
     if layout == LAYOUT_UNIFORM:
-        return {"*": uniform_texture(device_id)[0]}
+        return {"*": status_texture(uniform_texture(device_id), status)[0]}
     if layout == LAYOUT_MODEL:
-        return {"*": model_texture(device_id)[0]}
-    side = common_device_texture("side")[0]
+        return {"*": status_texture(model_texture(device_id), status)[0]}
+    side = status_texture(common_device_texture("side"), status)[0]
     return {
         "*": side,
-        "up": common_device_texture("top")[0],
-        "down": common_device_texture("bottom")[0],
-        "north": front_texture(device_id)[0],
+        "up": status_texture(common_device_texture("top"), status)[0],
+        "down": status_texture(common_device_texture("bottom"), status)[0],
+        "north": status_texture(front_texture(device_id), status)[0],
         "south": side,
         "east": side,
         "west": side,
     }
 
 
-def textures_of(device_id):
-    # type: (str) -> list
-    """该方块用到的全部 `(图集键, 路径)`。"""
+def textures_of(device_id, statuses=(STATUS_ONLINE,)):
+    # type: (str, tuple) -> list
+    """该方块用到的全部 `(图集键, 路径)`；`statuses` 是它的外观状态（`status_values_of`）。"""
     layout = layout_of(device_id)
-    if layout == LAYOUT_UNIFORM:
-        return [uniform_texture(device_id)]
     if layout == LAYOUT_MODEL:
-        return [model_texture(device_id)]
-    return [front_texture(device_id)] + [
-        common_device_texture(face) for face, _ in COMMON_DEVICE_TEXTURES
-    ]
+        base = [model_texture(device_id)]
+    elif layout == LAYOUT_UNIFORM:
+        base = [uniform_texture(device_id)]
+    else:
+        base = [front_texture(device_id)] + [
+            common_device_texture(face) for face, _ in COMMON_DEVICE_TEXTURES
+        ]
+    return [status_texture(texture, status) for status in statuses for texture in base]
+
+
+def statuses_of(device_id, definitions):
+    # type: (str, object) -> tuple
+    """这台方块的外观状态；没有离线外观的只有在线这一种。"""
+    return definitions.status_values_of(device_id) or (STATUS_ONLINE,)
+
+
+def material_instances(device_id, status=STATUS_ONLINE):
+    # type: (str, int) -> dict
+    """`minecraft:material_instances`：模型的渲染方式逐个声明（`MODEL_RENDER_METHODS`），整块不透明。"""
+    render_method = (
+        MODEL_RENDER_METHODS[device_id] if layout_of(device_id) == LAYOUT_MODEL else "opaque"
+    )
+    return dict(
+        (face, {"render_method": render_method, "texture": key})
+        for face, key in sorted(face_textures(device_id, status).items())
+    )
 
 
 def plural_dumps(payload):
@@ -486,6 +537,25 @@ def mining_components(category):
     }
 
 
+def definition_statuses(device_id):
+    # type: (str) -> tuple
+    """这台方块的外观状态（`DefinitionSet.status_values_of`，第一个是默认值）；没有离线外观为空。"""
+    return _DEFINITIONS.status_values_of(device_id)
+
+
+def status_condition(status):
+    # type: (int) -> str
+    """换成某个外观状态那条排列的条件。离线要排除没放过的默认组合：那是物品栏图标，画在线。"""
+    condition = "q.block_state('%s') == %d" % (STATUS_STATE, status)
+    if status != STATUS_OFFLINE:
+        return condition
+    return "%s && !(q.block_state('%s') == '%s' && q.block_state('%s') == '%s')" % (
+        condition, PLACED_FACE_STATE, UNPLACED_FACE, PLACED_HALF_STATE, UNPLACED_HALF)
+
+
+_DEFINITIONS = DefinitionSet()
+
+
 def build_block_json(device_id, definition):
     """生成单个方块的行为包定义。"""
     components = mining_components(definition.category)
@@ -494,7 +564,8 @@ def build_block_json(device_id, definition):
         raise ValueError(
             "%s 的外观布局是 %s，需要随朝向旋转，但它不在 DIRECTIONAL 里" % (device_id, layout)
         )
-    if layout == LAYOUT_FRONT:
+    if layout == LAYOUT_FRONT or (layout == LAYOUT_UNIFORM and definition_statuses(device_id)):
+        # 有离线外观的六面同图方块也要声明几何体，排列里换贴图才生效（见模块说明）
         components["minecraft:geometry"] = {"identifier": "minecraft:geometry.full_block"}
     elif layout == LAYOUT_MODEL:
         components["minecraft:geometry"] = {"identifier": MODELS[device_id][0]}
@@ -506,14 +577,7 @@ def build_block_json(device_id, definition):
             box = {"origin": list(origin), "size": list(size)}
             components["minecraft:collision_box"] = box
             components["minecraft:selection_box"] = dict(box)
-    # 模型的渲染方式逐个声明（MODEL_RENDER_METHODS）；整块方块不透明。
-    render_method = (
-        MODEL_RENDER_METHODS[device_id] if layout == LAYOUT_MODEL else "opaque"
-    )
-    components["minecraft:material_instances"] = dict(
-        (face, {"render_method": render_method, "texture": key})
-        for face, key in sorted(face_textures(device_id).items())
-    )
+    components["minecraft:material_instances"] = material_instances(device_id)
 
     # 自定义方块实体：tick 决定是否派发 ServerBlockEntityTickEvent（每秒 20 次）。
     # 即使不需要 tick 也要声明，否则方块实体数据无处存放。
@@ -542,30 +606,52 @@ def build_block_json(device_id, definition):
     if device_id in CONTAINERS:
         # 写在 description 而不是 components 里——这是引擎认的字段位置。
         description["base_block"] = "netease_container"
+    traits = {}
     if DIRECTIONAL.get(device_id):
-        description["traits"] = {
-            "minecraft:placement_direction": {
-                "enabled_states": [
-                    "minecraft:facing_direction" if device_id in SIX_WAY_ITEM_PORTS
-                    else "minecraft:cardinal_direction"
-                ],
-                "y_rotation_offset": 180.0,
-            }
+        traits["minecraft:placement_direction"] = {
+            "enabled_states": [
+                "minecraft:facing_direction" if device_id in SIX_WAY_ITEM_PORTS
+                else "minecraft:cardinal_direction"
+            ],
+            "y_rotation_offset": 180.0,
         }
+    if definition_statuses(device_id):
+        # 放置痕迹：物品栏图标（没放过的默认组合）画在线，放下的方块画离线（见模块说明）
+        traits["minecraft:placement_position"] = {
+            "enabled_states": [PLACED_FACE_STATE, PLACED_HALF_STATE],
+        }
+    if traits:
+        description["traits"] = traits
 
     block = {
         "components": components,
         "description": description,
     }
+    permutations = []
     if layout != LAYOUT_UNIFORM:
         # 正面画在 north 面，按朝向整体旋转（照 skybluetech_alloy_furnace.json）。
-        block["permutations"] = [
+        permutations.extend(
             {
                 "condition": "q.block_state('minecraft:cardinal_direction') == '%s'" % facing,
                 "components": {"minecraft:transformation": {"rotation": [0, angle, 0]}},
             }
             for facing, angle in FACING_ROTATIONS
-        ]
+        )
+    statuses = definition_statuses(device_id)
+    if statuses:
+        # 外观状态：`components` 是在线那一套，离线、冲突各换一套贴图；与朝向那几条排列各管各的
+        # 组件，同时成立时一起生效
+        description["states"] = {STATUS_STATE: list(statuses)}
+        permutations.extend(
+            {
+                "condition": status_condition(status),
+                "components": {"minecraft:material_instances": material_instances(device_id, status)},
+            }
+            for status in statuses
+            if status != STATUS_ONLINE
+        )
+    if permutations:
+        block["permutations"] = permutations
     return {
         "format_version": FORMAT_VERSION,
         "minecraft:block": block,
@@ -914,7 +1000,7 @@ def build_terrain_texture(existing, definitions):
         if not str(entry.get("textures", "")).startswith(prefixes)
     )
     for device_id in sorted(definitions.devices):
-        for key, path in textures_of(device_id):
+        for key, path in textures_of(device_id, statuses_of(device_id, definitions)):
             texture_data[key] = {"textures": path}
     for device_id in sorted(definitions.cables):
         key, path = cable_texture(device_id)
@@ -955,7 +1041,7 @@ def missing_textures(definitions):
     out = []
     seen = set()
     for device_id in sorted(definitions.devices):
-        for key, path in textures_of(device_id):
+        for key, path in textures_of(device_id, statuses_of(device_id, definitions)):
             full = os.path.join(RP_ROOT, *(path + ".png").split("/"))
             if full not in seen and not os.path.isfile(full):
                 seen.add(full)
