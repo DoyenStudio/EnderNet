@@ -347,11 +347,9 @@ class SelectorTests(unittest.TestCase):
                 self.assertEqual(button.GetElement("hover").sprite,
                                  self.module.PRESSED_TEXTURE if is_selected
                                  else self.module.HOVER_TEXTURE)
-                self.assertEqual(button.GetElement("default/wrapper").position,
-                                 (0, 0) if is_selected else (0, -1))
-                for state in ("hover", "pressed"):
+                for state in ("default", "hover"):
                     self.assertEqual(button.GetElement(state + "/wrapper").position,
-                                     (0, 0))
+                                     (0, 0) if is_selected else (0, -1))
 
     def test_initial_all_source_keeps_its_text_in_the_pressed_position(self):
         self.assertEqual(self.window.source, "all")

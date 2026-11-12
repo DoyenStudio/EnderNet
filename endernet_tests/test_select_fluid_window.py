@@ -189,11 +189,9 @@ class FluidWindowTests(unittest.TestCase):
                     self.assertEqual(button.GetElement("hover").sprite,
                                      self.items.PRESSED_TEXTURE if is_selected
                                      else self.items.HOVER_TEXTURE)
-                    self.assertEqual(button.GetElement("default/wrapper").position,
-                                     (0, 0) if is_selected else (0, -1))
-                    for state in ("hover", "pressed"):
+                    for state in ("default", "hover"):
                         self.assertEqual(button.GetElement(state + "/wrapper").position,
-                                         (0, 0))
+                                         (0, 0) if is_selected else (0, -1))
 
     def test_reopened_fluid_picker_restores_initial_all_text_position(self):
         window = self.open(["mod:oil"])
@@ -204,8 +202,9 @@ class FluidWindowTests(unittest.TestCase):
         self.assertIs(reopened.root, root)
         self.assertEqual(reopened.source, "all")
         for source, path in self.items.SOURCE_BUTTONS:
-            self.assertEqual(root.GetElement(path).GetElement("default/wrapper").position,
-                             (0, 0) if source == "all" else (0, -1))
+            for state in ("default", "hover"):
+                self.assertEqual(root.GetElement(path).GetElement(state + "/wrapper").position,
+                                 (0, 0) if source == "all" else (0, -1))
 
     def test_search_and_limit_apply_after_fluid_identification(self):
         self.catalog.fluid_ids = ["mod:fluid_%02d" % i for i in range(51)] + ["minecraft:water"]

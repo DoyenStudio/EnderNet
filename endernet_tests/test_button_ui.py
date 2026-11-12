@@ -10,8 +10,8 @@ import unittest
 from ui_terminal_templates import UiControls
 
 
-# 鼠标移入下沉 1 像素，按住保持同一位置；移出恢复默认位置。
-STATES = (("default", [0, -1]), ("hover", [0, 0]), ("pressed", [0, 0]))
+# 默认与悬停同位，仅按住时内容下沉 1 像素。
+STATES = (("default", [0, -1]), ("hover", [0, -1]), ("pressed", [0, 0]))
 CLOSE_STATES = ("default", "hover", "pressed")
 BUTTON_TEXTURES = ("textures/endernet/ui/button_", "textures/endernet/ui/frame_rise_")
 

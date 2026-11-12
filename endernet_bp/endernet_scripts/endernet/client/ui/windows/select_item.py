@@ -151,8 +151,9 @@ class SelectItemWindow(object):
             button.GetElement("hover").asImage().SetSprite(
                 PRESSED_TEXTURE if selected else HOVER_TEXTURE
             )
-            # 选中时默认态也与按下态对齐；绝对赋值避免反复切换累计位移。
-            button.GetElement("default/wrapper").SetPos((0, 0 if selected else -1))
+            # 选中时与按下态对齐；取消选中后默认、悬停均恢复，避免累计位移。
+            for state in ("default", "hover"):
+                button.GetElement(state + "/wrapper").SetPos((0, 0 if selected else -1))
         self.refresh()
 
     def on_search(self, params):

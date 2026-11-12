@@ -1416,7 +1416,7 @@
         "type": "image",
         "$button_content_offset|default": [
             0,
-            0
+            -1
         ]
     },
     "button_pressed@netease_editor_template_namespace.pressed": {
