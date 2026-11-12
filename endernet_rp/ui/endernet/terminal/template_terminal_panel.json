@@ -225,7 +225,7 @@
                                 "$label_layer": 3,
                                 "$label_offset": [
                                     0.0,
-                                    -1.0
+                                    0.0
                                 ],
                                 "$label_text": "OK",
                                 "$nine_slice_buttom": 0,

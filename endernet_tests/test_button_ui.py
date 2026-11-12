@@ -156,14 +156,39 @@ class ButtonUiContractTests(unittest.TestCase):
                                  "confirm_btn")
         self.assertIn("#EnderNetPreview.submit_enabled",
                       [binding.get("binding_name") for binding in preview[0]["bindings"]])
-        # 原来的文字校准是 -1；三态 wrapper 的位移叠加在它外面。
-        self.assertEqual(preview[1]["$label_offset"], [0, -1])
+        unused_key, preview_window = self.ui.definitions["endernet_windows.order_preview_window"]
+        confirm = next(value for entry in preview_window["controls"]
+                       for key, value in entry.items() if key.split("@")[0] == "confirm_btn")
+        self.assertNotIn("$label_offset", confirm)
+        self.assertEqual(preview[1]["$label_offset"], [0, 0])
         for state, unused in STATES:
             shadow = self.ui.child(number, state + "/wrapper/button_content/button_label")
             unicode_label = self.ui.child(importer, state + "/wrapper/button_content/button_label")
             self.assertIs(self.ui.substitute(shadow[0]["shadow"], shadow[1]), True)
             self.assertEqual(self.ui.substitute(unicode_label[0]["font_type"], unicode_label[1]),
                              "unicode")
+
+    def test_runtime_labels_do_not_repeat_the_wrapper_vertical_offset(self):
+        for filename, path, unused_key, control in self.ui.records():
+            for variable, value in control.items():
+                if variable.split("|")[0] != "$label_offset":
+                    continue
+                with self.subTest(file=filename, path="/".join(path), variable=variable):
+                    # 数值比较同时覆盖 [0, -1] 和 [0.0, -1.0]。
+                    self.assertNotEqual(value, [0, -1])
+
+    def test_source_selector_labels_use_zero_offset_inside_the_moving_wrapper(self):
+        for window in ("select_item_window", "select_fluid_window"):
+            root = self.ui.template("endernet_windows." + window)
+            for name in ("select_from_backpack_btn", "select_from_all_btn", "select_from_net_btn"):
+                with self.subTest(window=window, button=name):
+                    button = self.ui.child(root, name)
+                    self.assertEqual(button[1]["$label_offset"], [0, 0])
+                    for state, offset in STATES:
+                        wrapper = self.ui.child(button, state + "/wrapper")
+                        self.assertEqual(self.ui.substitute(wrapper[0]["offset"], wrapper[1]), offset)
+                        label = self.ui.child(wrapper, "button_content/button_label")
+                        self.assertEqual(label[1]["$label_offset"], [0, 0])
 
     def test_icon_only_controls_and_the_cache_switch_are_excluded(self):
         panel = self.ui.child(self.ui.template("endernet_template_terminal_panel.content"),

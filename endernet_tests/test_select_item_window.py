@@ -45,6 +45,7 @@ class Control(object):
         self.children = {}
         self.visible = True
         self.removed = False
+        self.position = (0, 0)
 
     def GetElement(self, path):
         return self.children.setdefault(path, Control())
@@ -62,6 +63,9 @@ class Control(object):
 
     def SetSprite(self, sprite):
         self.sprite = sprite
+
+    def SetPos(self, position):
+        self.position = tuple(position)
 
     def SetUiItem(self, name, aux):
         """`(name, aux)` 两个必填——真引擎的签名（2026-10-03 实测）。
@@ -331,6 +335,47 @@ class SelectorTests(unittest.TestCase):
             expected = (self.module.PRESSED_TEXTURE if source == "backpack"
                         else self.module.DEFAULT_TEXTURE)
             self.assertEqual(self.window.root.GetElement(path).GetElement("default").sprite, expected)
+
+    def assert_source_button_visuals(self, selected):
+        for source, path in self.module.SOURCE_BUTTONS:
+            with self.subTest(source=source, selected=selected):
+                button = self.window.root.GetElement(path)
+                is_selected = source == selected
+                self.assertEqual(button.GetElement("default").sprite,
+                                 self.module.PRESSED_TEXTURE if is_selected
+                                 else self.module.DEFAULT_TEXTURE)
+                self.assertEqual(button.GetElement("hover").sprite,
+                                 self.module.PRESSED_TEXTURE if is_selected
+                                 else self.module.HOVER_TEXTURE)
+                self.assertEqual(button.GetElement("default/wrapper").position,
+                                 (0, 0) if is_selected else (0, -1))
+                for state in ("hover", "pressed"):
+                    self.assertEqual(button.GetElement(state + "/wrapper").position,
+                                     (0, 0))
+
+    def test_initial_all_source_keeps_its_text_in_the_pressed_position(self):
+        self.assertEqual(self.window.source, "all")
+        self.assert_source_button_visuals("all")
+
+    def test_source_button_selection_restores_previous_text_without_drift(self):
+        paths = dict(self.module.SOURCE_BUTTONS)
+        for source in ("backpack", "network", "all", "all",
+                       "backpack", "backpack", "network", "all"):
+            self.window.root.GetElement(paths[source]).callback({})
+            self.assertEqual(self.window.source, source)
+            self.assert_source_button_visuals(source)
+
+    def test_reopening_resets_selection_on_the_reused_button_controls(self):
+        self.window._set_source("network")
+        self.assert_source_button_visuals("network")
+        root = self.window.root
+        self.window.close()
+        self.assertTrue(self.module.show_select_item_window(
+            self.screen, [], self.selected.append))
+        self.window = self.screen._vars[self.module.WINDOW_ATTRIBUTE]
+        self.addCleanup(self.window.close)
+        self.assertIs(self.window.root, root)
+        self.assert_source_button_visuals("all")
 
     def test_close_before_callback_exactly_once_and_reopen(self):
         old_root = self.window.root

@@ -764,10 +764,6 @@
                     "$label_font_scale_factor": 1.0,
                     "$label_font_size": "normal",
                     "$label_layer": 3,
-                    "$label_offset": [
-                        0.0,
-                        -1.0
-                    ],
                     "$label_text": "取消订单",
                     "$nine_slice_buttom": 0,
                     "$nine_slice_left": 0,
@@ -830,10 +826,6 @@
                     "$label_font_scale_factor": 1.0,
                     "$label_font_size": "normal",
                     "$label_layer": 3,
-                    "$label_offset": [
-                        0.0,
-                        -1.0
-                    ],
                     "$label_text": "确认",
                     "$nine_slice_buttom": 0,
                     "$nine_slice_left": 0,

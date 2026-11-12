@@ -170,6 +170,43 @@ class FluidWindowTests(unittest.TestCase):
         window._select(0)
         self.assertEqual(self.received, ["mod:milk"])
 
+    def test_source_buttons_inherit_exclusive_text_positions_without_drift(self):
+        window = self.open(["mod:oil"])
+        paths = dict(self.items.SOURCE_BUTTONS)
+        # The first "all" checks initialization, then callbacks switch and repeat.
+        for index, selected in enumerate(("all", "backpack", "network", "all",
+                                          "all", "network", "network", "backpack")):
+            if index:
+                window.root.GetElement(paths[selected]).callback({})
+            self.assertEqual(window.source, selected)
+            for source, path in self.items.SOURCE_BUTTONS:
+                with self.subTest(source=source, selected=selected):
+                    button = window.root.GetElement(path)
+                    is_selected = source == selected
+                    self.assertEqual(button.GetElement("default").sprite,
+                                     self.items.PRESSED_TEXTURE if is_selected
+                                     else self.items.DEFAULT_TEXTURE)
+                    self.assertEqual(button.GetElement("hover").sprite,
+                                     self.items.PRESSED_TEXTURE if is_selected
+                                     else self.items.HOVER_TEXTURE)
+                    self.assertEqual(button.GetElement("default/wrapper").position,
+                                     (0, 0) if is_selected else (0, -1))
+                    for state in ("hover", "pressed"):
+                        self.assertEqual(button.GetElement(state + "/wrapper").position,
+                                         (0, 0))
+
+    def test_reopened_fluid_picker_restores_initial_all_text_position(self):
+        window = self.open(["mod:oil"])
+        window._set_source("network")
+        root = window.root
+        window.close()
+        reopened = self.open()
+        self.assertIs(reopened.root, root)
+        self.assertEqual(reopened.source, "all")
+        for source, path in self.items.SOURCE_BUTTONS:
+            self.assertEqual(root.GetElement(path).GetElement("default/wrapper").position,
+                             (0, 0) if source == "all" else (0, -1))
+
     def test_search_and_limit_apply_after_fluid_identification(self):
         self.catalog.fluid_ids = ["mod:fluid_%02d" % i for i in range(51)] + ["minecraft:water"]
         window = self.open()
