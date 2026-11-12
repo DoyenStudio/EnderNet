@@ -604,6 +604,37 @@ class TestRevalidationCache(OneLevel):
         self.assertTrue(self.executor._recheck_if_stale(self.row, self.server.tick_count))
         self.assertGreater(self.pattern_state.stats["stale_checks"], checks)
 
+    def test_topology_change_in_another_network_leaves_the_order_alone(self):
+        """别处放方块会推进全世界的拓扑版本，但不是本网络的事：不复核、不阻塞。"""
+        world_version = self.server.topology.version
+        members = self.runtime.membership_version
+        revalidations = self.row.stats["revalidations"]
+        unblocked = self.service.stats["unblocked"]
+        self.place(key(100), BASEBAND)
+        self.server.tick()
+        self.assertGreater(self.server.topology.version, world_version)
+        self.assertEqual(self.runtime.membership_version, members)
+        self.assertTrue(self.executor._recheck_if_stale(self.row, self.server.tick_count))
+        self.assertEqual(self.row.stats["revalidations"], revalidations)
+        self.assertEqual(self.service.stats["unblocked"], unblocked)
+        self.assertNotEqual(self.row.status, OrderStatus.BLOCKED)
+
+    def test_own_membership_change_rechecks_patterns_without_blocking(self):
+        """本网络加设备：样板要重新核对一遍，但「成员变了」本身不挡路。
+
+        闪一下 BLOCKED 再解除可能发生在同一帧里，所以看「解除过几次阻塞」，
+        不看帧末的状态。
+        """
+        members = self.runtime.membership_version
+        checks = self.pattern_state.stats["stale_checks"]
+        unblocked = self.service.stats["unblocked"]
+        self.place(key(-1), BASEBAND)
+        self.drive(3)
+        self.assertGreater(self.runtime.membership_version, members)
+        self.assertGreater(self.pattern_state.stats["stale_checks"], checks)
+        self.assertEqual(self.service.stats["unblocked"], unblocked)
+        self.assertNotIn(Reason.PLAN_TOPOLOGY_CHANGED, [r.code for r in self.row.blockers])
+
 
 class TestSubmit(OneLevel):
     def test_two_players_rejected_c2_requests_keep_their_own_results(self):
@@ -1230,6 +1261,44 @@ class TestCompletion(OneLevel):
         self.drive(3)
         self.assertEqual(self.sink.registered, {})
         self.assertEqual(self.service.waiting.diagnostics()["instances"], 0)
+
+
+class TestTerminalOrderRetention(OneLevel):
+    """已结束的订单只留最近 N 张：订单簿不随历史无限增长。"""
+
+    order_policy = OrderPolicy(terminal_order_limit=1)
+
+    def complete_one(self, request_id):
+        order_id = self.submit_order(request_id=request_id).payload["order_id"]
+        self.settle(order_id)
+        self.drive(3)
+        self.sink.flush(self.service.executor)
+        self.drive(3)
+        self.assertEqual(self.service.orders.get(order_id).status, OrderStatus.COMPLETED)
+        return order_id
+
+    def test_only_the_newest_finished_orders_are_kept(self):
+        self.seed(IRON, 8)
+        first = self.complete_one("o1")
+        second = self.complete_one("o2")
+        self.drive(1)
+        self.assertIsNone(self.service.orders.get(first))
+        self.assertIsNotNone(self.service.orders.get(second))
+        self.assertEqual(self.service.orders.ids(), (second,))
+
+    def test_live_orders_are_never_pruned(self):
+        self.service.orders.prune_terminal(0)
+        self.seed(IRON, 2)
+        order_id = self.submit_order().payload["order_id"]
+        self.settle(order_id)
+        self.service.orders.prune_terminal(0)
+        self.assertIsNotNone(self.service.orders.get(order_id))
+
+    def test_the_limit_is_reported_as_an_unresolved_field(self):
+        fields = set(
+            item["field"] for item in self.server.policy_bundle().unresolved_report()
+        )
+        self.assertIn("order.terminal_order_limit", fields)
 
 
 

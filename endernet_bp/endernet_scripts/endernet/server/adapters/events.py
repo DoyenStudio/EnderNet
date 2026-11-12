@@ -474,7 +474,8 @@ class ServerEventBinder(object):
             # 漏出同样是「取出」，只标脏、不拦。
             self._count("custom_container_pull_out")
             self._mark_container_dirty(
-                event.dimension, (event.x, event.y, event.z)
+                event.dimension, (event.x, event.y, event.z),
+                getattr(event, "collectionIndex", None),
             )
 
         self._bound = True
@@ -627,7 +628,7 @@ class ServerEventBinder(object):
             # 标脏/拒收，**不猜一个维度**。
             return None
 
-    def _mark_container_dirty(self, dimension, position):
+    def _mark_container_dirty(self, dimension, position, slot=None):
         # type: (object, object) -> bool
         """把一个容器位置标脏。维度或坐标拿不到就什么都不做。
 
@@ -647,9 +648,16 @@ class ServerEventBinder(object):
         node_key = NodeKey(dimension, x, y, z)
         marked = False
         for store in stores:
-            if store.mark_dirty(node_key):
+            if self._mark_store(store, node_key, slot):
                 marked = True
         return marked
+
+    def _mark_store(self, store, node_key, slot):
+        # type: (object, NodeKey, object) -> bool
+        """样板 store 按槽号过滤（原料/产物格的变化不让样板失效），其余整台标脏。"""
+        if store is self.patterns:
+            return store.mark_dirty(node_key, slot=slot)
+        return store.mark_dirty(node_key)
 
     def _container_stores(self):
         # type: () -> tuple
@@ -731,7 +739,7 @@ class ServerEventBinder(object):
                 return True
         for store, _ in stores:
             if store is not None:
-                store.mark_dirty(node_key)
+                self._mark_store(store, node_key, getattr(event, "collectionIndex", None))
         return False
 
     def _on_block_entity_tick(self, dimension, x, y, z, block_name):

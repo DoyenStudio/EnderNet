@@ -189,6 +189,9 @@ class NetworkRuntime(object):
         self.master = None
         #: 图版本：最近一次同步到的快照版本。
         self.version = 0
+        #: 本网络成员（位置 + 代次）变过几次。`version` 跟的是全世界的拓扑
+        #: 发布，别处放一根线缆也会变；订单的计划封印与复核只看这一个。
+        self.membership_version = 0
         self.tick_count = 0
         #: 上一次推进时的帧号（`context["frame"]`）。公平轮转的余量轮会让
         #: 同一个运行时在一帧里被访问两次，靠它把「按帧走的东西」去重——
@@ -277,13 +280,19 @@ class NetworkRuntime(object):
         ):
             self.drop_node(node_key)
         mounted = 0
+        joined = False
         for node_key in sorted(incoming, key=lambda key: key.as_key()):
             node = incoming[node_key]
+            previous = self._nodes.get(node_key)
+            if previous is None or previous.ref.generation != node.ref.generation:
+                joined = True
             self._nodes[node_key] = node
             saved = self._saved.get(node_key)
             for service in self.services.assembly_order():
                 if service.add_node(node, saved):
                     mounted += 1
+        if joined:
+            self.membership_version += 1
         self.stats["nodes_mounted"] += mounted
         if mounted:
             self._notify(RuntimeChange.MEMBERS_CHANGED)
@@ -295,6 +304,7 @@ class NetworkRuntime(object):
         node = self._nodes.pop(node_key, None)
         if node is None:
             return False
+        self.membership_version += 1
         order = self.services.assembly_order()
         for index in range(len(order) - 1, -1, -1):
             order[index].remove_node(node)

@@ -1099,14 +1099,14 @@ class TerminalActions(object):
             "state": self._template_state_payload(state),
         })
 
-    def _template_template_error(self, item_key):
+    def _template_input_error(self, item_key):
         # type: (object) -> tuple
         """放入输入槽的物品是不是本模组的样板。返回 `(reason, detail)`。"""
         if item_key.name == TEMPLATE_PANEL_ITEM_ID:
             return None, ""
         if item_key.name in ITEM_TEMPLATES:
             return (Reason.PATTERN_KIND_MISMATCH,
-                    "输出槽只能放入工厂样板，%s 是另一种样板" % (item_key.name,))
+                    "输入槽只能放入工厂样板，%s 是另一种样板" % (item_key.name,))
         return (Reason.PATTERN_NOT_A_TEMPLATE,
                 "%s 不是本模组的样板" % (item_key.name,))
 
@@ -1130,7 +1130,7 @@ class TerminalActions(object):
             item_key = ResourceKey.from_dict(raw_key)
         except (KeyError, TypeError, ValueError):
             return self._reject(command, Reason.BAD_PARAMETER, "key 不合法")
-        reason, detail = self._template_template_error(item_key)
+        reason, detail = self._template_input_error(item_key)
         if reason is not None:
             return self._reject(command, reason, detail)
         anchor = self._anchor_of(payload)
@@ -1485,7 +1485,7 @@ class TerminalActions(object):
         if putting and area == "result":
             return self._reject(command, Reason.UNSUPPORTED, "成品槽只能取出")
         if putting and area == "input":
-            reason, detail = self._template_template_error(held)
+            reason, detail = self._template_input_error(held)
             if reason is not None:
                 return self._reject(command, reason, detail)
         if putting and key is not None and key != held and area != "network":

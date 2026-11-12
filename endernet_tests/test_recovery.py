@@ -17,7 +17,7 @@ import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
 
-from endernet.common.identity import DeviceRef, NodeKey
+from endernet.common.identity import DeviceRef, NodeKey, node_key_text
 from endernet.common.protocol import Reason
 from endernet.common.resources.key import ResourceKey
 from endernet.server.adapters.containers.contract import FakeContainer
@@ -42,7 +42,7 @@ from endernet.server.persistence.recovery import (
     RecoveryGate,
     consistency_report,
 )
-from endernet.server.storage.service import Reservation, StorageService
+from endernet.server.storage.service import NETWORK_RECORD_KIND, Reservation, StorageService
 from endernet.server.storage.transfer import TransferCoordinator
 
 from test_io import (
@@ -464,8 +464,37 @@ class TestBootstrapRecovery(unittest.TestCase):
         self.server.ports.configure(second.ref, PortConfig(enabled=False))
 
         before = self.backend.saves
-        self.server.tick()
+        for _ in range(self.server.persistence_interval):
+            self.server.tick()
         self.assertEqual(self.backend.saves - before, 1)
+
+    def test_nothing_is_committed_inside_the_window(self):
+        """提交按时间窗：窗口没到，脏记录留着、不调 `SaveExtraData()`。"""
+        self.server.start(bind_engine=False)
+        self.server.push(NormalizedEvent.place(key(3), OUTPUT_DEVICE))
+        self.server.tick()
+        record = self.server.registry.get(key(3))
+        self.server.ports.configure(record.ref, PortConfig(enabled=False))
+        before = self.backend.saves
+        self.server.tick()
+        self.assertEqual(self.backend.saves, before)
+        self.assertGreater(self.server.ports.pending_archive_writes(), 0)
+        for _ in range(self.server.persistence_interval):
+            self.server.tick()
+        self.assertEqual(self.server.ports.pending_archive_writes(), 0)
+        self.assertGreater(self.backend.saves, before)
+
+    def test_network_states_are_saved_without_a_clean_stop(self):
+        """崩服一致性：网络台账随定期落盘写出，不必等正常退出。"""
+        self.server.start(bind_engine=False)
+        runtime, storage = self._storage_with_a_reservation(self.server)
+        record_id = node_key_text(runtime.master.ref.node_key)
+        for _ in range(self.server.persistence_interval + 1):
+            self.server.tick()
+        stored = self.server.repository.load(NETWORK_RECORD_KIND, record_id)
+        self.assertIsNotNone(stored)
+        reservations = stored.payload["storage"]["reservations"]
+        self.assertIn("probe:1", [row["reservation_id"] for row in reservations])
 
     def test_a_write_fault_keeps_the_record_dirty_for_retry(self):
         """14 的中断注入入口：写失败**不摘脏**，下一帧重试。"""
@@ -475,7 +504,7 @@ class TestBootstrapRecovery(unittest.TestCase):
         from test_bootstrap import FakeWorld
 
         repo = MemoryRepository()
-        server = ServerBootstrap(world=FakeWorld(), repository=repo)
+        server = ServerBootstrap(world=FakeWorld(), repository=repo, persistence_interval=1)
         server.start(bind_engine=False)
         server.push(NormalizedEvent.place(key(3), OUTPUT_DEVICE))
         server.tick()

@@ -35,7 +35,7 @@
 """
 
 from ..shared import window_control
-from ....common.protocol import MSG_PORT_CONFIG
+from ....common.protocol import MSG_PORT_CONFIG, VIEW_ITEM
 from . import port_config_model
 from ..shared import slot_layout
 from ..windows.item_list import WINDOW_ATTRIBUTE as ITEM_LIST_WINDOW_ATTRIBUTE
@@ -83,6 +83,9 @@ def _reasons_text(result):
 class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMixin,
                         ProxyPanelBase):
     """物品接口屏的配置半边。子类用类属性描述差异，**不重写方法**。"""
+
+    #: 名单与逐槽选物品要看网络库存，因此仍开物品视图。
+    VIEW_KIND = VIEW_ITEM
 
     #: 本屏对应的方块 id（诊断用）。
     DEVICE_ID = ""

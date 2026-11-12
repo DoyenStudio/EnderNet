@@ -1466,6 +1466,28 @@ class TestPatternContainerEvents(unittest.TestCase):
             )
             self.assertGreater(state.dirty_tick, -1, name)
 
+    def test_return_row_events_leave_the_patterns_alone(self):
+        """回流行（样板行之外）的进出——外部产物回流、本模组自己的写入广播——不让样板失效。"""
+        ref = self.place(TEMPLATE_IO, 7)
+        self.settle()
+        state = self.server.patterns.get_by_ref(ref)
+        pattern_slots = list(self.server.patterns.pattern_slots(state))
+        state.dirty_tick = -1
+        for name in (
+            "ItemPushInCustomContainerServerEvent",
+            "ItemPullOutCustomContainerServerEvent",
+        ):
+            self.api.dispatch(
+                self.api.event(name),
+                SimplePayload(dimension=0, x=7, y=64, z=0, collectionIndex=len(pattern_slots)),
+            )
+        self.assertEqual(state.dirty_tick, -1)
+        self.api.dispatch(
+            self.api.event("ItemPullOutCustomContainerServerEvent"),
+            SimplePayload(dimension=0, x=7, y=64, z=0, collectionIndex=pattern_slots[0]),
+        )
+        self.assertGreater(state.dirty_tick, -1)
+
     def test_events_for_unknown_positions_are_harmless(self):
         self.place(TEMPLATE_IO, 7)
         self.api.dispatch(

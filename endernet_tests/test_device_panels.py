@@ -199,7 +199,7 @@ from endernet_bp.endernet_scripts.endernet.client.channels import (  # noqa: E40
 from endernet_bp.endernet_scripts.endernet.client.network_client import (  # noqa: E402
     NetworkClient,
 )
-from endernet_bp.endernet_scripts.endernet.client.ui.devices import panels as device_panels, proxy_panel  # noqa: E402
+from endernet_bp.endernet_scripts.endernet.client.ui.devices import panels as device_panels, port_panel, proxy_panel  # noqa: E402
 from endernet_bp.endernet_scripts.endernet.client.ui.device_status import model as device_status, bindings as device_status_bindings  # noqa: E402
 from endernet_bp.endernet_scripts.endernet.common.channels import device_identity  # noqa: E402
 from endernet_bp.endernet_scripts.endernet.common import protocol  # noqa: E402
@@ -883,7 +883,8 @@ class _FakeClient(object):
     模拟服务端回 `session_ready`。
     """
 
-    def __init__(self):
+    def __init__(self, view_kind=protocol.VIEW_ITEM):
+        self.view_kind = view_kind
         self.port = _FakePort()
         self.session_id = ""
         self.handlers = []
@@ -1091,6 +1092,11 @@ class TestSharedStatusHandler(unittest.TestCase):
                     panel.OnCreate()
                     client = panel.client
                     self.assertEqual(client.opens, [(ref, 0)])
+                    # 只有要选网络物品的物品口面板开物品视图，其余只看设备自己。
+                    expected = (protocol.VIEW_ITEM
+                                if issubclass(panel_cls, port_panel.ItemPortPanelBase)
+                                else protocol.VIEW_DEVICE)
+                    self.assertEqual(client.view_kind, expected)
                     client.establish()
                     for version, online in enumerate((True, False, True)):
                         message = protocol.DeviceStatusMessage(

@@ -1608,6 +1608,18 @@ class OrderStore(object):
             self._order.remove(order_id)
         return True
 
+    def prune_terminal(self, keep):
+        # type: (int) -> list
+        """已结束的订单只留最近 `keep` 张，更早的按创建顺序移出。返回移出的 ID。"""
+        finished = [key for key in self._order
+                    if key in self._orders and self._orders[key].is_terminal()]
+        excess = len(finished) - max(0, int(keep))
+        removed = []
+        for order_id in finished[:max(0, excess)]:
+            if self.remove(order_id):
+                removed.append(order_id)
+        return removed
+
     def orders(self):
         # type: () -> tuple
         """按创建顺序。**不用字典的键序**——那会随哈希变化。"""

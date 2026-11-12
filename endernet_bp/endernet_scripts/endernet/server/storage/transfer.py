@@ -481,18 +481,21 @@ class InventoryEndpoint(ContainerEndpoint):
 
     # -- 按槽读取 ------------------------------------------------------
 
-    def _entry_at(self, slot):
-        # type: (int) -> object
-        """该槽当前的条目；空槽返回 None。
+    def _slot_content(self, slot):
+        # type: (int) -> tuple
+        """该槽当前的 `(资源键, 数量)`；空槽 `(None, 0)`。**只读这一个槽**。
 
-        容器已失效时 `entries()` 会抛 `IOError`（13-01 的
-        `InvalidatableContainer` 就是这样），这里**不吞异常**——调用方
-        先看 `can_read()`，读不到就是「读不到」，不该伪装成空槽。
+        容器已失效时读取会抛 `IOError`（13-01 的 `InvalidatableContainer`
+        就是这样），这里**不吞异常**——调用方先看 `can_read()`，读不到就是
+        「读不到」，不该伪装成空槽。只有不支持按槽读的适配器才退回整表扫描。
         """
+        if callable(getattr(self.adapter, "read_slot", None)):
+            view = slot_read(self.adapter, slot)
+            return view["key"], view["count"]
         for index, entry in self.adapter.entries():
             if index == slot:
-                return entry
-        return None
+                return entry.resource_key, entry.count
+        return None, 0
 
     def slot_view(self, slot):
         # type: (int) -> dict
@@ -503,20 +506,25 @@ class InventoryEndpoint(ContainerEndpoint):
         必须把它当「本模组会话内的修订号」用——同一份快照里比较是有效的，
         跨会话比较没有意义。
         """
-        entry = self._entry_at(slot)
-        return self._observe_slot(slot, entry)
+        key, count = self._slot_content(slot)
+        return self._observe_slot(slot, key, count)
 
     def inventory_view(self):
         # type: () -> dict
         """一次读取整个背包，供同步与命令共用同一份版本台账。"""
         entries = dict(self.adapter.entries())
-        slots = [self._observe_slot(slot, entries.get(slot))
-                 for slot in range(self.adapter.slot_count())]
+        slots = []
+        for slot in range(self.adapter.slot_count()):
+            entry = entries.get(slot)
+            slots.append(self._observe_slot(
+                slot,
+                entry.resource_key if entry is not None else None,
+                entry.count if entry is not None else 0,
+            ))
         return {"revision": self._revision, "slots": slots}
 
-    def _observe_slot(self, slot, entry):
-        # type: (int, object) -> dict
-        key = entry.resource_key if entry is not None else None
+    def _observe_slot(self, slot, key, count):
+        # type: (int, object, int) -> dict
         canonical = key.canonical() if key is not None else ""
         record = self._versions.get(slot)
         if record is None or record[0] != canonical:
@@ -527,7 +535,7 @@ class InventoryEndpoint(ContainerEndpoint):
             "slot": slot,
             "key": key.to_dict() if key is not None else None,
             "canonical": canonical,
-            "count": entry.count if entry is not None else 0,
+            "count": count if key is not None else 0,
             "version": record[1],
         }
 

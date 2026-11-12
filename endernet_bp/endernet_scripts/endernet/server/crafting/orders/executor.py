@@ -285,8 +285,8 @@ class OrderExecutor(object):
 
     def _topology_version(self):
         # type: () -> object
-        topology = getattr(self.runtime, "topology", None)
-        return getattr(topology, "version", None)
+        """计划封印与复核用的图版本：**本网络**的成员版本，不是全世界的拓扑版本。"""
+        return getattr(self.runtime, "membership_version", None)
 
     def _inventory_version(self):
         # type: () -> object
@@ -1084,6 +1084,7 @@ class OrderExecutor(object):
         #: 每次 `tick` 都算一帧，与引入它之前一致。
         frame = context.get("frame")
         service = self.service
+        service.orders.prune_terminal(self.policy.terminal_order_limit)
         service.refresh_capacity()
         orders = service.orders.live()
         live_ids = set(order.order_id for order in orders)
@@ -1403,7 +1404,13 @@ class OrderExecutor(object):
             report = order.plan.revalidate(
                 self._store().check_dispatch, None, topology_version
             )
-            blockers.extend(report.reasons)
+            # 成员变了只是「该重新复核」的信号，本身不挡路：样板还在不在由
+            # check_dispatch 判，介质离网由预留撤销与 `_stock_blockers` 判，
+            # 设备离网由主控准入判。
+            blockers.extend(
+                reason for reason in report.reasons
+                if reason.code != Reason.PLAN_TOPOLOGY_CHANGED
+            )
             if pattern_key is not None and all(
                 reason.code == Reason.PLAN_TOPOLOGY_CHANGED for reason in report.reasons
             ):

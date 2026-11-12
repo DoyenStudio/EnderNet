@@ -117,6 +117,7 @@ from .devices import (
 )
 from .persistence import ExtraDataRepository, Record
 from .persistence import TerminalInventoryArchive
+from .persistence.repository import dumps_payload
 from .persistence import (
     RecoveryGate,
     assert_consistent,
@@ -607,11 +608,12 @@ class ServerBootstrap(object):
         sync_events=None,
         persistence_backend=None,
         persistence_batch=32,
+        persistence_interval=30,
         on_order_completed=None,
         on_slot_display=None,
         fluid_provider=None,
     ):
-        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, int, object, object, object) -> None
+        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, int, int, object, object, object) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
         #: 逻辑时钟（04-01）。**它是业务时间的唯一依据**，由 `drive_once()`
         #: 每帧推进一步，经 `context["tick"]` 下传给各服务。注入自有实例即可
@@ -669,6 +671,15 @@ class ServerBootstrap(object):
         #: 且按**调用次数**付（`persistence_backend.md` §3.2），所以提交要合并；
         #: 而一次写太多会在单帧里堆出尖峰，所以写也限量。
         self.persistence_batch = int(persistence_batch)
+        #: 两次提交之间至少隔几帧（30 帧约 1 秒）。每个窗口把脏介质、脏接口、
+        #: 网络台账（预留 / 待核对转移 / 订单簿）与终端格子里的实物**同一次**
+        #: 提交，崩服后读回的是同一时刻的一组记录；也把 `SaveExtraData()`
+        #: 从「物流跑着就每帧一次」压到每个窗口最多一次。
+        self.persistence_interval = max(1, int(persistence_interval))
+        self._persist_tick = None
+        #: 上次写进存档的网络台账 / 终端库存载荷：没变就不重写。
+        self._persisted_networks = {}
+        self._persisted_terminals = None
         if repository is None and persistence_backend is not None:
             repository = ExtraDataRepository(persistence_backend)
         self.repository = repository
@@ -1568,20 +1579,30 @@ class ServerBootstrap(object):
 
     def advance_persistence(self):
         # type: () -> dict
-        """把脏记录写进存档并提交。返回 `{"records": n, "commits": m}`。
+        """按时间窗把脏记录写进存档并提交。返回 `{"records": n, "commits": m}`。
 
         **没有脏记录时不调 `SaveExtraData()`**：那次调用的固定开销约
         39.8 KB，与载荷几乎无关（`persistence_backend.md` §3.2），
         空转帧不该付这笔钱。
+
+        网络台账与终端库存只在介质与接口的积压**写完的那个窗口**一起写：
+        同一次提交里的预留与介质内容、订单与接口批次才对得上。
         """
         if not self.persistence_enabled or self.persistence_restore_error:
             return {"records": 0, "commits": 0}
+        if (self._persist_tick is not None
+                and self.tick_count - self._persist_tick < self.persistence_interval):
+            return {"records": 0, "commits": 0}
+        self._persist_tick = self.tick_count
         # 预算是**两家分**（驱动器与接口各一半），不是先到先得：轮流让一家
         # 吃满的话，另一家在「那一类一直有脏记录」的网络里会永远排不上队，
         # 而症状是「有些设备的改动就是不落盘」，查起来毫无线索。
         half = max(1, self.persistence_batch // 2)
         records = self.drivers.save_to_repository(self.repository, budget=half)
         records += self.ports.save_to_repository(self.repository, budget=half)
+        if not self.drivers.pending_archive_writes() and not self.ports.pending_archive_writes():
+            records += self.write_network_states(changed_only=True)
+            records += self._write_terminal_inventories(changed_only=True)
         committed = self.repository.commit()
         return {"records": records, "commits": 1 if committed else 0}
 
@@ -1589,26 +1610,35 @@ class ServerBootstrap(object):
         # type: () -> int
         """把剩下的脏记录一次写完。**停机路径用，不限预算。**
 
-        网络级台账（预留、待核对转移、订单簿）**只在这里写**（以及显式调用
-        `write_network_states()` 时）：完整快照用于正常退出恢复；
-        不承诺非正常退出时最后一帧持久化。
-        不逐帧构造整份订单簿，避免订单数量变成每帧开销。
+        平时由 `advance_persistence` 按时间窗把网络台账与介质同批写出，
+        崩服最多丢最后一个窗口；这里补写停机那一刻的完整状态。
         """
         if not self.persistence_enabled or self.persistence_restore_error:
             return 0
         records = self.drivers.save_to_repository(self.repository, budget=None)
         records += self.ports.save_to_repository(self.repository, budget=None)
         records += self.write_network_states()
-        records += self.terminal_archive.save(self.repository)
+        records += self._write_terminal_inventories()
         self.repository.commit()
         return records
 
-    def write_network_states(self):
-        # type: () -> int
+    def _write_terminal_inventories(self, changed_only=False):
+        # type: (bool) -> int
+        """终端格子里的实物（合成格、样板终端的真实槽）。`changed_only` 时与上次写的相同就跳过。"""
+        text = dumps_payload(self.terminal_archive.snapshot())
+        if changed_only and text == self._persisted_terminals:
+            return 0
+        written = self.terminal_archive.save(self.repository)
+        self._persisted_terminals = text
+        return written
+
+    def write_network_states(self, changed_only=False):
+        # type: (bool) -> int
         """把每张网络的台账写进存档。返回写了多少条。
 
         **一张网络一条记录**，主键是主控位置文本。冻结（信封读不懂）的那些
-        不写回——与驱动器/介质同一条纪律。
+        不写回——与驱动器/介质同一条纪律。`changed_only` 时载荷与上次写的
+        相同就不重写（定期落盘用）。
         """
         if not self.persistence_enabled or self.persistence_restore_error:
             return 0
@@ -1638,9 +1668,14 @@ class ServerBootstrap(object):
                     if isinstance(factory, FactoryService) else None
                 ),
             }
+            # 比较编码后的文本：载荷里可能挂着活对象的引用，存字典会跟着变。
+            text = dumps_payload(payload)
+            if changed_only and self._persisted_networks.get(record_id) == text:
+                continue
             self.repository.write(
                 Record(NETWORK_RECORD_KIND, record_id, payload)
             )
+            self._persisted_networks[record_id] = text
             written += 1
         return written
 
@@ -1679,6 +1714,7 @@ class ServerBootstrap(object):
             )
             return report
         report["batch"] = self.persistence_batch
+        report["interval"] = self.persistence_interval
         report["backend"] = (
             type(self.persistence_backend).__name__
             if self.persistence_backend is not None
@@ -2724,7 +2760,8 @@ class ServerBootstrap(object):
                 "任务 10 的产物回流与分配（资源键索引、按真实到达量分配、"
                 "归属与计数同步、回执去重、迟到产物走普通库存）；"
                 "装配档位 %s。**接口接触真实引擎的那一段（箱子、背包、其他模组的"
-                "物流）没有在游戏内实测过**，流体路径则整条未接入（13-03）。"
+                "物流）没有逐项游戏验收**；流体：主动流体口与样板流体投料走公共流体接口，"
+                "被动流体口的本地储罐尚未接入（13-03）。"
                 "**四个服务槽位都已是正式实现**（工厂的替身已随任务 09 撤掉），"
                 "但「不是替身」不等于「能玩」："
                 "本装配若没显式注入 `returns_sink`，产物回流入口仍是任务 10 的"
@@ -2732,25 +2769,23 @@ class ServerBootstrap(object):
                 "**如实阻塞**并给出 order_returns_absent——那不是缺料、"
                 "也不是机器坏了，是**这条装配没有把 10 接上**"
                 "（游戏内由 `start_server()` 接上）；"
-                "装配仓执行是 07-06，它的回流入口已备好但仍无调用方。"
+                "装配仓执行（07-06）由工厂服务逐帧推进，产物经回流入口登记。"
                 "存档后端**已接入驱动器/介质、接口与网络级台账**（12-03/12-04，"
                 "世界 ExtraData）：接了 `persistence_backend` 时，驱动器槽位、"
                 "介质内容、接口配置/缓冲归属/批次/待核对标记都会随存档走，"
                 "重进世界**按位置重挂**；分阶段恢复（12-05）在读完记录到第一次"
                 "完整推进之间**不接受新存取**。"
-                "**新订单支持正常退出恢复**：完整计划与逐次执行账按主控位置恢复，"
+                "网络台账（预留、待核对转移、订单簿）与介质、接口、终端格子按"
+                "时间窗（`persistence_interval` 帧）**同一次提交**，崩服最多丢"
+                "最后一个窗口。**订单支持恢复**：完整计划与逐次执行账按主控位置恢复，"
                 "沿用订单/执行 ID，重建租约、等待回流与有主预留；无主预留只归档，"
                 "旧测试订单不迁移。**待核对的外部投料恢复成待核对但不重放**"
                 "（12-07）。拆除时接口记录删掉、余料另存一条处置留痕（12-06）。"
                 "没接后端时 `persistence` 那一节会如实报 `enabled: False`。"
-                "界面同步**只接了底座**——"
-                "会话与消息协议、快照与增量、长列表模型已完成，但没有任何一面"
-                "终端界面接上它（11-03 及以后等待 UI 交接），"
-                "因此 `sync` 那一节的 `networks` 为空是正常的。"
-                "预设配方适配（07-03）与样板编辑界面（11）都未开始，"
-                "因此样板目前只能看不能用——`debug_query(\"pattern\")`"
-                "查得到 9 格里有什么。"
-                "因此网络能不能开工，取决于当地那台网络的能源判定与带宽判定："
+                "终端界面（通用 / 合成 / 样板 / 工厂）与设备面板已经接上同步层"
+                "（会话、快照与增量、长列表）；样板由样板终端编码，装进样板接口"
+                "或装配仓后参与下单。"
+                "网络能不能开工，取决于当地那台网络的能源判定与带宽判定："
                 "判定为「待确认」时业务命令被拒并给出"
                 "energy_unavailable / bandwidth_unknown——**那是「算不出来」，"
                 "不是「没电」**，详情见 energy 那一节。"
@@ -2917,8 +2952,8 @@ class ServerBootstrap(object):
         view["unresolved"] = self.energy_policy.unresolved_report()
         view["scope_note"] = (
             "已接入 FE 缓冲、2:1 换算与模拟 tick 耗能结算。断电暂停"
-            "（04-06）与设备级能源状态通知（04-08）未实现。装置数量与工作态"
-            "还没有来源、基带等设备的耗能在 blocks.md 里未列（R10），因此库默认"
+            "（04-06）与设备级能源状态通知（04-08）未实现。驱动器数量、内存条根数、"
+            "处理器与装配仓工作态已接入；基带等设备的耗能在 blocks.md 里未列（R10），因此库默认"
             "口径下真实网络一律报「待确认」；DEV 档用替身口径把算不出的需求"
             "忽略掉（见 ignored_demand），那是「能跑起来」而不是「已定案」。"
         )
@@ -2943,10 +2978,9 @@ class ServerBootstrap(object):
         )
         report["scope_note"] = (
             "同步通道已接线：会话与消息协议（11-01）、快照/分批/版本增量/"
-            "断档重取/订阅清理（11-02）、长列表模型（11-09）已在离线层面完成。"
-            "**没有一面终端界面接上它**（11-03～11-07、11-10～11-14 未开始），"
-            "因此现在没有任何客户端在订阅——`networks` 为空是正常的，"
-            "不是「同步挂了」。11.md 页尾的请求大小、会话过期与分页上限"
+            "断档重取/订阅清理（11-02）、长列表模型（11-09），终端界面与设备面板"
+            "都经它订阅；`networks` 只列当前有人订阅的网络，没人开界面时为空。"
+            "11.md 页尾的请求大小、会话过期与分页上限"
             "仍未测量（11-14），相关字段见 `unresolved`。"
         )
         return report
