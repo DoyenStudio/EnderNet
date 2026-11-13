@@ -80,7 +80,7 @@ class EnergyMember(object):
     没有来源就是算不出需求，等于 0 才是真的不耗能。
     """
 
-    __slots__ = ("node_key", "ref", "device_id", "supply", "demand", "gap", "state", "unit_count")
+    __slots__ = ("node_key", "ref", "device_id", "supply", "demand", "gap", "state", "unit_count", "dynamic_demand")
 
     def __init__(self, node_key, ref, device_id, supply, demand, gap, state, unit_count):
         # type: (object, object, str, object, object, str, object, object) -> None
@@ -95,6 +95,7 @@ class EnergyMember(object):
         self.gap = gap
         self.state = state
         self.unit_count = unit_count
+        self.dynamic_demand = None
 
     def signature(self):
         # type: () -> tuple
@@ -105,6 +106,7 @@ class EnergyMember(object):
             self.supply,
             self.state,
             self.unit_count,
+            self.dynamic_demand,
         )
 
     def is_supplier(self):
@@ -508,6 +510,8 @@ class EnergyService(NetworkService):
         if member is None or not member.ref.matches(ref):
             self.stats["refused"] += 1
             return False
+        if self._definition_of(member.device_id).energy.dynamic:
+            return False
         if state is not None and state not in DEVICE_STATES:
             raise ValueError("未知的设备工作态: %r" % (state,))
         new_state = member.state if state is None else state
@@ -524,6 +528,23 @@ class EnergyService(NetworkService):
         return True
 
     # -- 查询 ----------------------------------------------------------
+
+    def set_dynamic_demand(self, ref, demand):
+        """仅接受动态设备的当前代次；None 表示权威需求尚未确认。"""
+        member = self._members.get(ref.node_key)
+        if member is None or not member.ref.matches(ref):
+            return False
+        if not self._definition_of(member.device_id).energy.dynamic:
+            return False
+        if demand is not None and (isinstance(demand, bool) or int(demand) != demand or demand < 0):
+            raise ValueError("invalid dynamic energy demand")
+        value = UNCONFIGURED if demand is None else int(demand)
+        gap = GAP_UNWIRED_INPUTS if demand is None else ""
+        if member.dynamic_demand == demand and member.demand == value and member.gap == gap:
+            return False
+        member.dynamic_demand, member.demand, member.gap = demand, value, gap
+        self._settle()
+        return True
 
     def members_of_kind(self, gap):
         # type: (str) -> list
@@ -611,17 +632,20 @@ class EnergyService(NetworkService):
         """
         state = None
         unit_count = None
+        dynamic_demand = None
         if previous is not None and previous.ref.matches(node.ref):
             state = previous.state
             unit_count = previous.unit_count
+            dynamic_demand = previous.dynamic_demand
         if self.inputs_of is not None:
             inputs = self.inputs_of(node.ref, node.device_id)
+            dynamic_demand = inputs.get("dynamic_demand", dynamic_demand)
             if "state" in inputs:
                 state = inputs["state"]
             if "unit_count" in inputs:
                 unit_count = inputs["unit_count"]
         demand, gap = self._demand_of(definition, state, unit_count)
-        return EnergyMember(
+        member = EnergyMember(
             node.node_key,
             node.ref,
             node.device_id,
@@ -633,6 +657,12 @@ class EnergyService(NetworkService):
             unit_count,
         )
 
+        if definition.energy.dynamic:
+            member.dynamic_demand = dynamic_demand
+            member.demand = UNCONFIGURED if dynamic_demand is None else int(dynamic_demand)
+            member.gap = GAP_UNWIRED_INPUTS if dynamic_demand is None else ""
+        return member
+
     @staticmethod
     def _demand_of(definition, state, unit_count):
         # type: (object, object, object) -> tuple
@@ -642,6 +672,8 @@ class EnergyService(NetworkService):
         不同（改文档 vs 接线），因此不能合并成一句「未知」。
         """
         energy = definition.energy
+        if energy.dynamic:
+            return UNCONFIGURED, GAP_UNWIRED_INPUTS
         if energy.follows_bandwidth:
             # 能耗等于所在负载域的负载。折算口径属 R08，不是「没人告诉它」，
             # 因此哪怕域已经同步过来也照样算不出。

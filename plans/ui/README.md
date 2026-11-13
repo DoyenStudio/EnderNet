@@ -21,6 +21,7 @@
 | 同名文档 | 界面／资源用途 |
 | --- | --- |
 | [_ui_defs.md](_ui_defs.md) | UI 资源登记 |
+| [storage_transfer.md](storage_transfer.md) | 四槽存储转储器 |
 | [assemble_chamber.md](assemble_chamber.md) | 装配仓 |
 | [bus_fluid_input_io.md](bus_fluid_input_io.md) | 主动流体存货口 |
 | [bus_fluid_io.md](bus_fluid_io.md) | 被动流体接口 |
@@ -44,6 +45,7 @@
 | [parallel_processor.md](parallel_processor.md) | 并行处理器 |
 | [parallel_processor_connector.md](parallel_processor_connector.md) | 并行处理器连接器 |
 | [storage_driver.md](storage_driver.md) | 存储驱动器 |
+| [transcriber.md](transcriber.md) | 八槽介质转录器 |
 | [template_terminal_panel.md](template_terminal_panel.md) | 样板终端 |
 | [tiny_network_endpoint.md](tiny_network_endpoint.md) | 小型网络控制器 |
 

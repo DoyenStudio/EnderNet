@@ -103,6 +103,12 @@ CATEGORY_PART_HOLDER = "part_holder"
 CATEGORY_BUS = "bus"
 CATEGORY_TERMINAL = "terminal"
 CATEGORY_STORAGE = "storage"
+CATEGORY_TRANSCRIBER = "transcriber"
+TRANSCRIBER_ID = "endernet:transcriber"
+TRANSCRIBER_SLOT_COUNT = Value(8)
+STORAGE_TRANSFER_ID = "endernet:storage_transfer"
+CATEGORY_STORAGE_TRANSFER = "storage_transfer"
+STORAGE_TRANSFER_SLOT_COUNT = Value(4)
 CATEGORY_PROCESSOR_CONNECTOR = "processor_connector"
 CATEGORY_PROCESSOR = "processor"
 CATEGORY_MEMORY = "memory"
@@ -122,6 +128,8 @@ DEVICE_CATEGORIES = frozenset(
         CATEGORY_BUS,
         CATEGORY_TERMINAL,
         CATEGORY_STORAGE,
+        CATEGORY_TRANSCRIBER,
+        CATEGORY_STORAGE_TRANSFER,
         CATEGORY_MEMORY,
         CATEGORY_ASSEMBLY,
         CATEGORY_ENERGY_INPUT,
@@ -278,15 +286,16 @@ class EnergySpec(object):
       见 blocks.md 的小型网络控制器「耗能：(基带负载)EN/t」。
     """
 
-    __slots__ = ("idle", "work", "follows_bandwidth", "per_unit")
+    __slots__ = ("idle", "work", "follows_bandwidth", "per_unit", "dynamic")
 
-    def __init__(self, idle=UNCONFIGURED, work=None, follows_bandwidth=False, per_unit=None):
+    def __init__(self, idle=UNCONFIGURED, work=None, follows_bandwidth=False, per_unit=None, dynamic=False):
         # type: (object, object, bool, object) -> None
         self.idle = idle
         #: None 表示该设备没有独立的工作态，能耗恒为 idle。
         self.work = idle if work is None else work
         self.follows_bandwidth = follows_bandwidth
         self.per_unit = per_unit
+        self.dynamic = bool(dynamic)
 
     def value_for_state(self, state, unit_count=0):
         # type: (str, int) -> object
@@ -985,6 +994,8 @@ TERMINAL_SCREENS = {
 #:
 #: 所有已有容器界面的设备都接入状态订阅；配置交互按各自交付范围接入。
 CONTAINER_SCREENS = {
+    TRANSCRIBER_ID: "endernet_transcriber.main",
+    STORAGE_TRANSFER_ID: "endernet_storage_transfer.main",
     "endernet:bus_item_io": "endernet_bus_item_io.main",
     "endernet:memory_slot": "endernet_memory_slot.main",
     "endernet:bus_fluid_input_io": "endernet_bus_fluid_input_io.main",
@@ -1032,6 +1043,7 @@ DEVICES = (
             "endernet:network_baseband_16",
             "endernet:network_baseband_32",
             "endernet:storage_driver",
+            TRANSCRIBER_ID,
             "endernet:common_terminal_panel",
             "endernet:crafting_terminal_panel",
         ),
@@ -1053,7 +1065,7 @@ DEVICES = (
             follows_bandwidth=True,
         ),
         allowed_device_ids=None,
-        notes="只接网络基带，须贴着基带核心；允许接入总线类设备；不支持订单处理。",
+        notes="只接网络基带，须贴着基带核心；允许接入总线类设备；支持订单处理。",
     ),
     # --- 网络传输介质 ---
     DeviceDefinition(
@@ -1141,6 +1153,19 @@ DEVICES = (
         bandwidth=BandwidthSpec(units_to_quarters(1)),
         energy=EnergySpec(Value(4)),
         capabilities=(CAP_PATTERN_PROVIDER, CAP_ITEM_PORT, CAP_FLUID_PORT),
+    ),
+    # --- 本机介质转录（不提供公共库存） ---
+    DeviceDefinition(
+        TRANSCRIBER_ID, "转录器", CATEGORY_TRANSCRIBER,
+        bandwidth=BandwidthSpec(0),
+        energy=EnergySpec(Value(0), dynamic=True),
+        notes="八槽本机转录，耗能 floor(可执行单位物每秒 / 4) EN/t。",
+    ),
+    DeviceDefinition(
+        STORAGE_TRANSFER_ID, "存储转储器", CATEGORY_STORAGE_TRANSFER,
+        bandwidth=BandwidthSpec(units_to_quarters(1)),
+        energy=EnergySpec(Value(0), dynamic=True),
+        notes="四槽介质向网络转储，耗能 floor(最近一秒实际单位物 / 4) EN/t。",
     ),
     # --- 存储器 ---
     DeviceDefinition(

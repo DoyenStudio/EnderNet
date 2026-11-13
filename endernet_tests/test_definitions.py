@@ -66,6 +66,8 @@ DOCUMENTED_CONTROLLERS = {
 
 #: blocks.md 列出的全部 23 个方块
 DOCUMENTED_BLOCKS = {
+    "endernet:transcriber",
+    "endernet:storage_transfer",
     "endernet:dos_network_endpoint",
     "endernet:tiny_network_endpoint",
     "endernet:network_baseband_8",
@@ -713,7 +715,7 @@ class TestConnectionRules(unittest.TestCase):
         表外的一律不连：主控只接基带；处理器只接处理器与连接器；连接器之间不连；
         面板不是方块，不在表里。
         """
-        devices = ["bus", "terminal", "storage", "memory", "assembly", "energy_input"]
+        devices = ["bus", "terminal", "storage", "memory", "assembly", "energy_input", "transcriber", "storage_transfer"]
         expected = set()
 
         def allow(first, second):

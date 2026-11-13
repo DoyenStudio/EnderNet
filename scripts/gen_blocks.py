@@ -66,6 +66,8 @@ from endernet.common.definitions import (  # noqa: E402
     PASSIVE_PORT_SLOT_COUNT,
     SIX_WAY_ITEM_PORTS,
     STORAGE_DRIVER_SLOT_COUNT,
+    TRANSCRIBER_SLOT_COUNT,
+    STORAGE_TRANSFER_SLOT_COUNT,
     QUARTERS_PER_UNIT,
     TEMPLATE_CONTAINER_SLOT_COUNT,
     DefinitionSet,
@@ -120,6 +122,8 @@ LAYOUT_FRONT = "front"
 LAYOUT_MODEL = "model"
 
 BLOCK_LAYOUTS = {
+    "endernet:storage_transfer": LAYOUT_FRONT,
+    "endernet:transcriber": LAYOUT_FRONT,
     # 六面同图：传输介质、无朝向的设备、以及 User 2026-11-05 指定改回单图的设备
     "endernet:network_baseband_8": LAYOUT_UNIFORM,
     "endernet:network_baseband_16": LAYOUT_UNIFORM,
@@ -250,6 +254,8 @@ TICKING = {
 #:   **这与上面两个流体口不矛盾**：那两台是 User 单独点名的占位，这台不是。
 #:   不要因为「都是流体」就顺手补齐。
 CONTAINERS = {
+    "endernet:transcriber": ("endernet_transcriber.main", TRANSCRIBER_SLOT_COUNT),
+    "endernet:storage_transfer": ("endernet_storage_transfer.main", STORAGE_TRANSFER_SLOT_COUNT),
     "endernet:storage_driver": ("endernet_storage_driver.main", STORAGE_DRIVER_SLOT_COUNT),
     "endernet:bus_item_io": ("endernet_bus_item_io.main", PASSIVE_PORT_SLOT_COUNT),
     "endernet:bus_template_io": ("endernet_bus_template_io.main", TEMPLATE_CONTAINER_SLOT_COUNT),
@@ -278,6 +284,8 @@ CONTAINERS = {
 
 #: 需要朝向状态的设备（放置方向决定端口朝向）。
 DIRECTIONAL = {
+    "endernet:transcriber": True,
+    "endernet:storage_transfer": True,
     "endernet:dos_network_endpoint": True,
     "endernet:tiny_network_endpoint": True,
     "endernet:bus_item_io": True,
@@ -319,7 +327,7 @@ DEFAULT_TIER_LEVEL = 2
 #: 方块的简短说明，写进游戏内提示
 TIPS = {
     "endernet:dos_network_endpoint": "最简单的仓储网络核心。不支持自动存货/取货与订单处理。",
-    "endernet:tiny_network_endpoint": "允许接入总线类设备；不支持订单处理。",
+    "endernet:tiny_network_endpoint": "允许接入总线类设备；支持订单处理。",
     "endernet:network_baseband_8": "网络传输介质，可接受最多 8u 网络负载。",
     "endernet:network_baseband_16": "网络传输介质，可接受最多 16u 网络负载。",
     "endernet:network_baseband_32": "网络传输介质，可接受最多 32u 网络负载。",
@@ -331,6 +339,8 @@ TIPS = {
     "endernet:bus_fluid_input_io": "持续从朝向的容器取出流体并存入网络。",
     "endernet:bus_template_io": "按工厂样板，向邻近容器投入原料。",
     "endernet:storage_driver": "放入存储介质，为网络提供仓储容量。",
+    "endernet:transcriber": "将左侧介质的内容转移到右侧介质；不占带宽。",
+    "endernet:storage_transfer": "将四槽非空介质中的内容转存至网络；占用 1u。",
     "endernet:common_terminal_panel": "管理网络的仓储信息。",
     "endernet:crafting_terminal_panel": "在通用终端的基础上增加工作台功能。",
     "endernet:template_terminal_panel": "在通用终端的基础上增加样板配置功能。",

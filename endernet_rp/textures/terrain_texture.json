@@ -85,11 +85,17 @@
         "endernet:storage_driver_model": {
             "textures": "textures/endernet/models/storage_driver"
         },
+        "endernet:storage_transfer_front": {
+            "textures": "textures/endernet/devices/storage_transfer_front"
+        },
         "endernet:template_terminal_panel_front": {
             "textures": "textures/endernet/devices/template_terminal_panel_front"
         },
         "endernet:tiny_network_endpoint_all": {
             "textures": "textures/endernet/devices/tiny_network_endpoint_all"
+        },
+        "endernet:transcriber_front": {
+            "textures": "textures/endernet/devices/transcriber_front"
         }
     },
     "texture_name": "atlas.terrain"

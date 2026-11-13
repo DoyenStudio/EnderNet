@@ -1502,6 +1502,67 @@ class StorageService(NetworkService):
         # type: (object) -> bool
         return self.runtime is None or self.runtime.admission.status_of(ref).ok is True
 
+    def import_medium(self, source_ref, slot, key, count, now_tick, budget=8, cursor=0):
+        """从转储器真实槽导入，源不挂到公共库存；返回搬运量、原因、工作量。"""
+        from ...common.definitions import STORAGE_TRANSFER_ID
+        from .medium import transfer_between
+
+        if count <= 0 or budget <= 0:
+            return 0, "等待介质", 0
+        if self.runtime is not None:
+            node = self.runtime.member(source_ref.node_key)
+            energy = self.runtime.services.get(ServiceId.ENERGY)
+            if (node is None or not node.ref.matches(source_ref) or not self.runtime.is_open()
+                    or not self._driver_admitted(source_ref) or energy is None
+                    or energy.power_ok(source_ref.node_key) is not True):
+                return 0, "网络离线，暂停转储", 1
+        state = self.drivers.get_by_ref(source_ref) if self.drivers is not None else None
+        if (state is None or state.device_id != STORAGE_TRANSFER_ID or not state.loaded
+                or not self.drivers.refresh(source_ref)):
+            return 0, "介质变化，等待确认", 1
+        assignment = state.assignment(slot)
+        if assignment is None:
+            return 0, "介质变化，等待确认", 1
+        source = self.drivers.medium(assignment.medium_id)
+        owner = self.drivers.medium_slot_owner(assignment.medium_id)
+        if (source is None or not source.is_tradeable() or source.model_id not in self.drivers.definitions.mediums
+                or owner is None or owner[0] is not state or owner[1].slot != slot
+                or source.medium_id in self.mounted):
+            return 0, "介质不可用", 1
+        targets = sorted(self.mounted)
+        if targets:
+            offset = cursor % len(targets)
+            targets = targets[offset:] + targets[:offset]
+        moved, spent = 0, 0
+        reason = "网络空间不足"
+        for medium_id in targets:
+            if spent >= budget or moved >= count:
+                break
+            spent += 1
+            provider = self._provider_for(medium_id)
+            if provider is None or medium_id == source.medium_id:
+                continue
+            target_ref = self.mounted[medium_id].device_ref
+            if not self.drivers.refresh(target_ref) or self._provider_for(medium_id) is None:
+                continue
+            target = self.drivers.medium(medium_id)
+            target_owner = self.drivers.medium_slot_owner(medium_id)
+            if target_owner is None or not target_owner[0].ref.matches(target_ref):
+                continue
+            # 空间存在而计划无法提交时，是读写额度不足，不将其误报为满盘。
+            if (target.free_micro() >= key.micro_units(1)
+                    and (target.count_of(key) or target.remaining_types() > 0)):
+                reason = "等待读写额度"
+            amount = transfer_between(source, target, key, count - moved, now_tick,
+                                      (source.revision, target.revision))
+            if amount:
+                self.drivers.note_transfer_changed(source.medium_id, medium_id)
+                moved += amount
+        if moved:
+            self._reindex_keys((key,))
+            self.stats["inserts"] += 1
+        return moved, "转储中" if moved else reason, max(1, spent)
+
     def _provider_for(self, medium_id):
         # type: (str) -> object
         """取该介质的**提供者**。不能交易时返回 None。

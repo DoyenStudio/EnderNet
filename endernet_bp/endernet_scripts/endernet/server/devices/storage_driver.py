@@ -36,6 +36,10 @@ from ...common.resources import medium_item
 from ...common.definitions import (
     CATEGORY_STORAGE,
     STORAGE_DRIVER_SLOT_COUNT,
+    TRANSCRIBER_ID,
+    TRANSCRIBER_SLOT_COUNT,
+    STORAGE_TRANSFER_ID,
+    STORAGE_TRANSFER_SLOT_COUNT,
     UNCONFIGURED,
 )
 from ...common.identity import DeviceRef, NodeKey, node_key_text  # noqa: F401
@@ -146,6 +150,11 @@ def is_storage_driver(device_id, definitions=None):
         if definition is not None:
             return definition.category == CATEGORY_STORAGE
     return device_id == DRIVER_DEVICE_ID
+
+
+def is_medium_bay(device_id, definitions=None):
+    """共享介质容器；转录器不因此获得存储提供者能力。"""
+    return device_id in (TRANSCRIBER_ID, STORAGE_TRANSFER_ID) or is_storage_driver(device_id, definitions)
 
 
 def _slot_count_of(adapter, fallback):
@@ -425,8 +434,10 @@ class DriverState(object):
         }
         #: 挂在这台设备上的**实际能力对象**（架构 §4 要求可查）。
         self.capabilities = CapabilityRegistry()
-        self.provider = StorageDriverProvider(self, store)
-        self.capabilities.register(STORAGE_PROVIDER, self.provider)
+        self.provider = None
+        if is_storage_driver(device_id, store.definitions):
+            self.provider = StorageDriverProvider(self, store)
+            self.capabilities.register(STORAGE_PROVIDER, self.provider)
         self.policy = policy
         if slot_count is UNCONFIGURED:
             self.recovery = Reason.DEFINITION_UNCONFIGURED
@@ -778,7 +789,7 @@ class StorageDriverProvider(object):
         )
 
 
-class StorageDriverStore(object):
+class MediumBayStore(object):
     """驱动器状态集合与介质权威表。
 
     **由启动层持有并注入网络服务**（架构 §3）：驱动器与介质的权威状态
@@ -826,6 +837,7 @@ class StorageDriverStore(object):
         #: 漏标一次的表现是「改了没存」，而那种缺陷要等到重进世界才看得见。
         #: （**驱动器本身不再有脏集**：它不再进存档。）
         self._dirty_mediums = set()
+        self._archive_groups = []
         #: 旧存档留下的驱动器记录：`记录 ID -> [SlotAssignment, ...]`。
         #: 读回来**只报进诊断**、不据此造物品，处置见 `restore_from_repository`。
         self._legacy_slots = {}
@@ -881,8 +893,12 @@ class StorageDriverStore(object):
 
     # -- 驱动器状态 ----------------------------------------------------
 
-    def slot_count(self):
+    def slot_count(self, device_id=None):
         # type: () -> object
+        if device_id == TRANSCRIBER_ID:
+            return TRANSCRIBER_SLOT_COUNT.value
+        if device_id == STORAGE_TRANSFER_ID:
+            return STORAGE_TRANSFER_SLOT_COUNT.value
         return self.policy.resolve_slot_count(self.definitions)
 
     def ensure(self, ref, device_id=None):
@@ -899,9 +915,9 @@ class StorageDriverStore(object):
         if device_id is None:
             record = self.registry.get_by_ref(ref)
             device_id = record.device_id if record is not None else DRIVER_DEVICE_ID
-        if not is_storage_driver(device_id, self.definitions):
+        if not is_medium_bay(device_id, self.definitions):
             return None
-        state = DriverState(ref, self.policy, self, device_id, self.slot_count())
+        state = DriverState(ref, self.policy, self, device_id, self.slot_count(device_id))
         self._states[ref.node_key.as_key()] = state
         self.stats["created"] += 1
         self.refresh(ref)
@@ -910,7 +926,7 @@ class StorageDriverStore(object):
     def get(self, node_key):
         # type: (object) -> DriverState
         state = self._states.get(node_key.as_key())
-        if state is None or not is_storage_driver(state.device_id, self.definitions):
+        if state is None or not is_medium_bay(state.device_id, self.definitions):
             return None
         return state
 
@@ -996,7 +1012,7 @@ class StorageDriverStore(object):
         """
         kind = change.kind
         if kind == ChangeKind.ADDED:
-            if not is_storage_driver(change.device_id, self.definitions):
+            if not is_medium_bay(change.device_id, self.definitions):
                 return 0
             state = self.ensure(change.ref, change.device_id)
             if state is None:
@@ -1006,14 +1022,14 @@ class StorageDriverStore(object):
             self.project(state)
             return 1
         if kind == ChangeKind.REMOVED:
-            if not is_storage_driver(change.device_id, self.definitions):
+            if not is_medium_bay(change.device_id, self.definitions):
                 return 0
             state = self.drop(change.ref)
             if state is None:
                 return 0
             return 1
         if kind in (ChangeKind.LOADED, ChangeKind.UNLOADED):
-            if not is_storage_driver(change.device_id, self.definitions):
+            if not is_medium_bay(change.device_id, self.definitions):
                 return 0
             if not self.mark_loaded(change.node_key, kind == ChangeKind.LOADED):
                 return 0
@@ -1031,6 +1047,8 @@ class StorageDriverStore(object):
         **这是唯一写该字段的地方**（架构 §4）。带宽准入读的就是它，
         因此任何命令载荷都不得直接提交计数——设备不得绕过权威槽位改负载。
         """
+        if state.device_id in (TRANSCRIBER_ID, STORAGE_TRANSFER_ID):
+            return False
         record = self.registry.get(state.node_key)
         if record is None:
             # 设备已经被移除（REMOVED 时注册表先删了记录）。
@@ -1182,18 +1200,22 @@ class StorageDriverStore(object):
             return None
         return self.containers.container_at(node_key)
 
-    def accepts_put(self, device_id, item_name):
-        # type: (str, str) -> bool
-        """这个物品能不能放进这台设备的容器。**只答驱动器那一部分。**
-
-        不是驱动器一律放行——别家容器各有各的规则，`events._veto_or_mark`
-        会逐个 store 问。
-
-        **只能按名字判**：放入事件里读不出 `userData`（`events._item_name`
-        只看 `newItemName`），因此这里问不了型号粒度——
-        `DriverPolicy.accepted_models` 那个 R10 替身留在重读路径上。
+    def accepts_put(self, device_id, item_name, item_data=None):
+        # type: (str, str, object) -> bool
+        """介质容器准入。转储器核对归一化后的完整身份及权威非空内容；
+        驱动器、转录器保持按型号接受空白介质的原规则。其他设备交给其 store。
         """
-        if not is_storage_driver(device_id, self.definitions):
+        if device_id == STORAGE_TRANSFER_ID:
+            if (not isinstance(item_data, dict) or isinstance(item_data.get("count"), bool)
+                    or item_data.get("count") != 1):
+                return False
+            carrier = medium_item.read_carrier(_user_data_of(item_data))
+            if carrier is None or carrier[1] != medium_item.CARRIER_VERSION:
+                return False
+            medium = self.medium(carrier[0])
+            return bool(medium is not None and medium.is_tradeable()
+                        and medium.model_id == item_name and medium.entries)
+        if not is_medium_bay(device_id, self.definitions):
             return True
         if not item_name:
             # 读不出物品名就不拦（与 `_veto_or_mark` 同一口径）。
@@ -1547,7 +1569,16 @@ class StorageDriverStore(object):
                 }
             # 记录缺失 → 孤儿。**占着槽**（`disk_count` 计入、`_transfer` 会以
             # `MEDIUM_UNRECOVERED` 拒绝交易），但不发号、不当空盘。
+            if state.device_id == STORAGE_TRANSFER_ID:
+                medium = self.medium(medium_id)
+                if medium is None or not medium.is_tradeable() or medium.model_id != name:
+                    return None, {"code": "invalid_medium", "detail": u"介质身份或内容不可用"}
+            medium = self.medium(medium_id)
+            if medium is not None and medium.model_id != name:
+                return None, {"code": "medium_model_mismatch", "detail": u"介质载体与物品型号不符"}
             return medium_id, None
+        if state.device_id == STORAGE_TRANSFER_ID:
+            return None, {"code": "empty_medium", "detail": u"转储器只接收已有内容的介质"}
         return self._materialize_blank(state, adapter, slot, name, self.tick)
 
     def _materialize_blank(self, state, adapter, slot, model_id, tick):
@@ -1638,7 +1669,7 @@ class StorageDriverStore(object):
         if medium_id in self._mediums and medium_id not in self._frozen_mediums:
             self._display_dirty[medium_id] = self.tick
 
-    def advance_display(self, budget=None):
+    def advance_display(self, budget=None, node_key=None, force=False):
         # type: (int) -> int
         """把到期的展示行写回槽里的介质物品。返回写了几件。
 
@@ -1659,7 +1690,7 @@ class StorageDriverStore(object):
             if written >= budget:
                 break
             dirty_tick = self._display_dirty.get(medium_id, self.tick)
-            if self.tick - dirty_tick < DRIVER_SETTLE_FRAMES:
+            if not force and self.tick - dirty_tick < DRIVER_SETTLE_FRAMES:
                 continue
             medium = self._mediums.get(medium_id)
             if medium is None or medium_id in self._frozen_mediums:
@@ -1672,6 +1703,8 @@ class StorageDriverStore(object):
                 self.stats["display_skipped"] += 1
                 continue
             state, assignment = owner
+            if node_key is not None and state.node_key != node_key:
+                continue
             adapter = self.container_at(state.node_key)
             if adapter is None or not callable(getattr(adapter, "read_slot", None)):
                 continue
@@ -1727,6 +1760,22 @@ class StorageDriverStore(object):
         if medium_id in self._mediums and medium_id not in self._frozen_mediums:
             self._dirty_mediums.add(medium_id)
 
+    def note_transfer_changed(self, source_id, target_id):
+        """关联介质必须在同一保存批次中暂存，预算不能拆开。"""
+        group = set((source_id, target_id))
+        for existing in list(self._archive_groups):
+            if existing.intersection(group):
+                group.update(existing)
+                self._archive_groups.remove(existing)
+        self._archive_groups.append(group)
+        for medium_id in group:
+            self.note_medium_changed(medium_id)
+            # 持续高速转录也应合并刷新展示，不能每帧重置等待起点而永远不写。
+            pending_tick = self._display_dirty.get(medium_id, self.tick)
+            self.note_display_dirty(medium_id)
+            if medium_id in self._display_dirty:
+                self._display_dirty[medium_id] = pending_tick
+
     def pending_archive_writes(self):
         # type: () -> int
         """还没落盘的记录数（脏介质 + 待删的旧驱动器记录）。诊断与预算用。"""
@@ -1740,6 +1789,16 @@ class StorageDriverStore(object):
         第二份真相（`persistence_backend.md` §4.1）。
         """
         written = 0
+        for group in list(self._archive_groups):
+            if budget is not None and written >= budget:
+                break
+            ids = sorted(group.intersection(self._dirty_mediums))
+            repository.write_group([Record(MEDIUM_RECORD_KIND, medium_id,
+                                           self._mediums[medium_id].to_dict()) for medium_id in ids])
+            written += len(ids)
+            self.archive_stats["medium_writes"] += len(ids)
+            self._dirty_mediums.difference_update(ids)
+            self._archive_groups.remove(group)
         for medium_id in sorted(self._dirty_mediums):
             if budget is not None and written >= budget:
                 break
@@ -1872,6 +1931,8 @@ class StorageDriverStore(object):
             return False, Reason.MEDIUM_NOT_MOUNTED, "没有 %s 这块介质的记录" % (
                 medium_id,
             )
+        if state.device_id == STORAGE_TRANSFER_ID and (not medium.is_tradeable() or not medium.entries):
+            return False, Reason.NOT_A_MEDIUM, "转储器只接收非空且可用的介质"
         owner = self.medium_slot_owner(medium_id)
         if owner is not None:
             other_state, assignment = owner
@@ -2129,3 +2190,9 @@ def _managed_lines_of(data):
     if not isinstance(lore, (list, tuple)):
         return ()
     return tuple(line for line in lore if medium_item.is_managed_line(line))
+
+
+class StorageDriverStore(MediumBayStore):
+    """兼容既有组合根接口；共享全部介质容器的身份、归属与持久化。"""
+
+    pass

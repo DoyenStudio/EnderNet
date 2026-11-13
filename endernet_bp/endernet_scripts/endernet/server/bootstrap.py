@@ -109,6 +109,8 @@ from .devices import (
 )
 from .devices import DeviceRegistry
 from .devices import MemorySlotStore
+from .devices.transcriber import TranscriberService
+from .devices.storage_transfer import StorageTransferService
 from .devices import SlotDisplayTracker
 from .devices import (
     DriverPolicy,
@@ -862,6 +864,8 @@ class ServerBootstrap(object):
         #: 「外部物流已送入缓冲的资源仍保留」）。
         #: 它同样在 `admission` 之后构造，但**不**通知负载重算——接口的带宽
         #: 与能耗是定义表里的固定值，不随缓冲内容变化。
+        self.transcribers = TranscriberService(self.drivers)
+        self.storage_transfers = StorageTransferService(self.drivers)
         self.ports = PortStore(
             self.definitions,
             self.registry,
@@ -1352,6 +1356,8 @@ class ServerBootstrap(object):
         # 不成立的归属动手。
         # 恢复等待者必须早于接口回流和订单推进，避免首帧产物无人认领。
         network_states_applied = self._apply_archived_network_states()
+        self.transcribers.prepare(self.clock.current_tick(), self._transcriber_energy)
+        self.storage_transfers.prepare(self.clock.current_tick(), self._transcriber_energy)
         self._settle_input_power()
         service_steps = self.runtimes.tick(self.runtime_budget, self._tick_context())
         # 发布窗口**紧跟运行时推进**（任务 11-02）：提交发生在 `runtimes.tick`
@@ -1360,6 +1366,9 @@ class ServerBootstrap(object):
         #
         # 没有订阅者的网络连碰都不碰（`tick()` 只遍历有会话的网络），
         # 因此那句「无人订阅时 `take_dirty_keys()` 不会被调用」继续成立。
+        self.transcribers.execute(self.clock.current_tick(), self._transcriber_online)
+        self.storage_transfers.execute(self.clock.current_tick(), self._transcriber_online,
+                                       self._storage_transfer_storage)
         published = self.sync.tick()
         # 样板槽的重读放在最后：它读的是方块容器，与网络服务不相干。
         # **注意容器事件不走这里的队列**：它们是引擎监听器，由适配器在
@@ -1711,6 +1720,17 @@ class ServerBootstrap(object):
             report["restore_error"] = self.persistence_restore_error
         return report
 
+    def _storage_transfer_storage(self, ref):
+        runtime = self.runtimes.runtime_for(ref)
+        return runtime.services.get(ServiceId.STORAGE) if runtime is not None else None
+
+    def _transcriber_energy(self, ref):
+        runtime = self.runtimes.runtime_of(ref.node_key)
+        return runtime.services.get(ServiceId.ENERGY) if runtime is not None else None
+
+    def _transcriber_online(self, ref):
+        return self.recovery.is_open() and self.runtimes.device_status(ref).is_online
+
     def _settle_input_power(self):
         if self.energy_inputs is None:
             return
@@ -1890,6 +1910,12 @@ class ServerBootstrap(object):
     def _energy_inputs_of(self, runtime, ref, device_id):
         # type: (object, object, str) -> dict
         """只读权威设备状态，不用可被配置命令改写的数量投影。"""
+        if device_id == "endernet:transcriber":
+            view = self.transcribers.view(ref)
+            return {"dynamic_demand": view["demand"] if view is not None else None}
+        if device_id == "endernet:storage_transfer":
+            view = self.storage_transfers.view(ref)
+            return {"dynamic_demand": view["demand"] if view is not None else 0}
         if is_storage_driver(device_id, self.definitions):
             # 硬盘个数来自容器读数（2026-10-04）。**没读到过就是 `None`（待确认）**，
             # 与内存槽同形——读不到不等于一块盘都没有。
@@ -2375,7 +2401,12 @@ class ServerBootstrap(object):
         `sync/device_status.read_status` 里做，这里只负责把设备身份换成
         结论。
         """
-        return self.runtimes.device_status(device_ref)
+        status = self.runtimes.device_status(device_ref)
+        if status.device_id == "endernet:transcriber":
+            status.notes = tuple(status.notes) + (self.transcribers.summary(device_ref),)
+        if status.device_id == "endernet:storage_transfer":
+            status.notes = tuple(status.notes) + (self.storage_transfers.summary(device_ref),)
+        return status
 
     def _sync_port_of(self, device_ref):
         # type: (object) -> object

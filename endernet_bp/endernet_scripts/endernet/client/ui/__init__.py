@@ -26,6 +26,8 @@ def register_screens():
         BusTemplatePanel,
         MemorySlotPanel,
         StorageDriverPanel,
+        TranscriberPanel,
+        StorageTransferPanel,
     )
     from .terminal.factoric_panel import FactoricPanel
     from .terminal.template_panel import TemplatePanel
@@ -42,6 +44,8 @@ def register_screens():
         BusTemplatePanel,
         AssembleChamberPanel,
         StorageDriverPanel,
+        TranscriberPanel,
+        StorageTransferPanel,
         UniversalImporterScreen,
         BusItemPanel,
         MemorySlotPanel,

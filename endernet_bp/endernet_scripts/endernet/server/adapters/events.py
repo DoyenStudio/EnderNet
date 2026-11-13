@@ -25,6 +25,7 @@ from ...common.definitions import (
 from ...common.channels import identity_payload
 from ...common.rate_limit import PlayerRateLimiter
 from ...common.identity import ChunkKey, NodeKey
+from ...common.resources import normalize_engine_item
 from .channels import send_device_identity
 from ..interaction import BlockUse, Openers, OpenTarget, UseGuard
 from ..runtime import EventKind, NormalizedEvent, WakeSet
@@ -444,6 +445,7 @@ class ServerEventBinder(object):
             # **取出永远不拦。** 拒收只针对「不该进来的东西」；
             # 连拿都拿不出来会让玩家对着一块卡住的方块无计可施。
             self._count("custom_container_remove")
+            self._flush_transcriber_display(self._player_dimension(event.playerId), event.x, event.y, event.z)
             self._mark_container_dirty(
                 self._player_dimension(event.playerId),
                 (event.x, event.y, event.z),
@@ -473,6 +475,7 @@ class ServerEventBinder(object):
         def on_hopper_out(event):
             # 漏出同样是「取出」，只标脏、不拦。
             self._count("custom_container_pull_out")
+            self._flush_transcriber_display(event.dimension, event.x, event.y, event.z)
             self._mark_container_dirty(
                 event.dimension, (event.x, event.y, event.z)
             )
@@ -541,7 +544,16 @@ class ServerEventBinder(object):
                                    tick=self._tick(), source="block_remove")
         )
 
+    def _flush_transcriber_display(self, dimension, x, y, z):
+        if dimension is None or self.drivers is None:
+            return
+        key = NodeKey(dimension, x, y, z)
+        record = self.registry.get(key)
+        if record is not None and record.device_id in ("endernet:transcriber", "endernet:storage_transfer"):
+            self.drivers.advance_display(budget=8, node_key=key, force=True)
+
     def _on_try_destroy(self, dimension, x, y, z, block_name):
+        self._flush_transcriber_display(dimension, x, y, z)
         self._count("try_destroy")
         if not self._is_ours(block_name):
             return
@@ -719,13 +731,16 @@ class ServerEventBinder(object):
         for store, counter in stores:
             if store is None:
                 continue
-            if store is self.patterns:
+            if store is self.drivers:
+                accepts = store.accepts_put(record.device_id, item_name,
+                                            normalize_engine_item(_item_data(item)))
+            elif store is self.patterns:
                 accepts = store.accepts_put(record.device_id, item_name,
                                             getattr(event, "collectionIndex", None),
                                             _item_data(item))
             else:
                 accepts = store.accepts_put(record.device_id, item_name)
-            if item_name and not accepts:
+            if not accepts and (item_name or record.device_id == "endernet:storage_transfer"):
                 event.cancel()
                 self._count(counter)
                 return True

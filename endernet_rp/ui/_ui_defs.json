@@ -25,6 +25,8 @@
         "ui/endernet/terminal/crafting_terminal_panel.json",
         "ui/endernet/terminal/factoric_terminal_panel.json",
         "ui/endernet/terminal/template_terminal_panel.json",
-        "ui/endernet/terminal/universal_importer.json"
+        "ui/endernet/terminal/universal_importer.json",
+        "ui/endernet/storage/transcriber.json",
+        "ui/endernet/storage/storage_transfer.json"
     ]
 }

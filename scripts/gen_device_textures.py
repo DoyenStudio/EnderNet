@@ -331,6 +331,30 @@ def f_template_io():
     return t
 
 
+def f_storage_transfer():
+    """四仓介质汇入中央网络总线。"""
+    t = chassis()
+    for x in (2, 9):
+        for y in (3, 8):
+            t.rect(x, y, 5, 3, "k0").h(x, y, 5, "k4")
+            t.h(x + 1, y + 2, 3, "net2").set(x + 3, y + 2, "net0")
+    t.h(3, 12, 10, "net1")
+    t.pts([(6, 11), (7, 12), (6, 13), (9, 11), (8, 12), (9, 13)], "net0")
+    return t
+
+
+def f_transcriber():
+    t = chassis()
+    for x in (2, 11):
+        for y in (4, 9):
+            t.rect(x, y, 3, 3, "k0")
+            t.h(x, y, 3, "net2")
+            t.h(x, y + 2, 3, "net0")
+    t.h(6, 7, 4, "net1")
+    t.pts([(8, 5), (9, 6), (10, 7), (9, 8), (8, 9)], "net0")
+    return t
+
+
 def f_driver():
     """存储驱动器：2x5 仓位 = 10 槽，每仓一颗灯，中脊为数据总线。"""
     t = chassis()
@@ -472,6 +496,8 @@ def f_creative():
 #: DOS 与小型控制器**互换**：User 2026-11-05 把两者的贴图对调了，占位图跟着对调，
 #: 免得补出来的图和手绘图对不上。
 DESIGNS = {
+    "endernet:transcriber": f_transcriber,
+    "endernet:storage_transfer": f_storage_transfer,
     "endernet:dos_network_endpoint": f_tiny,
     "endernet:tiny_network_endpoint": f_dos,
     "endernet:network_baseband_8": lambda: f_baseband(8),

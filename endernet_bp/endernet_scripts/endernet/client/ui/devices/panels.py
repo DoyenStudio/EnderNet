@@ -131,6 +131,30 @@ class AssembleChamberPanel(ProxyPanelBase):
     """
 
 
+@RegistToolDeltaScreen("endernet_transcriber.main", is_proxy=True)
+class TranscriberPanel(ProxyPanelBase):
+    """真实八槽由引擎管理；工作摘要随现有设备状态订阅同步。"""
+
+    @Binder.binding(Binder.BF_BindString, "#EnderNetTranscriber.summary")
+    def transcriber_summary(self):
+        model = getattr(self, "status", None)
+        current = model._current() if model is not None else None
+        if current is None:
+            return "等待转录器确认"
+        return current.notes[-1] if current.notes else "等待转录器确认"
+
+
+@RegistToolDeltaScreen("endernet_storage_transfer.main", is_proxy=True)
+class StorageTransferPanel(ProxyPanelBase):
+    """原生四槽及服务端转储摘要。"""
+
+    @Binder.binding(Binder.BF_BindString, "#EnderNetStorageTransfer.summary")
+    def storage_transfer_summary(self):
+        model = getattr(self, "status", None)
+        current = model._current() if model is not None else None
+        return current.notes[-1] if current is not None and current.notes else "等待转储器确认"
+
+
 @RegistToolDeltaScreen("endernet_storage_driver.main", is_proxy=True)
 class StorageDriverPanel(ProxyPanelBase):
     """存储驱动器（`endernet:storage_driver`）。**这是一张空屏，有意如此。**
@@ -241,6 +265,8 @@ PROXY_PANELS = (
     ("endernet:bus_template_io", BusTemplatePanel),
     ("endernet:assemble_chamber", AssembleChamberPanel),
     ("endernet:storage_driver", StorageDriverPanel),
+    ("endernet:transcriber", TranscriberPanel),
+    ("endernet:storage_transfer", StorageTransferPanel),
     ("endernet:bus_item_io", BusItemPanel),
     ("endernet:memory_slot", MemorySlotPanel),
     ("endernet:bus_fluid_input_io", BusFluidInputPanel),

@@ -1,0 +1,8 @@
+2026-11-13
+python -B endernet_tests/run_tests.py
+py2check: 171 files passed Python 2.7 compatibility checks
+Ran 4774 tests in 38.161s
+OK
+Transcriber-specific tests: 25
+python -B scripts/gen_blocks.py --check: 33 blocks up to date
+git diff --ignore-submodules --check: passed

@@ -290,6 +290,23 @@ class Record(object):
 class Repository(object):
     """存档边界。后端实现可以是内存、ExtraData 或方块实体数据。"""
 
+    def write_group(self, records):
+        """成组暂存；失败后禁止提交，直到调用方用完整最新组重试成功。"""
+        records = list(records)
+        pending = getattr(self, "_incomplete_groups", None)
+        if pending is None:
+            pending = self._incomplete_groups = set()
+        keys = frozenset((record.kind, record.record_id) for record in records)
+        pending.add(keys)
+        for record in records:
+            self.write(record)
+        # 后续转储可能扩大关联组，完整超集也能解除之前的失败组。
+        self._incomplete_groups = set(group for group in pending if not group.issubset(keys))
+
+    def require_complete_groups(self):
+        if getattr(self, "_incomplete_groups", None):
+            raise IOError("incomplete medium transfer group; retry before commit")
+
     def load(self, kind, record_id):
         # type: (str, str) -> Record
         """读取。不存在返回 None。版本过新时返回 `read_only` 的记录。"""
@@ -435,6 +452,7 @@ class MemoryRepository(Repository):
         # type: (int) -> int
         if limit is None:
             limit = self.commit_limit
+        self.require_complete_groups()
         written = 0
         for kind in sorted(self._store.keys()):
             for record_id in sorted(self._store[kind].keys()):
@@ -604,6 +622,7 @@ class ExtraDataRepository(Repository):
         「每帧最多写几条」由调用方在**写**的那一侧控（`WriteCoordinator`
         的批大小）——那才是省下固定开销的地方。
         """
+        self.require_complete_groups()
         for (kind, record_id), text in list(self._unfinished_operations().items()):
             self._stage(kind, record_id, text)
         if self._pending <= 0:

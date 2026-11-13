@@ -36,6 +36,8 @@ from ...common.definitions import (
     CATEGORY_PROCESSOR,
     CATEGORY_PROCESSOR_CONNECTOR,
     CATEGORY_STORAGE,
+    CATEGORY_TRANSCRIBER,
+    CATEGORY_STORAGE_TRANSFER,
     CATEGORY_TERMINAL,
 )
 from ...common.identity import FACING_NAMES
@@ -137,6 +139,8 @@ class PortRuleSet(object):
         CATEGORY_BUS: frozenset([PortKind.NETWORK]),
         CATEGORY_TERMINAL: frozenset([PortKind.NETWORK]),
         CATEGORY_STORAGE: frozenset([PortKind.NETWORK]),
+        CATEGORY_TRANSCRIBER: frozenset([PortKind.NETWORK]),
+        CATEGORY_STORAGE_TRANSFER: frozenset([PortKind.NETWORK]),
         CATEGORY_MEMORY: frozenset([PortKind.NETWORK]),
         CATEGORY_ASSEMBLY: frozenset([PortKind.NETWORK]),
         CATEGORY_ENERGY_INPUT: frozenset([PortKind.NETWORK]),

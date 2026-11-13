@@ -995,3 +995,46 @@ class Medium(object):
             self.capacity_micro(),
             self.type_count,
         )
+
+
+def transfer_between(source, target, key, count, now_tick, revisions=None):
+    """同一服务端执行段内成对提交；任何拒绝/异常恢复内容、版本及额度。
+
+    调用者在进入前核实真实槽位身份，此处不执行引擎 IO 或通知回调。
+    revisions 可用于拒绝在计划后已发生变化的介质。
+    """
+    if source is target or source.medium_id == target.medium_id:
+        return 0
+    if revisions is not None and revisions != (source.revision, target.revision):
+        return 0
+    read = source.plan(key, count, DIRECTION_READ, now_tick)
+    write = target.plan(key, read.accepted, DIRECTION_WRITE, now_tick)
+    accepted = min(read.accepted, write.accepted)
+    if not read.ok or not write.ok or accepted <= 0:
+        return 0
+    read = source.plan(key, accepted, DIRECTION_READ, now_tick)
+    write = target.plan(key, accepted, DIRECTION_WRITE, now_tick)
+    snapshots = []
+    for medium in (source, target):
+        buckets = []
+        for bucket in (medium.read_bucket, medium.write_bucket):
+            buckets.append((bucket, tuple(getattr(bucket, name) for name in TokenBucket.__slots__)))
+        snapshots.append((medium, medium.entries.get(key, 0), medium.used_micro,
+                          medium.type_count, medium.revision, buckets))
+    try:
+        if source.commit(read, now_tick) != accepted:
+            raise ValueError("source commit refused")
+        if target.commit(write, now_tick) != accepted:
+            raise ValueError("target commit refused")
+    except Exception:
+        for medium, before, used, types, revision, buckets in snapshots:
+            if before:
+                medium.entries[key] = before
+            else:
+                medium.entries.pop(key, None)
+            medium.used_micro, medium.type_count, medium.revision = used, types, revision
+            for bucket, values in buckets:
+                for name, value in zip(TokenBucket.__slots__, values):
+                    setattr(bucket, name, value)
+        return 0
+    return accepted

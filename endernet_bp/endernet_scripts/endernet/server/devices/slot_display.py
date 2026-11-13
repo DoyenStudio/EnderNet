@@ -158,6 +158,8 @@ class SlotDisplayTracker(object):
         published = 0
         for kind, store in self._stores():
             for state in store.states():
+                if kind == DISK and getattr(state, "provider", True) is None:
+                    continue
                 try:
                     key = state.node_key.as_key()
                     seen.add(key)
@@ -266,7 +268,7 @@ class SlotDisplayTracker(object):
         """回答一次单点请求：这台设备当前的读数。不认识的位置返回 None。"""
         for kind, store in self._stores():
             state = store.get(node_key)
-            if state is None:
+            if state is None or (kind == DISK and getattr(state, "provider", True) is None):
                 continue
             entry = self._entry_for(kind, state)
             # **就地算，不动「已发」的账**：要是这一刻的读数还没轮到 `advance()`，

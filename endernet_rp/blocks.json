@@ -150,6 +150,17 @@
             "identifier": "endernet:storage_driver_modules"
         }
     },
+    "endernet:storage_transfer": {
+        "textures": {
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom",
+            "north": "endernet:storage_transfer_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side"
+        },
+        "sound": "stone"
+    },
     "endernet:template_terminal_panel": {
         "textures": {
             "up": "endernet:common_device_top",
@@ -166,6 +177,17 @@
     },
     "endernet:tiny_network_endpoint": {
         "textures": "endernet:tiny_network_endpoint_all",
+        "sound": "stone"
+    },
+    "endernet:transcriber": {
+        "textures": {
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom",
+            "north": "endernet:transcriber_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side"
+        },
         "sound": "stone"
     },
     "format_version": [

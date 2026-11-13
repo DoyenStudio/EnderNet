@@ -6,6 +6,7 @@ tile.endernet:bus_fluid_output_io.name=总线流体取货口
 tile.endernet:bus_item_input_io.name=总线物品存货口
 tile.endernet:bus_fluid_input_io.name=总线流体存货口
 tile.endernet:storage_driver.name=存储驱动器
+tile.endernet:storage_transfer.name=存储转储器
 tile.endernet:network_baseband_8.name=8位网络基带
 tile.endernet:network_baseband_16.name=16位网络基带
 tile.endernet:network_baseband_32.name=32位网络基带
@@ -41,3 +42,5 @@ tile.endernet:common_terminal_part.name=通用终端面板
 tile.endernet:crafting_terminal_part.name=合成终端面板
 tile.endernet:template_terminal_part.name=样板终端面板
 tile.endernet:factoric_terminal_part.name=工厂终端面板
+
+tile.endernet:transcriber.name=转录器

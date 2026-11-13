@@ -23,7 +23,7 @@
                 "value": true
             },
             "netease:custom_tips": {
-                "value": "\n§7允许接入总线类设备；不支持订单处理。"
+                "value": "\n§7允许接入总线类设备；支持订单处理。"
             }
         },
         "description": {
