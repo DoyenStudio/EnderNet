@@ -658,11 +658,20 @@ class TestInventoryProvider(unittest.TestCase):
             def close_for_player(self, player_id, reason):
                 return []
 
+        class ViewerStub(object):
+            def __init__(self):
+                self.closed = []
+
+            def close(self, player_id):
+                self.closed.append(player_id)
+
         endpoint = self.provider.endpoint_of("steve")
         server = object.__new__(ServerBootstrap)
         server.inventories = self.provider
         server.sync = SyncStub()
+        server.network_viewer = ViewerStub()
         self.assertEqual(server._on_player_leave("steve"), 0)
+        self.assertEqual(server.network_viewer.closed, ["steve"])
         self.assertFalse(endpoint.can_read())
         self.assertIsNot(self.provider.endpoint_of("steve"), endpoint)
 

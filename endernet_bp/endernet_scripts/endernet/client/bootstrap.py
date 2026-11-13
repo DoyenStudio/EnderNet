@@ -45,6 +45,7 @@ class ClientBootstrap(object):
         from .channels import get_cable_intent
         from .channels import get_device_identity
         from .channels import get_slot_display
+        from .channels.network_view import get_network_view
 
         service = get_device_identity()
         slots = get_slot_display()
@@ -66,6 +67,7 @@ class ClientBootstrap(object):
             # 光缆交互意图（阶段 C）。`intercepted` 涨而 `sent` 不涨：看 `ray_failures`
             # （引擎没有 3.10 的射线接口）与 `deduplicated`（按住时的重复）。
             "cable_intent": cables.diagnostics() if cables is not None else None,
+            "network_view": get_network_view().diagnostics() if get_network_view() else None,
             "scope_note": "客户端不持有权威状态；界面与订阅属于任务 11。",
         }
 
@@ -82,6 +84,7 @@ def start_client():
     from .channels import start_cable_intent
     from .channels import start_device_identity
     from .channels import start_slot_display
+    from .channels.network_view import start_network_view
     from .ui import register_screens
 
     register_screens()
@@ -96,6 +99,7 @@ def start_client():
     # 光缆交互意图（阶段 C）：点中光缆时取射线、发意图。点按要先记触点，所以与上面
     # 两条一样在启动时就挂上。
     start_cable_intent()
+    start_network_view()
     if _CLIENT is not None:
         _CLIENT.stop()
     _CLIENT = ClientBootstrap()
@@ -109,10 +113,12 @@ def stop_client():
     from .channels import stop_cable_intent
     from .channels import stop_device_identity
     from .channels import stop_slot_display
+    from .channels.network_view import stop_network_view
     from .ui.universal_importer.screen import close_universal_importer
 
     close_universal_importer()
     stop_cable_intent()
+    stop_network_view()
     stop_slot_display()
     stop_device_identity()
     if _CLIENT is not None:

@@ -1,0 +1,14 @@
+{
+  "materials": {
+    "version": "1.0.0",
+    "endernet_network_overlay:entity_for_skeleton": {
+      "vertexShader": "shaders/endernet_network_overlay.vertex",
+      "fragmentShader": "shaders/endernet_network_overlay.fragment",
+      "+states": ["DisableDepthTest", "DisableDepthWrite", "DisableCulling", "Blending"],
+      "depthFunc": "Always",
+      "blendSrc": "SourceAlpha",
+      "blendDst": "OneMinusSrcAlpha",
+      "msaaSupport": "Both"
+    }
+  }
+}

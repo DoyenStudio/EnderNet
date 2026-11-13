@@ -41,6 +41,7 @@ item.endernet:memory_256k.name=256KB 内存条
 item.endernet:network_wrench.name=网络扳手
 item.endernet:config_card.name=配置卡
 item.endernet:wireless_link_tool.name=无线连接工具
+item.endernet:network_visualizer.name=网络可视化查看器
 tile.endernet:common_terminal_part.name=通用终端面板
 tile.endernet:crafting_terminal_part.name=合成终端面板
 tile.endernet:template_terminal_part.name=样板终端面板

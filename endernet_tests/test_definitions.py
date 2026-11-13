@@ -885,11 +885,13 @@ class TestNetworkRedesignDefinitions(unittest.TestCase):
                 ("endernet:network_wrench", "网络扳手"),
                 ("endernet:config_card", "配置卡"),
                 ("endernet:wireless_link_tool", "无线连接工具"),
+                ("endernet:network_visualizer", "网络可视化查看器"),
             ],
         )
         self.assertEqual(
             ITEM_TOOLS,
-            ("endernet:network_wrench", "endernet:config_card", "endernet:wireless_link_tool"),
+            ("endernet:network_wrench", "endernet:config_card", "endernet:wireless_link_tool",
+             "endernet:network_visualizer"),
         )
         self.assertTrue(self.defs.has_tool("endernet:network_wrench"))
         self.assertIsInstance(self.defs.get_tool("endernet:network_wrench"), ToolSpec)

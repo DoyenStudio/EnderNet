@@ -1557,6 +1557,7 @@ CONFIG_CARD_ID = "endernet:config_card"
 #: 无线连接工具（2026-11-13，对应 ExtendedAE 的无线设置工具）：右键两台无线连接器配对，
 #: 潜行右键连接器解除配对，潜行右键别处清空待配对的那一台。
 WIRELESS_LINK_TOOL_ID = "endernet:wireless_link_tool"
+NETWORK_VISUALIZER_ID = "endernet:network_visualizer"
 
 #: 工具物品规格。网络扳手：切断光缆的某一面、拆单块面板、潜行拆卸（13 §6）；配置卡与
 #: 无线连接工具见上。贴图为占位，作者后补。
@@ -1573,11 +1574,13 @@ TOOLS = (
         "无线连接工具",
         "右键两台无线连接器完成配对；潜行右键连接器解除配对，潜行右键别处清空",
     ),
+    ToolSpec(NETWORK_VISUALIZER_ID, "网络可视化查看器",
+             "手持点击线缆或设备查看当前带宽线路；绿色在线，红色带宽不足，橙色离线，灰色待确认；换手关闭"),
 )
 
 #: **已注册为游戏物品**的工具。与 `ITEM_MEDIUMS` 同一地位、同一理由：规格表与
 #: 「已经做成了物品」是两件事。物品 JSON、图标与语言条目由 `scripts/gen_items.py` 生成。
-ITEM_TOOLS = (WRENCH_ID, CONFIG_CARD_ID, WIRELESS_LINK_TOOL_ID)
+ITEM_TOOLS = (WRENCH_ID, CONFIG_CARD_ID, WIRELESS_LINK_TOOL_ID, NETWORK_VISUALIZER_ID)
 
 
 class DefinitionSet(object):

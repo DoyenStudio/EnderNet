@@ -1567,7 +1567,7 @@ class TestHolderThroughTheServer(unittest.TestCase):
         self.assertEqual([sound[1:3] for sound in rig.sounds], [("dig.stone", (0.5, 64.5, -0.5))],
                          "放成功播一次原版放置音效")
         self.assertEqual(rig.server.event_binder.use_guard.rules(),
-                         ["open", "add_cable", "panel_item"])
+                         ["open", "add_cable", "panel_item", "network_view"])
         self.assertEqual(rig.server.event_binder.openers.names(), ["terminal", "panel"])
         payload = rig.server.slot_displays.answer(key(0, z=-1))
         # 底座上的面板不入网，外观是离线屏幕（2026-11-13）

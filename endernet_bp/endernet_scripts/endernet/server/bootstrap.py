@@ -1185,6 +1185,15 @@ class ServerBootstrap(object):
         self.admission.set_tunnels(self.tunnels)
         self.wireless.items = self.item_exchange
         self.wireless.register(self.cable_intents)
+        from .network.view_graph import ViewGraph
+        from .network.viewer import NetworkViewer
+        from ..common.definitions import NETWORK_VISUALIZER_ID
+        self.network_viewer = NetworkViewer(
+            ViewGraph(self.definitions, self.registry, self.catalog, self.topology, self.admission,
+                      self.tunnels, self.runtimes.device_status),
+            self.cable_intents, self.cable_intent_port)
+        self.event_binder.use_guard.forbid("network_view", items=[NETWORK_VISUALIZER_ID],
+                                          unless_sneaking=False)
         #: 设备的在线 / 离线外观（2026-11-13）：整方块设备写方块状态 `endernet:status`，面板换离线
         #: 屏幕（面板外观读数加偏移）。结论取设备状态，与设备界面同一个；拓扑、带宽、运行时一变就全部
         #: 重算，此外每帧轮转复查几台（够不够电没有通知）。
@@ -1262,6 +1271,8 @@ class ServerBootstrap(object):
             self.sync_port.on_player_leave(self._on_player_leave)
             # 光缆交互意图（阶段 C）：同一本注册账，`stop()` 一并注销。
             self.cable_intent_port.listen(self.cable_intents.handle)
+            from .adapters.channels.network_view import bind_viewer
+            bind_viewer(self.event_binder, self.network_viewer, self.sync_events)
             if hasattr(self.sync_port, "on_player_join") and hasattr(self.inventories, "cursor_of"):
                 self.sync_port.on_player_join(self._return_player_cursor)
             if hasattr(self.sync_port, "on_player_death") and hasattr(self.inventories, "cursor_of"):
@@ -1345,6 +1356,7 @@ class ServerBootstrap(object):
         # 留着它的症状不是报错，而是下一次 `start()` 时发布窗口以为还有人在看，
         # 于是对着一批早已离线的玩家组包。
         self.sync.shutdown()
+        self.network_viewer.shutdown()
         self.queue.clear()
         # 光缆排着要重算的格子同理：重启后区块重新加载会再排。
         self.cables.reset()
@@ -1425,6 +1437,7 @@ class ServerBootstrap(object):
         self.storage_transfers.execute(self.clock.current_tick(), self._transcriber_online,
                                        self._storage_transfer_storage)
         published = self.sync.tick()
+        self.network_viewer.advance()
         # 样板槽的重读放在最后：它读的是方块容器，与网络服务不相干。
         # **注意容器事件不走这里的队列**：它们是引擎监听器，由适配器在
         # 引擎派发时直接 `mark_dirty`，因此到达时刻与这一帧的推进无关。
@@ -2075,6 +2088,7 @@ class ServerBootstrap(object):
         return payload
 
     def _on_cursor_death(self, player_id):
+        self.network_viewer.close(player_id)
         cursor = self.inventories.cursor_of(player_id)
         if cursor is not None:
             if not cursor.primitives.keep_inventory():
@@ -2096,6 +2110,7 @@ class ServerBootstrap(object):
         玩家——那正是 11-02 要防的「无人订阅时的空转」。
         """
         closed = len(self.sync.close_for_player(player_id, "player_left"))
+        self.network_viewer.close(player_id)
         forget = getattr(self.inventories, "forget", None)
         if callable(forget):
             forget(player_id)
@@ -2646,6 +2661,7 @@ class ServerBootstrap(object):
             self.wireless.observe(change)
             # 在线 / 离线外观跟踪哪几格也从同一批变化推导
             self.status_looks.observe(change)
+            self.network_viewer.observe(change)
             # 驱动器状态与接口状态也从**同一批变化**推导，不另开观察者通道——
             # 两条路径分叉就会出「拓扑知道设备没了、驱动器/接口还以为在」。
             self.drivers.observe(change)
@@ -2809,6 +2825,7 @@ class ServerBootstrap(object):
             "changes": dict(self._change_counts),
             "topology": self.topology.diagnostics(),
             "admission": self.admission.diagnostics(),
+            "network_viewer": self.network_viewer.diagnostics(),
             "assembly": self.assembly_diagnostics(),
             "runtimes": self.runtimes.diagnostics(),
             "application": self.application.diagnostics(),

@@ -32,6 +32,9 @@
         "endernet:memory_64k": {
             "textures": "textures/endernet/items/memory_64k"
         },
+        "endernet:network_visualizer": {
+            "textures": "textures/endernet/items/network_visualizer"
+        },
         "endernet:network_wrench": {
             "textures": "textures/endernet/items/network_wrench"
         },

@@ -1,0 +1,8 @@
+{
+  "endernet_network_overlay": {
+    "mesh": "mesh/endernet_network_overlay.json",
+    "skeleton": "skeleton/endernet_network_overlay.json",
+    "material": "endernet_network_overlay",
+    "dy_load": true
+  }
+}

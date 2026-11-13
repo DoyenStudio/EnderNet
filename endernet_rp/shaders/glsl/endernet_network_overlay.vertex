@@ -1,0 +1,33 @@
+// __multiversion__
+#include "vertexVersionCentroidUV.h"
+#include "uniformWorldConstants.h"
+#include "uniformExtraVectorConstants.h"
+attribute POS4 POSITION;
+varying vec4 overlayColor;
+
+// A rigid quad; animation and environmental lighting are deliberately unused.
+// EXTRA_VECTOR1: RGBA; 2/3: endpoints relative to model origin; 4: size, marker flag.
+void main() {
+    POS4 point;
+    if (EXTRA_VECTOR4.y > 0.5) {
+        point = WORLDVIEW * vec4(0.0, 0.0, 0.0, 1.0);
+        point.xy += POSITION.xy * EXTRA_VECTOR4.x;
+    } else {
+        POS4 a = WORLDVIEW * vec4(EXTRA_VECTOR2.xyz, 1.0);
+        POS4 b = WORLDVIEW * vec4(EXTRA_VECTOR3.xyz, 1.0);
+        // Clip against the camera plane before projection (long remote links).
+        float nearZ = -0.05;
+        if (a.z > nearZ && b.z <= nearZ) {
+            a = mix(a, b, (nearZ - a.z) / (b.z - a.z));
+        } else if (b.z > nearZ && a.z <= nearZ) {
+            b = mix(b, a, (nearZ - b.z) / (a.z - b.z));
+        }
+        vec2 axis = b.xy / max(-b.z, 0.05) - a.xy / max(-a.z, 0.05);
+        float len = length(axis);
+        vec2 side = len > 0.00001 ? vec2(-axis.y, axis.x) / len : vec2(1.0, 0.0);
+        point = mix(a, b, POSITION.x + 0.5);
+        point.xy += side * POSITION.y * EXTRA_VECTOR4.x;
+    }
+    gl_Position = PROJ * point;
+    overlayColor = EXTRA_VECTOR1;
+}

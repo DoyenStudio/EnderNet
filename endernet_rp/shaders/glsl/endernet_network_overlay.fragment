@@ -1,0 +1,6 @@
+// __multiversion__
+#include "fragmentVersionCentroidUV.h"
+varying vec4 overlayColor;
+void main() {
+    gl_FragColor = overlayColor;
+}

@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 1,
+            "netease:customtips": {
+                "value": "\n§7手持点击线缆或设备查看当前带宽线路；绿色在线，红色带宽不足，橙色离线，灰色待确认；换手关闭"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:network_visualizer"
+        }
+    }
+}

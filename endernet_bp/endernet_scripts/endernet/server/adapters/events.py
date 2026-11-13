@@ -836,6 +836,10 @@ class ServerEventBinder(object):
         block_name = getattr(event, "blockName", "")
         if not block_name:
             return
+        from ...common.definitions import NETWORK_VISUALIZER_ID
+        if self._use_of(event, getattr(event, "playerId", "")).item_id == NETWORK_VISUALIZER_ID:
+            event.cancel()
+            return
         container_key = CONTAINER_SCREENS.get(block_name)
         if container_key is not None:
             self._on_container_block_use(event, container_key)

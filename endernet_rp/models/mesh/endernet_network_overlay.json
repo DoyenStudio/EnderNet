@@ -1,0 +1,73 @@
+{
+  "version": "0.1.0",
+  "mesh": [
+    {
+      "material": "textures/endernet/visualizer/white",
+      "fields": [
+        "pos",
+        "normal",
+        "uvcoord",
+        "weight"
+      ],
+      "indices": [
+        0,
+        1,
+        2,
+        0,
+        2,
+        3
+      ],
+      "vertices": [
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        1,
+        0,
+        2,
+        0,
+        2,
+        0,
+        3,
+        0,
+        3,
+        0
+      ],
+      "poses": [
+        -0.5,
+        -0.5,
+        0,
+        0.5,
+        -0.5,
+        0,
+        0.5,
+        0.5,
+        0,
+        -0.5,
+        0.5,
+        0
+      ],
+      "normals": [
+        0,
+        0,
+        1
+      ],
+      "uvcoords": [
+        0,
+        0,
+        1,
+        0,
+        1,
+        1,
+        0,
+        1
+      ],
+      "weights": [
+        "root",
+        1.0
+      ]
+    }
+  ]
+}
