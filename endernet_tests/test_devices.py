@@ -433,6 +433,15 @@ class TestCatalogConnectionRules(RegistryFixture):
                 self.catalog.controller_serves(DOS, device_id).allowed, device_id
             )
 
+    def test_dos_and_tiny_controllers_serve_energy_input(self):
+        for controller_id in (DOS, TINY):
+            self.assertTrue(
+                self.catalog.controller_serves(
+                    controller_id, "endernet:energy_input_interface"
+                ).allowed,
+                controller_id,
+            )
+
     def test_tiny_controller_serves_buses(self):
         self.assertTrue(self.catalog.controller_serves(TINY, BUS).allowed)
 

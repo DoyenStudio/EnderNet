@@ -1137,6 +1137,7 @@ DEVICES = (
             "endernet:network_baseband_16",
             "endernet:network_baseband_32",
             "endernet:storage_driver",
+            ENERGY_INPUT_ID,
             TRANSCRIBER_ID,
             "endernet:common_terminal_panel",
             "endernet:crafting_terminal_panel",
