@@ -186,14 +186,19 @@ class TerminalInventoryArchive(object):
         self.pending = pending
         return count
 
+    def snapshot(self):
+        # type: () -> dict
+        """两类终端的库存载荷（纯数据）；`save` 与定期落盘的「变没变」比较共用。"""
+        payload = {"schema_version": 1}
+        for device_id, (store, _rows, _field, _version) in self.stores.items():
+            payload[device_id] = store.save_all()
+        return payload
+
     def save(self, repository):
         # type: (object) -> int
-        payload = {"schema_version": 1}
-        has_state = False
-        for device_id, (store, rows, field, version) in self.stores.items():
-            snapshot = store.save_all()
-            payload[device_id] = snapshot
-            has_state = has_state or bool(snapshot[rows])
+        payload = self.snapshot()
+        has_state = any(payload[device_id][rows]
+                        for device_id, (_store, rows, _field, _version) in self.stores.items())
         if not has_state:
             return 0
         repository.write(Record(TERMINAL_RECORD_KIND, TERMINAL_RECORD_ID, payload))

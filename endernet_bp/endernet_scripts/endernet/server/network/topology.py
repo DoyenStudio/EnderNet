@@ -29,6 +29,12 @@
      消费者（`LineTree`）。
 6. **成员全部加载才运行**（2026-11-09 作者改定，取代 01/03「只阻塞那台设备与主控」
    的放宽）：分量里任何一台设备所在区块未加载，整网离线。
+7. **非相邻连边（远程连边，2026-11-13）**：P2P 隧道与无线连接器都是「两格不相邻却连着」。
+   边由注入的提供者给出（`add_remote_links`：`links_of(格子) -> [(远端格子, 隧道组或 None)]`），
+   条件（配对、两端已加载、距离……）全在提供者那边判，这里只要求两端都有记录。远端没加载
+   时提供者不给这条边，远端就不是成员，不触发第 6 条的整网离线。隧道组的边在线路树上插一个
+   隧道段（`TunnelSegment`，容量 = 每组上限），经过这条隧道的各出口分摊这一份；无线连接器
+   本身就是 32u 的载体，不另插段。
 
 **版本号的语义。** `version` 是全局单调递增的图版本，每次「发布」加一。
 发布的时刻只有两种：受到影响的资格被撤销（进入重建中），
@@ -50,6 +56,8 @@ from ...common.definitions import (
     CATEGORY_CONTROLLER,
     CATEGORY_PROCESSOR,
     CATEGORY_PROCESSOR_CONNECTOR,
+    CATEGORY_WIRELESS,
+    TUNNEL_PART_ID,
     UNCONFIGURED,
 )
 from ...common.identity import (  # noqa: F401 (NodeKey 仅用于 # type: 注释)
@@ -105,6 +113,8 @@ CORE_MAX_SPAN = 7
 
 #: 不进线路树的分类：基带是根所在的核心，主控只贴核心、不在任何线路上。
 _CORE_CATEGORIES = frozenset([CATEGORY_BASEBAND, CATEGORY_CONTROLLER])
+#: 线路树上按本档容量承载、自身不占带宽的分类：光缆与无线连接器（同致密光缆一档）。
+_CARRIER_CATEGORIES = frozenset([CATEGORY_CABLE, CATEGORY_WIRELESS])
 
 
 class ProcessorOwnership(object):
@@ -133,7 +143,7 @@ class MigrationKind(object):
 class LineKind(object):
     """线路树上节点的种类。"""
 
-    #: 光缆：载体，按本档容量承载，自身不占带宽。
+    #: 光缆（以及无线连接器）：载体，按本档容量承载，自身不占带宽。
     CABLE = "cable"
     #: 整方块设备：消费者，同时按透传容量（R14-a）让线路经过它继续往下走。
     DEVICE = "device"
@@ -144,6 +154,44 @@ class LineKind(object):
     #: 访问到的那台代表整组计带宽，其余几台不计；组内处理器之间的连接不受透传
     #: 容量限制；处理器不透传（13 §3），线路不经处理器往外走。
     PROCESSOR = "processor"
+    #: P2P 隧道段（2026-11-13）：伪节点，键是 `TunnelSegment`，载体，容量 = 每组上限。父节点是
+    #: 进入隧道的那一端的正面格，同组其余各端的正面格挂在它下面——经过这条隧道的总量不超过
+    #: 这一段，各出口分摊（同 AE2 ME 隧道外侧的致密容量）。
+    TUNNEL = "tunnel"
+
+
+#: 线路树上的载体种类：不计带宽、没有带宽结论。
+_CARRIER_KINDS = frozenset([LineKind.CABLE, LineKind.TUNNEL])
+
+
+class TunnelSegment(object):
+    """线路树上隧道段的键：一个隧道组（`via`，由隧道提供者给出）在一棵树里只有一段。
+
+    与 `NodeKey` / `PartKey` 一样有 `as_key()`，线路指纹与诊断按它写；不是世界里的格子，
+    不进分量成员。
+    """
+
+    __slots__ = ("via",)
+
+    def __init__(self, via):
+        # type: (str) -> None
+        self.via = via
+
+    def as_key(self):
+        # type: () -> tuple
+        return ("tunnel", self.via)
+
+    def __eq__(self, other):
+        return isinstance(other, TunnelSegment) and other.via == self.via
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return hash(("tunnel", self.via))
+
+    def __repr__(self):
+        return "TunnelSegment(%s)" % (self.via,)
 
 
 # -- 值对象 ----------------------------------------------------------------
@@ -439,7 +487,7 @@ class LineNode(object):
         """要单独计带宽的节点：设备、面板，以及处理器组的代表。"""
         if self.kind == LineKind.PROCESSOR:
             return self.group == self.key
-        return self.kind != LineKind.CABLE
+        return self.kind not in _CARRIER_KINDS
 
     def is_group_member(self):
         # type: () -> bool
@@ -470,6 +518,7 @@ class LineTree(object):
         "_keys_by_root",
         "_roots_by_baseband",
         "_group_sizes",
+        "_tunnel_lines",
     )
 
     def __init__(self, roots, nodes, order, hosted=None):
@@ -491,10 +540,15 @@ class LineTree(object):
             (key, tuple(sorted(root_ids))) for key, root_ids in by_baseband.items()
         )
         sizes = {}
+        tunnel_lines = {}
         for node in self.nodes.values():
             if node.group is not None:
                 sizes[node.group] = sizes.get(node.group, 0) + 1
+            if node.kind == LineKind.TUNNEL:
+                tunnel_lines[node.key.via] = node.root_id
         self._group_sizes = sizes
+        #: 隧道组 → 它的隧道段所在的线路（一组在一棵树里只有一段）
+        self._tunnel_lines = tunnel_lines
 
     # -- 查询 ----------------------------------------------------------
 
@@ -538,8 +592,17 @@ class LineTree(object):
         # type: (str) -> list
         """一条线路上有带宽结论的全部节点（消费者加处理器组的其余成员）。"""
         return [
-            key for key in self.keys_of(root_id) if self.nodes[key].kind != LineKind.CABLE
+            key for key in self.keys_of(root_id) if self.nodes[key].kind not in _CARRIER_KINDS
         ]
+
+    def tunnel_line(self, via):
+        # type: (str) -> object
+        """这个隧道组的隧道段在哪条线路上；这棵树里没有它返回 None。"""
+        return self._tunnel_lines.get(via)
+
+    def tunnel_vias(self):
+        # type: () -> list
+        return sorted(self._tunnel_lines)
 
     def group_size(self, entry):
         # type: (object) -> int
@@ -570,7 +633,7 @@ class LineTree(object):
 
     def capacity_of(self, segment_id):
         # type: (object) -> object
-        """一段的容量：根取档位，光缆取本档，设备取透传容量。"""
+        """一段的容量：根取档位，光缆取本档，设备取透传容量，隧道段取每组上限。"""
         if self.is_segment_root(segment_id):
             return self._roots_by_id[segment_id].capacity_quarters
         return self.nodes[segment_id].capacity_quarters
@@ -1176,6 +1239,8 @@ class TopologyService(object):
         self.catalog = catalog
         self.ports = ports if ports is not None else PortRuleSet()
         self.step_budget = int(step_budget)
+        #: 远程连边的提供者（`add_remote_links`）：P2P 隧道、无线连接器
+        self._remote_providers = []
 
         #: 图版本。每次发布加一。
         self.version = 0
@@ -1227,6 +1292,9 @@ class TopologyService(object):
             "merges": 0,
             "port_rejections": 0,
             "empty_passes": 0,
+            #: 提供者给出的远程连边条数（建图时）与提供者抛出的异常次数
+            "remote_links": 0,
+            "remote_link_errors": 0,
             #: 归属阶段扫描的成员总数。**不受步数预算约束**：一个分量的线路树
             #: 走完之后，核心校验、面板清点与处理器群就在同一帧完成。
             #: 这一段是 O(分量规模)，大网络上需要 04 的预算重新评估。
@@ -1244,6 +1312,17 @@ class TopologyService(object):
         光缆的切断面或面板变了（阶段 C 写完 `config` 之后）也走这里。
         """
         self._seed(node_key)
+
+    def add_remote_links(self, provider):
+        # type: (object) -> None
+        """登记一个远程连边的提供者：`provider.links_of(node_key) -> [(远端 NodeKey, 隧道组)]`。
+
+        隧道组是隧道提供者的组标识（字符串），线路树据此插隧道段；无线配对给 None。提供者
+        必须给出**对称**的边（A 给出 B，B 也给出 A），条件不再成立时由它把两端标脏
+        （`mark_dirty`）。
+        """
+        if provider not in self._remote_providers:
+            self._remote_providers.append(provider)
 
     def mark_all_dirty(self):
         # type: () -> int
@@ -1270,7 +1349,7 @@ class TopologyService(object):
             # 撤销的同时**必须把那个邻居也标脏**：「重建中」只在分量被重建时
             # 才会解除，如果这个分量一个种子都没有，它会永远停在待确认，
             # 而它本来什么事都没有。
-            for neighbor_key in node_key.neighbors():
+            for neighbor_key in list(node_key.neighbors()) + list(self._remote_links(node_key)):
                 neighbor_component = self._membership.get(neighbor_key)
                 if neighbor_component is not None:
                     self._seeds.add(neighbor_key)
@@ -1403,6 +1482,8 @@ class TopologyService(object):
             "members": [seed],
             #: 第一阶段顺手记下的邻接表，第二阶段与收尾都读它，不再重新探邻。
             "adjacency": {},
+            #: 其中的远程连边：格子 -> {远端: 隧道组或 None}（线路树据此插隧道段）
+            "remote": {},
             #: 游标启动前就在队列里的种子。跨帧期间新标脏的种子不在此列，
             #: 因此不会被「本次重建已经覆盖」误判而丢弃。
             "seeds_at_start": set(self._seeds),
@@ -1424,8 +1505,10 @@ class TopologyService(object):
                 head += 1
                 used += 1
                 self.stats["node_visits"] += 1
-                linked = self._linked_neighbors(key)
+                linked, remote = self._linked_neighbors(key)
                 adjacency[key] = linked
+                if remote:
+                    cursor["remote"][key] = remote
                 for neighbor_key in linked:
                     if neighbor_key in visited:
                         continue
@@ -1511,6 +1594,7 @@ class TopologyService(object):
                 "parts_by_host": parts_by_host,
                 "hosted": hosted,
                 "passthrough": self.definitions.device_passthrough_quarters(),
+                "tunnel_capacity": self.definitions.tunnel_capacity_quarters(),
                 "heap": [],
                 "nodes": {},
                 "order": [],
@@ -1532,14 +1616,14 @@ class TopologyService(object):
         # type: (dict, NodeKey, object, str, int) -> None
         """第一次访问到一个节点：定下父节点与访问序号，按层入队。
 
-        出队优先级：光缆先于设备；光缆之间容量大的先（32u → 16u → 8u）；
+        出队优先级：光缆（与无线连接器）先于设备；载体之间容量大的先（32u → 16u → 8u）；
         同一层里离根近的先，再按位置。
         """
         definition = cursor["info"][key][1]
         if definition.category == CATEGORY_PROCESSOR:
             self._discover_processor_group(cursor, key, parent, root_id, depth)
             return
-        if definition.category == CATEGORY_CABLE:
+        if definition.category in _CARRIER_CATEGORIES:
             kind = LineKind.CABLE
             capacity = _capacity_of(definition)
             rank = (0, 0 if capacity is UNCONFIGURED else -capacity)
@@ -1594,7 +1678,11 @@ class TopologyService(object):
 
     def _step_lines(self, cursor, steps):
         # type: (dict, int) -> int
-        """按优先级逐个展开节点：先按面序挂它的面板，再按位置访问还没访问过的邻居。"""
+        """按优先级逐个展开节点：先按面序挂它的面板，再按位置访问还没访问过的邻居。
+
+        经隧道组的远程邻居挂在这一组的隧道段下面（`_tunnel_segment`）；无线配对的远程邻居
+        与相邻的一样直接挂上。
+        """
         heap = cursor["heap"]
         nodes = cursor["nodes"]
         order = cursor["order"]
@@ -1611,14 +1699,40 @@ class TopologyService(object):
                     node.depth + 1, len(order), None,
                 )
                 order.append(part_key)
+            remote = cursor["remote"].get(key, {})
             for neighbor in sorted(cursor["adjacency"].get(key, ()), key=_as_key):
                 if neighbor in nodes:
                     continue
                 entry = cursor["info"].get(neighbor)
                 if entry is None or entry[1].category in _CORE_CATEGORIES:
                     continue
-                self._discover(cursor, neighbor, key, node.root_id, node.depth + 1)
+                via = remote.get(neighbor)
+                if via is None:
+                    self._discover(cursor, neighbor, key, node.root_id, node.depth + 1)
+                    continue
+                segment = self._tunnel_segment(cursor, via, key, node)
+                self._discover(cursor, neighbor, segment.key, segment.root_id, segment.depth + 1)
         return used
+
+    def _tunnel_segment(self, cursor, via, key, node):
+        # type: (dict, str, NodeKey, LineNode) -> LineNode
+        """这个隧道组在这棵树里的隧道段；第一次走到时挂在 `key`（进入隧道的那一端正面格）下面。
+
+        同组其余各端的正面格都是 `key` 的远程邻居，展开 `key` 时一次挂到这一段下面，所以
+        一组只有一段、只挂在一处。
+        """
+        nodes = cursor["nodes"]
+        segment_key = TunnelSegment(via)
+        segment = nodes.get(segment_key)
+        if segment is None:
+            order = cursor["order"]
+            segment = LineNode(
+                segment_key, LineKind.TUNNEL, TUNNEL_PART_ID, key, node.root_id,
+                node.depth + 1, len(order), cursor["tunnel_capacity"],
+            )
+            nodes[segment_key] = segment
+            order.append(segment_key)
+        return segment
 
     def _finish_cursor(self):
         # type: () -> object
@@ -1780,15 +1894,16 @@ class TopologyService(object):
 
     def _probe_neighbors(self, node_key):
         # type: (NodeKey) -> tuple
-        """逐个检查六个面的邻居，返回 (相连的, 被拒的)。
+        """逐个检查六个面的邻居，再加上远程连边，返回 (相连的, 被拒的, 远程的)。
 
-        相邻只是前提：分类、光缆按面的状态、端口种类与方向都通过才算一条边。
+        相邻只是前提：分类、光缆按面的状态、端口种类与方向都通过才算一条边。远程连边的
+        条件由提供者判（`add_remote_links`），排在相邻的后面；`远程的` 是 `{远端: 隧道组}`。
         这里不缓存结果——邻接只在重建与诊断时查询，重建本身就是有限步的，
         缓存带来的失效风险大于收益（一次重建内的复用由游标的邻接表负责）。
         """
         record = self.registry.get(node_key)
         if record is None:
-            return [], []
+            return [], [], {}
         linked = []
         rejected = []
         for index, neighbor_key in enumerate(node_key.neighbors()):
@@ -1803,16 +1918,42 @@ class TopologyService(object):
                 rejected.append((neighbor_key, neighbor.device_id, reason, detail))
                 continue
             linked.append(neighbor_key)
-        return linked, rejected
+        remote = self._remote_links(node_key)
+        for neighbor_key in sorted(remote, key=_as_key):
+            if neighbor_key not in linked:
+                linked.append(neighbor_key)
+        return linked, rejected, remote
+
+    def _remote_links(self, node_key):
+        # type: (NodeKey) -> dict
+        """提供者给出的远程连边：`{远端 NodeKey: 隧道组或 None}`。远端没有记录的、指回自己的
+        不算；同一个远端几个提供者都给了，取先登记的那个。提供者抛的异常只计数——这里在重建
+        里被调用，抛出去会让重建每帧卡在同一处。"""
+        out = {}
+        for provider in self._remote_providers:
+            try:
+                links = list(provider.links_of(node_key) or ())
+            except Exception:
+                self.stats["remote_link_errors"] += 1
+                continue
+            for neighbor_key, via in links:
+                if neighbor_key == node_key or neighbor_key in out:
+                    continue
+                if self.registry.get(neighbor_key) is None:
+                    continue
+                out[neighbor_key] = via
+        return out
 
     def _linked_neighbors(self, node_key):
-        # type: (NodeKey) -> list
-        """建图用的邻接查询。诊断计数只在这里加——`link_state()` 之类的
+        # type: (NodeKey) -> tuple
+        """建图用的邻接查询：`(相连的, 远程的)`。诊断计数只在这里加——`link_state()` 之类的
         只读查询不应当让「端口拒绝数」这个指标变高，那不是图的工作量。"""
-        linked, rejected = self._probe_neighbors(node_key)
+        linked, rejected, remote = self._probe_neighbors(node_key)
         if rejected:
             self.stats["port_rejections"] += len(rejected)
-        return linked
+        if remote:
+            self.stats["remote_links"] += len(remote)
+        return linked, remote
 
     # -- 结构推导（只在分量重建时执行）---------------------------------
 
@@ -2159,7 +2300,7 @@ class TopologyService(object):
                 node_key, None, None,
                 reasons=[BlockReason(Reason.DEVICE_GONE, "该位置没有设备")],
             )
-        linked, rejected = self._probe_neighbors(node_key)
+        linked, rejected, _remote = self._probe_neighbors(node_key)
         snapshot = self._snapshot
         component = snapshot.component_of(node_key)
         pending = snapshot.is_pending(node_key)

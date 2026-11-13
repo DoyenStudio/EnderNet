@@ -33,7 +33,7 @@ from .....tooldelta.ui import ToolDeltaScreen
 from ..windows.lifecycle import close_windows
 from ...channels import latch as identity_latch
 from ...network_client import NetworkClient
-from ....common.protocol import MSG_ERROR
+from ....common.protocol import MSG_ERROR, VIEW_DEVICE
 from ..device_status import model as device_status
 from ..device_status.bindings import DeviceStatusBindingsMixin
 
@@ -77,6 +77,9 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
     比 `OnCreate` 早生效也活得更久，因此每条绑定回调都要容忍它们还是
     `None`（安全值见 `DeviceStatusBindingsMixin`）。
     """
+
+    #: 会话的视图种类。纯状态面板只要设备状态与配置；要选网络物品的子类改成物品视图。
+    VIEW_KIND = VIEW_DEVICE
 
     #: 本屏的同步客户端；没认到身份之前是 `None`。
     client = None
@@ -143,7 +146,7 @@ class ProxyPanelBase(DeviceStatusBindingsMixin, ToolDeltaScreen):
         if entry is None:
             return False
         device_ref, dimension = entry
-        client = NetworkClient()
+        client = NetworkClient(view_kind=self.VIEW_KIND)
         # 先挂收包再开会话：`session_ready` 可能比这个函数返回还早，晚一步
         # 那一份就永远补不上了（与终端的 `OnCreate` 同一条理由）。
         client.port.listen(client.receive)

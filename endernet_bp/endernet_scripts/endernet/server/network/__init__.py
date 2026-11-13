@@ -17,7 +17,7 @@ from .services import (
 from .controller import RequestLedger, power_blocker
 from .energy import DEVICE_IDLE, DEVICE_WORK, EnergyPolicy, EnergyService
 from .ticking import RotationCursor, SchedulerService
-from .topology import TopologyService
+from .topology import ControllerState, TopologyService
 from .runtime import RuntimeChange, RuntimeManager
 
 __all__ = [
@@ -37,6 +37,7 @@ __all__ = [
     "EnergyService",
     "RotationCursor",
     "SchedulerService",
+    "ControllerState",
     "TopologyService",
     "RuntimeChange",
     "RuntimeManager",

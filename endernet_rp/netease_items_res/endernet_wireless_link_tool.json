@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:wireless_link_tool"
+        },
+        "description": {
+            "identifier": "endernet:wireless_link_tool"
+        }
+    }
+}

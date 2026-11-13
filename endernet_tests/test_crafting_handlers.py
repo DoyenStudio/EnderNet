@@ -193,10 +193,10 @@ class Fixture(unittest.TestCase):
         self.inventory = FakeInventory()
         self.recipes = FakeRecipes({"minecraft:stick": [STICK_RECIPE]})
         self.service = self.stand.service
-        self.service.workbench = self.store
-        self.service.recipes = self.recipes
+        self.service.terminal.workbench = self.store
+        self.service.terminal.recipes = self.recipes
         self.service.inventories = FakeProviders(self.inventory)
-        self.service.crafting_policy = CraftingPolicy()
+        self.service.terminal.crafting_policy = CraftingPolicy()
 
     def command(self, payload, request_id="r1"):
         ref = self.stand.record.ref
@@ -234,7 +234,7 @@ class TestFill(Fixture):
 
     def setUp(self):
         Fixture.setUp(self)
-        self.service.grid_stack_limit = lambda key: 64
+        self.service.terminal.grid_stack_limit = lambda key: 64
 
     def fill(self, request_id="fill1", revision=None):
         return self.send({"action": "craft_fill", "config": {
@@ -265,7 +265,7 @@ class TestFill(Fixture):
         self.assertEqual([14, 14], [self.grid.count_at(i) for i in (0, 3)])
 
     def test_stack_limits_and_different_materials(self):
-        self.service.grid_stack_limit = lambda key: 16 if key == BIRCH else 64
+        self.service.terminal.grid_stack_limit = lambda key: 16 if key == BIRCH else 64
         self.grid.set_slot(0, PLANKS, 60)
         self.grid.set_slot(1, PLANKS, 63)
         self.grid.set_slot(3, BIRCH, 14)
@@ -278,7 +278,7 @@ class TestFill(Fixture):
         revision = self.grid.revision
         self.assertEqual(0, self.fill().payload["moved"])
         self.assertEqual(revision, self.grid.revision)
-        self.service.grid_stack_limit = lambda key: 1
+        self.service.terminal.grid_stack_limit = lambda key: 1
         self.grid.set_slot(0, PLANKS, 1)
         revision = self.grid.revision
         self.assertEqual(0, self.fill("fill2").payload["moved"])
@@ -329,7 +329,7 @@ class TestFill(Fixture):
             self.assertEqual(before, self.grid.to_dict())
 
     def test_non_crafting_device_is_refused(self):
-        self.service.workbench = WorkbenchStore(accepts=lambda ref: False)
+        self.service.terminal.workbench = WorkbenchStore(accepts=lambda ref: False)
         self.assertIn(Reason.UNSUPPORTED, self.reasons(self.fill()))
 
 
@@ -376,11 +376,11 @@ class TestImport(Fixture):
         stand.service.advance_clock(stand.next_tick + 10)
         grid = _S().of(stand.record.ref)
         service = stand.service
-        service.workbench = _S()
-        service.workbench._grids[service.workbench._key_of(stand.record.ref)] = grid
-        service.recipes = self.recipes
+        service.terminal.workbench = _S()
+        service.terminal.workbench._grids[service.terminal.workbench._key_of(stand.record.ref)] = grid
+        service.terminal.recipes = self.recipes
         service.inventories = FakeProviders(FakeInventory())
-        service.crafting_policy = CraftingPolicy()
+        service.terminal.crafting_policy = CraftingPolicy()
 
         ref = stand.record.ref
         result = service.handle(None, DeviceCommand(
@@ -423,8 +423,8 @@ class TestImport(Fixture):
         self.assertEqual((4,), self.grid.occupied_slots())
 
     def test_the_occupied_refusal_can_be_relaxed_by_policy(self):
-        self.service.crafting_policy = CraftingPolicy()
-        self.service.crafting_policy.import_when_occupied = IMPORT_KEEP
+        self.service.terminal.crafting_policy = CraftingPolicy()
+        self.service.terminal.crafting_policy.import_when_occupied = IMPORT_KEEP
         self.grid.set_slot(4, LOG, 3)
         result = self.import_stick()
         self.assertTrue(result.is_applied(), result.to_dict())
@@ -437,7 +437,7 @@ class TestImport(Fixture):
     def test_a_non_crafting_terminal_has_no_workbench(self):
         # 没有 `accepts` 时 store 对谁都开口，因此这里显式装一个只认
         # 合成终端的门——这条钉的是「别的方块不该有九宫格」。
-        self.service.workbench = WorkbenchStore(
+        self.service.terminal.workbench = WorkbenchStore(
             accepts=lambda ref: False)
         result = self.import_stick()
         self.assertIn(Reason.UNSUPPORTED, self.reasons(result))
@@ -447,7 +447,7 @@ class TestImport(Fixture):
             def recipes_for(self, key):
                 raise TypeError("引擎返回了 bool")
 
-        self.service.recipes = Broken()
+        self.service.terminal.recipes = Broken()
         result = self.import_stick(request_id="r7")
         self.assertFalse(result.is_applied())
         self.assertIn(Reason.NO_ADAPTER, self.reasons(result))

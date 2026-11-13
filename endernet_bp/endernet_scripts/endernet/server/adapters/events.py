@@ -477,7 +477,8 @@ class ServerEventBinder(object):
             self._count("custom_container_pull_out")
             self._flush_transcriber_display(event.dimension, event.x, event.y, event.z)
             self._mark_container_dirty(
-                event.dimension, (event.x, event.y, event.z)
+                event.dimension, (event.x, event.y, event.z),
+                getattr(event, "collectionIndex", None),
             )
 
         self._bound = True
@@ -639,7 +640,7 @@ class ServerEventBinder(object):
             # 标脏/拒收，**不猜一个维度**。
             return None
 
-    def _mark_container_dirty(self, dimension, position):
+    def _mark_container_dirty(self, dimension, position, slot=None):
         # type: (object, object) -> bool
         """把一个容器位置标脏。维度或坐标拿不到就什么都不做。
 
@@ -659,9 +660,16 @@ class ServerEventBinder(object):
         node_key = NodeKey(dimension, x, y, z)
         marked = False
         for store in stores:
-            if store.mark_dirty(node_key):
+            if self._mark_store(store, node_key, slot):
                 marked = True
         return marked
+
+    def _mark_store(self, store, node_key, slot):
+        # type: (object, NodeKey, object) -> bool
+        """样板 store 按槽号过滤（原料/产物格的变化不让样板失效），其余整台标脏。"""
+        if store is self.patterns:
+            return store.mark_dirty(node_key, slot=slot)
+        return store.mark_dirty(node_key)
 
     def _container_stores(self):
         # type: () -> tuple
@@ -746,7 +754,7 @@ class ServerEventBinder(object):
                 return True
         for store, _ in stores:
             if store is not None:
-                store.mark_dirty(node_key)
+                self._mark_store(store, node_key, getattr(event, "collectionIndex", None))
         return False
 
     def _on_block_entity_tick(self, dimension, x, y, z, block_name):
@@ -820,7 +828,7 @@ class ServerEventBinder(object):
           取消，问的是同一个 `openers`），按玩家限速，推屏。
 
         **设备的权威身份只能从注册表取**（见 `_terminal_claim`）。认领了却打不开（设备还没被
-        发现、这种面板没有界面）：照样取消，什么都不推——编一个代次为 0 的 ref 发过去，客户端
+        发现）：照样取消，什么都不推——编一个代次为 0 的 ref 发过去，客户端
         会开出一个立刻被服务端关掉的会话，玩家看到的是「界面一闪」。见 `plans/tasks/11-03` 的
         打开入口决策（D5）。
         """

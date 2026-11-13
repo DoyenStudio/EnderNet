@@ -10,7 +10,7 @@
 
 from .feedback import PlaceFeedback
 from .guard import UseGuard
-from .items import ItemExchange
+from .items import ItemExchange, instance_tips
 from .opening import BlockUse, Openers, OpenTarget
 
 __all__ = [
@@ -20,4 +20,5 @@ __all__ = [
     "PlaceFeedback",
     "UseGuard",
     "ItemExchange",
+    "instance_tips",
 ]

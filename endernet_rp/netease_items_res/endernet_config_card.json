@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:config_card"
+        },
+        "description": {
+            "identifier": "endernet:config_card"
+        }
+    }
+}

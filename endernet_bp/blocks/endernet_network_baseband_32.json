@@ -10,6 +10,9 @@
                 "digger": "pickaxe",
                 "level": 1
             },
+            "minecraft:geometry": {
+                "identifier": "minecraft:geometry.full_block"
+            },
             "minecraft:material_instances": {
                 "*": {
                     "render_method": "opaque",
@@ -28,7 +31,34 @@
         },
         "description": {
             "category": "endernet",
-            "identifier": "endernet:network_baseband_32"
-        }
+            "identifier": "endernet:network_baseband_32",
+            "traits": {
+                "minecraft:placement_position": {
+                    "enabled_states": [
+                        "minecraft:block_face",
+                        "minecraft:vertical_half"
+                    ]
+                }
+            },
+            "states": {
+                "endernet:status": [
+                    0,
+                    1
+                ]
+            }
+        },
+        "permutations": [
+            {
+                "condition": "q.block_state('endernet:status') == 0 && !(q.block_state('minecraft:block_face') == 'down' && q.block_state('minecraft:vertical_half') == 'bottom')",
+                "components": {
+                    "minecraft:material_instances": {
+                        "*": {
+                            "render_method": "opaque",
+                            "texture": "endernet:network_baseband_32_all_offline"
+                        }
+                    }
+                }
+            }
+        ]
     }
 }

@@ -938,6 +938,9 @@ class TerminalSyncHub(object):
 
     def _on_snapshot_request(self, session, request, frame):
         # type: (object, object, int) -> object
+        if session.view_kind != VIEW_ITEM:
+            # 库存流只属于物品视图：订单 / 设备会话来要快照一律不理。
+            return None
         subs = self._subs.get(session.network_id)
         if subs is None:
             return None
@@ -1187,10 +1190,9 @@ class TerminalSyncHub(object):
                 self._publish_preview(session)
                 self._publish_device_status(session)
                 # 接口配置（11-07）。**同样不按视图分流**，理由与设备状态
-                # 逐字相同：配置是**这台设备自己**的，不属于物品视图；而且
-                # 代理屏本来就以 `VIEW_ITEM` 开会话（`ProxyPanelBase._adopt`
-                # 用的是 `NetworkClient()` 的默认种类）。非接口设备读不到，
-                # 这一句自然什么都不发。
+                # 逐字相同：配置是**这台设备自己**的，不属于物品视图；物品口
+                # 面板开物品视图、其余设备面板开 `VIEW_DEVICE`，两种都要它。
+                # 非接口设备读不到，这一句自然什么都不发。
                 self._publish_device_config(session)
         return self._publish_network(subs, frame)
 

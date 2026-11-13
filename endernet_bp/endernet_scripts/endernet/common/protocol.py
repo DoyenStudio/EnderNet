@@ -122,6 +122,11 @@ class Reason(object):
     BANDWIDTH_DEMAND_EXCEEDS_LINE = "bandwidth_demand_exceeds_line"
     #: 设备没有经光缆或设备连到任何一个基带外露面上，不在任何线路里。
     NO_BANDWIDTH_PATH = "no_bandwidth_path"
+    #: 设备的线路经过一条 P2P 隧道，而这条隧道进出两端里有一端的隧道面板没有获准带宽、或它的
+    #: 宿主网络不能运行（2026-11-13）。隧道两侧照样算同一张网，只是隧道后面的设备不准入。
+    TUNNEL_OFFLINE = "tunnel_offline"
+    #: P2P 隧道面板自己的线路就经过一条隧道（嵌套，同 AE2 `NESTED_P2P_TUNNEL`）：不准入。
+    TUNNEL_NESTED = "tunnel_nested"
 
     # 能源（04）
     BROWNOUT = "brownout"
@@ -1099,10 +1104,15 @@ DEVICE_IDENTITY_CHANNEL_S2C = "endernet:device_identity"
 #: 服务端推 `MSG_ORDER_STATE` 而不是物品快照，`_service_network` 按这个
 #: 字段分流。**在 11-06 之前它只出现在 `VIEW_KINDS` 里**，开会话会被
 #: `sessions.check` 以「尚未接入（依赖 11-06/11-09）」拒掉。
+#:
+#: `device`：只看**这台设备自己**的状态与配置（驱动器、内存槽、装配仓、样板
+#: 总线、流体口的面板）。它不订阅网络库存、也不收背包与合成格——那几条按
+#: `VIEW_ITEM` 分流，给设备面板推只是白耗引擎读与带宽。
 VIEW_ITEM = "item"
 VIEW_ORDER = "order"
-VIEW_KINDS = (VIEW_ITEM, VIEW_ORDER)
-VIEW_KINDS_WITH_PRODUCER = (VIEW_ITEM, VIEW_ORDER)
+VIEW_DEVICE = "device"
+VIEW_KINDS = (VIEW_ITEM, VIEW_ORDER, VIEW_DEVICE)
+VIEW_KINDS_WITH_PRODUCER = (VIEW_ITEM, VIEW_ORDER, VIEW_DEVICE)
 
 MSG_SESSION_OPEN = "session_open"
 MSG_SESSION_CLOSE = "session_close"

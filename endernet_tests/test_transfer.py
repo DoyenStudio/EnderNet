@@ -759,6 +759,23 @@ class TestSlotAnchor(unittest.TestCase):
         self.assertFalse(verdict[0])
         self.assertEqual(verdict[1], Reason.SLOT_CHANGED)
 
+    def test_slot_view_reads_only_that_slot(self):
+        """看一个槽只读这一个槽：终端每次点击都要看槽，读整包是 36 次引擎调用。"""
+        endpoint = self.endpoint()
+        self.inventory.insert("seed", STONE, 5)
+        reads = []
+        original = self.primitives.player_item
+
+        def counting(player_id, slot):
+            reads.append(slot)
+            return original(player_id, slot)
+
+        self.primitives.player_item = counting
+        view = endpoint.slot_view(0)
+        self.assertEqual(reads, [0])
+        self.assertEqual((view["count"], view["canonical"]), (5, STONE.canonical()))
+        self.assertEqual(endpoint.slot_view(7)["count"], 0)
+
     def test_anchor_rejects_an_empty_slot(self):
         verdict = self.endpoint().anchor_verdict(SlotAnchor(35, STONE))
         self.assertFalse(verdict[0])

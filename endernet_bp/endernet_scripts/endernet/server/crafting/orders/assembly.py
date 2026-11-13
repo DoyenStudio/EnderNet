@@ -8,7 +8,7 @@
 from ....common.resources import item_dict_from_key, item_key_from_dict
 from ....common.protocol import BlockReason, Reason, TransferRequest, TransferStatus
 from ....common.resources import ResourceKey
-from ...storage import NetworkEndpoint, SlotView, slot_read, slot_limit_of
+from ...storage import SlotView, slot_read, slot_limit_of
 from ...network import power_blocker
 from ..patterns import MODE_CRAFTING
 from .jobs import StepStatus
@@ -223,7 +223,7 @@ class AssemblyChamberExecution(object):
     def _move(self, executor, instance, adapter, slot, key, count, returning):
         # type: (object, object, object, int, object, int, bool) -> object
         storage = executor._storage()
-        network = NetworkEndpoint(storage, executor.runtime.component_id)
+        network = storage.network_endpoint()
         endpoint = SlotView(adapter, slot, instance.assembly["holder"])
         source, target = (endpoint, network) if returning else (network, endpoint)
         instance.op_attempt += 1

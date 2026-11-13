@@ -753,6 +753,32 @@ class TestDispatchRevision(StoreCase):
         self.assertNotEqual(before, first)
         self.assertNotEqual(first, self.store.dispatch_revision())
 
+    def test_non_pattern_slot_changes_do_not_invalidate_dispatch(self):
+        """样板接口回流行的变化（每次外部产物回流都有）不让派发复核失效。"""
+        self.containers.by_position[self.ref.node_key.as_key()] = FakeContainer(slots=18, max_stack=64)
+        self.container = self.containers.container_for(self.ref)
+        self.store.refresh(self.ref, force=True)
+        before = self.store.dispatch_revision()
+        self.assertFalse(self.store.mark_dirty(self.ref.node_key, slot=9))
+        self.assertEqual(self.store.dispatch_revision(), before)
+        self.assertTrue(self.store.mark_dirty(self.ref.node_key, slot=3))
+        self.assertNotEqual(self.store.dispatch_revision(), before)
+
+    def test_assembly_work_slots_do_not_invalidate_dispatch(self):
+        """装配仓的原料/产物格每次投料都在写；只有样板槽（10–18）变化才算。"""
+        self.containers.slots = 19
+        chamber = DeviceRef(key(20), 1)
+        self.registry.add(chamber, CHAMBER_DEVICE)
+        self.store.ensure(chamber, CHAMBER_DEVICE)
+        self.store.refresh(chamber, force=True)
+        before = self.store.dispatch_revision()
+        for slot in range(10):
+            self.assertFalse(self.store.mark_dirty(chamber.node_key, slot=slot))
+        self.assertEqual(self.store.dispatch_revision(), before)
+        self.assertTrue(self.store.mark_dirty(chamber.node_key, slot=12))
+        self.assertTrue(self.store.mark_dirty(chamber.node_key))
+        self.assertNotEqual(self.store.dispatch_revision(), before)
+
     def test_unchanged_refresh_does_not_invalidate_dispatch(self):
         before = self.store.dispatch_revision()
         self.assertTrue(self.store.refresh(self.ref, force=True))

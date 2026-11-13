@@ -52,7 +52,7 @@
 
     endernet_rp/models/blocks/<光缆>.geo.json              每种光缆一份：直通 / 连接臂 / 短接线 / 空面
     endernet_rp/models/blocks/<光缆>_item.geo.json         光缆物品：一段直通（方块 JSON 的 item_visual 指向它）
-    endernet_rp/models/blocks/<面板>.geo.json              面板物品：居中、屏幕朝南的单块面板（面板展示方块的几何）
+    endernet_rp/models/blocks/<面板>.geo.json              面板物品：居中、屏幕朝南的单块面板（含 P2P 隧道屏幕）
     endernet_rp/models/entity/ender_cable_panels.geo.json  一格 6 面 × 每种面板（方块实体外观）
     endernet_rp/models/entity/ender_cable_panel.geo.json   单块朝北（同上的北面那组骨骼，给 Blockbench 画图）
     endernet_rp/entity/ender_cable_panels.entity.json      方块实体外观（玻璃与普通光缆在 blocks.json 引用它）
@@ -131,7 +131,7 @@ from endernet.common.definitions import CABLES as CABLE_DEFINITIONS  # noqa: E40
 from endernet.common.definitions import DefinitionSet  # noqa: E402
 # 面的顺序全仓库共用一份（拓扑、端口都按它）；面板变量沿用槽位模块的取值
 from endernet.common.identity import FACING_NAMES, opposite_face  # noqa: E402
-from endernet.common.channels.slot_display import EMPTY, FIRST_MODEL, UNKNOWN  # noqa: E402
+from endernet.common.channels.slot_display import EMPTY, FIRST_MODEL, OFFLINE_OFFSET, UNKNOWN  # noqa: E402
 # 部件尺寸与盒子只写一份：几何体、方块碰撞盒（gen_blocks）与运行时的精确交互共用（13 §6）
 from endernet.common.cable_shapes import (  # noqa: E402
     AXIS_FACES,
@@ -148,6 +148,7 @@ from endernet.common.cable_shapes import (  # noqa: E402
     PANEL_DEPTH,
     PANEL_ENTITY_ID,
     PANEL_KINDS,
+    PANEL_SCREENS,
     PANEL_SIZE,
     PLATE_DEPTH,
     PLATE_INSET,
@@ -171,6 +172,7 @@ from endernet.common.cable_shapes import (  # noqa: E402
     short_name,
 )
 from endernet.common.cable_shapes import stub_length as shape_stub_length  # noqa: E402
+from endernet.common.cable_shapes import PANEL_PART_IDS  # noqa: E402
 
 # -- 尺寸参数（单位 px，1 格 = 16 px）------------------------------------------
 #
@@ -1019,9 +1021,19 @@ def build_cable(cable):
 # -- 面板（实体几何体 + 方块实体外观）----------------------------------------
 
 
-def screen_variants():
-    """屏幕的种类：`default` 在前，其余按种类表顺序（与槽位模块一样）。"""
+def terminal_screen_variants():
+    """原有终端屏幕的顺序，保持手绘图集的分区位置。"""
     return [DEFAULT_PANEL] + [kind for kind, _device in PANEL_KINDS]
+
+
+def offline_variant(variant):
+    return variant + "_offline"
+
+
+def screen_variants():
+    """在线屏幕在前，离线屏幕在后；取值顺序与槽位模块一致。"""
+    online = [DEFAULT_PANEL] + [kind for kind, _part in PANEL_SCREENS]
+    return online + [offline_variant(variant) for variant in online]
 
 
 def panel_variable(index):
@@ -1033,7 +1045,7 @@ def panel_value(variant):
     """某种面板的变量值：`default` = UNKNOWN，第 i 种 = FIRST_MODEL + i。"""
     if variant == DEFAULT_PANEL:
         return UNKNOWN
-    return FIRST_MODEL + [kind for kind, _device in PANEL_KINDS].index(variant)
+    return FIRST_MODEL + [kind for kind, _part in PANEL_SCREENS].index(variant)
 
 
 def frame_bone(face):
@@ -1046,7 +1058,7 @@ def panel_bone(face, variant):
 
 def panel_atlas(name):
     atlas = Atlas(name, PANEL_TEXTURE_WIDTH)
-    for variant in screen_variants():
+    for variant in terminal_screen_variants():
         atlas.add("screen", PANEL_SIZE, PANEL_SIZE, variant=variant)
     atlas.add("frame_back", PANEL_SIZE, PANEL_SIZE)
     atlas.add("frame_edge", PANEL_SIZE, PANEL_DEPTH)
@@ -1054,6 +1066,12 @@ def panel_atlas(name):
     atlas.add("back_face", BACK_SIZE, BACK_SIZE)
     atlas.add("back_edge", BACK_SIZE, BACK_DEPTH)
     atlas.add("back_edge", BACK_DEPTH, BACK_SIZE)
+    for variant in terminal_screen_variants():
+        atlas.add("screen", PANEL_SIZE, PANEL_SIZE, variant=offline_variant(variant))
+    for kind, _part in PANEL_SCREENS:
+        if kind not in terminal_screen_variants():
+            atlas.add("screen", PANEL_SIZE, PANEL_SIZE, variant=kind)
+            atlas.add("screen", PANEL_SIZE, PANEL_SIZE, variant=offline_variant(kind))
     return atlas
 
 
@@ -1190,8 +1208,15 @@ def panel_item_offset(vector):
     return tuple(offset)
 
 
-def build_panel_item(kind, atlas):
-    """一种面板的物品几何：一根骨骼，面板框 + 背板 + 这一种的屏幕，挪到方块中心、屏幕朝南。"""
+def default_screen_parts():
+    """没有自己那块屏幕的面板：物品几何用默认面板的屏幕，与它挂在光缆上时
+    （外观取值「认不出的种类」，画 `DEFAULT_PANEL`）显示的一样，图集不加分区。"""
+    return sorted(part_id for part_id in DefinitionSet().parts if part_id not in PANEL_PART_IDS)
+
+
+def build_panel_item(kind, atlas, name=None):
+    """一种面板的物品几何：一根骨骼，面板框 + 背板 + 这一种的屏幕，挪到方块中心、屏幕朝南。
+    `name` 是几何名（缺省按种类取 `<短名>_terminal_part`）。"""
     vector = dict(DIRECTIONS)[PANEL_ITEM_FACE]
     frame, back = panel_shell_faces(vector)
     offset = panel_item_offset(vector)
@@ -1200,7 +1225,7 @@ def build_panel_item(kind, atlas):
         cube(back_box(vector), back, atlas, offset),
         cube(screen_box(vector), {PANEL_ITEM_FACE: "screen"}, atlas, offset, kind),
     ]}]
-    return geometry(panel_item_name(kind), atlas.size, bones, BLOCK_BOUNDS)
+    return geometry(name or panel_item_name(kind), atlas.size, bones, BLOCK_BOUNDS)
 
 
 def visibility_rules():
@@ -1208,16 +1233,23 @@ def visibility_rules():
 
     与 `gen_slot_models.visibility_rules` 同一规则：`default` 管 1 与种类表以外的值。
     """
-    specific = [panel_value(kind) for kind, _device in PANEL_KINDS]
+    specific = [panel_value(kind) for kind, _part in PANEL_SCREENS]
     rules = []
     for index, (face, _vector) in enumerate(DIRECTIONS):
         variable = panel_variable(index)
         present = "%s >= %d" % (variable, UNKNOWN)
         rules.append((frame_bone(face), present))
         rules.append((panel_bone(face, DEFAULT_PANEL), " && ".join(
-            [present] + ["%s != %d" % (variable, value) for value in specific])))
-        for kind, _device in PANEL_KINDS:
+            [present, "%s < %d" % (variable, OFFLINE_OFFSET)]
+            + ["%s != %d" % (variable, value) for value in specific])))
+        for kind, _part in PANEL_SCREENS:
             rules.append((panel_bone(face, kind), "%s == %d" % (variable, panel_value(kind))))
+        rules.append((panel_bone(face, offline_variant(DEFAULT_PANEL)), " && ".join(
+            ["%s >= %d" % (variable, UNKNOWN + OFFLINE_OFFSET)]
+            + ["%s != %d" % (variable, value + OFFLINE_OFFSET) for value in specific])))
+        for kind, _part in PANEL_SCREENS:
+            rules.append((panel_bone(face, offline_variant(kind)),
+                          "%s == %d" % (variable, panel_value(kind) + OFFLINE_OFFSET)))
     return rules
 
 
@@ -1450,8 +1482,12 @@ def outputs(probe=False):
         (ENTITY_FILE, build_entity(probe)),
         (CONTROLLER_FILE, build_controller()),
     ])
-    for kind, _terminal in PANEL_KINDS:
-        documents.append((block_file(panel_item_name(kind)), build_panel_item(kind, panels)))
+    for kind, part_id in PANEL_SCREENS:
+        name = short_name(part_id)
+        documents.append((block_file(name), build_panel_item(kind, panels, name)))
+    for part_id in default_screen_parts():
+        name = short_name(part_id)
+        documents.append((block_file(name), build_panel_item(DEFAULT_PANEL, panels, name)))
     textures.append((texture_file(PANEL_TEXTURE_DIR, PANELS), panels.size, placeholder(panels)))
     return [(path, json_bytes(payload)) for path, payload in documents], textures
 

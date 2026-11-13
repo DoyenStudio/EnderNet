@@ -101,6 +101,7 @@ class OrderPolicy(object):
         "max_orders",
         "op_ledger_limit",
         "rejected_request_limit",
+        "terminal_order_limit",
     )
 
     def __init__(
@@ -112,8 +113,9 @@ class OrderPolicy(object):
         max_orders=64,
         op_ledger_limit=4096,
         rejected_request_limit=64,
+        terminal_order_limit=32,
     ):
-        # type: (bool, int, int, int, int, int, int) -> None
+        # type: (bool, int, int, int, int, int, int, int) -> None
         #: **R09**：返还物没到齐算不算「这一步没做完」。
         #: 09 验收原文「所需鱼已回流但空桶未到时步骤仍工作中」是**看得到的
         #: 既定玩法**，因此替身取 `True`（返还物到齐才算完成）。R09 的另一侧
@@ -137,6 +139,10 @@ class OrderPolicy(object):
         #: **必须有上界**：它是唯一一张只增不减的表，一张长跑的存档会让它
         #: 一直长下去；而它挡的是「同一条回执重试」，保留最近的几千条足够。
         self.op_ledger_limit = int(op_ledger_limit)
+        #: 每张网络保留几张**已结束**（完成/取消/失败）的订单供界面回看。
+        #: 超出的按创建顺序从最旧的移出台账：不移的话每帧遍历、每次同步与
+        #: 存档的订单簿都会随历史无限增长。帧安全阀与存档体积上限，不是玩法数值。
+        self.terminal_order_limit = int(terminal_order_limit)
 
         for name in (
             "plan_budget_per_tick",
@@ -149,6 +155,8 @@ class OrderPolicy(object):
                 raise ValueError("%s 必须为正，得到 %r" % (name, getattr(self, name)))
         if self.submit_plan_budget < 0:
             raise ValueError("submit_plan_budget 不能为负")
+        if self.terminal_order_limit < 0:
+            raise ValueError("terminal_order_limit 不能为负")
 
     def unresolved_report(self):
         # type: () -> list
@@ -178,6 +186,12 @@ class OrderPolicy(object):
                 "value": self.orders_per_tick,
                 "note": "每帧最多推进几个订单；帧安全阀而非玩法数值",
             },
+            {
+                "field": "order.terminal_order_limit",
+                "rule": "R04",
+                "value": self.terminal_order_limit,
+                "note": "每张网络保留几张已结束的订单供回看；帧安全阀与存档体积上限，不是玩法数值",
+            },
         ]
 
     def assert_settled(self):
@@ -205,6 +219,7 @@ class OrderPolicy(object):
             "max_orders": self.max_orders,
             "op_ledger_limit": self.op_ledger_limit,
             "rejected_request_limit": self.rejected_request_limit,
+            "terminal_order_limit": self.terminal_order_limit,
         }
 
 

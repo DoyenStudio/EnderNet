@@ -8,6 +8,7 @@
   同一本账，`stop()` 时随其它监听器一起注销。发件人只认引擎附的 `__id__`。
 - **查**：处理函数要的玩家事实——所在维度、脚下坐标、主手物品、是不是创造模式；
   放面板时从主手扣一个（阶段 D）。
+  配置卡与无线连接工具还要读写主手那一件的 `userData` 与说明（2026-11-13）。
 - **回**：处理结果那一句话用弹出提示给发件人（同蔚蓝管道的扳手提示）；同一 tick 多出来的、
   以及登记成静默的动作（挂面板、底座换光缆）没有话，不弹。
 
@@ -92,11 +93,70 @@ def engine_take_held_item(player_id, item_id):
     return bool(SetInventorySlotItemCount(player_id, slot, item.count - 1))
 
 
-def engine_notify(player_id, text):
-    # type: (str, str) -> None
+def _held_item(player_id):
+    # type: (str) -> tuple
+    """`(主手物品栏槽位, tooldelta Item 或 None)`，带 `userData`。"""
+    from mod.server.extraServerApi import GetMinecraftEnum
+    from .....tooldelta.api.server.player import GetPlayerItem, GetSelectedSlot
+
+    slot = GetSelectedSlot(player_id)
+    return slot, GetPlayerItem(player_id, GetMinecraftEnum().ItemPosType.INVENTORY, slot, True)
+
+
+def engine_held_user_data(player_id, item_id):
+    # type: (str, str) -> object
+    """主手那一件 `item_id` 的 `userData`（解掉引擎的 NBT 包装）；主手已经不是它返回 None，
+    没有 `userData` 返回 `{}`。"""
+    from ....common.resources.item_codec import unbox_engine_value
+
+    _slot, item = _held_item(player_id)
+    if item is None or item.newItemName != item_id or item.count < 1:
+        return None
+    data = unbox_engine_value(item.userData) if item.userData is not None else None
+    return data if isinstance(data, dict) else {}
+
+
+def engine_write_held_user_data(player_id, item_id, key, value, tips):
+    # type: (str, str, str, object, str) -> bool
+    """改写主手那一件 `item_id` 的 `userData` 与说明。主手已经不是它返回 False。
+
+    `userData` 整张换成只有本模组这一项（`value` 为 None 就是空的）：配置卡与无线连接工具是
+    本模组自己的物品，不带别人的数据；读回来的旧值里键是 `unicode`，原样写回会被引擎整条
+    丢掉（样板那边实测过，见 `server/crafting/patterns.py` 的 ASCII 编码一节），所以不回写。
+    键与值都过 `engine_text`；值是字符串到字符串的字典。说明整段写进顶层 `customTips`
+    （盖掉物品 JSON 的那一份），引擎复制进 `userData` 的旧副本一并不要。写完读回核一遍。
+    """
+    from mod.server.extraServerApi import GetMinecraftEnum
+    from .....tooldelta.api.server.player import SetPlayerAllItems
+
+    slot, item = _held_item(player_id)
+    if item is None or item.newItemName != item_id or item.count < 1:
+        return False
+    data = {}
+    if value is not None:
+        data[engine_text(key)] = dict(
+            (engine_text(name), engine_text(text)) for name, text in dict(value).items()
+        )
+    # 整张换掉：引擎读物品时复制进 `userData` 的旧说明副本（`ItemCustomTips`，见
+    # `common/resources/item_codec.py` 的 `_ENGINE_CUSTOM_TIPS_KEY`）也就不在了
+    item.userData = data
+    item.customTips = engine_text(tips)
+    SetPlayerAllItems(player_id, {(GetMinecraftEnum().ItemPosType.INVENTORY, slot): item})
+    written = engine_held_user_data(player_id, item_id)
+    if written is None:
+        return False
+    if value is None:
+        return key not in written
+    return written.get(key) == dict(value)
+
+
+def engine_notify(player_id, text, title=None):
+    # type: (str, str, object) -> None
     from .....tooldelta.api.server.tips import SetOnePopupNotice
 
-    SetOnePopupNotice(engine_text(player_id), engine_text(text), engine_text(NOTICE_TITLE))
+    SetOnePopupNotice(
+        engine_text(player_id), engine_text(text), engine_text(title or NOTICE_TITLE)
+    )
 
 
 class CableIntentPort(object):
@@ -113,8 +173,10 @@ class CableIntentPort(object):
         notify=None,
         creative=None,
         take_held=None,
+        held_user_data=None,
+        write_held_user_data=None,
     ):
-        # type: (object, object, object, object, object, object, object, object) -> None
+        # type: (object, object, object, object, object, object, object, object, object, object) -> None
         #: 注册账本：`ServerEventBinder`（`stop()` 时一并注销）
         self.binder = binder
         self.events = events if events is not None else engine_events
@@ -128,6 +190,13 @@ class CableIntentPort(object):
         self.notify = notify if notify is not None else engine_notify
         self.creative = creative if creative is not None else engine_is_creative
         self.take_held = take_held if take_held is not None else engine_take_held_item
+        self.read_held_data = (
+            held_user_data if held_user_data is not None else engine_held_user_data
+        )
+        self.write_held_data = (
+            write_held_user_data if write_held_user_data is not None
+            else engine_write_held_user_data
+        )
         self._event_classes = None
         self.stats = {"received": 0, "handler_errors": 0, "notified": 0, "notify_errors": 0}
 
@@ -167,6 +236,26 @@ class CableIntentPort(object):
         except Exception:
             return False
 
+    def held_user_data(self, player_id, item_id):
+        # type: (str, str) -> object
+        """主手那一件 `item_id` 的 `userData`；主手已经不是它（或读不到）返回 None。"""
+        if not player_id:
+            return None
+        try:
+            return self.read_held_data(player_id, item_id)
+        except Exception:
+            return None
+
+    def write_held_user_data(self, player_id, item_id, key, value, tips):
+        # type: (str, str, str, object, str) -> bool
+        """改写主手那一件的 `userData[key]` 与说明；写不进去返回 False。"""
+        if not player_id:
+            return False
+        try:
+            return bool(self.write_held_data(player_id, item_id, key, value, tips))
+        except Exception:
+            return False
+
     @staticmethod
     def _ask(asker, player_id):
         # type: (object, str) -> object
@@ -198,8 +287,12 @@ class CableIntentPort(object):
                 return None
             message = getattr(result, "message", "")
             if message and player_id:
+                title = getattr(result, "title", "")
                 try:
-                    self.notify(player_id, message)
+                    if title:
+                        self.notify(player_id, message, title)
+                    else:
+                        self.notify(player_id, message)
                     self.stats["notified"] += 1
                 except Exception:
                     self.stats["notify_errors"] += 1

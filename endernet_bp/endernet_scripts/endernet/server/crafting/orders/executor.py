@@ -285,8 +285,8 @@ class OrderExecutor(object):
 
     def _topology_version(self):
         # type: () -> object
-        topology = getattr(self.runtime, "topology", None)
-        return getattr(topology, "version", None)
+        """计划封印与复核用的图版本：**本网络**的成员版本，不是全世界的拓扑版本。"""
+        return getattr(self.runtime, "membership_version", None)
 
     def _inventory_version(self):
         # type: () -> object
@@ -1084,6 +1084,7 @@ class OrderExecutor(object):
         #: 每次 `tick` 都算一帧，与引入它之前一致。
         frame = context.get("frame")
         service = self.service
+        service.orders.prune_terminal(self.policy.terminal_order_limit)
         service.refresh_capacity()
         orders = service.orders.live()
         live_ids = set(order.order_id for order in orders)
@@ -1403,7 +1404,13 @@ class OrderExecutor(object):
             report = order.plan.revalidate(
                 self._store().check_dispatch, None, topology_version
             )
-            blockers.extend(report.reasons)
+            # 成员变了只是「该重新复核」的信号，本身不挡路：样板还在不在由
+            # check_dispatch 判，介质离网由预留撤销与 `_stock_blockers` 判，
+            # 设备离网由主控准入判。
+            blockers.extend(
+                reason for reason in report.reasons
+                if reason.code != Reason.PLAN_TOPOLOGY_CHANGED
+            )
             if pattern_key is not None and all(
                 reason.code == Reason.PLAN_TOPOLOGY_CHANGED for reason in report.reasons
             ):
@@ -1665,6 +1672,34 @@ class OrderExecutor(object):
             instance.blockers = []
         return int((result.payload or {}).get("work", 0))
 
+    def assembly_advance(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """主控准入后的装配推进；资源与槽号全部从服务器执行账取得。
+
+        由 `FactoryService.handle` 的 `assembly_advance` 动作调用（只接受
+        本执行器自己发出的设备请求）。2026-11-12 前它挂在存储服务下，
+        存储服务再回头读执行器的私有方法——装配是工厂的事，挪回这里。
+        """
+        order = self.orders.get(payload.get("order_id")) if self.orders is not None else None
+        instance = order.inflight.get(payload.get("execution_id")) if order is not None else None
+        if (instance is None or instance.is_terminal() or order.paused
+                or instance.step.mode != "crafting"
+                or command.source is None or command.source.player_id is not None):
+            return CommandResult.rejected(command.request_id, [BlockReason(
+                Reason.BAD_PARAMETER, u"装配推进仅接受活动订单的设备请求")])
+        ref = self._step_ref(instance)
+        if ref is None or command.device_ref != ref:
+            return CommandResult.rejected(command.request_id, [BlockReason(
+                Reason.DEVICE_GONE, u"装配请求与提供者实例不一致")])
+        obstacles = self._order_obstacles(order)
+        if obstacles:
+            return CommandResult.blocked(command.request_id, obstacles)
+        tick = int(getattr(self.runtime, "tick_count", 0) or 0)
+        work, blocker, moved = self.service.patterns.assembly.advance(self, order, instance, tick)
+        if blocker is not None:
+            return CommandResult.blocked(command.request_id, [blocker])
+        return CommandResult.ok(command.request_id, {"work": work, "moved": moved})
+
     def _assembly_command(self, order, instance):
         # type: (object, object) -> object
         gateway = self.service.gateway
@@ -1675,7 +1710,7 @@ class OrderExecutor(object):
         instance.op_attempt += 1
         return gateway.submit(DeviceCommand(
             "assemble/%s/%d" % (instance.execution_id, instance.op_attempt),
-            CommandKind.STORAGE,
+            CommandKind.ORDER,
             CommandSource(None, ref, ref.node_key.as_key()[0], distance_ok=True),
             payload={"action": "assembly_advance", "order_id": order.order_id,
                      "execution_id": instance.execution_id},
@@ -2825,6 +2860,8 @@ class FactoryService(NetworkService):
         if action == "cancel":
             return _with_request(command.request_id, self.executor.cancel(
                 payload.get("order_id") or ""))
+        if action == "assembly_advance":
+            return self.executor.assembly_advance(command, payload)
         if action == "preview_request":
             return self.previews.request(command, payload)
         if action == "preview_cancel":

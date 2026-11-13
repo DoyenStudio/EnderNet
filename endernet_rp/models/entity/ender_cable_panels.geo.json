@@ -5,7 +5,7 @@
             "description": {
                 "identifier": "geometry.endernet.ender_cable_panels",
                 "texture_width": 64,
-                "texture_height": 32,
+                "texture_height": 64,
                 "visible_bounds_width": 3,
                 "visible_bounds_height": 2.5,
                 "visible_bounds_offset": [
@@ -318,6 +318,251 @@
                                     "uv": [
                                         60,
                                         12
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_up_tunnel",
+                    "parent": "frame_up",
+                    "pivot": [
+                        -8,
+                        16,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                15.5,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "up": {
+                                    "uv": [
+                                        60,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_up_default_offline",
+                    "parent": "frame_up",
+                    "pivot": [
+                        -8,
+                        16,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                15.5,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "up": {
+                                    "uv": [
+                                        55,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_up_common_offline",
+                    "parent": "frame_up",
+                    "pivot": [
+                        -8,
+                        16,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                15.5,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "up": {
+                                    "uv": [
+                                        12,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_up_crafting_offline",
+                    "parent": "frame_up",
+                    "pivot": [
+                        -8,
+                        16,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                15.5,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "up": {
+                                    "uv": [
+                                        24,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_up_template_offline",
+                    "parent": "frame_up",
+                    "pivot": [
+                        -8,
+                        16,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                15.5,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "up": {
+                                    "uv": [
+                                        36,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_up_factoric_offline",
+                    "parent": "frame_up",
+                    "pivot": [
+                        -8,
+                        16,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                15.5,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "up": {
+                                    "uv": [
+                                        48,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_up_tunnel_offline",
+                    "parent": "frame_up",
+                    "pivot": [
+                        -8,
+                        16,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                15.5,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "up": {
+                                    "uv": [
+                                        12,
+                                        48
                                     ],
                                     "uv_size": [
                                         -12,
@@ -642,6 +887,251 @@
                     ]
                 },
                 {
+                    "name": "panel_down_tunnel",
+                    "parent": "frame_down",
+                    "pivot": [
+                        -8,
+                        0,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                0,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        60,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_down_default_offline",
+                    "parent": "frame_down",
+                    "pivot": [
+                        -8,
+                        0,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                0,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        55,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_down_common_offline",
+                    "parent": "frame_down",
+                    "pivot": [
+                        -8,
+                        0,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                0,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_down_crafting_offline",
+                    "parent": "frame_down",
+                    "pivot": [
+                        -8,
+                        0,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                0,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        24,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_down_template_offline",
+                    "parent": "frame_down",
+                    "pivot": [
+                        -8,
+                        0,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                0,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        36,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_down_factoric_offline",
+                    "parent": "frame_down",
+                    "pivot": [
+                        -8,
+                        0,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                0,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        48,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_down_tunnel_offline",
+                    "parent": "frame_down",
+                    "pivot": [
+                        -8,
+                        0,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                0,
+                                2
+                            ],
+                            "size": [
+                                12,
+                                0.5,
+                                12
+                            ],
+                            "uv": {
+                                "down": {
+                                    "uv": [
+                                        12,
+                                        48
+                                    ],
+                                    "uv_size": [
+                                        -12,
+                                        -12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
                     "name": "frame_north",
                     "pivot": [
                         -8,
@@ -944,6 +1434,251 @@
                                     "uv": [
                                         48,
                                         0
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_tunnel",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        48,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_default_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        43,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_common_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_crafting_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        12,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_template_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        24,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_factoric_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        36,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_tunnel_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        36
                                     ],
                                     "uv_size": [
                                         12,
@@ -1268,6 +2003,251 @@
                     ]
                 },
                 {
+                    "name": "panel_south_tunnel",
+                    "parent": "frame_south",
+                    "pivot": [
+                        -8,
+                        8,
+                        16
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                15.5
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "south": {
+                                    "uv": [
+                                        48,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_south_default_offline",
+                    "parent": "frame_south",
+                    "pivot": [
+                        -8,
+                        8,
+                        16
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                15.5
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "south": {
+                                    "uv": [
+                                        43,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_south_common_offline",
+                    "parent": "frame_south",
+                    "pivot": [
+                        -8,
+                        8,
+                        16
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                15.5
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "south": {
+                                    "uv": [
+                                        0,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_south_crafting_offline",
+                    "parent": "frame_south",
+                    "pivot": [
+                        -8,
+                        8,
+                        16
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                15.5
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "south": {
+                                    "uv": [
+                                        12,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_south_template_offline",
+                    "parent": "frame_south",
+                    "pivot": [
+                        -8,
+                        8,
+                        16
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                15.5
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "south": {
+                                    "uv": [
+                                        24,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_south_factoric_offline",
+                    "parent": "frame_south",
+                    "pivot": [
+                        -8,
+                        8,
+                        16
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                15.5
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "south": {
+                                    "uv": [
+                                        36,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_south_tunnel_offline",
+                    "parent": "frame_south",
+                    "pivot": [
+                        -8,
+                        8,
+                        16
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                15.5
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "south": {
+                                    "uv": [
+                                        0,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
                     "name": "frame_west",
                     "pivot": [
                         0,
@@ -1581,6 +2561,251 @@
                     ]
                 },
                 {
+                    "name": "panel_west_tunnel",
+                    "parent": "frame_west",
+                    "pivot": [
+                        0,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -0.5,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "west": {
+                                    "uv": [
+                                        48,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_west_default_offline",
+                    "parent": "frame_west",
+                    "pivot": [
+                        0,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -0.5,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "west": {
+                                    "uv": [
+                                        43,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_west_common_offline",
+                    "parent": "frame_west",
+                    "pivot": [
+                        0,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -0.5,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "west": {
+                                    "uv": [
+                                        0,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_west_crafting_offline",
+                    "parent": "frame_west",
+                    "pivot": [
+                        0,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -0.5,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "west": {
+                                    "uv": [
+                                        12,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_west_template_offline",
+                    "parent": "frame_west",
+                    "pivot": [
+                        0,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -0.5,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "west": {
+                                    "uv": [
+                                        24,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_west_factoric_offline",
+                    "parent": "frame_west",
+                    "pivot": [
+                        0,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -0.5,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "west": {
+                                    "uv": [
+                                        36,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_west_tunnel_offline",
+                    "parent": "frame_west",
+                    "pivot": [
+                        0,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -0.5,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "west": {
+                                    "uv": [
+                                        0,
+                                        36
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
                     "name": "frame_east",
                     "pivot": [
                         -16,
@@ -1883,6 +3108,251 @@
                                     "uv": [
                                         48,
                                         0
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_east_tunnel",
+                    "parent": "frame_east",
+                    "pivot": [
+                        -16,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -16,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "east": {
+                                    "uv": [
+                                        48,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_east_default_offline",
+                    "parent": "frame_east",
+                    "pivot": [
+                        -16,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -16,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "east": {
+                                    "uv": [
+                                        43,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_east_common_offline",
+                    "parent": "frame_east",
+                    "pivot": [
+                        -16,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -16,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_east_crafting_offline",
+                    "parent": "frame_east",
+                    "pivot": [
+                        -16,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -16,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "east": {
+                                    "uv": [
+                                        12,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_east_template_offline",
+                    "parent": "frame_east",
+                    "pivot": [
+                        -16,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -16,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "east": {
+                                    "uv": [
+                                        24,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_east_factoric_offline",
+                    "parent": "frame_east",
+                    "pivot": [
+                        -16,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -16,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "east": {
+                                    "uv": [
+                                        36,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_east_tunnel_offline",
+                    "parent": "frame_east",
+                    "pivot": [
+                        -16,
+                        8,
+                        8
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -16,
+                                2,
+                                2
+                            ],
+                            "size": [
+                                0.5,
+                                12,
+                                12
+                            ],
+                            "uv": {
+                                "east": {
+                                    "uv": [
+                                        0,
+                                        36
                                     ],
                                     "uv_size": [
                                         12,

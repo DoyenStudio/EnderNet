@@ -97,19 +97,21 @@ REASON_REMOVE_FAILED = "remove_failed"
 
 
 class IntentResult(object):
-    """一条意图的处理结果。`message` 非空时由适配器弹给发件人看。"""
+    """一条意图的处理结果。`message` 非空时由适配器弹给发件人看；`title` 是弹出提示的副标题
+    （空 = 适配器的默认，网络扳手）。"""
 
-    __slots__ = ("ok", "reason", "message")
+    __slots__ = ("ok", "reason", "message", "title")
 
-    def __init__(self, ok, reason, message=""):
-        # type: (bool, str, str) -> None
+    def __init__(self, ok, reason, message="", title=""):
+        # type: (bool, str, str, str) -> None
         self.ok = bool(ok)
         self.reason = reason
         self.message = message
+        self.title = title
 
     def to_dict(self):
         # type: () -> dict
-        return {"ok": self.ok, "reason": self.reason, "message": self.message}
+        return {"ok": self.ok, "reason": self.reason, "message": self.message, "title": self.title}
 
     def __repr__(self):
         return "IntentResult(%s, %s)" % (self.ok, self.reason)

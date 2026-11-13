@@ -16,7 +16,7 @@
                     "frame_up": "variable.p0 >= 1"
                 },
                 {
-                    "panel_up_default": "variable.p0 >= 1 && variable.p0 != 2 && variable.p0 != 3 && variable.p0 != 4 && variable.p0 != 5"
+                    "panel_up_default": "variable.p0 >= 1 && variable.p0 < 16 && variable.p0 != 2 && variable.p0 != 3 && variable.p0 != 4 && variable.p0 != 5 && variable.p0 != 6"
                 },
                 {
                     "panel_up_common": "variable.p0 == 2"
@@ -31,10 +31,31 @@
                     "panel_up_factoric": "variable.p0 == 5"
                 },
                 {
+                    "panel_up_tunnel": "variable.p0 == 6"
+                },
+                {
+                    "panel_up_default_offline": "variable.p0 >= 17 && variable.p0 != 18 && variable.p0 != 19 && variable.p0 != 20 && variable.p0 != 21 && variable.p0 != 22"
+                },
+                {
+                    "panel_up_common_offline": "variable.p0 == 18"
+                },
+                {
+                    "panel_up_crafting_offline": "variable.p0 == 19"
+                },
+                {
+                    "panel_up_template_offline": "variable.p0 == 20"
+                },
+                {
+                    "panel_up_factoric_offline": "variable.p0 == 21"
+                },
+                {
+                    "panel_up_tunnel_offline": "variable.p0 == 22"
+                },
+                {
                     "frame_down": "variable.p1 >= 1"
                 },
                 {
-                    "panel_down_default": "variable.p1 >= 1 && variable.p1 != 2 && variable.p1 != 3 && variable.p1 != 4 && variable.p1 != 5"
+                    "panel_down_default": "variable.p1 >= 1 && variable.p1 < 16 && variable.p1 != 2 && variable.p1 != 3 && variable.p1 != 4 && variable.p1 != 5 && variable.p1 != 6"
                 },
                 {
                     "panel_down_common": "variable.p1 == 2"
@@ -49,10 +70,31 @@
                     "panel_down_factoric": "variable.p1 == 5"
                 },
                 {
+                    "panel_down_tunnel": "variable.p1 == 6"
+                },
+                {
+                    "panel_down_default_offline": "variable.p1 >= 17 && variable.p1 != 18 && variable.p1 != 19 && variable.p1 != 20 && variable.p1 != 21 && variable.p1 != 22"
+                },
+                {
+                    "panel_down_common_offline": "variable.p1 == 18"
+                },
+                {
+                    "panel_down_crafting_offline": "variable.p1 == 19"
+                },
+                {
+                    "panel_down_template_offline": "variable.p1 == 20"
+                },
+                {
+                    "panel_down_factoric_offline": "variable.p1 == 21"
+                },
+                {
+                    "panel_down_tunnel_offline": "variable.p1 == 22"
+                },
+                {
                     "frame_north": "variable.p2 >= 1"
                 },
                 {
-                    "panel_north_default": "variable.p2 >= 1 && variable.p2 != 2 && variable.p2 != 3 && variable.p2 != 4 && variable.p2 != 5"
+                    "panel_north_default": "variable.p2 >= 1 && variable.p2 < 16 && variable.p2 != 2 && variable.p2 != 3 && variable.p2 != 4 && variable.p2 != 5 && variable.p2 != 6"
                 },
                 {
                     "panel_north_common": "variable.p2 == 2"
@@ -67,10 +109,31 @@
                     "panel_north_factoric": "variable.p2 == 5"
                 },
                 {
+                    "panel_north_tunnel": "variable.p2 == 6"
+                },
+                {
+                    "panel_north_default_offline": "variable.p2 >= 17 && variable.p2 != 18 && variable.p2 != 19 && variable.p2 != 20 && variable.p2 != 21 && variable.p2 != 22"
+                },
+                {
+                    "panel_north_common_offline": "variable.p2 == 18"
+                },
+                {
+                    "panel_north_crafting_offline": "variable.p2 == 19"
+                },
+                {
+                    "panel_north_template_offline": "variable.p2 == 20"
+                },
+                {
+                    "panel_north_factoric_offline": "variable.p2 == 21"
+                },
+                {
+                    "panel_north_tunnel_offline": "variable.p2 == 22"
+                },
+                {
                     "frame_south": "variable.p3 >= 1"
                 },
                 {
-                    "panel_south_default": "variable.p3 >= 1 && variable.p3 != 2 && variable.p3 != 3 && variable.p3 != 4 && variable.p3 != 5"
+                    "panel_south_default": "variable.p3 >= 1 && variable.p3 < 16 && variable.p3 != 2 && variable.p3 != 3 && variable.p3 != 4 && variable.p3 != 5 && variable.p3 != 6"
                 },
                 {
                     "panel_south_common": "variable.p3 == 2"
@@ -85,10 +148,31 @@
                     "panel_south_factoric": "variable.p3 == 5"
                 },
                 {
+                    "panel_south_tunnel": "variable.p3 == 6"
+                },
+                {
+                    "panel_south_default_offline": "variable.p3 >= 17 && variable.p3 != 18 && variable.p3 != 19 && variable.p3 != 20 && variable.p3 != 21 && variable.p3 != 22"
+                },
+                {
+                    "panel_south_common_offline": "variable.p3 == 18"
+                },
+                {
+                    "panel_south_crafting_offline": "variable.p3 == 19"
+                },
+                {
+                    "panel_south_template_offline": "variable.p3 == 20"
+                },
+                {
+                    "panel_south_factoric_offline": "variable.p3 == 21"
+                },
+                {
+                    "panel_south_tunnel_offline": "variable.p3 == 22"
+                },
+                {
                     "frame_west": "variable.p4 >= 1"
                 },
                 {
-                    "panel_west_default": "variable.p4 >= 1 && variable.p4 != 2 && variable.p4 != 3 && variable.p4 != 4 && variable.p4 != 5"
+                    "panel_west_default": "variable.p4 >= 1 && variable.p4 < 16 && variable.p4 != 2 && variable.p4 != 3 && variable.p4 != 4 && variable.p4 != 5 && variable.p4 != 6"
                 },
                 {
                     "panel_west_common": "variable.p4 == 2"
@@ -103,10 +187,31 @@
                     "panel_west_factoric": "variable.p4 == 5"
                 },
                 {
+                    "panel_west_tunnel": "variable.p4 == 6"
+                },
+                {
+                    "panel_west_default_offline": "variable.p4 >= 17 && variable.p4 != 18 && variable.p4 != 19 && variable.p4 != 20 && variable.p4 != 21 && variable.p4 != 22"
+                },
+                {
+                    "panel_west_common_offline": "variable.p4 == 18"
+                },
+                {
+                    "panel_west_crafting_offline": "variable.p4 == 19"
+                },
+                {
+                    "panel_west_template_offline": "variable.p4 == 20"
+                },
+                {
+                    "panel_west_factoric_offline": "variable.p4 == 21"
+                },
+                {
+                    "panel_west_tunnel_offline": "variable.p4 == 22"
+                },
+                {
                     "frame_east": "variable.p5 >= 1"
                 },
                 {
-                    "panel_east_default": "variable.p5 >= 1 && variable.p5 != 2 && variable.p5 != 3 && variable.p5 != 4 && variable.p5 != 5"
+                    "panel_east_default": "variable.p5 >= 1 && variable.p5 < 16 && variable.p5 != 2 && variable.p5 != 3 && variable.p5 != 4 && variable.p5 != 5 && variable.p5 != 6"
                 },
                 {
                     "panel_east_common": "variable.p5 == 2"
@@ -119,6 +224,27 @@
                 },
                 {
                     "panel_east_factoric": "variable.p5 == 5"
+                },
+                {
+                    "panel_east_tunnel": "variable.p5 == 6"
+                },
+                {
+                    "panel_east_default_offline": "variable.p5 >= 17 && variable.p5 != 18 && variable.p5 != 19 && variable.p5 != 20 && variable.p5 != 21 && variable.p5 != 22"
+                },
+                {
+                    "panel_east_common_offline": "variable.p5 == 18"
+                },
+                {
+                    "panel_east_crafting_offline": "variable.p5 == 19"
+                },
+                {
+                    "panel_east_template_offline": "variable.p5 == 20"
+                },
+                {
+                    "panel_east_factoric_offline": "variable.p5 == 21"
+                },
+                {
+                    "panel_east_tunnel_offline": "variable.p5 == 22"
                 }
             ]
         }

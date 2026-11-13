@@ -26,13 +26,18 @@
   （2026-11-10 方案 B，`scripts/gen_blocks.py` 的 `build_part_item_json`：物品栏显示 3D 面板），
   玩家放不下它（`server/interaction/guard.py` 的 `panel_item` 规则拦掉放置），挂面板走客户端
   接管的意图；
+- `TUNNEL_PARTS`：P2P 网络隧道（2026-11-13），只有面板形态、没有对应的整方块；物品形态与终端
+  面板一样是同名的展示方块（屏幕取默认面板那一块），手持点光缆挂上去，走同一条挂面板的意图。
+  与 `TERMINAL_PARTS` 合起来是 `PARTS`；
 - `PART_HOLDERS`：面板底座（2026-11-10 真机反馈后照 AE2 补上）。面板对着普通方块或
   空气放时由它承载：只装面板、没有线芯、不入网，最后一块面板拆掉就消失；按面数据与
   方块状态的维护同光缆一套，因此也不进 `DEVICES`；
-- `TOOLS`：工具物品（网络扳手）。
+- `TOOLS`：工具物品（网络扳手、配置卡、无线连接工具）。
 
 `DefinitionSet.get()` / `has()` 跨这四张设备表查；`devices` 仍只是整方块那一张。
 """
+
+import math
 
 
 # -- 未配置哨兵 ------------------------------------------------------------
@@ -119,6 +124,12 @@ FE_PER_EN = 2
 ENERGY_INPUT_CAPACITY_FE = 2147483647
 
 CATEGORY_ENERGY_INPUT = "energy_input"
+#: P2P 网络隧道（2026-11-13）：只有面板形态，挂在光缆的一个面上；同频率的几块隧道把各自
+#: 正面那一格连成一张网（拓扑的远程连边）。面板不在连接表里，这个分类只给准入与诊断认。
+CATEGORY_TUNNEL = "tunnel"
+#: 无线连接器（2026-11-13）：整方块载体，六面像致密光缆一样连；用无线连接工具与另一台配对后，
+#: 两台之间多一条远程连边（同维度、限距离）。
+CATEGORY_WIRELESS = "wireless"
 
 #: 13 §3 连接表里的「设备」：整方块的总线、终端、驱动器、内存槽、装配仓与能源类。
 #: 它们彼此透传（13 §0.5），也都能接基带与光缆。处理器与处理器连接器各有
@@ -142,10 +153,11 @@ FORM_PART = "part"
 FORMS = frozenset([FORM_BLOCK, FORM_PART])
 
 #: 面板的种类（面板骨架，2026-11-10）：决定一块面板挂上以后走哪几条流程。
-#: 目前只有终端（右键开终端屏、库存按整方块终端记账）；往后的总线接口面板、
-#: P2P 面板各加一种，各自的流程按种类分派，不再默认「面板就是终端」。
+#: 终端（右键开终端屏、库存按整方块终端记账）与 P2P 隧道（配置卡设频率、正面经隧道连网）；
+#: 往后的总线接口面板再加一种，各自的流程按种类分派，不默认「面板就是终端」。
 PART_KIND_TERMINAL = "terminal"
-PART_KINDS = frozenset([PART_KIND_TERMINAL])
+PART_KIND_TUNNEL = "tunnel"
+PART_KINDS = frozenset([PART_KIND_TERMINAL, PART_KIND_TUNNEL])
 
 # -- 能力名（与 devices/capabilities.py 的协议一一对应）--------------------
 
@@ -196,6 +208,7 @@ def _connection_pairs():
     | 设备 | 设备（透传）、处理器连接器 |
     | 处理器连接器 | 处理器 |
     | 处理器 | 处理器 |
+    | 无线连接器 | 基带、光缆、设备、处理器连接器、无线连接器（照致密光缆，不接主控） |
 
     面板不在表里：它不是方块，只经同格线芯挂在宿主光缆上，不对外连（拓扑负责）。
     光缆按面的限制（被切断、被面板占住）是第二层判定，见
@@ -211,12 +224,17 @@ def _connection_pairs():
             (CATEGORY_CABLE, CATEGORY_PROCESSOR_CONNECTOR),
             (CATEGORY_PROCESSOR_CONNECTOR, CATEGORY_PROCESSOR),
             (CATEGORY_PROCESSOR, CATEGORY_PROCESSOR),
+            (CATEGORY_BASEBAND, CATEGORY_WIRELESS),
+            (CATEGORY_CABLE, CATEGORY_WIRELESS),
+            (CATEGORY_WIRELESS, CATEGORY_PROCESSOR_CONNECTOR),
+            (CATEGORY_WIRELESS, CATEGORY_WIRELESS),
         ]
     )
     devices = sorted(DEVICE_CATEGORIES)
     for index, device in enumerate(devices):
         pairs.add((CATEGORY_BASEBAND, device))
         pairs.add((CATEGORY_CABLE, device))
+        pairs.add((CATEGORY_WIRELESS, device))
         pairs.add((device, CATEGORY_PROCESSOR_CONNECTOR))
         for other in devices[index:]:
             pairs.add((device, other))
@@ -406,8 +424,9 @@ class DeviceDefinition(object):
     2026-11-09 网络改版加了三个字段（13 §2）：
 
     - `form`：`FORM_BLOCK` 整方块，或 `FORM_PART` 面板形态（挂在光缆一个面上）；
-    - `whole_block_id`：面板形态对应的整方块设备。面板的带宽、耗能、界面都与它
-      相同，界面由 `DefinitionSet.terminal_screen_of` 据此查；整方块设备为 None；
+    - `whole_block_id`：面板形态对应的整方块设备。终端面板必填：带宽、耗能、界面都与它
+      相同，界面由 `DefinitionSet.terminal_screen_of` 据此查。P2P 隧道（2026-11-13）只有面板
+      形态，没有对应的整方块，为 None；整方块设备一律为 None；
     - `accepts_parts`：光缆能不能挂面板。致密光缆不能，玻璃与普通能；面板底座也能。
 
     2026-11-10 面板骨架加了一个：
@@ -453,14 +472,14 @@ class DeviceDefinition(object):
     ):
         if form not in FORMS:
             raise ValueError("未知的设备形态: %r" % (form,))
-        if (form == FORM_PART) != (whole_block_id is not None):
-            raise ValueError(
-                "面板形态必须指明对应的整方块设备，整方块设备不得指明: %s" % (device_id,)
-            )
+        if form != FORM_PART and whole_block_id is not None:
+            raise ValueError("整方块设备不得指明对应的整方块设备: %s" % (device_id,))
         if (form == FORM_PART) != (part_kind is not None):
             raise ValueError("面板形态必须指明种类，整方块设备不得指明: %s" % (device_id,))
         if part_kind is not None and part_kind not in PART_KINDS:
             raise ValueError("未知的面板种类 %r: %s" % (part_kind, device_id))
+        if part_kind == PART_KIND_TERMINAL and whole_block_id is None:
+            raise ValueError("终端面板必须指明对应的整方块终端: %s" % (device_id,))
         if accepts_parts and category not in (CATEGORY_CABLE, CATEGORY_PART_HOLDER):
             raise ValueError("只有光缆与面板底座能挂面板: %s" % (device_id,))
         self.id = device_id
@@ -569,19 +588,24 @@ class TemplateSpec(object):
 
 
 class ToolSpec(object):
-    """一件工具物品的静态定义（13 §2：网络扳手）。
+    """一件工具物品的静态定义（13 §2：网络扳手；2026-11-13 加配置卡、无线连接工具）。
 
-    **只有标识与名字，没有数值字段，这是有意的。** 扳手的行为——切断光缆的
-    某一面、拆单块面板、潜行拆卸（13 §6）——全在交互层，作者没给任何数值；
-    堆叠上限这类物品属性归物品生成器，与介质、内存条同理。
+    **只有标识、名字与物品说明，没有数值字段，这是有意的。** 工具的行为——切断光缆的
+    某一面、拆单块面板、潜行拆卸（13 §6），设隧道频率、配对无线连接器——全在交互层，作者
+    没给任何数值；堆叠上限这类物品属性归物品生成器，与介质、内存条同理。
+
+    `tip` 是物品说明的正文（不含开头的换行与颜色码）：物品 JSON 由 `scripts/gen_items.py`
+    按它写；配置卡与无线连接工具把自己记着的东西写进物品实例的说明时，也以它开头
+    （实例说明会盖掉物品 JSON 的那一份），两处同源。
     """
 
-    __slots__ = ("id", "label")
+    __slots__ = ("id", "label", "tip")
 
-    def __init__(self, tool_id, label):
-        # type: (str, str) -> None
+    def __init__(self, tool_id, label, tip=""):
+        # type: (str, str, str) -> None
         self.id = tool_id
         self.label = label
+        self.tip = tip
 
     def __repr__(self):
         return "ToolSpec(%s)" % (self.id,)
@@ -655,6 +679,45 @@ class MemorySpec(object):
         return "MemorySpec(%s, %d B)" % (self.id, self.capacity_bytes)
 
 
+# -- 设备的在线 / 离线外观（2026-11-13，作者画的离线材质）---------------------------
+
+#: 整方块设备的外观状态（方块状态）：0 离线、1 在线、2 冲突（只有控制器有：多台控制器连在一张网，
+#: 照 AE2 控制器冲突变红）。默认是列表里的第一个值，即 0 离线：刚放下的方块先是离线外观，服务端确认
+#: 在线后再写成在线（`server/devices/status_looks.py`），不会先亮一下再灭。生成器按它给方块加状态与
+#: 贴图切换。
+STATUS_STATE = "endernet:status"
+STATUS_OFFLINE = 0
+STATUS_ONLINE = 1
+STATUS_CONFLICT = 2
+
+#: 放置痕迹：有离线外观的设备另带原版特征 `minecraft:placement_position` 的两个状态，放下时由引擎填
+#: （点的是哪一面、落在格子的上半还是下半）。物品栏图标与放下的方块画的都是物品带的那一份状态，
+#: 只能靠放置时引擎改写的状态把两者分开：没放过的默认组合是 (down, bottom)，玩家放置放不出来（点
+#: 方块底面放下时一定落在上半），所以「状态 0 且还是默认组合」画在线外观（图标），其余状态 0 画离线。
+#: `/setblock`、结构与加这个特征之前的旧存档放出的方块也是默认组合，服务端第一次写外观时顺手把
+#: 下半改成上半（`PLACED_HALF`）。
+PLACED_FACE_STATE = "minecraft:block_face"
+PLACED_HALF_STATE = "minecraft:vertical_half"
+UNPLACED_FACE = "down"
+UNPLACED_HALF = "bottom"
+PLACED_HALF = "top"
+
+
+def looks_unplaced(states):
+    # type: (dict) -> bool
+    """方块状态是不是还带着没放过的默认组合（见 `PLACED_FACE_STATE`）；读不到这两个状态算放过。"""
+    return (states.get(PLACED_FACE_STATE) == UNPLACED_FACE
+            and states.get(PLACED_HALF_STATE) == UNPLACED_HALF)
+
+#: 没有离线外观的整方块设备：创造能量源是电源（作者画的离线图与在线图一样）。
+#: 转录器与存储转储器尚无离线贴图，沿用原有外观。
+NO_STATUS_LOOK = frozenset([
+    "endernet:creative_energy_source",
+    TRANSCRIBER_ID,
+    STORAGE_TRANSFER_ID,
+])
+
+
 #: 整方块设备的**透传容量**（13 §0.5「设备透传带宽（AE2 式）」，R14-a）：
 #: 线路经过一台设备继续往下走时，这台设备这一段最多能让多少带宽经过。
 #: 2026-11-09 作者定案 **8u**（与 AE2 整方块设备透传 8 频道一致），已定数值，
@@ -669,6 +732,37 @@ DEVICE_PASSTHROUGH_QUARTERS = Value(
 #: 这里给出的是每增加一个单元的增量，供定义表引用与诊断。
 PER_DISK_ENERGY = Value(1, note="存储驱动器：每块硬盘 1 EN/t（blocks.md）")
 PER_MEMORY_ENERGY = Value(8, note="内存槽：每根内存条 8 EN/t（blocks.md）")
+
+
+# -- P2P 隧道与无线连接器（2026-11-13 作者认可 `.claude/17` 的推荐值）---------------
+
+#: 一个频率组（一个输入、若干输出）总共能让多少带宽经过：32u，同 AE2 ME 隧道外侧的致密容量。
+#: 拓扑在线路树上把它记成隧道段的容量，经过这条隧道的各个出口分摊这一份。
+TUNNEL_CAPACITY_QUARTERS = Value(
+    units_to_quarters(32),
+    note="P2P 网络隧道每个频率组 32u（2026-11-13 作者认可）",
+)
+
+TUNNEL_PART_ID = "endernet:p2p_network_tunnel"
+WIRELESS_CONNECTOR_ID = "endernet:wireless_connector"
+
+#: 无线连接器配对的最远距离（格，两台方块中心的直线距离）。只连同一维度。
+WIRELESS_MAX_DISTANCE = Value(256, note="无线连接器配对上限 256 格（2026-11-13 作者认可）")
+
+#: 无线连接器按配对距离多耗的能：每个「距离单位」1 EN/t，单位数 = ceil(0.025 × 距离^1.5)
+#: （`wireless_distance_units`）。每台连接器各记一份，加上自身固定的 4 EN/t，一对合计约
+#: `8 + 0.05 × 距离^1.5`：64 格约 34 EN/t、256 格约 213 EN/t。
+WIRELESS_DISTANCE_ENERGY = Value(1, note="无线连接器：每个距离单位 1 EN/t（2026-11-13 作者认可）")
+WIRELESS_DISTANCE_FACTOR = 0.025
+WIRELESS_DISTANCE_EXPONENT = 1.5
+
+
+def wireless_distance_units(distance):
+    # type: (float) -> int
+    """配对距离（格）→ 计耗能的单位数。没配对（距离 0）为 0。"""
+    if distance <= 0:
+        return 0
+    return int(math.ceil(WIRELESS_DISTANCE_FACTOR * float(distance) ** WIRELESS_DISTANCE_EXPONENT))
 
 
 # -- 存储驱动器配置 --------------------------------------------------------
@@ -1291,6 +1385,21 @@ DEVICES = (
             "因此不影响线路分配与带宽准入。"
         ),
     ),
+    # --- 无线连接（2026-11-13）---
+    # 载体：容量照致密光缆 32u，自身不占带宽；R14-a 的设备透传 8u 不适用于它。
+    # 耗能 = 固定 4 EN/t + 每个距离单位 1 EN/t（单位数由配对距离算，没配对为 0），
+    # 单位数由装配层的 `_energy_inputs_of` 按配对数据给出，与驱动器按硬盘个数计同一条路。
+    DeviceDefinition(
+        WIRELESS_CONNECTOR_ID,
+        "无线连接器",
+        CATEGORY_WIRELESS,
+        bandwidth=BandwidthSpec(0, capacity_quarters=units_to_quarters(32)),
+        energy=EnergySpec(Value(4), per_unit=WIRELESS_DISTANCE_ENERGY),
+        notes=(
+            "载体 32u，自身不占带宽；用无线连接工具与另一台配对后两台合成一张网"
+            "（同维度、256 格内）。耗能 4 EN/t 加上按配对距离的部分。"
+        ),
+    ),
 )
 
 
@@ -1415,16 +1524,60 @@ TERMINAL_PARTS = (
 )
 
 
+#: P2P 隧道（2026-11-13，`.claude/17`）。只有面板形态，没有对应的整方块（`whole_block_id`
+#: 为 None）。挂在玻璃或普通光缆的一个面上，占宿主线路 1u、2 EN/t；用配置卡设成某个频率的
+#: 输入或输出，同频率恰好一个输入时，各端正面那一格经隧道连成一张网（拓扑的远程连边，
+#: 每组最多让 `TUNNEL_CAPACITY_QUARTERS` 经过）。目前只有运带宽的网络隧道。
+TUNNEL_PARTS = (
+    DeviceDefinition(
+        TUNNEL_PART_ID,
+        "P2P 网络隧道",
+        CATEGORY_TUNNEL,
+        bandwidth=BandwidthSpec(units_to_quarters(1)),
+        energy=EnergySpec(Value(2)),
+        form=FORM_PART,
+        part_kind=PART_KIND_TUNNEL,
+        notes=(
+            "面板形态：挂在末影玻璃光缆或末影光缆的一个面上，占宿主线路 1u、2 EN/t；"
+            "同频率一入多出，各端正面那一格经隧道连通，每组最多让 32u 经过；不能嵌套。"
+        ),
+    ),
+)
+
+#: 全部面板形态：终端与隧道。物品形态都是同名的展示方块（`gen_blocks.build_part_item_json`）。
+PARTS = TERMINAL_PARTS + TUNNEL_PARTS
+
+
 # -- 工具（13 §2）------------------------------------------------------------
 
-#: 工具物品规格。网络扳手：切断光缆的某一面、拆单块面板、潜行拆卸（13 §6）。
-#: 贴图为占位，作者后补。
-TOOLS = (ToolSpec("endernet:network_wrench", "网络扳手"),)
+WRENCH_ID = "endernet:network_wrench"
+#: 配置卡（2026-11-13，对应 AE2 内存卡；「内存卡」已被内存条系列占用）：潜行右键 P2P 隧道
+#: 设为输入并记下频率，右键别的隧道设为同频率的输出，潜行右键别处清空。只存频率。
+CONFIG_CARD_ID = "endernet:config_card"
+#: 无线连接工具（2026-11-13，对应 ExtendedAE 的无线设置工具）：右键两台无线连接器配对，
+#: 潜行右键连接器解除配对，潜行右键别处清空待配对的那一台。
+WIRELESS_LINK_TOOL_ID = "endernet:wireless_link_tool"
+
+#: 工具物品规格。网络扳手：切断光缆的某一面、拆单块面板、潜行拆卸（13 §6）；配置卡与
+#: 无线连接工具见上。贴图为占位，作者后补。
+TOOLS = (
+    # 扳手的说明是作者 2026-11-10 在物品 JSON 里定的原文
+    ToolSpec(WRENCH_ID, "网络扳手", "用于对终界网络设备进行维护"),
+    ToolSpec(
+        CONFIG_CARD_ID,
+        "配置卡",
+        "潜行右键 P2P 隧道设为输入并记下频率，右键其他隧道设为同频率的输出；潜行右键别处清空",
+    ),
+    ToolSpec(
+        WIRELESS_LINK_TOOL_ID,
+        "无线连接工具",
+        "右键两台无线连接器完成配对；潜行右键连接器解除配对，潜行右键别处清空",
+    ),
+)
 
 #: **已注册为游戏物品**的工具。与 `ITEM_MEDIUMS` 同一地位、同一理由：规格表与
-#: 「已经做成了物品」是两件事。扳手的物品 JSON、图标与语言条目由阶段 C 的
-#: `scripts/gen_items.py` 生成（2026-11-10），从此登记为物品。
-ITEM_TOOLS = ("endernet:network_wrench",)
+#: 「已经做成了物品」是两件事。物品 JSON、图标与语言条目由 `scripts/gen_items.py` 生成。
+ITEM_TOOLS = (WRENCH_ID, CONFIG_CARD_ID, WIRELESS_LINK_TOOL_ID)
 
 
 class DefinitionSet(object):
@@ -1449,6 +1602,8 @@ class DefinitionSet(object):
         "memory_slot.slot_count": MEMORY_SLOT_COUNT,
         "port.pickup_filter_limit": PICKUP_FILTER_LIMIT,
         "network.device_passthrough_quarters": DEVICE_PASSTHROUGH_QUARTERS,
+        "network.tunnel_capacity_quarters": TUNNEL_CAPACITY_QUARTERS,
+        "wireless.max_distance": WIRELESS_MAX_DISTANCE,
     }
 
     def __init__(
@@ -1501,7 +1656,7 @@ class DefinitionSet(object):
                 raise ValueError("光缆表里只能放光缆: %s" % (definition.id,))
             self._add_unique(self.cables, definition.id, definition, "光缆")
             self._add_unique(self._by_id, definition.id, definition, "设备")
-        for definition in parts if parts is not None else TERMINAL_PARTS:
+        for definition in parts if parts is not None else PARTS:
             if not definition.is_part():
                 raise ValueError("面板表里只能放面板形态的设备: %s" % (definition.id,))
             self._add_unique(self.parts, definition.id, definition, "面板")
@@ -1544,10 +1699,12 @@ class DefinitionSet(object):
             for tool_id in self.item_tools:
                 if tool_id not in self.tools:
                     raise ValueError("已注册为物品的工具不在工具表中: %s" % (tool_id,))
-        # 面板必须指向一台真实的整方块终端。只在两张表都用默认值时校验，
-        # 理由同上：测试常拿一小份自制设备表构造夹具。
+        # 指明了整方块对应物的面板（终端面板），必须指向一台真实的整方块终端。只在两张表都用
+        # 默认值时校验，理由同上：测试常拿一小份自制设备表构造夹具。
         if devices is None and parts is None:
             for definition in self.parts.values():
+                if definition.whole_block_id is None:
+                    continue
                 if definition.whole_block_id not in self.devices:
                     raise ValueError(
                         "面板 %s 指向的整方块设备不存在: %s"
@@ -1632,6 +1789,33 @@ class DefinitionSet(object):
         if value is None or value is UNCONFIGURED:
             return UNCONFIGURED
         return int(value)
+
+    def status_values_of(self, device_id):
+        # type: (str) -> tuple
+        """这台整方块设备的外观状态能取哪几个值（第一个是默认值）：控制器 `(0, 1, 2)`，其余有离线
+        外观的 `(0, 1)`，没有离线外观的（`NO_STATUS_LOOK`、光缆、面板、面板底座）为空。面板的离线
+        走面板外观读数，不在这里。"""
+        if device_id not in self.devices or device_id in NO_STATUS_LOOK:
+            return ()
+        if self.devices[device_id].category == CATEGORY_CONTROLLER:
+            return (STATUS_OFFLINE, STATUS_ONLINE, STATUS_CONFLICT)
+        return (STATUS_OFFLINE, STATUS_ONLINE)
+
+    def tunnel_capacity_quarters(self):
+        # type: () -> object
+        """一个 P2P 隧道频率组能让多少带宽经过（四分之一 u），见 `TUNNEL_CAPACITY_QUARTERS`。"""
+        value = self.config_value("network.tunnel_capacity_quarters")
+        if value is None or value is UNCONFIGURED:
+            return UNCONFIGURED
+        return int(value)
+
+    def wireless_max_distance(self):
+        # type: () -> float
+        """无线连接器配对的最远距离（格），见 `WIRELESS_MAX_DISTANCE`；缺项按 0（谁都连不上）。"""
+        value = self.config_value("wireless.max_distance")
+        if value is None or value is UNCONFIGURED:
+            return 0.0
+        return float(value)
 
     # -- 工具 ----------------------------------------------------------
 
@@ -1758,7 +1942,7 @@ class DefinitionSet(object):
         资产检查与物品生成器读这一份：两边各维护一张清单的话，新增一类物品
         时总有一处会漏，而漏掉的表现是「游戏里有这件物品、但没人检查它的贴图」
         或者反过来「检查报缺文件、其实这件物品还没做」。
-        三种规格都带 `id` 与 `label`，这正是那两处用到的全部字段。
+        几种规格都带 `id` 与 `label`，这正是那两处用到的全部字段。面板是展示方块，不在内。
         """
         return (
             self.item_medium_specs()

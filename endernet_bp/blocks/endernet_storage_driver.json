@@ -45,7 +45,19 @@
                         "minecraft:cardinal_direction"
                     ],
                     "y_rotation_offset": 180.0
+                },
+                "minecraft:placement_position": {
+                    "enabled_states": [
+                        "minecraft:block_face",
+                        "minecraft:vertical_half"
+                    ]
                 }
+            },
+            "states": {
+                "endernet:status": [
+                    0,
+                    1
+                ]
             }
         },
         "permutations": [
@@ -94,6 +106,17 @@
                             90,
                             0
                         ]
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('endernet:status') == 0 && !(q.block_state('minecraft:block_face') == 'down' && q.block_state('minecraft:vertical_half') == 'bottom')",
+                "components": {
+                    "minecraft:material_instances": {
+                        "*": {
+                            "render_method": "alpha_test",
+                            "texture": "endernet:storage_driver_model_offline"
+                        }
                     }
                 }
             }

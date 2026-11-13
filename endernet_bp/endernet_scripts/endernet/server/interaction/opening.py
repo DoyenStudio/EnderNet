@@ -83,8 +83,8 @@ class OpenTarget(object):
     """入口认领一次右键的结果：开哪个界面（`ui_key`，与 `@RegistToolDeltaScreen` 的键逐字相同）、
     带什么参数（`params`，整方块终端与面板同形：`device_ref` + `dimension`）。
 
-    `ui_key` 为 None = 归它管、这次打不开（设备还没被发现、这种面板没有界面）：原版交互照样
-    取消，不推屏。
+    `ui_key` 为 None = 归它管、这次打不开（设备还没被发现）：原版交互照样取消，不推屏。没有
+    界面的面板（隧道）干脆不认领（`PanelService.claim_open`），原版交互照常。
     """
 
     __slots__ = ("ui_key", "params")

@@ -491,16 +491,22 @@ class PatternStore(object):
 
     # -- 变更信号 ------------------------------------------------------
 
-    def mark_dirty(self, node_key, tick=None):
-        # type: (object, int) -> bool
+    def mark_dirty(self, node_key, tick=None, slot=None):
+        # type: (object, int, int) -> bool
         """这台设备所在的容器变了。**只记一笔**，不在这里读容器。
 
         引擎无关的入口：适配器把容器事件翻译成位置后调它。不立刻读的
         两个理由（都在模块 docstring 里）：事件顺序不可依赖；事件触发时
         容器内容可能还没落定。
+
+        给了 `slot` 且它不是样板槽（装配仓的原料/产物格、样板接口的回流行）
+        时不标脏：那些格子每次投料、回流都在变，样板没动，不该让派发复核失效。
         """
         state = self.get(node_key)
         if state is None:
+            return False
+        if (slot is not None and state.refresh_tick >= 0
+                and slot not in self.pattern_slots(state)):
             return False
         state.dirty_tick = self.tick if tick is None else int(tick)
         self._dispatch_revision += 1
@@ -688,9 +694,7 @@ class PatternStore(object):
             state.slot_count = min(state.slot_count, TEMPLATE_PATTERN_SLOT_COUNT.value)
         entries = {}
         invalid = {}
-        slots = (ASSEMBLE_PATTERN_SLOTS if state.device_id == "endernet:assemble_chamber"
-                 else range(state.slot_count))
-        for slot in slots:
+        for slot in self.pattern_slots(state):
             entry, error = self._read_one(state, adapter, slot)
             if state.unreadable:
                 # **中途读失败，整次作废。** 半份结果不是结果：把它当成
@@ -709,6 +713,14 @@ class PatternStore(object):
         state.invalid = invalid
         state.stats["invalid_slots"] = len(invalid)
         return True
+
+    @staticmethod
+    def pattern_slots(state):
+        # type: (PatternProviderState) -> object
+        """这台提供者哪些槽放样板。样板接口的槽数在读容器时已截到样板行。"""
+        if state.device_id == "endernet:assemble_chamber":
+            return ASSEMBLE_PATTERN_SLOTS
+        return range(state.slot_count)
 
     def _read_one(self, state, adapter, slot):
         # type: (PatternProviderState, object, int) -> tuple
@@ -1174,8 +1186,8 @@ class PatternStore(object):
             "unresolved": self.policy.unresolved_report(),
             "scope_note": (
                 "样板结构、编解码、9 格读写与产物索引已实现；"
-                "**执行半边（投料与回流）未实现**（07-05/06，依赖 09），"
-                "预设配方适配未实现（07-03），编辑界面属任务 11。"
+                "投料与回流由工厂（09）与回流（10）完成；配方查询走引擎配方适配"
+                "（`adapters/recipes.py`，07-03 的落地形态），样板由样板终端编辑（11）。"
                 "样板槽的变更由容器事件标脏、去抖后重读，"
                 "因此索引永远是容器内容的派生——它不存档、也不需要迁移。"
             ),

@@ -5,7 +5,7 @@
             "description": {
                 "identifier": "geometry.endernet.ender_cable_panel",
                 "texture_width": 64,
-                "texture_height": 32,
+                "texture_height": 64,
                 "visible_bounds_width": 3,
                 "visible_bounds_height": 2.5,
                 "visible_bounds_offset": [
@@ -318,6 +318,251 @@
                                     "uv": [
                                         48,
                                         0
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_tunnel",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        48,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_default_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        43,
+                                        12
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_common_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_crafting_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        12,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_template_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        24,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_factoric_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        36,
+                                        24
+                                    ],
+                                    "uv_size": [
+                                        12,
+                                        12
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "panel_north_tunnel_offline",
+                    "parent": "frame_north",
+                    "pivot": [
+                        -8,
+                        8,
+                        0
+                    ],
+                    "cubes": [
+                        {
+                            "origin": [
+                                -14,
+                                2,
+                                0
+                            ],
+                            "size": [
+                                12,
+                                12,
+                                0.5
+                            ],
+                            "uv": {
+                                "north": {
+                                    "uv": [
+                                        0,
+                                        36
                                     ],
                                     "uv_size": [
                                         12,

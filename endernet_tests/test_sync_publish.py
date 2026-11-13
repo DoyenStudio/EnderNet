@@ -51,6 +51,7 @@ from endernet.common.protocol import (
     SYNC_SCHEMA_VERSION,
     TerminalCommand,
     VIEW_ITEM,
+    VIEW_DEVICE,
     VIEW_ORDER,
 )
 from endernet.common.resources.key import ResourceKey
@@ -1691,6 +1692,28 @@ class TestRefusals(Fixture):
         self.assertNotIn(MSG_ORDER_STATE, kinds)
         self.assertNotIn(MSG_INVENTORY_SNAPSHOT, kinds)
         self.assertNotIn(MSG_SNAPSHOT_BEGIN, kinds)
+
+    def test_a_device_view_session_gets_no_item_streams(self):
+        """设备面板按 `VIEW_DEVICE` 开会话：开得起来；背包快照、库存快照一条不发，
+        要快照也不给（库存流只属于物品视图）。"""
+        device = self.devices[NETWORK]
+        reply = self.hub.handle(
+            SyncEnvelope(SessionOpen("r1", device, 0), view_kind=VIEW_DEVICE), "p1"
+        )
+        self.assertEqual(reply.message.kind, MSG_SESSION_READY)
+        session_id = reply.session_id
+        self.hub.tick()
+        self.hub.handle(
+            SyncEnvelope(SnapshotRequest("q1", 0), session_id=session_id,
+                         network_id=reply.network_id, epoch=reply.epoch,
+                         view_kind=VIEW_DEVICE),
+            "p1",
+        )
+        self.hub.tick()
+        kinds = [envelope.message.kind for envelope in self.port.sent]
+        self.assertNotIn(MSG_INVENTORY_SNAPSHOT, kinds)
+        self.assertNotIn(MSG_SNAPSHOT_BEGIN, kinds)
+        self.assertNotIn(MSG_ITEM_DELTA, kinds)
 
     def test_the_error_envelope_needs_no_session(self):
         """`error` 是「S2C 必须带会话」唯一的例外，否则只能硬编一个假会话。

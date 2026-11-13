@@ -40,6 +40,7 @@ from ..common.definitions import (
     CATEGORY_ASSEMBLY,
     CATEGORY_MEMORY,
     CATEGORY_PROCESSOR,
+    CATEGORY_WIRELESS,
     PART_KIND_TERMINAL,
     PATTERN_MODE_CRAFTING,
     DefinitionSet,
@@ -76,6 +77,7 @@ from .adapters import EngineRecipeSource
 from .adapters import ToolDeltaWorldAdapter
 from .application import ApplicationService
 from .devices import CableIntentService, CableStateKeeper, DeviceCatalog, PanelService
+from .devices import StatusLooks, TunnelService, WirelessService
 from .interaction import ItemExchange, PlaceFeedback
 from .crafting.orders import OrderPolicy
 from .crafting.orders import AbsentReturns, FactoryService
@@ -119,6 +121,7 @@ from .devices import (
 )
 from .persistence import ExtraDataRepository, Record
 from .persistence import TerminalInventoryArchive
+from .persistence.repository import dumps_payload
 from .persistence import (
     RecoveryGate,
     assert_consistent,
@@ -134,7 +137,7 @@ from .network import (
     ServiceRegistry,
 )
 from .network import SchedulerService
-from .network import TopologyService
+from .network import ControllerState, TopologyService
 from .runtime import EventKind, EventQueue
 from .runtime import ChangeKind, DeviceLifecycle
 from .runtime import LogicalClock, SchedulerPolicy
@@ -609,11 +612,12 @@ class ServerBootstrap(object):
         sync_events=None,
         persistence_backend=None,
         persistence_batch=32,
+        persistence_interval=30,
         on_order_completed=None,
         on_slot_display=None,
         fluid_provider=None,
     ):
-        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, int, object, object, object) -> None
+        # type: (DefinitionSet, object, int, int, int, object, int, object, str, object, object, object, int, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, object, int, int, object, object, object) -> None
         self.definitions = definitions if definitions is not None else DefinitionSet()
         #: 逻辑时钟（04-01）。**它是业务时间的唯一依据**，由 `drive_once()`
         #: 每帧推进一步，经 `context["tick"]` 下传给各服务。注入自有实例即可
@@ -652,7 +656,13 @@ class ServerBootstrap(object):
             self.world,
             clock=self.clock,
         )
-        self.lifecycle.set_config_reader(self.cables.read_config)
+        #: 无线连接器（2026-11-13）：配对数据在方块实体里，注册时与光缆一样经生命周期的 config
+        #: 读口读进记录；配对成立的两台是拓扑的一条远程连边。工具的两个动作在意图服务建好后登记。
+        self.wireless = WirelessService(
+            self.definitions, self.registry, self.topology, self.world, clock=self.clock
+        )
+        self.lifecycle.set_config_reader(self._read_device_config)
+        self.topology.add_remote_links(self.wireless)
         self.admission = AdmissionService(self.definitions, self.registry, self.topology)
         #: 每帧给运行时的服务推进预算。与图重建预算分开计：两者消耗的
         #: 是同一帧的时间，但一个是节点展开、一个是业务工作，不能混在一起。
@@ -671,6 +681,15 @@ class ServerBootstrap(object):
         #: 且按**调用次数**付（`persistence_backend.md` §3.2），所以提交要合并；
         #: 而一次写太多会在单帧里堆出尖峰，所以写也限量。
         self.persistence_batch = int(persistence_batch)
+        #: 两次提交之间至少隔几帧（30 帧约 1 秒）。每个窗口把脏介质、脏接口、
+        #: 网络台账（预留 / 待核对转移 / 订单簿）与终端格子里的实物**同一次**
+        #: 提交，崩服后读回的是同一时刻的一组记录；也把 `SaveExtraData()`
+        #: 从「物流跑着就每帧一次」压到每个窗口最多一次。
+        self.persistence_interval = max(1, int(persistence_interval))
+        self._persist_tick = None
+        #: 上次写进存档的网络台账 / 终端库存载荷：没变就不重写。
+        self._persisted_networks = {}
+        self._persisted_terminals = None
         if repository is None and persistence_backend is not None:
             repository = ExtraDataRepository(persistence_backend)
         self.repository = repository
@@ -1151,6 +1170,37 @@ class ServerBootstrap(object):
         )
         self.slot_displays.panels = self.panels.display_values
         self.cables.on_faces_changed = self._on_cable_faces_changed
+        #: P2P 网络隧道（2026-11-13）：频率索引是拓扑的另一份远程连边，准入按它把关隧道后面的
+        #: 设备；配置卡的两个动作登记进同一张意图分派表。无线连接工具同一张表。
+        self.tunnels = TunnelService(
+            self.definitions,
+            self.registry,
+            self.catalog,
+            self.topology,
+            self.panels,
+            items=self.item_exchange,
+        )
+        self.tunnels.register(self.cable_intents)
+        self.topology.add_remote_links(self.tunnels)
+        self.admission.set_tunnels(self.tunnels)
+        self.wireless.items = self.item_exchange
+        self.wireless.register(self.cable_intents)
+        #: 设备的在线 / 离线外观（2026-11-13）：整方块设备写方块状态 `endernet:status`，面板换离线
+        #: 屏幕（面板外观读数加偏移）。结论取设备状态，与设备界面同一个；拓扑、带宽、运行时一变就全部
+        #: 重算，此外每帧轮转复查几台（够不够电没有通知）。
+        self.status_looks = StatusLooks(
+            self.definitions,
+            self.registry,
+            self.catalog,
+            self.world,
+            status_of=self.runtimes.device_status,
+            conflict_of=self._controller_conflict,
+            mark_panels=self.slot_displays.mark_panels,
+        )
+        self.panels.offline_of = self.status_looks.panel_offline
+        self.topology.add_listener(self.status_looks.mark_all)
+        self.admission.add_listener(self.status_looks.mark_all)
+        self.runtimes.add_listener(self.status_looks.mark_all)
         # 运行时状态变化的消费者（任务 11）。挂在这里而不是让 sync 自己订阅：
         # `_emit` 的订阅者顺序按注册先后走，而这一步在**装配期**完成，
         # 与 04/05 那些消费者一样是固定的、可复现的顺序。
@@ -1346,6 +1396,8 @@ class ServerBootstrap(object):
         # 光缆的方块状态紧跟拓扑发布（13 §5「拓扑重建发布后」）：事实来源是拓扑，
         # 方块状态只是外观；按帧限量，只在变了时写。
         cable_cells = self.cables.advance(self.clock.current_tick())
+        # 无线连接器的方块实体重读（区块刚加载时读不到的那几台），同光缆的节奏
+        self.wireless.advance(self.clock.current_tick())
         # 唤醒投递必须夹在**重建之后、推进之前**：放前面会丢掉「本帧刚放下、
         # 运行时还没同步成员」的设备（它的 lane 还不存在）；放后面则本帧
         # 白等一帧。集合为空时 `take_wakes()` 是 O(1)，空闲帧几乎不花钱。
@@ -1360,6 +1412,9 @@ class ServerBootstrap(object):
         self.storage_transfers.prepare(self.clock.current_tick(), self._transcriber_energy)
         self._settle_input_power()
         service_steps = self.runtimes.tick(self.runtime_budget, self._tick_context())
+        # 在线 / 离线外观紧跟运行时推进：本帧的网络状态算完了再写方块状态；面板外观的变化
+        # 由帧尾的槽位模块显示发出去
+        looks = self.status_looks.advance()
         # 发布窗口**紧跟运行时推进**（任务 11-02）：提交发生在 `runtimes.tick`
         # 内，取脏键放其后，窗口才看得见本帧提交。放前面会让本帧的提交等到
         # 下一帧才发布——那不是错，只是白慢一拍；放后面则更快。位置不能挪。
@@ -1409,6 +1464,8 @@ class ServerBootstrap(object):
             #: 本帧重算了几格光缆的方块状态（阶段 C）。恒为 0 是正常的——只在放下、
             #: 区块加载、邻居变化与扳手操作之后才有。
             "cable_cells": cable_cells,
+            #: 本帧算了几格设备外观（在线 / 离线，2026-11-13）
+            "status_looks": looks,
             #: 本帧服务推进消耗的工作量（03）。受 `runtime_budget` 约束；
             #: 调度器落地后它不再恒为 0——有到期任务时才会有消耗。
             "service_steps": service_steps,
@@ -1577,20 +1634,30 @@ class ServerBootstrap(object):
 
     def advance_persistence(self):
         # type: () -> dict
-        """把脏记录写进存档并提交。返回 `{"records": n, "commits": m}`。
+        """按时间窗把脏记录写进存档并提交。返回 `{"records": n, "commits": m}`。
 
         **没有脏记录时不调 `SaveExtraData()`**：那次调用的固定开销约
         39.8 KB，与载荷几乎无关（`persistence_backend.md` §3.2），
         空转帧不该付这笔钱。
+
+        网络台账与终端库存只在介质与接口的积压**写完的那个窗口**一起写：
+        同一次提交里的预留与介质内容、订单与接口批次才对得上。
         """
         if not self.persistence_enabled or self.persistence_restore_error:
             return {"records": 0, "commits": 0}
+        if (self._persist_tick is not None
+                and self.tick_count - self._persist_tick < self.persistence_interval):
+            return {"records": 0, "commits": 0}
+        self._persist_tick = self.tick_count
         # 预算是**两家分**（驱动器与接口各一半），不是先到先得：轮流让一家
         # 吃满的话，另一家在「那一类一直有脏记录」的网络里会永远排不上队，
         # 而症状是「有些设备的改动就是不落盘」，查起来毫无线索。
         half = max(1, self.persistence_batch // 2)
         records = self.drivers.save_to_repository(self.repository, budget=half)
         records += self.ports.save_to_repository(self.repository, budget=half)
+        if not self.drivers.pending_archive_writes() and not self.ports.pending_archive_writes():
+            records += self.write_network_states(changed_only=True)
+            records += self._write_terminal_inventories(changed_only=True)
         committed = self.repository.commit()
         return {"records": records, "commits": 1 if committed else 0}
 
@@ -1598,26 +1665,35 @@ class ServerBootstrap(object):
         # type: () -> int
         """把剩下的脏记录一次写完。**停机路径用，不限预算。**
 
-        网络级台账（预留、待核对转移、订单簿）**只在这里写**（以及显式调用
-        `write_network_states()` 时）：完整快照用于正常退出恢复；
-        不承诺非正常退出时最后一帧持久化。
-        不逐帧构造整份订单簿，避免订单数量变成每帧开销。
+        平时由 `advance_persistence` 按时间窗把网络台账与介质同批写出，
+        崩服最多丢最后一个窗口；这里补写停机那一刻的完整状态。
         """
         if not self.persistence_enabled or self.persistence_restore_error:
             return 0
         records = self.drivers.save_to_repository(self.repository, budget=None)
         records += self.ports.save_to_repository(self.repository, budget=None)
         records += self.write_network_states()
-        records += self.terminal_archive.save(self.repository)
+        records += self._write_terminal_inventories()
         self.repository.commit()
         return records
 
-    def write_network_states(self):
-        # type: () -> int
+    def _write_terminal_inventories(self, changed_only=False):
+        # type: (bool) -> int
+        """终端格子里的实物（合成格、样板终端的真实槽）。`changed_only` 时与上次写的相同就跳过。"""
+        text = dumps_payload(self.terminal_archive.snapshot())
+        if changed_only and text == self._persisted_terminals:
+            return 0
+        written = self.terminal_archive.save(self.repository)
+        self._persisted_terminals = text
+        return written
+
+    def write_network_states(self, changed_only=False):
+        # type: (bool) -> int
         """把每张网络的台账写进存档。返回写了多少条。
 
         **一张网络一条记录**，主键是主控位置文本。冻结（信封读不懂）的那些
-        不写回——与驱动器/介质同一条纪律。
+        不写回——与驱动器/介质同一条纪律。`changed_only` 时载荷与上次写的
+        相同就不重写（定期落盘用）。
         """
         if not self.persistence_enabled or self.persistence_restore_error:
             return 0
@@ -1647,9 +1723,14 @@ class ServerBootstrap(object):
                     if isinstance(factory, FactoryService) else None
                 ),
             }
+            # 比较编码后的文本：载荷里可能挂着活对象的引用，存字典会跟着变。
+            text = dumps_payload(payload)
+            if changed_only and self._persisted_networks.get(record_id) == text:
+                continue
             self.repository.write(
                 Record(NETWORK_RECORD_KIND, record_id, payload)
             )
+            self._persisted_networks[record_id] = text
             written += 1
         return written
 
@@ -1688,6 +1769,7 @@ class ServerBootstrap(object):
             )
             return report
         report["batch"] = self.persistence_batch
+        report["interval"] = self.persistence_interval
         report["backend"] = (
             type(self.persistence_backend).__name__
             if self.persistence_backend is not None
@@ -1927,6 +2009,9 @@ class ServerBootstrap(object):
             return {"unit_count": self.memory_slots.unit_count_of(ref)}
         if category == CATEGORY_ASSEMBLY:
             return {"state": DEVICE_WORK if self.patterns.assembly.is_working(ref) else DEVICE_IDLE}
+        if category == CATEGORY_WIRELESS:
+            # 按配对距离的耗能单位（2026-11-13）：没配对为 0，方块实体还没读到为 None（待确认）
+            return {"unit_count": self.wireless.distance_units(ref)}
         if category == CATEGORY_PROCESSOR:
             factory = runtime.services.get(ServiceId.FACTORY)
             if not isinstance(factory, FactoryService):
@@ -2556,6 +2641,11 @@ class ServerBootstrap(object):
             # 光缆的方块状态维护也从**同一批变化**推导（阶段 C）：放下、区块加载、
             # 邻居变化、面板离开各自决定哪格什么时候重算。
             self.cables.observe(change)
+            # P2P 隧道的频率索引与无线连接器的方块实体重读也从同一批变化推导（2026-11-13）
+            self.tunnels.observe(change)
+            self.wireless.observe(change)
+            # 在线 / 离线外观跟踪哪几格也从同一批变化推导
+            self.status_looks.observe(change)
             # 驱动器状态与接口状态也从**同一批变化**推导，不另开观察者通道——
             # 两条路径分叉就会出「拓扑知道设备没了、驱动器/接口还以为在」。
             self.drivers.observe(change)
@@ -2650,8 +2740,24 @@ class ServerBootstrap(object):
         """光缆的按面数据刚被改过（`CableStateKeeper.on_faces_changed`）：外观下一帧比一次，
         新出现的面板核对终端库存身份（接了存档时）。"""
         self.slot_displays.mark_panels(node_key)
+        self.tunnels.refresh_host(node_key)
+        self.status_looks.refresh_host(node_key)
         if self.persistence_enabled:
             self._discover_panels(self.registry.get(node_key))
+
+    def _controller_conflict(self, node_key):
+        # type: (object) -> bool
+        """这一格所在的网络是不是控制器冲突（不止一台控制器），控制器的冲突外观用。"""
+        component = self.topology.snapshot().component_of(node_key)
+        return component is not None and component.controller_state == ControllerState.CONFLICT
+
+    def _read_device_config(self, node_key, device_id):
+        # type: (object, str) -> object
+        """生命周期注册时读 config 的口子：光缆与面板底座读按面数据，无线连接器读配对数据，
+        别的设备没有（None）。"""
+        if self.definitions.has_face_data(device_id):
+            return self.cables.read_config(node_key, device_id)
+        return self.wireless.read_config(node_key, device_id)
 
     def _discover_panels(self, record):
         # type: (object) -> None
@@ -2726,6 +2832,11 @@ class ServerBootstrap(object):
             ),
             #: 光缆面板（阶段 D）：挂上、打开、退还、挖掉时掉出的件数
             "panels": self.panels.diagnostics(),
+            #: P2P 隧道的频率组与无线连接器的方块实体读写（2026-11-13）
+            "tunnels": self.tunnels.diagnostics(),
+            "wireless": self.wireless.diagnostics(),
+            #: 在线 / 离线外观（2026-11-13）：跟踪几格、写了几次、面板变了几次
+            "status_looks": self.status_looks.diagnostics(),
             "plan": self.plan_diagnostics(),
             "order": self.order_diagnostics(),
             "energy": self.energy_diagnostics(),
@@ -2755,7 +2866,8 @@ class ServerBootstrap(object):
                 "任务 10 的产物回流与分配（资源键索引、按真实到达量分配、"
                 "归属与计数同步、回执去重、迟到产物走普通库存）；"
                 "装配档位 %s。**接口接触真实引擎的那一段（箱子、背包、其他模组的"
-                "物流）没有在游戏内实测过**，流体路径则整条未接入（13-03）。"
+                "物流）没有逐项游戏验收**；流体：主动流体口与样板流体投料走公共流体接口，"
+                "被动流体口的本地储罐尚未接入（13-03）。"
                 "**四个服务槽位都已是正式实现**（工厂的替身已随任务 09 撤掉），"
                 "但「不是替身」不等于「能玩」："
                 "本装配若没显式注入 `returns_sink`，产物回流入口仍是任务 10 的"
@@ -2763,25 +2875,23 @@ class ServerBootstrap(object):
                 "**如实阻塞**并给出 order_returns_absent——那不是缺料、"
                 "也不是机器坏了，是**这条装配没有把 10 接上**"
                 "（游戏内由 `start_server()` 接上）；"
-                "装配仓执行是 07-06，它的回流入口已备好但仍无调用方。"
+                "装配仓执行（07-06）由工厂服务逐帧推进，产物经回流入口登记。"
                 "存档后端**已接入驱动器/介质、接口与网络级台账**（12-03/12-04，"
                 "世界 ExtraData）：接了 `persistence_backend` 时，驱动器槽位、"
                 "介质内容、接口配置/缓冲归属/批次/待核对标记都会随存档走，"
                 "重进世界**按位置重挂**；分阶段恢复（12-05）在读完记录到第一次"
                 "完整推进之间**不接受新存取**。"
-                "**新订单支持正常退出恢复**：完整计划与逐次执行账按主控位置恢复，"
+                "网络台账（预留、待核对转移、订单簿）与介质、接口、终端格子按"
+                "时间窗（`persistence_interval` 帧）**同一次提交**，崩服最多丢"
+                "最后一个窗口。**订单支持恢复**：完整计划与逐次执行账按主控位置恢复，"
                 "沿用订单/执行 ID，重建租约、等待回流与有主预留；无主预留只归档，"
                 "旧测试订单不迁移。**待核对的外部投料恢复成待核对但不重放**"
                 "（12-07）。拆除时接口记录删掉、余料另存一条处置留痕（12-06）。"
                 "没接后端时 `persistence` 那一节会如实报 `enabled: False`。"
-                "界面同步**只接了底座**——"
-                "会话与消息协议、快照与增量、长列表模型已完成，但没有任何一面"
-                "终端界面接上它（11-03 及以后等待 UI 交接），"
-                "因此 `sync` 那一节的 `networks` 为空是正常的。"
-                "预设配方适配（07-03）与样板编辑界面（11）都未开始，"
-                "因此样板目前只能看不能用——`debug_query(\"pattern\")`"
-                "查得到 9 格里有什么。"
-                "因此网络能不能开工，取决于当地那台网络的能源判定与带宽判定："
+                "终端界面（通用 / 合成 / 样板 / 工厂）与设备面板已经接上同步层"
+                "（会话、快照与增量、长列表）；样板由样板终端编码，装进样板接口"
+                "或装配仓后参与下单。"
+                "网络能不能开工，取决于当地那台网络的能源判定与带宽判定："
                 "判定为「待确认」时业务命令被拒并给出"
                 "energy_unavailable / bandwidth_unknown——**那是「算不出来」，"
                 "不是「没电」**，详情见 energy 那一节。"
@@ -2948,8 +3058,8 @@ class ServerBootstrap(object):
         view["unresolved"] = self.energy_policy.unresolved_report()
         view["scope_note"] = (
             "已接入 FE 缓冲、2:1 换算与模拟 tick 耗能结算。断电暂停"
-            "（04-06）与设备级能源状态通知（04-08）未实现。装置数量与工作态"
-            "还没有来源、基带等设备的耗能在 blocks.md 里未列（R10），因此库默认"
+            "（04-06）与设备级能源状态通知（04-08）未实现。驱动器数量、内存条根数、"
+            "处理器与装配仓工作态已接入；基带等设备的耗能在 blocks.md 里未列（R10），因此库默认"
             "口径下真实网络一律报「待确认」；DEV 档用替身口径把算不出的需求"
             "忽略掉（见 ignored_demand），那是「能跑起来」而不是「已定案」。"
         )
@@ -2974,10 +3084,9 @@ class ServerBootstrap(object):
         )
         report["scope_note"] = (
             "同步通道已接线：会话与消息协议（11-01）、快照/分批/版本增量/"
-            "断档重取/订阅清理（11-02）、长列表模型（11-09）已在离线层面完成。"
-            "**没有一面终端界面接上它**（11-03～11-07、11-10～11-14 未开始），"
-            "因此现在没有任何客户端在订阅——`networks` 为空是正常的，"
-            "不是「同步挂了」。11.md 页尾的请求大小、会话过期与分页上限"
+            "断档重取/订阅清理（11-02）、长列表模型（11-09），终端界面与设备面板"
+            "都经它订阅；`networks` 只列当前有人订阅的网络，没人开界面时为空。"
+            "11.md 页尾的请求大小、会话过期与分页上限"
             "仍未测量（11-14），相关字段见 `unresolved`。"
         )
         return report

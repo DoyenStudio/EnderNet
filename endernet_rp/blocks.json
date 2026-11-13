@@ -128,6 +128,9 @@
         "textures": "endernet:network_baseband_8_all",
         "sound": "stone"
     },
+    "endernet:p2p_network_tunnel": {
+        "sound": "stone"
+    },
     "endernet:parallel_processor": {
         "textures": "endernet:parallel_processor_all",
         "sound": "stone"
@@ -188,6 +191,10 @@
             "east": "endernet:common_device_side",
             "west": "endernet:common_device_side"
         },
+        "sound": "stone"
+    },
+    "endernet:wireless_connector": {
+        "textures": "endernet:wireless_connector_all",
         "sound": "stone"
     },
     "format_version": [

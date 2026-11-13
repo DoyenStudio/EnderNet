@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 1,
+            "netease:customtips": {
+                "value": "\n§7右键两台无线连接器完成配对；潜行右键连接器解除配对，潜行右键别处清空"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:wireless_link_tool"
+        }
+    }
+}

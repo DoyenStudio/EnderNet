@@ -108,6 +108,21 @@ class TestTerminalRecovery(unittest.TestCase):
         self.assertIsNone(self.primitives.slots[9])
         self.assertIsNone(self.primitives.slots[10])
 
+    def crash_and_restart(self):
+        """模拟崩服：只有已提交（`SaveExtraData()` 过）的那一份留下来，不走 `stop()`。"""
+        crashed = testsupport.MemoryExtraDataBackend()
+        crashed.committed = dict(self.backend.committed)
+        self.backend = crashed
+        self.start()
+
+    def test_terminal_items_survive_a_crash_after_the_save_window(self):
+        """崩服一致性：终端格子里的实物随定期落盘写出，不必等正常退出。"""
+        self.grid().set_slot(0, IRON, 12)
+        for _ in range(self.server.persistence_interval + 1):
+            self.server.tick()
+        self.crash_and_restart()
+        self.assertEqual(self.grid().entry(0), (IRON, 12))
+
     def test_replaced_terminals_do_not_inherit_items_or_drop_offline_orphans(self):
         self.grid().set_slot(0, IRON, 12)
         self.template().slots.set_slot(INPUT_SLOT, BLANK, 3)

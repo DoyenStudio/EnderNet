@@ -57,11 +57,12 @@
   一份（`endernet:part_config_<面>`），挂上新面板时清空、原地换方块时随面板搬走。
 
 **外观**：`display_values(node_key)` 给 `SlotDisplayTracker` 当面板读数（六面取值，顺序
-`FACING_NAMES`，种类序号同 `cable_shapes.PANEL_KINDS`）。
+`FACING_NAMES`，种类序号同 `cable_shapes.PANEL_KINDS`）。面板离线（`offline_of`，装配层接
+`StatusLooks.panel_offline`，2026-11-13）时那一面取值加 `slot_display.OFFLINE_OFFSET`，画离线屏幕。
 """
 
 from ...common.cable_shapes import PANEL_PART_IDS, PART_PANEL
-from ...common.channels import PANEL, kind_of, model_value
+from ...common.channels import OFFLINE_OFFSET, PANEL, kind_of, model_value
 from ...common.channels.cable_intent import (
     ACTION_ADD_CABLE,
     ACTION_PLACE_PANEL,
@@ -110,7 +111,8 @@ class PartKindHooks(object):
     """一种面板的流程（面板骨架）：界面（右键点中它开什么）与正面那一格变了。都可缺。
 
     - `screen_of(record, face, part_id) -> OpenTarget`（`server/interaction/opening.py`）；
-      缺了 = 这种面板没有界面：点中它照样只认领、不推屏，原版交互一样取消；
+      缺了 = 这种面板没有界面（P2P 隧道）：点中它不认领，原版交互照常——手里拿着方块就贴着
+      这一面放下去，与点光缆别处一样；
     - `on_front_changed(part_key, part_id, front_key) -> None`。
     """
 
@@ -148,6 +150,8 @@ class PanelService(object):
         self.intents = None
         #: 面板种类 → `PartKindHooks`
         self._kinds = {}
+        #: `offline_of(PartKey) -> bool`：这块面板离线没有（外观换离线屏幕）；没接就一律按在线画
+        self.offline_of = None
         self.register_kind(PART_KIND_TERMINAL, screen_of=self._terminal_screen)
         self.stats = dict.fromkeys(
             (
@@ -384,8 +388,8 @@ class PanelService(object):
 
         只看能挂面板的方块（玻璃、普通光缆、面板底座）。射线是玩家眼睛 → 引擎给的命中点，与该格
         **当前的方块状态**求交，与意图同一个求交（`CableIntentService.pick_at`）。点中面板 → 它那
-        一种的 `screen_of`（终端：`_terminal_screen`）；这种面板没有界面 → 认领、打不开。没点中
-        面板、这格还没加载好、射线读不到 → 不认领，原版照常（贴着光缆放方块之类）。
+        一种的 `screen_of`（终端：`_terminal_screen`）。这种面板没有界面（隧道）、没点中面板、这格
+        还没加载好、射线读不到 → 不认领，原版照常（贴着光缆或面板放方块之类）。
         """
         if use.block not in PANEL_HOST_IDS or self.intents is None:
             return None
@@ -407,7 +411,7 @@ class PanelService(object):
             return None
         hooks = self.hooks_of(part_id)
         if hooks is None or hooks.screen_of is None:
-            return OpenTarget()
+            return None
         return hooks.screen_of(record, hit.face, part_id)
 
     def _terminal_screen(self, record, face, part_id):
@@ -430,7 +434,13 @@ class PanelService(object):
         if record is None or kind_of(record.device_id) != PANEL:
             return None
         parts = dict(self.catalog.parts_of(record))
-        return tuple(model_value(PANEL_PART_IDS, parts.get(face)) for face in FACING_NAMES)
+        values = []
+        for face in FACING_NAMES:
+            value = model_value(PANEL_PART_IDS, parts.get(face))
+            if value and self.offline_of is not None and self.offline_of(PartKey(node_key, face)):
+                value += OFFLINE_OFFSET
+            values.append(value)
+        return tuple(values)
 
     # -- 宿主上的面板 ----------------------------------------------------
 

@@ -34,6 +34,7 @@ from endernet.common.channels.slot_display import (
     EMPTY,
     FACING_VARIABLE,
     FIRST_MODEL,
+    OFFLINE_OFFSET,
     PANEL,
     PANEL_DEVICES,
     has_facing,
@@ -47,6 +48,8 @@ from endernet.common.definitions import (
     CATEGORY_TERMINAL,
     FORM_PART,
     PART_KIND_TERMINAL,
+    PART_KIND_TUNNEL,
+    TUNNEL_PART_ID,
     PATTERN_MODE_FACTORY,
     DefinitionSet,
     DeviceDefinition,
@@ -303,7 +306,13 @@ class TestPanelReferences(unittest.TestCase):
 
 class TestPanelKinds(unittest.TestCase):
     def test_kinds_are_the_registered_parts(self):
+        """外观种类表是四种终端面板，P2P 隧道另有一块屏幕排在最后（`PANEL_SCREENS`）；合起来就是
+        全部面板。"""
         definitions = DefinitionSet()
+        terminals = [part_id for part_id in definitions.parts
+                     if definitions.part_kind_of(part_id) == PART_KIND_TERMINAL]
+        self.assertEqual(sorted(PANEL_PART_IDS[:len(PANEL_KINDS)]), sorted(terminals))
+        self.assertEqual(PANEL_PART_IDS[len(PANEL_KINDS):], (TUNNEL_PART_ID,))
         self.assertEqual(sorted(PANEL_PART_IDS), sorted(definitions.parts))
         for (kind, terminal), part_id in zip(PANEL_KINDS, PANEL_PART_IDS):
             self.assertEqual(part_id, panel_part_id(kind))
@@ -1561,8 +1570,9 @@ class TestHolderThroughTheServer(unittest.TestCase):
                          ["open", "add_cable", "panel_item"])
         self.assertEqual(rig.server.event_binder.openers.names(), ["terminal", "panel"])
         payload = rig.server.slot_displays.answer(key(0, z=-1))
+        # 底座上的面板不入网，外观是离线屏幕（2026-11-13）
         self.assertEqual(parse_update(payload)[2][FACING_NAMES.index("south")],
-                         FIRST_MODEL + PANEL_PART_IDS.index(COMMON_PART))
+                         FIRST_MODEL + PANEL_PART_IDS.index(COMMON_PART) + OFFLINE_OFFSET)
         self.assert_not_on_a_cable(rig.ref("south", host=key(0, z=-1)))
 
     def test_digging_a_holder_drops_its_panels_and_not_itself(self):
@@ -1597,11 +1607,18 @@ class TestPanelFramework(unittest.TestCase):
     def test_every_panel_has_a_kind(self):
         definitions = DefinitionSet()
         for part_id in definitions.parts:
-            self.assertEqual(definitions.part_kind_of(part_id), PART_KIND_TERMINAL, part_id)
+            expected = PART_KIND_TUNNEL if part_id == TUNNEL_PART_ID else PART_KIND_TERMINAL
+            self.assertEqual(definitions.part_kind_of(part_id), expected, part_id)
         self.assertIsNone(definitions.part_kind_of(GLASS))
         with self.assertRaises(ValueError):
             DeviceDefinition("endernet:x_part", "x", CATEGORY_TERMINAL, form=FORM_PART,
                              whole_block_id=COMMON_TERMINAL)
+        with self.assertRaises(ValueError):
+            # 终端面板必须指明整方块终端；没有整方块对应物的只有隧道
+            DeviceDefinition("endernet:x_part", "x", CATEGORY_TERMINAL, form=FORM_PART,
+                             part_kind=PART_KIND_TERMINAL)
+        with self.assertRaises(ValueError):
+            DeviceDefinition("endernet:x", "x", CATEGORY_TERMINAL, whole_block_id=COMMON_TERMINAL)
         with self.assertRaises(ValueError):
             DeviceDefinition("endernet:x_part", "x", CATEGORY_TERMINAL, form=FORM_PART,
                              whole_block_id=COMMON_TERMINAL, part_kind="bus")
@@ -1641,16 +1658,24 @@ class TestPanelFramework(unittest.TestCase):
         rig.act(key(0), GLASS, ACTION_PLACE_PANEL, CENTER, "up", item=CRAFT_PART)
         self.assertEqual(panels.part_config(PartKey(key(0), "up")), {}, "同一面再挂一块不继承")
 
-    def test_a_kind_without_a_screen_is_claimed_but_does_not_open(self):
-        """点中的是面板，只是这种面板没有界面：照样认领，原版交互一样取消，不推屏。"""
+    def test_a_kind_without_a_screen_leaves_the_click_to_vanilla(self):
+        """点中的是面板，只是这种面板没有界面（P2P 隧道）：不认领，原版交互照常——手里的方块
+        贴着这一面放下去。"""
+        rig = PanelRig()
+        rig.place(key(0), GLASS, parts={"east": TUNNEL_PART_ID})
+        rig.step(2)
+        block, item = rig.use(key(0), GLASS, CENTER, "east", item=STONE)
+        self.assertFalse(block.cancelled or item.cancelled)
+        self.assertEqual(rig.opened, [])
+
+    def test_a_kind_registered_without_a_screen_is_not_claimed_either(self):
         rig = PanelRig()
         rig.place(key(0), GLASS, parts={"east": CRAFT_PART})
         rig.step(2)
         rig.panels.register_kind(PART_KIND_TERMINAL)
         block, item = rig.use(key(0), GLASS, CENTER, "east", item=STONE)
-        self.assertTrue(block.cancelled and item.cancelled)
+        self.assertFalse(block.cancelled or item.cancelled)
         self.assertEqual(rig.opened, [])
-        self.assertEqual(rig.binder.counts["block_use_unknown"], 1)
 
     def test_front_change_without_a_hook_is_only_counted(self):
         rig = PanelRig()
