@@ -233,7 +233,7 @@ class TestBlockJsonCoverage(AssetFixture):
 
         - `uniform`：只有 `*`，指向 `<短名>_all`；
         - `front`：north 是 `<短名>_front`，其余面是通用机壳；
-        - `port`：north 是 top，south 是 bottom，其余四面是 side；
+        - `port`：up 是 top，down 是 bottom，四周是 side；
         - `model`：只有 `*`，指向 `<基名>_model`。
         """
         for device_id in self.block_ids:
@@ -250,9 +250,9 @@ class TestBlockJsonCoverage(AssetFixture):
                 expected = {"*": "endernet:%s_model" % declared_models()[device_id][1]}
             elif layout == "port":
                 side = "endernet:%s_side" % name
-                expected = {"*": side, "north": "endernet:%s_top" % name,
-                            "south": "endernet:%s_bottom" % name,
-                            "up": side, "down": side, "east": side, "west": side}
+                expected = {"*": side, "up": "endernet:%s_top" % name,
+                            "down": "endernet:%s_bottom" % name,
+                            "north": side, "south": side, "east": side, "west": side}
             else:
                 side = "endernet:common_device_side"
                 expected = {
@@ -309,9 +309,9 @@ class TestBlockJsonCoverage(AssetFixture):
             )
 
     def test_item_port_textures_rotate_together_in_all_six_directions(self):
-        expected = {"north": [0, 0, 0], "south": [0, 180, 0],
-                    "east": [0, -90, 0], "west": [0, 90, 0],
-                    "up": [90, 0, 0], "down": [-90, 0, 0]}
+        expected = {"north": [-90, 0, 0], "south": [90, 0, 0],
+                    "east": [0, 0, -90], "west": [0, 0, 90],
+                    "up": [0, 0, 0], "down": [180, 0, 0]}
         for device_id in ("endernet:bus_item_input_io", "endernet:bus_item_output_io"):
             block = self.read_block_json(device_id)["minecraft:block"]
             self.assertEqual(declared_layouts()[device_id], "port")
@@ -324,12 +324,69 @@ class TestBlockJsonCoverage(AssetFixture):
             self.assertEqual(rotations, expected, device_id)
             # RP fallback 与 BP 模型同样声明三种贴图，不能残留已删除的 all。
             textures = self.blocks_json[device_id]["textures"]
-            self.assertEqual(textures["north"], device_id + "_top")
-            self.assertEqual(textures["south"], device_id + "_bottom")
-            for face in ("up", "down", "east", "west"):
+            self.assertEqual(textures["up"], device_id + "_top")
+            self.assertEqual(textures["down"], device_id + "_bottom")
+            for face in ("north", "south", "east", "west"):
                 self.assertEqual(textures[face], device_id + "_side")
             self.assertNotIn(device_id + "_all", self.terrain_data)
             self.assertNotIn(device_id + "_all_offline", self.terrain_data)
+
+    def test_item_port_side_arrows_follow_the_transfer_axis_on_every_face(self):
+        """检查 UV 的图片方向和实际面法线，避免只验正面位置漏掉四周箭头。
+
+        原生 full_block 四周图片的下方都是 -Y，上下面图片的下方沿 Z。
+        存货口原图箭头向下（top → bottom），取货口原图箭头向上（bottom → top）。
+        """
+        from math import cos, sin, radians
+
+        normals = {"up": (0, 1, 0), "down": (0, -1, 0),
+                   "north": (0, 0, -1), "south": (0, 0, 1),
+                   "east": (1, 0, 0), "west": (-1, 0, 0)}
+        image_down = dict((face, (0, -1, 0)) for face in ("north", "south", "east", "west"))
+        image_down.update({"up": (0, 0, 1), "down": (0, 0, -1)})
+
+        def rotate(vector, angles):
+            x, y, z = vector
+            for axis, angle in enumerate(angles):
+                c, s = cos(radians(angle)), sin(radians(angle))
+                if axis == 0:
+                    y, z = y * c - z * s, y * s + z * c
+                elif axis == 1:
+                    x, z = x * c + z * s, -x * s + z * c
+                else:
+                    x, y = x * c - y * s, x * s + y * c
+            return tuple(int(round(value)) for value in (x, y, z))
+
+        for device_id, sign in (("endernet:bus_item_input_io", -1),
+                                ("endernet:bus_item_output_io", 1)):
+            block = self.read_block_json(device_id)["minecraft:block"]
+            materials = [block["components"]["minecraft:material_instances"]]
+            materials.extend(p["components"]["minecraft:material_instances"]
+                             for p in block["permutations"]
+                             if "minecraft:material_instances" in p["components"])
+            for permutation in block["permutations"]:
+                if "minecraft:facing_direction" not in permutation["condition"]:
+                    continue
+                facing = permutation["condition"].split("==")[1].strip().strip("'")
+                angles = permutation["components"]["minecraft:transformation"]["rotation"]
+                for instances in materials:
+                    side_faces = [face for face in normals
+                                  if instances[face]["texture"] == device_id + "_side"]
+                    self.assertEqual(len(side_faces), 4)
+                    for face in normals:
+                        texture = instances[face]["texture"]
+                        context = (device_id, facing, face)
+                        if texture == device_id + "_top":
+                            self.assertEqual(rotate(normals[face], angles), normals[facing], context)
+                        elif texture == device_id + "_bottom":
+                            self.assertEqual(rotate(normals[face], angles),
+                                             tuple(-v for v in normals[facing]), context)
+                    for face in side_faces:
+                        # 图片下方为存货箭头方向，图片上方为取货箭头方向。
+                        arrow = tuple(-sign * v for v in image_down[face])
+                        self.assertEqual(rotate(arrow, angles),
+                                         tuple(sign * v for v in normals[facing]),
+                                         (device_id, facing, face))
 
 
 class TestBlockModels(AssetFixture):

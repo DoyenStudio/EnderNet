@@ -131,8 +131,8 @@ HIDDEN_CATEGORY = "none"
 #:   `common_device_{top,side,bottom}.png`；几何体为 `minecraft:geometry.full_block`，
 #:   按 `cardinal_direction` 用 `minecraft:transformation` 旋转，正面朝向放置者
 #:   （照 `skybluetech_alloy_furnace.json`）。
-#: - `port`：物品存取口专用三面贴图，north 使用 top、south 使用 bottom，
-#:   其余四面使用 side；按 facing_direction 六向旋转，top 朝向放置者。
+#: - `port`：物品存取口专用三面贴图，up 使用 top、down 使用 bottom，
+#:   四周使用 side（箭头的 UV 基准一致）；按 facing_direction 六向旋转，top 朝向放置者。
 #: - `model`：自定义几何体（`endernet_rp/models/blocks/*.geo.json`）+ 一张模型贴图，
 #:   同样按朝向旋转（照 `skybluetech_charger.json`）。物品栏里直接渲染同一个几何体。
 #:   **不写 `minecraft:item_visual`**，挂了方块实体外观（`client_entity`）的也不写：
@@ -221,11 +221,16 @@ FACING_ROTATIONS = (
     ("west", 90),
 )
 
-#: 网易运行时实测：north 正面绕 X +90 朝上、-90 朝下。
-#: 与文档示例的 X 轴符号相反，不能只检查状态名而不看实际贴图。
-PORT_FACING_ROTATIONS = tuple(
-    (facing, (0, angle, 0)) for facing, angle in FACING_ROTATIONS
-) + (("down", (-90, 0, 0)), ("up", (90, 0, 0)))
+#: 以 up 为贴图正面：四周 side 的图片下方统一朝向 bottom。
+#: 不能把正面放在 north 再旋转：原生 up/down 面的 UV 会使两个 side 箭头横过来。
+PORT_FACING_ROTATIONS = (
+    ("up", (0, 0, 0)),
+    ("down", (180, 0, 0)),
+    ("north", (-90, 0, 0)),
+    ("south", (90, 0, 0)),
+    ("east", (0, 0, -90)),
+    ("west", (0, 0, 90)),
+)
 
 #: 需要逐 tick 的设备（`netease:block_entity.tick = true`）。
 #: 依据是该设备是否要被动推进：控制器排程、总线搬运、装配仓加工、处理器工作态、
@@ -540,8 +545,8 @@ def face_textures(device_id, status=STATUS_ONLINE):
     if layout == LAYOUT_PORT:
         # 新贴图没有离线变体；两种状态共用作者原图，不再换回旧的 all_offline。
         side = device_id + "_side"
-        return {"*": side, "north": device_id + "_top", "south": device_id + "_bottom",
-                "up": side, "down": side, "east": side, "west": side}
+        return {"*": side, "up": device_id + "_top", "down": device_id + "_bottom",
+                "north": side, "south": side, "east": side, "west": side}
     side = status_texture(common_device_texture("side"), status)[0]
     return {
         "*": side,

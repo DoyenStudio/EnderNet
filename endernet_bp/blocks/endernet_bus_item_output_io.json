@@ -20,7 +20,7 @@
                 },
                 "down": {
                     "render_method": "opaque",
-                    "texture": "endernet:bus_item_output_io_side"
+                    "texture": "endernet:bus_item_output_io_bottom"
                 },
                 "east": {
                     "render_method": "opaque",
@@ -28,15 +28,15 @@
                 },
                 "north": {
                     "render_method": "opaque",
-                    "texture": "endernet:bus_item_output_io_top"
+                    "texture": "endernet:bus_item_output_io_side"
                 },
                 "south": {
                     "render_method": "opaque",
-                    "texture": "endernet:bus_item_output_io_bottom"
+                    "texture": "endernet:bus_item_output_io_side"
                 },
                 "up": {
                     "render_method": "opaque",
-                    "texture": "endernet:bus_item_output_io_side"
+                    "texture": "endernet:bus_item_output_io_top"
                 },
                 "west": {
                     "render_method": "opaque",
@@ -85,12 +85,24 @@
         },
         "permutations": [
             {
-                "condition": "q.block_state('minecraft:facing_direction') == 'south'",
+                "condition": "q.block_state('minecraft:facing_direction') == 'up'",
                 "components": {
                     "minecraft:transformation": {
                         "rotation": [
                             0,
+                            0,
+                            0
+                        ]
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('minecraft:facing_direction') == 'down'",
+                "components": {
+                    "minecraft:transformation": {
+                        "rotation": [
                             180,
+                            0,
                             0
                         ]
                     }
@@ -101,7 +113,19 @@
                 "components": {
                     "minecraft:transformation": {
                         "rotation": [
+                            -90,
                             0,
+                            0
+                        ]
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('minecraft:facing_direction') == 'south'",
+                "components": {
+                    "minecraft:transformation": {
+                        "rotation": [
+                            90,
                             0,
                             0
                         ]
@@ -114,8 +138,8 @@
                     "minecraft:transformation": {
                         "rotation": [
                             0,
-                            -90,
-                            0
+                            0,
+                            -90
                         ]
                     }
                 }
@@ -126,32 +150,8 @@
                     "minecraft:transformation": {
                         "rotation": [
                             0,
-                            90,
-                            0
-                        ]
-                    }
-                }
-            },
-            {
-                "condition": "q.block_state('minecraft:facing_direction') == 'down'",
-                "components": {
-                    "minecraft:transformation": {
-                        "rotation": [
-                            -90,
                             0,
-                            0
-                        ]
-                    }
-                }
-            },
-            {
-                "condition": "q.block_state('minecraft:facing_direction') == 'up'",
-                "components": {
-                    "minecraft:transformation": {
-                        "rotation": [
-                            90,
-                            0,
-                            0
+                            90
                         ]
                     }
                 }
@@ -166,7 +166,7 @@
                         },
                         "down": {
                             "render_method": "opaque",
-                            "texture": "endernet:bus_item_output_io_side"
+                            "texture": "endernet:bus_item_output_io_bottom"
                         },
                         "east": {
                             "render_method": "opaque",
@@ -174,15 +174,15 @@
                         },
                         "north": {
                             "render_method": "opaque",
-                            "texture": "endernet:bus_item_output_io_top"
+                            "texture": "endernet:bus_item_output_io_side"
                         },
                         "south": {
                             "render_method": "opaque",
-                            "texture": "endernet:bus_item_output_io_bottom"
+                            "texture": "endernet:bus_item_output_io_side"
                         },
                         "up": {
                             "render_method": "opaque",
-                            "texture": "endernet:bus_item_output_io_side"
+                            "texture": "endernet:bus_item_output_io_top"
                         },
                         "west": {
                             "render_method": "opaque",

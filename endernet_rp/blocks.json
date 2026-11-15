@@ -24,10 +24,10 @@
     },
     "endernet:bus_item_input_io": {
         "textures": {
-            "up": "endernet:bus_item_input_io_side",
-            "down": "endernet:bus_item_input_io_side",
-            "north": "endernet:bus_item_input_io_top",
-            "south": "endernet:bus_item_input_io_bottom",
+            "up": "endernet:bus_item_input_io_top",
+            "down": "endernet:bus_item_input_io_bottom",
+            "north": "endernet:bus_item_input_io_side",
+            "south": "endernet:bus_item_input_io_side",
             "east": "endernet:bus_item_input_io_side",
             "west": "endernet:bus_item_input_io_side"
         },
@@ -39,10 +39,10 @@
     },
     "endernet:bus_item_output_io": {
         "textures": {
-            "up": "endernet:bus_item_output_io_side",
-            "down": "endernet:bus_item_output_io_side",
-            "north": "endernet:bus_item_output_io_top",
-            "south": "endernet:bus_item_output_io_bottom",
+            "up": "endernet:bus_item_output_io_top",
+            "down": "endernet:bus_item_output_io_bottom",
+            "north": "endernet:bus_item_output_io_side",
+            "south": "endernet:bus_item_output_io_side",
             "east": "endernet:bus_item_output_io_side",
             "west": "endernet:bus_item_output_io_side"
         },

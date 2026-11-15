@@ -1,0 +1,77 @@
+{
+    "date": "2026-11-15",
+    "purpose": "修正存取口四个 side 面的箭头朝向：存货口 top 到 bottom，取货口 bottom 到 top",
+    "method": "重载资源后，通过 GetBlockAuxValueFromStates 与 SetBlockNew 创建临时设备，回读状态并从对角方向截图检查；不修改用户原有设备",
+    "location": {"dimension": 0, "device": [-8, 96, -18]},
+    "offline": {
+        "tests_passed": 4986,
+        "python27_files": 190,
+        "generated_blocks": 39,
+        "regression": "依据面法线与原生图片下方方向计算六向旋转，校验正反面及四周箭头；两种设备的在线和离线材质均覆盖"
+    },
+    "game_checks": [
+        {
+            "device": "endernet:bus_item_input_io",
+            "facing": "up",
+            "status": 0,
+            "views": ["northeast", "southwest"],
+            "result": "四个侧面的箭头全部朝下，从上方箱子方向指向设备背面",
+            "screenshots": ["active_item_port_side_input_ne_2026-11-15.jpg", "active_item_port_side_input_sw_2026-11-15.jpg"]
+        },
+        {
+            "device": "endernet:bus_item_output_io",
+            "facing": "up",
+            "status": 0,
+            "views": ["northeast", "southwest"],
+            "result": "四个侧面的箭头全部朝上，从设备背面指向上方箱子方向",
+            "screenshots": ["active_item_port_side_output_ne_2026-11-15.jpg", "active_item_port_side_output_sw_2026-11-15.jpg"]
+        },
+        {
+            "device": "endernet:bus_item_input_io",
+            "facing": "east",
+            "status": 0,
+            "views": ["northeast", "southwest"],
+            "result": "东面是 top，西面是 bottom，可见侧面箭头向西",
+            "screenshots": ["active_item_port_side_input_east_ne_2026-11-15.jpg", "active_item_port_side_input_east_sw_2026-11-15.jpg"]
+        },
+        {
+            "device": "endernet:bus_item_input_io",
+            "facing": "west",
+            "status": 0,
+            "views": ["southwest"],
+            "result": "西面是 top，可见侧面箭头向东"
+        },
+        {
+            "device": "endernet:bus_item_input_io",
+            "facing": "north",
+            "status": 0,
+            "views": ["northeast"],
+            "result": "北面是 top，可见侧面箭头向南",
+            "screenshots": ["active_item_port_side_input_north_2026-11-15.jpg"]
+        },
+        {
+            "device": "endernet:bus_item_input_io",
+            "facing": "south",
+            "status": 0,
+            "views": ["southwest"],
+            "result": "南面是 top，可见侧面箭头向北",
+            "screenshots": ["active_item_port_side_input_south_2026-11-15.jpg"]
+        },
+        {
+            "device": "endernet:bus_item_input_io",
+            "facing": "down",
+            "status": 0,
+            "views": ["northeast_below"],
+            "result": "下表面是 top，可见两侧的箭头均向上",
+            "screenshots": ["active_item_port_side_input_down_2026-11-15.jpg"]
+        }
+    ],
+    "cleanup": {
+        "temporary_positions": [[-8, 95, -18], [-8, 96, -18], [-8, 97, -18]],
+        "readback": ["minecraft:air", "minecraft:air", "minecraft:air"],
+        "player_foot_restored": [-9.055501937866211, 85.77173614501953, -4.620141983032227],
+        "player_rotation_restored": [36.7127685546875, -50.064727783203125],
+        "inventory_changed": false
+    },
+    "limitations": ["没有重新验证 PC/触屏放置手势或物品搬运；本轮修改只有贴图映射及几何旋转"]
+}
