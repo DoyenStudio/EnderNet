@@ -1,0 +1,167 @@
+{
+  "date": "2026-11-15",
+  "method": "PlayerUseItemToPos after setting player position/rotation; states read from engine, no direct facing-state writes by test",
+  "location": {
+    "dimension": 0,
+    "support": [
+      -8,
+      95,
+      -18
+    ],
+    "port": [
+      -8,
+      96,
+      -18
+    ]
+  },
+  "cases": [
+    {
+      "device": "endernet:bus_item_input_io",
+      "expected": "north",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "north",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_input_io",
+      "expected": "south",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "south",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_input_io",
+      "expected": "east",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "east",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_input_io",
+      "expected": "west",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "west",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_input_io",
+      "expected": "up",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "up",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_input_io",
+      "expected": "down",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "down",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_output_io",
+      "expected": "north",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "north",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_output_io",
+      "expected": "south",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "south",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_output_io",
+      "expected": "east",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "east",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_output_io",
+      "expected": "west",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "west",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_output_io",
+      "expected": "up",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "up",
+        "minecraft:vertical_half": "bottom"
+      }
+    },
+    {
+      "device": "endernet:bus_item_output_io",
+      "expected": "down",
+      "placed": true,
+      "states": {
+        "endernet:status": 0,
+        "minecraft:block_face": "up",
+        "minecraft:facing_direction": "down",
+        "minecraft:vertical_half": "bottom"
+      }
+    }
+  ],
+  "cleanup": "Temporary port and support removed; player position, rotation and empty carried slot restored",
+  "offline": {
+    "tests": 4939,
+    "py27_files": 190,
+    "generated_blocks": 39
+  },
+  "limitations": [
+    "PC/触屏真实点击手势未单独验收",
+    "未逐朝向截图；最终旋转配置已复测朝上存货口及朝下取货口"
+  ],
+  "final_vertical_visual_checks": {
+    "up": "active_item_port_up_2026-11-15.jpg",
+    "down": "active_item_port_down_2026-11-15.jpg",
+    "result": "golden-center top texture faces the placer in both screenshots",
+    "rotation_x": {"up": 90, "down": -90}
+  }
+}

@@ -1,7 +1,8 @@
 # coding=utf-8
 """引擎事件到归一化事件的绑定。本模块是**引擎边界**。
 
-对应任务 01-05。这里只做翻译与入队，不做任何业务判断。
+对应任务 01-05。这里负责翻译与入队；新物品口放置时先修正引擎的垂直朝向，
+让生命周期读到的朝向与玩家看见的正面一致，不在这里执行搬运业务。
 
 **事件的语义注记（都是实测后才能确认的点）：**
 
@@ -19,6 +20,7 @@
 from ...common.definitions import (
     CONTAINER_SCREENS,
     ENERGY_INPUT_ID,
+    SIX_WAY_ITEM_PORTS,
     TERMINAL_OPEN_LIMIT_SECONDS,
     TERMINAL_SCREENS,
 )
@@ -364,6 +366,9 @@ class ServerEventBinder(object):
 
         @self.listen(api.EntityPlaceBlockAfterServerEvent)
         def on_place_after(event):
+            if event.fullName in SIX_WAY_ITEM_PORTS:
+                self.world.face_placed_item_port(
+                    NodeKey(event.dimensionId, event.x, event.y, event.z), event.entityId)
             self._on_place(event.dimensionId, event.x, event.y, event.z, event.fullName,
                            "entity_place_after")
 

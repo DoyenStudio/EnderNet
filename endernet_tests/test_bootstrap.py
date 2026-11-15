@@ -1006,6 +1006,19 @@ class TestEventDispatchThroughBinding(unittest.TestCase):
         self.server.tick()
         self.assertIsNotNone(self.server.registry.get(NodeKey(0, 3, 64, 4)))
 
+    def test_only_entity_placement_corrects_active_item_port_facing(self):
+        calls = []
+        self.world.face_placed_item_port = lambda key, entity: calls.append((key, entity))
+        for name in ("endernet:bus_item_input_io", "endernet:bus_item_output_io",
+                     "endernet:bus_fluid_input_io", BB8):
+            self.api.dispatch(self.api.event("EntityPlaceBlockAfterServerEvent"),
+                              SimplePayload(dimensionId=0, x=3, y=64, z=4,
+                                            fullName=name, entityId="steve"))
+            self.api.dispatch(self.api.event("ServerPlaceBlockEntityEvent"),
+                              SimplePayload(dimension=0, posX=3, posY=64, posZ=4,
+                                            blockName=name))
+        self.assertEqual(calls, [(NodeKey(0, 3, 64, 4), "steve")] * 2)
+
     def test_foreign_block_is_ignored(self):
         self.api.dispatch(
             self.api.event("ServerPlaceBlockEntityEvent"),

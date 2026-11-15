@@ -51,6 +51,13 @@ _PER_FACE_FIELDS = (TERMINAL_INVENTORY_FIELD, PART_CONFIG_FIELD)
 AIR = "minecraft:air"
 
 
+def engine_entity_pitch(entity_id):
+    # type: (str) -> float
+    from mod.server.extraServerApi import GetEngineCompFactory
+
+    return GetEngineCompFactory().CreateRot(entity_id).GetRot()[0]
+
+
 def terminal_inventory_field(key):
     # type: (object) -> tuple
     """`NodeKey` / `PartKey` → `(方块位置, 方块实体字段名)`。"""
@@ -154,6 +161,22 @@ class ToolDeltaWorldAdapter(object):
         UpdateBlockStates(node_key.dimension, node_key.as_tuple(),
                           {"minecraft:facing_direction": facing})
         return self.facing_at(node_key) == facing
+
+    def face_placed_item_port(self, node_key, entity_id):
+        # type: (NodeKey, str) -> bool
+        """仅玩家/生物新放置时修正上下方向；区块重载、旧档迁移不调用。
+
+        placement_direction 的 180 度偏移只作用于水平轴，垂直状态仍沿视线。
+        以放置者俯仰角写目标方向，重复通知也不会把方向翻回去。
+        """
+        states = self.block_states_at(node_key) or {}
+        facing = states.get("minecraft:facing_direction")
+        if facing not in ("up", "down"):
+            return True
+        desired = "up" if engine_entity_pitch(entity_id) > 0 else "down"
+        if facing == desired:
+            return True
+        return self.update_block_states(node_key, {"minecraft:facing_direction": desired}, states)
 
     def get_block_entity_data(self, node_key):
         # type: (NodeKey) -> dict

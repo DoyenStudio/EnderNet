@@ -23,7 +23,14 @@
         "sound": "stone"
     },
     "endernet:bus_item_input_io": {
-        "textures": "endernet:bus_item_input_io_all",
+        "textures": {
+            "up": "endernet:bus_item_input_io_side",
+            "down": "endernet:bus_item_input_io_side",
+            "north": "endernet:bus_item_input_io_top",
+            "south": "endernet:bus_item_input_io_bottom",
+            "east": "endernet:bus_item_input_io_side",
+            "west": "endernet:bus_item_input_io_side"
+        },
         "sound": "stone"
     },
     "endernet:bus_item_io": {
@@ -31,7 +38,14 @@
         "sound": "stone"
     },
     "endernet:bus_item_output_io": {
-        "textures": "endernet:bus_item_output_io_all",
+        "textures": {
+            "up": "endernet:bus_item_output_io_side",
+            "down": "endernet:bus_item_output_io_side",
+            "north": "endernet:bus_item_output_io_top",
+            "south": "endernet:bus_item_output_io_bottom",
+            "east": "endernet:bus_item_output_io_side",
+            "west": "endernet:bus_item_output_io_side"
+        },
         "sound": "stone"
     },
     "endernet:bus_template_io": {

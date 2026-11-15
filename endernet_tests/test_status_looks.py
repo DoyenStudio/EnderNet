@@ -133,6 +133,9 @@ class TestStatusLookAssets(unittest.TestCase):
 
             self.assertEqual(drawn(STATUS_OFFLINE, ICON), online, device_id)
             offline = dict((face, texture + "_offline") for face, texture in online.items())
+            if device_id in ("endernet:bus_item_input_io", "endernet:bus_item_output_io"):
+                # 新的三面贴图尚无离线变体，离线也保留可辨识的 top / bottom / side。
+                offline = online
             conflict = dict((face, texture + "_conflict") for face, texture in online.items())
             for mark in PLACED:
                 self.assertEqual(drawn(STATUS_OFFLINE, mark), offline, (device_id, mark))

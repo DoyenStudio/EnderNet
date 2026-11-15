@@ -25,11 +25,14 @@
         "endernet:bus_fluid_output_io_all_offline": {
             "textures": "textures/endernet/devices/bus_fluid_output_io_all_offline"
         },
-        "endernet:bus_item_input_io_all": {
-            "textures": "textures/endernet/devices/bus_item_input_io_all"
+        "endernet:bus_item_input_io_bottom": {
+            "textures": "textures/endernet/devices/bus_item_input_io_bottom"
         },
-        "endernet:bus_item_input_io_all_offline": {
-            "textures": "textures/endernet/devices/bus_item_input_io_all_offline"
+        "endernet:bus_item_input_io_side": {
+            "textures": "textures/endernet/devices/bus_item_input_io_side"
+        },
+        "endernet:bus_item_input_io_top": {
+            "textures": "textures/endernet/devices/bus_item_input_io_top"
         },
         "endernet:bus_item_io_all": {
             "textures": "textures/endernet/devices/bus_item_io_all"
@@ -37,11 +40,14 @@
         "endernet:bus_item_io_all_offline": {
             "textures": "textures/endernet/devices/bus_item_io_all_offline"
         },
-        "endernet:bus_item_output_io_all": {
-            "textures": "textures/endernet/devices/bus_item_output_io_all"
+        "endernet:bus_item_output_io_bottom": {
+            "textures": "textures/endernet/devices/bus_item_output_io_bottom"
         },
-        "endernet:bus_item_output_io_all_offline": {
-            "textures": "textures/endernet/devices/bus_item_output_io_all_offline"
+        "endernet:bus_item_output_io_side": {
+            "textures": "textures/endernet/devices/bus_item_output_io_side"
+        },
+        "endernet:bus_item_output_io_top": {
+            "textures": "textures/endernet/devices/bus_item_output_io_top"
         },
         "endernet:bus_template_io_all": {
             "textures": "textures/endernet/devices/bus_template_io_all"

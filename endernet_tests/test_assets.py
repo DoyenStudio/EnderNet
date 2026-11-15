@@ -85,7 +85,7 @@ def _gen_blocks():
 
 
 def declared_layouts():
-    """`gen_blocks.BLOCK_LAYOUTS` 的读数：设备 -> uniform / front / model。"""
+    """`gen_blocks.BLOCK_LAYOUTS` 的读数：设备 -> uniform / front / port / model。"""
     return _gen_blocks().BLOCK_LAYOUTS
 
 
@@ -223,10 +223,11 @@ class TestBlockJsonCoverage(AssetFixture):
                 )
 
     def test_material_instances_follow_the_layout(self):
-        """三种布局各有固定的贴图名，测试**独立写出**期望值，不从生成器反推。
+        """各布局有固定的贴图名，测试**独立写出**期望值，不从生成器反推。
 
         - `uniform`：只有 `*`，指向 `<短名>_all`；
         - `front`：north 是 `<短名>_front`，其余面是通用机壳；
+        - `port`：north 是 top，south 是 bottom，其余四面是 side；
         - `model`：只有 `*`，指向 `<基名>_model`。
         """
         for device_id in self.block_ids:
@@ -241,6 +242,11 @@ class TestBlockJsonCoverage(AssetFixture):
                 expected = {"*": "endernet:%s_all" % name}
             elif layout == "model":
                 expected = {"*": "endernet:%s_model" % declared_models()[device_id][1]}
+            elif layout == "port":
+                side = "endernet:%s_side" % name
+                expected = {"*": side, "north": "endernet:%s_top" % name,
+                            "south": "endernet:%s_bottom" % name,
+                            "up": side, "down": side, "east": side, "west": side}
             else:
                 side = "endernet:common_device_side"
                 expected = {
@@ -271,7 +277,7 @@ class TestBlockJsonCoverage(AssetFixture):
                 permutation for permutation in block.get("permutations", [])
                 if "minecraft:cardinal_direction" in permutation["condition"]
             ]
-            if declared_layouts()[device_id] == "uniform":
+            if declared_layouts()[device_id] in ("uniform", "port"):
                 self.assertEqual(permutations, [], device_id)
                 continue
             trait = block["description"]["traits"]["minecraft:placement_direction"]
@@ -287,7 +293,7 @@ class TestBlockJsonCoverage(AssetFixture):
 
     def test_front_blocks_use_the_full_block_geometry(self):
         for device_id in self.block_ids:
-            if declared_layouts()[device_id] != "front":
+            if declared_layouts()[device_id] not in ("front", "port"):
                 continue
             components = self.read_block_json(device_id)["minecraft:block"]["components"]
             self.assertEqual(
@@ -295,6 +301,29 @@ class TestBlockJsonCoverage(AssetFixture):
                 {"identifier": "minecraft:geometry.full_block"},
                 device_id,
             )
+
+    def test_item_port_textures_rotate_together_in_all_six_directions(self):
+        expected = {"north": [0, 0, 0], "south": [0, 180, 0],
+                    "east": [0, -90, 0], "west": [0, 90, 0],
+                    "up": [90, 0, 0], "down": [-90, 0, 0]}
+        for device_id in ("endernet:bus_item_input_io", "endernet:bus_item_output_io"):
+            block = self.read_block_json(device_id)["minecraft:block"]
+            self.assertEqual(declared_layouts()[device_id], "port")
+            rotations = {}
+            for permutation in block["permutations"]:
+                if "minecraft:facing_direction" not in permutation["condition"]:
+                    continue
+                facing = permutation["condition"].split("==")[1].strip().strip("'")
+                rotations[facing] = permutation["components"]["minecraft:transformation"]["rotation"]
+            self.assertEqual(rotations, expected, device_id)
+            # RP fallback 与 BP 模型同样声明三种贴图，不能残留已删除的 all。
+            textures = self.blocks_json[device_id]["textures"]
+            self.assertEqual(textures["north"], device_id + "_top")
+            self.assertEqual(textures["south"], device_id + "_bottom")
+            for face in ("up", "down", "east", "west"):
+                self.assertEqual(textures[face], device_id + "_side")
+            self.assertNotIn(device_id + "_all", self.terrain_data)
+            self.assertNotIn(device_id + "_all_offline", self.terrain_data)
 
 
 class TestBlockModels(AssetFixture):

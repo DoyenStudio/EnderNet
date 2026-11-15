@@ -2,6 +2,7 @@
 """主动物品口定案：真实库存、ID名单、轮转与权限，离线回归。"""
 import json
 import unittest
+from unittest.mock import patch
 
 import testsupport  # noqa: F401
 import test_io as fixtures
@@ -19,6 +20,33 @@ from endernet.server.adapters.world import ToolDeltaWorldAdapter
 
 
 class FacingStates(unittest.TestCase):
+    def test_new_vertical_ports_face_the_placer_without_reversing_twice(self):
+        world = ToolDeltaWorldAdapter()
+        for original, pitch, expected in (("down", 90, "up"), ("up", -90, "down")):
+            states = {"minecraft:facing_direction": original, "endernet:status": 0}
+            writes = []
+            world.block_states_at = lambda key: dict(states)
+
+            def update(key, changes, current=None):
+                writes.append(changes)
+                states.update(changes)
+                return True
+
+            world.update_block_states = update
+            with patch("endernet.server.adapters.world.engine_entity_pitch", return_value=pitch):
+                self.assertTrue(world.face_placed_item_port(fixtures.key(1), "steve"))
+                self.assertTrue(world.face_placed_item_port(fixtures.key(1), "steve"))
+            self.assertEqual(states, {"minecraft:facing_direction": expected, "endernet:status": 0})
+            self.assertEqual(len(writes), 1)
+
+    def test_horizontal_placement_keeps_the_trait_direction(self):
+        world = ToolDeltaWorldAdapter()
+        for facing in ("north", "south", "east", "west"):
+            world.block_states_at = lambda key: {"minecraft:facing_direction": facing}
+            with patch("endernet.server.adapters.world.engine_entity_pitch") as pitch:
+                self.assertTrue(world.face_placed_item_port(fixtures.key(1), "steve"))
+                pitch.assert_not_called()
+
     def test_six_way_state_takes_precedence_and_legacy_horizontal_still_works(self):
         world = ToolDeltaWorldAdapter()
         for facing in ('up', 'down', 'north', 'south', 'west', 'east'):

@@ -121,7 +121,7 @@ CREATIVE_CATEGORY = "endernet"
 #: SkyblueTech（`netease_blocks/liquid/skybluetech_flowing_brine.json` 的 `"category": "none"`）。
 HIDDEN_CATEGORY = "none"
 
-#: 方块的外观分三种，写法全部照同环境可运行的 SkyblueTech：
+#: 方块的外观分四种：
 #:
 #: - `uniform`：六面同一张贴图 `<短名>_all.png`，`material_instances` 只写 `*`
 #:   （SkyblueTech 有 47 个方块是这个形状）。
@@ -129,6 +129,8 @@ HIDDEN_CATEGORY = "none"
 #:   `common_device_{top,side,bottom}.png`；几何体为 `minecraft:geometry.full_block`，
 #:   按 `cardinal_direction` 用 `minecraft:transformation` 旋转，正面朝向放置者
 #:   （照 `skybluetech_alloy_furnace.json`）。
+#: - `port`：物品存取口专用三面贴图，north 使用 top、south 使用 bottom，
+#:   其余四面使用 side；按 facing_direction 六向旋转，top 朝向放置者。
 #: - `model`：自定义几何体（`endernet_rp/models/blocks/*.geo.json`）+ 一张模型贴图，
 #:   同样按朝向旋转（照 `skybluetech_charger.json`）。物品栏里直接渲染同一个几何体。
 #:   **不写 `minecraft:item_visual`**，挂了方块实体外观（`client_entity`）的也不写：
@@ -139,6 +141,7 @@ HIDDEN_CATEGORY = "none"
 #:   所以光缆写 `item_visual`，指向 `gen_cable_models.py` 出的专用物品几何（2026-11-10）。
 LAYOUT_UNIFORM = "uniform"
 LAYOUT_FRONT = "front"
+LAYOUT_PORT = "port"
 LAYOUT_MODEL = "model"
 
 BLOCK_LAYOUTS = {
@@ -154,14 +157,15 @@ BLOCK_LAYOUTS = {
     "endernet:tiny_network_endpoint": LAYOUT_UNIFORM,
     "endernet:bus_item_io": LAYOUT_UNIFORM,
     "endernet:bus_fluid_io": LAYOUT_UNIFORM,
-    "endernet:bus_item_input_io": LAYOUT_UNIFORM,
-    "endernet:bus_item_output_io": LAYOUT_UNIFORM,
     "endernet:bus_fluid_input_io": LAYOUT_UNIFORM,
     "endernet:bus_fluid_output_io": LAYOUT_UNIFORM,
     "endernet:bus_template_io": LAYOUT_UNIFORM,
     "endernet:parallel_processor_connector": LAYOUT_UNIFORM,
     "endernet:energy_input_interface": LAYOUT_UNIFORM,
     "endernet:wireless_connector": LAYOUT_UNIFORM,
+    # 六向物品存取口：作者提供 top / bottom / side 三张贴图
+    "endernet:bus_item_input_io": LAYOUT_PORT,
+    "endernet:bus_item_output_io": LAYOUT_PORT,
     # 正面 + 通用机壳
     "endernet:assemble_chamber": LAYOUT_FRONT,
     "endernet:common_terminal_panel": LAYOUT_FRONT,
@@ -214,6 +218,12 @@ FACING_ROTATIONS = (
     ("east", -90),
     ("west", 90),
 )
+
+#: 网易运行时实测：north 正面绕 X +90 朝上、-90 朝下。
+#: 与文档示例的 X 轴符号相反，不能只检查状态名而不看实际贴图。
+PORT_FACING_ROTATIONS = tuple(
+    (facing, (0, angle, 0)) for facing, angle in FACING_ROTATIONS
+) + (("down", (-90, 0, 0)), ("up", (90, 0, 0)))
 
 #: 需要逐 tick 的设备（`netease:block_entity.tick = true`）。
 #: 依据是该设备是否要被动推进：控制器排程、总线搬运、装配仓加工、处理器工作态、
@@ -466,6 +476,11 @@ def face_textures(device_id, status=STATUS_ONLINE):
         return {"*": status_texture(uniform_texture(device_id), status)[0]}
     if layout == LAYOUT_MODEL:
         return {"*": status_texture(model_texture(device_id), status)[0]}
+    if layout == LAYOUT_PORT:
+        # 新贴图没有离线变体；两种状态共用作者原图，不再换回旧的 all_offline。
+        side = device_id + "_side"
+        return {"*": side, "north": device_id + "_top", "south": device_id + "_bottom",
+                "up": side, "down": side, "east": side, "west": side}
     side = status_texture(common_device_texture("side"), status)[0]
     return {
         "*": side,
@@ -482,6 +497,9 @@ def textures_of(device_id, statuses=(STATUS_ONLINE,)):
     # type: (str, tuple) -> list
     """该方块用到的全部 `(图集键, 路径)`；`statuses` 是它的外观状态（`status_values_of`）。"""
     layout = layout_of(device_id)
+    if layout == LAYOUT_PORT:
+        return [_device_texture(short_name(device_id) + "_" + face)
+                for face in ("top", "bottom", "side")]
     if layout == LAYOUT_MODEL:
         base = [model_texture(device_id)]
     elif layout == LAYOUT_UNIFORM:
@@ -574,7 +592,7 @@ def build_block_json(device_id, definition):
         raise ValueError(
             "%s 的外观布局是 %s，需要随朝向旋转，但它不在 DIRECTIONAL 里" % (device_id, layout)
         )
-    if layout == LAYOUT_FRONT or (layout == LAYOUT_UNIFORM and definition_statuses(device_id)):
+    if layout in (LAYOUT_FRONT, LAYOUT_PORT) or (layout == LAYOUT_UNIFORM and definition_statuses(device_id)):
         # 有离线外观的六面同图方块也要声明几何体，排列里换贴图才生效（见模块说明）
         components["minecraft:geometry"] = {"identifier": "minecraft:geometry.full_block"}
     elif layout == LAYOUT_MODEL:
@@ -638,7 +656,15 @@ def build_block_json(device_id, definition):
         "description": description,
     }
     permutations = []
-    if layout != LAYOUT_UNIFORM:
+    if layout == LAYOUT_PORT:
+        permutations.extend(
+            {
+                "condition": "q.block_state('minecraft:facing_direction') == '%s'" % facing,
+                "components": {"minecraft:transformation": {"rotation": list(rotation)}},
+            }
+            for facing, rotation in PORT_FACING_ROTATIONS
+        )
+    elif layout != LAYOUT_UNIFORM:
         # 正面画在 north 面，按朝向整体旋转（照 skybluetech_alloy_furnace.json）。
         permutations.extend(
             {
@@ -978,7 +1004,7 @@ def build_blocks_json(definitions):
             payload[device_id] = entry
             continue
         faces = face_textures(device_id)
-        if layout == LAYOUT_FRONT:
+        if layout in (LAYOUT_FRONT, LAYOUT_PORT):
             entry["textures"] = dict(
                 (face, faces[face]) for face in ("up", "down", "north", "south", "east", "west")
             )
