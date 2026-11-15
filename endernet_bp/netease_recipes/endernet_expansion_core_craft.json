@@ -1,0 +1,33 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:expansion_core_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "endernet:logic_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:ender_dust",
+                "data": 0
+            },
+            {
+                "item": "minecraft:quartz",
+                "data": 0
+            }
+        ],
+        "result": {
+            "item": "endernet:expansion_core",
+            "data": 0,
+            "count": 2
+        }
+    }
+}

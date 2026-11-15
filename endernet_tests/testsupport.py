@@ -648,6 +648,30 @@ def load_dotted_module(real_name, path, fake=None):
     return module
 
 
+class UIPathStub(object):
+    """ToolDelta 路径值；保留字符串与 Python 2/3 的拼接语义。"""
+
+    def __init__(self, base):
+        self.base = base
+
+    def __str__(self):
+        return self.base
+
+    def __truediv__(self, child):
+        return UIPathStub(self.base + "/" + child)
+
+    __div__ = __truediv__
+
+    def __add__(self, suffix):
+        return UIPathStub(self.base + suffix)
+
+
+SCREEN_BASE_PATH = UIPathStub(
+    "/variables_button_mappings_and_controls/safezone_screen_matrix/"
+    "inner_matrix/safezone_screen_panel/root_screen_panel"
+)
+
+
 def registered_device_screens():
     """Exercise production registration without loading the live importer event bus."""
     import sys

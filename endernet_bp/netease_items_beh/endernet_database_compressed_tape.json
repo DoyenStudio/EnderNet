@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 1,
+            "netease:customtips": {
+                "value": "\n§7容量：64 类型 1073741824 单位物\n§7读 64 单位物/s，写 64 单位物/s"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:database_compressed_tape"
+        }
+    }
+}

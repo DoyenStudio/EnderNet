@@ -1,0 +1,145 @@
+{
+  "categories": {
+    "endernet:resonance_charger": {
+      "complete": true,
+      "count": 1,
+      "ids": [
+        "endernet:charge_crystal"
+      ]
+    },
+    "endernet:resonance_generator": {
+      "complete": true,
+      "count": 1,
+      "ids": [
+        "endernet:generator_fuel"
+      ]
+    },
+    "endernet:resonance_inscriber": {
+      "complete": true,
+      "count": 7,
+      "ids": [
+        "endernet:grind_quartz",
+        "endernet:press_logic",
+        "endernet:press_calculation",
+        "endernet:press_engineering",
+        "endernet:assemble_logic",
+        "endernet:assemble_calculation",
+        "endernet:assemble_engineering"
+      ]
+    }
+  },
+  "outputs": [
+    {
+      "data": {
+        "mode": "charge",
+        "power": 32,
+        "ticks": 80
+      },
+      "found": true,
+      "id": "endernet:charge_crystal"
+    },
+    {
+      "data": {
+        "mode": "grind",
+        "power": 32,
+        "ticks": 80
+      },
+      "found": true,
+      "id": "endernet:grind_quartz"
+    },
+    {
+      "data": {
+        "mode": "press",
+        "power": 32,
+        "ticks": 80
+      },
+      "found": true,
+      "id": "endernet:press_logic"
+    },
+    {
+      "data": {
+        "mode": "press",
+        "power": 32,
+        "ticks": 80
+      },
+      "found": true,
+      "id": "endernet:press_calculation"
+    },
+    {
+      "data": {
+        "mode": "press",
+        "power": 32,
+        "ticks": 80
+      },
+      "found": true,
+      "id": "endernet:press_engineering"
+    },
+    {
+      "data": {
+        "mode": "assemble",
+        "power": 32,
+        "ticks": 80
+      },
+      "found": true,
+      "id": "endernet:assemble_logic"
+    },
+    {
+      "data": {
+        "mode": "assemble",
+        "power": 32,
+        "ticks": 80
+      },
+      "found": true,
+      "id": "endernet:assemble_calculation"
+    },
+    {
+      "data": {
+        "mode": "assemble",
+        "power": 32,
+        "ticks": 80
+      },
+      "found": true,
+      "id": "endernet:assemble_engineering"
+    }
+  ],
+  "stations": [
+    [
+      "endernet:resonance_charger",
+      1
+    ],
+    [
+      "endernet:resonance_inscriber",
+      7
+    ],
+    [
+      "endernet:resonance_generator",
+      1
+    ]
+  ],
+  "uses": [
+    [
+      "minecraft:coal",
+      0,
+      1,
+      1
+    ],
+    [
+      "minecraft:coal",
+      1,
+      1,
+      1
+    ],
+    [
+      "minecraft:charcoal",
+      0,
+      1,
+      1
+    ],
+    [
+      "minecraft:coal",
+      2,
+      0,
+      0
+    ]
+  ]
+}

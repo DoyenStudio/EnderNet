@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:doubleside_tape"
+        },
+        "description": {
+            "identifier": "endernet:doubleside_tape"
+        }
+    }
+}

@@ -838,6 +838,86 @@ class TestOutputRecipeLongPress(TemplateFixture):
         self.assertTrue(window.closed)
 
 
+class TestMeiRecipeImport(TemplateFixture):
+    def config(self, mode=MODE_FACTORY):
+        return {"mode": mode,
+                "inputs": [{"key": STONE.to_dict(), "count": 16}] + [None] * 8,
+                "outputs": [{"key": STICK.to_dict(), "count": 4}]}
+
+    def test_one_versioned_command_keeps_display_authoritative(self):
+        self.state(mode=MODE_CRAFTING, source=((7, STONE, 1),), revision=12)
+        config = self.config()
+        request_id = self.view.on_mei_import(config)
+        self.assertIsNotNone(request_id)
+        payload = self.last_command()
+        self.assertEqual("template_mei_import", payload["action"])
+        self.assertEqual(12, payload["slot_version"])
+        self.assertEqual(config, payload["config"])
+        self.assertEqual(MODE_CRAFTING, self.view.mode)
+        self.assertIsNone(self.view.cell(SURFACE_SOURCE, 0))
+        self.assertIsNotNone(self.view.cell(SURFACE_SOURCE, 7))
+
+    def test_rechecks_ready_state_and_prevents_duplicate_or_concurrent_edits(self):
+        self.assertIsNotNone(self.view.mei_import_error())
+        self.assertIsNone(self.view.on_mei_import(self.config()))
+        self.state()
+        self.assertIsNone(self.view.mei_import_error())
+        request_id = self.view.on_mei_import(self.config())
+        self.assertIsNotNone(self.view.mei_import_error())
+        self.assertIsNone(self.view.on_mei_import(self.config()))
+        self.assertEqual(1, len(self.commands()))
+        self.deliver(self.result(request_id))
+        self.assertIsNone(self.view.mei_import_error())
+        self.view.on_clear()
+        self.assertIsNone(self.view.on_mei_import(self.config()))
+
+    def test_rejected_import_preserves_old_config_and_selection(self):
+        self.state(mode=MODE_FACTORY, source=((0, STONE, 3),), revision=2)
+        self.view.selection = (SURFACE_SOURCE, 0)
+        request_id = self.view.on_mei_import(self.config(MODE_CRAFTING))
+        self.deliver(self.result(request_id, status=STATUS_REJECTED,
+                                 reasons=[{"code": Reason.STALE_VERSION,
+                                           "detail": "配置已经变更"}]))
+        self.assertEqual(MODE_FACTORY, self.view.mode)
+        self.assertEqual(3, self.view.cell(SURFACE_SOURCE, 0)["count"])
+        self.assertEqual((SURFACE_SOURCE, 0), self.view.selection)
+        self.assertEqual(template_panel.REASON_TEXTS[Reason.STALE_VERSION], self.view.last_error)
+        self.assertIsNone(self.view.mei_import_error())
+
+    def test_success_clears_selection_and_uses_server_mode_and_slots(self):
+        self.state(source=((0, STONE, 3),))
+        self.select_backpack(0)
+        self.view.selection = (SURFACE_SOURCE, 0)
+        self.view.presses[SURFACE_SOURCE] = (0, 0.0, False)
+        request_id = self.view.on_mei_import(self.config())
+        self.deliver(self.result(request_id))
+        self.assertIsNone(self.view.selection)
+        self.assertIsNone(self.backpack.selected)
+        self.assertEqual({}, self.view.presses)
+        self.state(mode=MODE_FACTORY, source=((0, STONE, 16),),
+                   outputs=((0, STICK, 4),), revision=2)
+        self.assertEqual(MODE_FACTORY, self.view.mode)
+        self.assertEqual(16, self.view.cell(SURFACE_SOURCE, 0)["count"])
+        self.assertEqual(4, self.view.cell(SURFACE_OUTPUTS, 0)["count"])
+
+    def test_session_loss_and_close_reject_transfer(self):
+        self.state()
+        self.client.close_session()
+        self.assertIsNotNone(self.view.mei_import_error())
+        self.assertIsNone(self.view.on_mei_import(self.config()))
+        self.view.close()
+        self.assertIsNone(self.view.on_mei_import(self.config()))
+        self.assertEqual([], self.commands())
+
+    def test_import_closes_local_edit_windows_before_sending(self):
+        self.state()
+        with patch.object(self.view, "close_number_window") as number:
+            with patch.object(self.view, "close_recipe_windows") as recipes:
+                self.assertIsNotNone(self.view.on_mei_import(self.config()))
+        number.assert_called_once_with()
+        recipes.assert_called_once_with()
+
+
 class TestTitleIsWrittenByScript(TemplateFixture):
     """标题由脚本 `SetText` 写（User 2026-10-02 定），**不走绑定**。"""
 

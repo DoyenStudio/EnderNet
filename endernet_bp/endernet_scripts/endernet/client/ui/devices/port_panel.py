@@ -43,6 +43,7 @@ from ..windows.item_list import show_item_list_window
 from .proxy_panel import ProxyPanelBase
 from ..shared import on_click, show_item
 from ..shared.button_utils import button_content_paths
+from ..terminal import TerminalCache
 from ..windows.list_bindings import (
     ItemListWindowBindingsMixin, SelectItemWindowBindingsMixin,
 )
@@ -86,6 +87,7 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
 
     #: 名单与逐槽选物品要看网络库存，因此仍开物品视图。
     VIEW_KIND = VIEW_ITEM
+    stock = None
 
     #: 本屏对应的方块 id（诊断用）。
     DEVICE_ID = ""
@@ -130,6 +132,7 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
 
     def _attach_models(self, device_ref, client):
         self.port_config = port_config_model.PortConfigModel(device_ref)
+        self.stock = TerminalCache(client=client)
         self.settings = None
         self.controls = {}
         self.missing = set()
@@ -138,6 +141,7 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
 
     def _detach_models(self):
         self._close_settings()
+        self.stock = None
         self.port_config = None
         self.settings = None
         self.controls = {}
@@ -167,7 +171,7 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
     # -- 每帧 ----------------------------------------------------------
 
     def _tick_extra(self):
-        for step in (self._ensure_controls, self._drain_receipts,
+        for step in (self._tick_stock, self._ensure_controls, self._drain_receipts,
                      self._watch_filter_window, self._poll_switch,
                      self._refresh_mode):
             try:
@@ -176,6 +180,18 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
                 # **一步炸了不能连累后面几步**，也不能让异常从 tick 路径
                 # 回到引擎（那会刷屏并跳过本帧剩下的事）。计数留给诊断。
                 self.failures["errors"] += 1
+
+    def _tick_stock(self):
+        if self.stock is not None and self.stock.tick() is not None and self.draft is not None:
+            self.draft[0].set_network_item_ids(self._network_item_ids())
+
+    def _network_item_ids(self):
+        # type: () -> list
+        if self.stock is None:
+            return []
+        model = self.stock.model
+        rows = model.query_page(model.query_generation(), 0, model.count())
+        return [row.key.name for row in rows if row.key.kind == "item" and row.stored > 0]
 
     def _missing(self, name):
         # type: (str) -> None
@@ -329,7 +345,8 @@ class ItemPortPanelBase(ItemListWindowBindingsMixin, SelectItemWindowBindingsMix
             model.mode_visual()[2] if self.FILTER_TITLE_FROM_MODE
             else self.FILTER_TITLE
         )
-        opened = show_item_list_window(self, names, model.filter_limit, title)
+        opened = show_item_list_window(
+            self, names, model.filter_limit, title, network_item_ids=self._network_item_ids())
         if not opened:
             return
         window = screen_vars.get(ITEM_LIST_WINDOW_ATTRIBUTE)

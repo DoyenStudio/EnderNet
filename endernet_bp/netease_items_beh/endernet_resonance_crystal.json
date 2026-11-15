@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 64,
+            "netease:customtips": {
+                "value": "\n§7从末地谐振矿石中取得。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:resonance_crystal"
+        }
+    }
+}

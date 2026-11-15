@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 64,
+            "netease:customtips": {
+                "value": "\n§7无线连接器的远距谐振组件。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:wireless_resonance_core"
+        }
+    }
+}

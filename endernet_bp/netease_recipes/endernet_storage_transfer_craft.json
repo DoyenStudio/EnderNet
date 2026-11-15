@@ -1,0 +1,55 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:storage_transfer_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "endernet:end_casing",
+                "data": 0
+            },
+            {
+                "item": "minecraft:chest"
+            },
+            {
+                "item": "minecraft:chest"
+            },
+            {
+                "item": "endernet:logic_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:logic_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:convergence_core",
+                "data": 0
+            },
+            {
+                "item": "endernet:convergence_core",
+                "data": 0
+            },
+            {
+                "item": "endernet:calculation_chip",
+                "data": 0
+            },
+            {
+                "item": "minecraft:hopper",
+                "data": 0
+            }
+        ],
+        "result": {
+            "item": "endernet:storage_transfer",
+            "data": 0,
+            "count": 1
+        }
+    }
+}

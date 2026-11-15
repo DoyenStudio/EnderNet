@@ -1,0 +1,57 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:database_compressed_tape_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "endernet:archive_core",
+                "data": 0
+            },
+            {
+                "item": "endernet:magnetic_strip",
+                "data": 0
+            },
+            {
+                "item": "endernet:magnetic_strip",
+                "data": 0
+            },
+            {
+                "item": "endernet:magnetic_strip",
+                "data": 0
+            },
+            {
+                "item": "endernet:magnetic_strip",
+                "data": 0
+            },
+            {
+                "item": "endernet:engineering_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:engineering_chip",
+                "data": 0
+            },
+            {
+                "item": "minecraft:ender_eye",
+                "data": 0
+            },
+            {
+                "item": "endernet:medium_casing",
+                "data": 0
+            }
+        ],
+        "result": {
+            "item": "endernet:database_compressed_tape",
+            "data": 0,
+            "count": 1
+        }
+    }
+}

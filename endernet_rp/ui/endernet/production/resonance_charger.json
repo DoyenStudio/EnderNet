@@ -1,0 +1,241 @@
+{
+    "content": {
+        "type": "panel",
+        "layer": 1,
+        "controls": [
+            {
+                "flying_item_renderer@common.flying_item_renderer": {
+                    "layer": 11,
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "container_gamepad_helpers@common.container_gamepad_helpers": {
+                    "layer": 3
+                }
+            },
+            {
+                "selected_item_details_factory@common.selected_item_details_factory": {
+                    "layer": 4,
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "item_lock_notification_factory@common.item_lock_notification_factory": {
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "root_panel@common.root_panel": {
+                    "controls": [
+                        {
+                            "bg@common.dialog_background_opaque": {
+                                "controls": [
+                                    {
+                                        "inventory_selected_icon_button@common.inventory_selected_icon_button": {}
+                                    },
+                                    {
+                                        "gamepad_cursor_button@common.gamepad_cursor_button": {
+                                            "visible": true
+                                        }
+                                    },
+                                    {
+                                        "close@endernet_ui_common.vanilla_close_button": {
+                                            "size": [
+                                                18,
+                                                18
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "main": {
+                                            "type": "panel",
+                                            "controls": [
+                                                {
+                                                    "title": {
+                                                        "type": "image",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "size": [
+                                                            64,
+                                                            16
+                                                        ],
+                                                        "layer": 1,
+                                                        "texture": "textures/endernet/ui/device_title_background",
+                                                        "controls": [
+                                                            {
+                                                                "title_text": {
+                                                                    "type": "label",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        3.0,
+                                                                        3.0
+                                                                    ],
+                                                                    "color": [
+                                                                        0.3058823529411765,
+                                                                        0.2549019607843137,
+                                                                        0.3137254901960784
+                                                                    ],
+                                                                    "font_scale_factor": 1.2,
+                                                                    "font_type": "default",
+                                                                    "text": "tile.endernet:resonance_charger.name",
+                                                                    "text_alignment": "center"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "power_bar@endernet_production_common.energy_meter": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            7,
+                                                            17
+                                                        ],
+                                                        "size": [
+                                                            12,
+                                                            54
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "ring_energy@endernet_production_common.status_ring": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            7,
+                                                            17
+                                                        ],
+                                                        "size": [
+                                                            12,
+                                                            54
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "slot_0@endernet_container_common.indexed_container_slot": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            50,
+                                                            35
+                                                        ],
+                                                        "$container_slot_index": 0
+                                                    }
+                                                },
+                                                {
+                                                    "ring_in_input_slot@endernet_production_common.status_ring": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            50,
+                                                            35
+                                                        ],
+                                                        "size": [
+                                                            18,
+                                                            18
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "progress@endernet_production_common.progress_icon_bolt": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            84,
+                                                            38
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "slot_1@endernet_container_common.indexed_container_slot": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            108,
+                                                            31
+                                                        ],
+                                                        "$container_slot_index": 1,
+                                                        "size": [
+                                                            26,
+                                                            26
+                                                        ],
+                                                        "controls": [
+                                                            {
+                                                                "slot@endernet_container_common.container_grid_item": {
+                                                                    "collection_index": "$container_slot_index",
+                                                                    "size": [
+                                                                        26,
+                                                                        26
+                                                                    ],
+                                                                    "$cell_image_size": [
+                                                                        26,
+                                                                        26
+                                                                    ]
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "ring_out_output_slot@endernet_production_common.status_ring": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            108,
+                                                            31
+                                                        ],
+                                                        "size": [
+                                                            26,
+                                                            26
+                                                        ]
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "inventory@endernet_container_common.inventory": {
+                                            "anchor_from": "bottom_middle",
+                                            "anchor_to": "bottom_middle",
+                                            "offset": [
+                                                0,
+                                                -4
+                                            ]
+                                        }
+                                    }
+                                ],
+                                "layer": 0,
+                                "texture": "textures/endernet/ui/background_panel_opaque",
+                                "$background_images": "endernet_production_common.machine_slot_background"
+                            }
+                        }
+                    ],
+                    "layer": 0,
+                    "size": [
+                        176,
+                        166
+                    ]
+                }
+            }
+        ]
+    },
+    "main@common.inventory_screen_common": {
+        "$screen_background_alpha": 0.4,
+        "$screen_bg_content": "common.screen_background",
+        "$screen_content": "endernet_ui_common.screen_root",
+        "$window_content": "endernet_resonance_charger.content"
+    },
+    "namespace": "endernet_resonance_charger"
+}

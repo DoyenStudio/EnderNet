@@ -1,0 +1,1783 @@
+{
+  "cases": [
+    {
+      "after": {
+        "journal": null,
+        "service_error": null,
+        "slots": [
+          null,
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:charged_resonance_crystal",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:charged_resonance_crystal",
+            "showInHand": true,
+            "userData": null
+          }
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_charger",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_charger.main",
+          "message": "",
+          "mode": "charge",
+          "pos": [
+            64,
+            63,
+            36
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        },
+        "ticks": 2806
+      },
+      "before": {
+        "native_state": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 32000,
+          "journal": null,
+          "mode": "charge",
+          "progress": 0,
+          "recipe": "",
+          "version": 2
+        },
+        "service_error": null,
+        "slots": [
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:resonance_crystal",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:resonance_crystal",
+            "showInHand": true,
+            "userData": null
+          },
+          null
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_charger",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_charger.main",
+          "message": "",
+          "mode": "charge",
+          "pos": [
+            64,
+            63,
+            36
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        }
+      },
+      "error_free": true,
+      "expected_inputs": [
+        [
+          "endernet:resonance_crystal",
+          1
+        ]
+      ],
+      "expected_output": {
+        "count": 1,
+        "name": "endernet:charged_resonance_crystal"
+      },
+      "generator_after": {
+        "fuel": null,
+        "state": {
+          "burn": 480,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_generator",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_generator.main",
+          "message": "",
+          "mode": "charge",
+          "pos": [
+            64,
+            63,
+            37
+          ],
+          "progress": 0,
+          "status": "buffer_full"
+        }
+      },
+      "generator_before": {
+        "burn": 520,
+        "capacity": 32000,
+        "device_id": "endernet:resonance_generator",
+        "dimension": 0,
+        "duration": 80,
+        "energy": 32000,
+        "key": "endernet_resonance_generator.main",
+        "message": "",
+        "mode": "charge",
+        "pos": [
+          64,
+          63,
+          37
+        ],
+        "progress": 0,
+        "status": "buffer_full"
+      },
+      "generator_pos": [
+        64,
+        63,
+        37
+      ],
+      "input_writes": [
+        true
+      ],
+      "journal_durable": true,
+      "journal_write": {
+        "actual": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:charged_resonance_crystal\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:resonance_crystal\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:resonance_crystal\",\"showInHand\":true,\"userData\":null},null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "charge",
+          "progress": 80,
+          "recipe": "endernet:charge_crystal",
+          "version": 2
+        },
+        "exact_readback": true,
+        "expected": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:charged_resonance_crystal\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:resonance_crystal\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:resonance_crystal\",\"showInHand\":true,\"userData\":null},null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "charge",
+          "progress": 80,
+          "recipe": "endernet:charge_crystal",
+          "version": 2
+        },
+        "native_type": "str"
+      },
+      "machine": "endernet:resonance_charger",
+      "mode": "charge",
+      "passed": true,
+      "pos": [
+        64,
+        63,
+        36
+      ],
+      "recipe": "endernet:charge_crystal",
+      "recipe_passed": true,
+      "start_tick": 2076
+    },
+    {
+      "after": {
+        "journal": null,
+        "service_error": null,
+        "slots": [
+          null,
+          null,
+          null,
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 2,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:quartz_dust",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:quartz_dust",
+            "showInHand": true,
+            "userData": null
+          }
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "grind",
+          "pos": [
+            66,
+            63,
+            36
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        },
+        "ticks": 2806
+      },
+      "before": {
+        "native_state": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 32000,
+          "journal": null,
+          "mode": "grind",
+          "progress": 0,
+          "recipe": "",
+          "version": 2
+        },
+        "service_error": null,
+        "slots": [
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": 406,
+            "itemName": "minecraft:quartz",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "minecraft:quartz",
+            "showInHand": true,
+            "userData": null
+          },
+          null,
+          null,
+          null
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "grind",
+          "pos": [
+            66,
+            63,
+            36
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        }
+      },
+      "error_free": true,
+      "expected_inputs": [
+        [
+          "minecraft:quartz",
+          1
+        ]
+      ],
+      "expected_output": {
+        "count": 2,
+        "name": "endernet:quartz_dust"
+      },
+      "generator_after": {
+        "fuel": null,
+        "state": {
+          "burn": 480,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_generator",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_generator.main",
+          "message": "",
+          "mode": "charge",
+          "pos": [
+            66,
+            63,
+            37
+          ],
+          "progress": 0,
+          "status": "buffer_full"
+        }
+      },
+      "generator_before": {
+        "burn": 520,
+        "capacity": 32000,
+        "device_id": "endernet:resonance_generator",
+        "dimension": 0,
+        "duration": 80,
+        "energy": 32000,
+        "key": "endernet_resonance_generator.main",
+        "message": "",
+        "mode": "charge",
+        "pos": [
+          66,
+          63,
+          37
+        ],
+        "progress": 0,
+        "status": "buffer_full"
+      },
+      "generator_pos": [
+        66,
+        63,
+        37
+      ],
+      "input_writes": [
+        true
+      ],
+      "journal_durable": true,
+      "journal_write": {
+        "actual": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":2,\"newAuxValue\":0,\"newItemName\":\"endernet:quartz_dust\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":406,\"itemName\":\"minecraft:quartz\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:quartz\",\"showInHand\":true,\"userData\":null},null,null,null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "grind",
+          "progress": 80,
+          "recipe": "endernet:grind_quartz",
+          "version": 2
+        },
+        "exact_readback": true,
+        "expected": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":2,\"newAuxValue\":0,\"newItemName\":\"endernet:quartz_dust\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":406,\"itemName\":\"minecraft:quartz\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:quartz\",\"showInHand\":true,\"userData\":null},null,null,null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "grind",
+          "progress": 80,
+          "recipe": "endernet:grind_quartz",
+          "version": 2
+        },
+        "native_type": "str"
+      },
+      "machine": "endernet:resonance_inscriber",
+      "mode": "grind",
+      "mode_selected": true,
+      "passed": true,
+      "pos": [
+        66,
+        63,
+        36
+      ],
+      "recipe": "endernet:grind_quartz",
+      "recipe_passed": true,
+      "start_tick": 2076
+    },
+    {
+      "after": {
+        "journal": null,
+        "service_error": null,
+        "slots": [
+          null,
+          null,
+          null,
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:logic_circuit",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:logic_circuit",
+            "showInHand": true,
+            "userData": null
+          }
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "press",
+          "pos": [
+            68,
+            63,
+            36
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        },
+        "ticks": 2806
+      },
+      "before": {
+        "native_state": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 32000,
+          "journal": null,
+          "mode": "press",
+          "progress": 0,
+          "recipe": "",
+          "version": 2
+        },
+        "service_error": null,
+        "slots": [
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": 266,
+            "itemName": "minecraft:gold_ingot",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "minecraft:gold_ingot",
+            "showInHand": true,
+            "userData": null
+          },
+          null,
+          null,
+          null
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "press",
+          "pos": [
+            68,
+            63,
+            36
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        }
+      },
+      "error_free": true,
+      "expected_inputs": [
+        [
+          "minecraft:gold_ingot",
+          1
+        ]
+      ],
+      "expected_output": {
+        "count": 1,
+        "name": "endernet:logic_circuit"
+      },
+      "generator_after": {
+        "fuel": null,
+        "state": {
+          "burn": 520,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_generator",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_generator.main",
+          "message": "",
+          "mode": "charge",
+          "pos": [
+            68,
+            63,
+            37
+          ],
+          "progress": 0,
+          "status": "buffer_full"
+        }
+      },
+      "generator_before": {
+        "burn": 560,
+        "capacity": 32000,
+        "device_id": "endernet:resonance_generator",
+        "dimension": 0,
+        "duration": 80,
+        "energy": 32000,
+        "key": "endernet_resonance_generator.main",
+        "message": "",
+        "mode": "charge",
+        "pos": [
+          68,
+          63,
+          37
+        ],
+        "progress": 0,
+        "status": "buffer_full"
+      },
+      "generator_pos": [
+        68,
+        63,
+        37
+      ],
+      "input_writes": [
+        true
+      ],
+      "journal_durable": true,
+      "journal_write": {
+        "actual": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:logic_circuit\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":266,\"itemName\":\"minecraft:gold_ingot\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:gold_ingot\",\"showInHand\":true,\"userData\":null},null,null,null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "press",
+          "progress": 80,
+          "recipe": "endernet:press_logic",
+          "version": 2
+        },
+        "exact_readback": true,
+        "expected": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:logic_circuit\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":266,\"itemName\":\"minecraft:gold_ingot\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:gold_ingot\",\"showInHand\":true,\"userData\":null},null,null,null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "press",
+          "progress": 80,
+          "recipe": "endernet:press_logic",
+          "version": 2
+        },
+        "native_type": "str"
+      },
+      "machine": "endernet:resonance_inscriber",
+      "mode": "press",
+      "mode_selected": true,
+      "passed": true,
+      "pos": [
+        68,
+        63,
+        36
+      ],
+      "recipe": "endernet:press_logic",
+      "recipe_passed": true,
+      "start_tick": 2076
+    },
+    {
+      "after": {
+        "journal": null,
+        "service_error": null,
+        "slots": [
+          null,
+          null,
+          null,
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:calculation_circuit",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:calculation_circuit",
+            "showInHand": true,
+            "userData": null
+          }
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "press",
+          "pos": [
+            70,
+            63,
+            36
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        },
+        "ticks": 2806
+      },
+      "before": {
+        "native_state": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 32000,
+          "journal": null,
+          "mode": "press",
+          "progress": 0,
+          "recipe": "",
+          "version": 2
+        },
+        "service_error": null,
+        "slots": [
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:resonance_crystal",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:resonance_crystal",
+            "showInHand": true,
+            "userData": null
+          },
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": 771,
+            "itemName": "minecraft:amethyst_shard",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "minecraft:amethyst_shard",
+            "showInHand": true,
+            "userData": null
+          },
+          null,
+          null
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "press",
+          "pos": [
+            70,
+            63,
+            36
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        }
+      },
+      "error_free": true,
+      "expected_inputs": [
+        [
+          "endernet:resonance_crystal",
+          1
+        ],
+        [
+          "minecraft:amethyst_shard",
+          1
+        ]
+      ],
+      "expected_output": {
+        "count": 1,
+        "name": "endernet:calculation_circuit"
+      },
+      "generator_after": {
+        "fuel": null,
+        "state": {
+          "burn": 520,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_generator",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_generator.main",
+          "message": "",
+          "mode": "charge",
+          "pos": [
+            70,
+            63,
+            37
+          ],
+          "progress": 0,
+          "status": "buffer_full"
+        }
+      },
+      "generator_before": {
+        "burn": 560,
+        "capacity": 32000,
+        "device_id": "endernet:resonance_generator",
+        "dimension": 0,
+        "duration": 80,
+        "energy": 32000,
+        "key": "endernet_resonance_generator.main",
+        "message": "",
+        "mode": "charge",
+        "pos": [
+          70,
+          63,
+          37
+        ],
+        "progress": 0,
+        "status": "buffer_full"
+      },
+      "generator_pos": [
+        70,
+        63,
+        37
+      ],
+      "input_writes": [
+        true,
+        true
+      ],
+      "journal_durable": true,
+      "journal_write": {
+        "actual": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31936,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:calculation_circuit\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:resonance_crystal\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:resonance_crystal\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":771,\"itemName\":\"minecraft:amethyst_shard\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:amethyst_shard\",\"showInHand\":true,\"userData\":null},null,null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "press",
+          "progress": 80,
+          "recipe": "endernet:press_calculation",
+          "version": 2
+        },
+        "exact_readback": true,
+        "expected": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31936,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:calculation_circuit\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:resonance_crystal\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:resonance_crystal\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":771,\"itemName\":\"minecraft:amethyst_shard\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:amethyst_shard\",\"showInHand\":true,\"userData\":null},null,null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "press",
+          "progress": 80,
+          "recipe": "endernet:press_calculation",
+          "version": 2
+        },
+        "native_type": "str"
+      },
+      "machine": "endernet:resonance_inscriber",
+      "mode": "press",
+      "mode_selected": true,
+      "passed": true,
+      "pos": [
+        70,
+        63,
+        36
+      ],
+      "recipe": "endernet:press_calculation",
+      "recipe_passed": true,
+      "start_tick": 2076
+    },
+    {
+      "after": {
+        "journal": null,
+        "service_error": null,
+        "slots": [
+          null,
+          null,
+          null,
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:engineering_circuit",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:engineering_circuit",
+            "showInHand": true,
+            "userData": null
+          }
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "press",
+          "pos": [
+            64,
+            63,
+            39
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        },
+        "ticks": 2806
+      },
+      "before": {
+        "native_state": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 32000,
+          "journal": null,
+          "mode": "press",
+          "progress": 0,
+          "recipe": "",
+          "version": 2
+        },
+        "service_error": null,
+        "slots": [
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": 264,
+            "itemName": "minecraft:diamond",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "minecraft:diamond",
+            "showInHand": true,
+            "userData": null
+          },
+          null,
+          null,
+          null
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "press",
+          "pos": [
+            64,
+            63,
+            39
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        }
+      },
+      "error_free": true,
+      "expected_inputs": [
+        [
+          "minecraft:diamond",
+          1
+        ]
+      ],
+      "expected_output": {
+        "count": 1,
+        "name": "endernet:engineering_circuit"
+      },
+      "generator_after": {
+        "fuel": null,
+        "state": {
+          "burn": 520,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_generator",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_generator.main",
+          "message": "",
+          "mode": "charge",
+          "pos": [
+            64,
+            63,
+            40
+          ],
+          "progress": 0,
+          "status": "buffer_full"
+        }
+      },
+      "generator_before": {
+        "burn": 560,
+        "capacity": 32000,
+        "device_id": "endernet:resonance_generator",
+        "dimension": 0,
+        "duration": 80,
+        "energy": 32000,
+        "key": "endernet_resonance_generator.main",
+        "message": "",
+        "mode": "charge",
+        "pos": [
+          64,
+          63,
+          40
+        ],
+        "progress": 0,
+        "status": "buffer_full"
+      },
+      "generator_pos": [
+        64,
+        63,
+        40
+      ],
+      "input_writes": [
+        true
+      ],
+      "journal_durable": true,
+      "journal_write": {
+        "actual": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:engineering_circuit\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":264,\"itemName\":\"minecraft:diamond\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:diamond\",\"showInHand\":true,\"userData\":null},null,null,null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "press",
+          "progress": 80,
+          "recipe": "endernet:press_engineering",
+          "version": 2
+        },
+        "exact_readback": true,
+        "expected": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:engineering_circuit\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":264,\"itemName\":\"minecraft:diamond\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:diamond\",\"showInHand\":true,\"userData\":null},null,null,null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "press",
+          "progress": 80,
+          "recipe": "endernet:press_engineering",
+          "version": 2
+        },
+        "native_type": "str"
+      },
+      "machine": "endernet:resonance_inscriber",
+      "mode": "press",
+      "mode_selected": true,
+      "passed": true,
+      "pos": [
+        64,
+        63,
+        39
+      ],
+      "recipe": "endernet:press_engineering",
+      "recipe_passed": true,
+      "start_tick": 2076
+    },
+    {
+      "after": {
+        "journal": null,
+        "service_error": null,
+        "slots": [
+          null,
+          null,
+          null,
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:logic_chip",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:logic_chip",
+            "showInHand": true,
+            "userData": null
+          }
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "assemble",
+          "pos": [
+            66,
+            63,
+            39
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        },
+        "ticks": 2806
+      },
+      "before": {
+        "native_state": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 32000,
+          "journal": null,
+          "mode": "assemble",
+          "progress": 0,
+          "recipe": "",
+          "version": 2
+        },
+        "service_error": null,
+        "slots": [
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:logic_circuit",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:logic_circuit",
+            "showInHand": true,
+            "userData": null
+          },
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:silicon",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:silicon",
+            "showInHand": true,
+            "userData": null
+          },
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": 331,
+            "itemName": "minecraft:redstone",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "minecraft:redstone",
+            "showInHand": true,
+            "userData": null
+          },
+          null
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "assemble",
+          "pos": [
+            66,
+            63,
+            39
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        }
+      },
+      "error_free": true,
+      "expected_inputs": [
+        [
+          "endernet:logic_circuit",
+          1
+        ],
+        [
+          "endernet:silicon",
+          1
+        ],
+        [
+          "minecraft:redstone",
+          1
+        ]
+      ],
+      "expected_output": {
+        "count": 1,
+        "name": "endernet:logic_chip"
+      },
+      "generator_after": {
+        "fuel": null,
+        "state": {
+          "burn": 520,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_generator",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_generator.main",
+          "message": "",
+          "mode": "charge",
+          "pos": [
+            66,
+            63,
+            40
+          ],
+          "progress": 0,
+          "status": "buffer_full"
+        }
+      },
+      "generator_before": {
+        "burn": 560,
+        "capacity": 32000,
+        "device_id": "endernet:resonance_generator",
+        "dimension": 0,
+        "duration": 80,
+        "energy": 32000,
+        "key": "endernet_resonance_generator.main",
+        "message": "",
+        "mode": "charge",
+        "pos": [
+          66,
+          63,
+          40
+        ],
+        "progress": 0,
+        "status": "buffer_full"
+      },
+      "generator_pos": [
+        66,
+        63,
+        40
+      ],
+      "input_writes": [
+        true,
+        true,
+        true
+      ],
+      "journal_durable": true,
+      "journal_write": {
+        "actual": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:logic_chip\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:logic_circuit\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:logic_circuit\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:silicon\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:silicon\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":331,\"itemName\":\"minecraft:redstone\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:redstone\",\"showInHand\":true,\"userData\":null},null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "assemble",
+          "progress": 80,
+          "recipe": "endernet:assemble_logic",
+          "version": 2
+        },
+        "exact_readback": true,
+        "expected": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:logic_chip\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:logic_circuit\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:logic_circuit\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:silicon\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:silicon\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":331,\"itemName\":\"minecraft:redstone\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:redstone\",\"showInHand\":true,\"userData\":null},null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "assemble",
+          "progress": 80,
+          "recipe": "endernet:assemble_logic",
+          "version": 2
+        },
+        "native_type": "str"
+      },
+      "machine": "endernet:resonance_inscriber",
+      "mode": "assemble",
+      "mode_selected": true,
+      "passed": true,
+      "pos": [
+        66,
+        63,
+        39
+      ],
+      "recipe": "endernet:assemble_logic",
+      "recipe_passed": true,
+      "start_tick": 2076
+    },
+    {
+      "after": {
+        "journal": null,
+        "service_error": null,
+        "slots": [
+          null,
+          null,
+          null,
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:calculation_chip",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:calculation_chip",
+            "showInHand": true,
+            "userData": null
+          }
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "assemble",
+          "pos": [
+            68,
+            63,
+            39
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        },
+        "ticks": 2806
+      },
+      "before": {
+        "native_state": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 32000,
+          "journal": null,
+          "mode": "assemble",
+          "progress": 0,
+          "recipe": "",
+          "version": 2
+        },
+        "service_error": null,
+        "slots": [
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:calculation_circuit",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:calculation_circuit",
+            "showInHand": true,
+            "userData": null
+          },
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:silicon",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:silicon",
+            "showInHand": true,
+            "userData": null
+          },
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": 331,
+            "itemName": "minecraft:redstone",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "minecraft:redstone",
+            "showInHand": true,
+            "userData": null
+          },
+          null
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "assemble",
+          "pos": [
+            68,
+            63,
+            39
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        }
+      },
+      "error_free": true,
+      "expected_inputs": [
+        [
+          "endernet:calculation_circuit",
+          1
+        ],
+        [
+          "endernet:silicon",
+          1
+        ],
+        [
+          "minecraft:redstone",
+          1
+        ]
+      ],
+      "expected_output": {
+        "count": 1,
+        "name": "endernet:calculation_chip"
+      },
+      "generator_after": {
+        "fuel": null,
+        "state": {
+          "burn": 520,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_generator",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_generator.main",
+          "message": "",
+          "mode": "charge",
+          "pos": [
+            68,
+            63,
+            40
+          ],
+          "progress": 0,
+          "status": "buffer_full"
+        }
+      },
+      "generator_before": {
+        "burn": 560,
+        "capacity": 32000,
+        "device_id": "endernet:resonance_generator",
+        "dimension": 0,
+        "duration": 80,
+        "energy": 32000,
+        "key": "endernet_resonance_generator.main",
+        "message": "",
+        "mode": "charge",
+        "pos": [
+          68,
+          63,
+          40
+        ],
+        "progress": 0,
+        "status": "buffer_full"
+      },
+      "generator_pos": [
+        68,
+        63,
+        40
+      ],
+      "input_writes": [
+        true,
+        true,
+        true
+      ],
+      "journal_durable": true,
+      "journal_write": {
+        "actual": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:calculation_chip\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:calculation_circuit\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:calculation_circuit\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:silicon\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:silicon\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":331,\"itemName\":\"minecraft:redstone\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:redstone\",\"showInHand\":true,\"userData\":null},null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "assemble",
+          "progress": 80,
+          "recipe": "endernet:assemble_calculation",
+          "version": 2
+        },
+        "exact_readback": true,
+        "expected": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:calculation_chip\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:calculation_circuit\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:calculation_circuit\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:silicon\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:silicon\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":331,\"itemName\":\"minecraft:redstone\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:redstone\",\"showInHand\":true,\"userData\":null},null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "assemble",
+          "progress": 80,
+          "recipe": "endernet:assemble_calculation",
+          "version": 2
+        },
+        "native_type": "str"
+      },
+      "machine": "endernet:resonance_inscriber",
+      "mode": "assemble",
+      "mode_selected": true,
+      "passed": true,
+      "pos": [
+        68,
+        63,
+        39
+      ],
+      "recipe": "endernet:assemble_calculation",
+      "recipe_passed": true,
+      "start_tick": 2076
+    },
+    {
+      "after": {
+        "journal": null,
+        "service_error": null,
+        "slots": [
+          null,
+          null,
+          null,
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:engineering_chip",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:engineering_chip",
+            "showInHand": true,
+            "userData": null
+          }
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "assemble",
+          "pos": [
+            70,
+            63,
+            39
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        },
+        "ticks": 2806
+      },
+      "before": {
+        "native_state": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 32000,
+          "journal": null,
+          "mode": "assemble",
+          "progress": 0,
+          "recipe": "",
+          "version": 2
+        },
+        "service_error": null,
+        "slots": [
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:engineering_circuit",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:engineering_circuit",
+            "showInHand": true,
+            "userData": null
+          },
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": -1,
+            "itemName": "endernet:silicon",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "endernet:silicon",
+            "showInHand": true,
+            "userData": null
+          },
+          {
+            "auxValue": 0,
+            "canDestroy": [],
+            "canPlaceOn": [],
+            "count": 1,
+            "customTips": "",
+            "durability": 0,
+            "enchantData": [],
+            "extraId": "",
+            "isDiggerItem": false,
+            "itemId": 331,
+            "itemName": "minecraft:redstone",
+            "modEnchantData": [],
+            "modId": "",
+            "modItemId": "",
+            "newAuxValue": 0,
+            "newItemName": "minecraft:redstone",
+            "showInHand": true,
+            "userData": null
+          },
+          null
+        ],
+        "state": {
+          "burn": 0,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_inscriber",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_inscriber.main",
+          "message": "",
+          "mode": "assemble",
+          "pos": [
+            70,
+            63,
+            39
+          ],
+          "progress": 0,
+          "status": "waiting_input"
+        }
+      },
+      "error_free": true,
+      "expected_inputs": [
+        [
+          "endernet:engineering_circuit",
+          1
+        ],
+        [
+          "endernet:silicon",
+          1
+        ],
+        [
+          "minecraft:redstone",
+          1
+        ]
+      ],
+      "expected_output": {
+        "count": 1,
+        "name": "endernet:engineering_chip"
+      },
+      "generator_after": {
+        "fuel": null,
+        "state": {
+          "burn": 520,
+          "capacity": 32000,
+          "device_id": "endernet:resonance_generator",
+          "dimension": 0,
+          "duration": 80,
+          "energy": 32000,
+          "key": "endernet_resonance_generator.main",
+          "message": "",
+          "mode": "charge",
+          "pos": [
+            70,
+            63,
+            40
+          ],
+          "progress": 0,
+          "status": "buffer_full"
+        }
+      },
+      "generator_before": {
+        "burn": 560,
+        "capacity": 32000,
+        "device_id": "endernet:resonance_generator",
+        "dimension": 0,
+        "duration": 80,
+        "energy": 32000,
+        "key": "endernet_resonance_generator.main",
+        "message": "",
+        "mode": "charge",
+        "pos": [
+          70,
+          63,
+          40
+        ],
+        "progress": 0,
+        "status": "buffer_full"
+      },
+      "generator_pos": [
+        70,
+        63,
+        40
+      ],
+      "input_writes": [
+        true,
+        true,
+        true
+      ],
+      "journal_durable": true,
+      "journal_write": {
+        "actual": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:engineering_chip\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:engineering_circuit\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:engineering_circuit\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:silicon\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:silicon\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":331,\"itemName\":\"minecraft:redstone\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:redstone\",\"showInHand\":true,\"userData\":null},null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "assemble",
+          "progress": 80,
+          "recipe": "endernet:assemble_engineering",
+          "version": 2
+        },
+        "exact_readback": true,
+        "expected": {
+          "burn": 0,
+          "cursor": 0,
+          "energy": 31968,
+          "journal": "{\"after\":[null,null,null,{\"count\":1,\"newAuxValue\":0,\"newItemName\":\"endernet:engineering_chip\"}],\"before\":[{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:engineering_circuit\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:engineering_circuit\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":-1,\"itemName\":\"endernet:silicon\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"endernet:silicon\",\"showInHand\":true,\"userData\":null},{\"auxValue\":0,\"canDestroy\":[],\"canPlaceOn\":[],\"count\":1,\"customTips\":\"\",\"durability\":0,\"enchantData\":[],\"extraId\":\"\",\"isDiggerItem\":false,\"itemId\":331,\"itemName\":\"minecraft:redstone\",\"modEnchantData\":[],\"modId\":\"\",\"modItemId\":\"\",\"newAuxValue\":0,\"newItemName\":\"minecraft:redstone\",\"showInHand\":true,\"userData\":null},null],\"post\":{\"progress\":0,\"recipe\":\"\"}}",
+          "mode": "assemble",
+          "progress": 80,
+          "recipe": "endernet:assemble_engineering",
+          "version": 2
+        },
+        "native_type": "str"
+      },
+      "machine": "endernet:resonance_inscriber",
+      "mode": "assemble",
+      "mode_selected": true,
+      "passed": true,
+      "pos": [
+        70,
+        63,
+        39
+      ],
+      "recipe": "endernet:assemble_engineering",
+      "recipe_passed": true,
+      "start_tick": 2076
+    }
+  ],
+  "dimension": 0,
+  "elapsed_seconds": 37.10000014305115,
+  "execution": "native BlockEntityTickEvent; no direct machine.tick calls",
+  "observed_epoch": 1794682784.627,
+  "passed": true,
+  "recipe_results_passed": true,
+  "started_epoch": 1794682747.527,
+  "state_version": 2
+}

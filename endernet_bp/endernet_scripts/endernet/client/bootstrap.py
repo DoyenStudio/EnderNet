@@ -86,8 +86,12 @@ def start_client():
     from .channels import start_slot_display
     from .channels.network_view import start_network_view
     from .ui import register_screens
+    from .channels.production import start_production_client
+    from .mei import start_mei
 
     register_screens()
+    start_production_client()
+    start_mei()
     # 设备身份下行（11-07）：容器类设备的屏拿不到参数，身份由服务端推过来，
     # 这条监听必须在屏可能被打开之前就挂上——因此它在启动时起，而不是在
     # 某个屏的 `OnCreate` 里起（那时推送可能已经发过了）。
@@ -115,8 +119,12 @@ def stop_client():
     from .channels import stop_slot_display
     from .channels.network_view import stop_network_view
     from .ui.universal_importer.screen import close_universal_importer
+    from .channels.production import stop_production_client
+    from .mei import stop_mei
 
     close_universal_importer()
+    stop_production_client()
+    stop_mei()
     stop_cable_intent()
     stop_network_view()
     stop_slot_display()

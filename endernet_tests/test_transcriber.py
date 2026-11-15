@@ -252,8 +252,8 @@ class TestTranscriber(unittest.TestCase):
         found = []
         def walk(value):
             if isinstance(value, dict):
-                if "collection_index" in value:
-                    found.append(value["collection_index"])
+                if "$container_slot_index" in value:
+                    found.append(value["$container_slot_index"])
                 for child in value.values():
                     walk(child)
             elif isinstance(value, list):

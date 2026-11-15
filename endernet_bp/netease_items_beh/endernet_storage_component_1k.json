@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 64,
+            "netease:customtips": {
+                "value": "\n§7用于制造 1K 软盘和硬盘。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:storage_component_1k"
+        }
+    }
+}

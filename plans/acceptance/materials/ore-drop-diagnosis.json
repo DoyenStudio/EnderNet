@@ -1,0 +1,93 @@
+{
+  "test_position": [
+    61,
+    63,
+    41
+  ],
+  "dimension": 0,
+  "method": "PlayerDestroyBlock with real survival player tools; original carried tool restored after each batch; player position unchanged",
+  "before_fix": [
+    {
+      "case": "vanilla_control",
+      "placed": true,
+      "broken": true,
+      "hand": "minecraft:iron_pickaxe",
+      "enchantments": [],
+      "drops": [
+        {
+          "id": "minecraft:diamond",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "case": "normal",
+      "placed": true,
+      "broken": true,
+      "hand": "minecraft:iron_pickaxe",
+      "enchantments": [],
+      "drops": []
+    },
+    {
+      "case": "silk",
+      "placed": true,
+      "broken": true,
+      "hand": "minecraft:iron_pickaxe",
+      "enchantments": [
+        [
+          16,
+          1
+        ]
+      ],
+      "drops": [
+        {
+          "id": "endernet:end_resonance_ore",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "case": "low_tier",
+      "placed": true,
+      "broken": true,
+      "hand": "minecraft:stone_pickaxe",
+      "enchantments": [],
+      "drops": []
+    }
+  ],
+  "native_reference": [
+    {
+      "case": "reference_normal",
+      "placed": true,
+      "broken": true,
+      "hand": "minecraft:iron_pickaxe",
+      "enchantments": [],
+      "drops": [
+        {
+          "id": "skybluetech:raw_tin",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "case": "reference_silk",
+      "placed": true,
+      "broken": true,
+      "hand": "minecraft:iron_pickaxe",
+      "enchantments": [
+        [
+          16,
+          1
+        ]
+      ],
+      "drops": [
+        {
+          "id": "skybluetech:tin_ore",
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "tile_drops_enabled": true,
+  "diagnosis": "match_tool silk_touch max=0 rejects ordinary unenchanted tools; NetEase native silk-touch harvest bypasses ordinary loot and drops the ore block itself. Keep netease:tier level 2 and make the ordinary table yield one crystal."
+}

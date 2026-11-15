@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 64,
+            "netease:customtips": {
+                "value": "\n§7末地石骨架、石英饰面、铁质边框。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:end_casing"
+        }
+    }
+}

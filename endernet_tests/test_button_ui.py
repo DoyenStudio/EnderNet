@@ -28,18 +28,30 @@ class ButtonUiContractTests(unittest.TestCase):
         contents = []
         for state, offset in STATES:
             face = children[state]
-            face_node = face[0]
-            self.assertTrue(face_node.get("type") == "image"
-                            or face_node.get("external_template")
-                            == "netease_editor_template_namespace." + state)
-            self.assertNotIn("offset", face_node, "按钮底板必须固定")
-            wrapper = self.ui.child(face, "wrapper")
-            self.assertEqual(self.ui.substitute(wrapper[0]["offset"], wrapper[1]), offset)
-            content = self.ui.child(wrapper, "button_content")
-            self.assertTrue(self.ui.children(content), "状态内容不能是空面板")
-            contents.append(content[0])
-        self.assertEqual(contents[0], contents[1])
-        self.assertEqual(contents[1], contents[2])
+            faces = [(face, offset, state)]
+            if face[0].get("type") == "panel":
+                branches = self.ui.children(face)
+                self.assertEqual(set(branches), {"normal", "selected"})
+                normal, selected = branches["normal"], branches["selected"]
+                self.assertEqual(normal[0]["bindings"][0]["binding_name"],
+                                 selected[0]["bindings"][0]["binding_name"])
+                self.assertEqual(normal[0]["bindings"][1]["source_property_name"],
+                                 "(not #mode_selected)")
+                self.assertEqual(selected[0]["bindings"][0]["binding_name_override"], "#visible")
+                faces = [(normal, offset, state), (selected, [0, 0], "pressed")]
+            for rendered, expected_offset, rendered_state in faces:
+                face_node = rendered[0]
+                self.assertTrue(face_node.get("type") == "image"
+                                or face_node.get("external_template")
+                                == "netease_editor_template_namespace." + rendered_state)
+                self.assertNotIn("offset", face_node, "按钮底板必须固定")
+                wrapper = self.ui.child(rendered, "wrapper")
+                self.assertEqual(self.ui.substitute(wrapper[0]["offset"], wrapper[1]), expected_offset)
+                content = self.ui.child(wrapper, "button_content")
+                self.assertTrue(self.ui.children(content), "状态内容不能是空面板")
+                contents.append(content[0])
+        for content in contents[1:]:
+            self.assertEqual(contents[0], content)
 
     def test_all_conventional_textured_buttons_use_the_shared_states(self):
         covered = set()

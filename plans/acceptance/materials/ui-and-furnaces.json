@@ -1,0 +1,117 @@
+{
+  "furnaces": {
+    "36": [
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:silicon",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:silicon",
+        "showInHand": true,
+        "userData": null
+      },
+      null,
+      null
+    ],
+    "37": [
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:resonance_crystal",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:resonance_crystal",
+        "showInHand": true,
+        "userData": null
+      },
+      null,
+      null
+    ]
+  },
+  "inventory": [
+    {
+      "auxValue": 0,
+      "canDestroy": [],
+      "canPlaceOn": [],
+      "count": 1,
+      "customTips": "",
+      "durability": 0,
+      "enchantData": [],
+      "extraId": "",
+      "isDiggerItem": false,
+      "itemId": 406,
+      "itemName": "minecraft:quartz",
+      "modEnchantData": [],
+      "modId": "",
+      "modItemId": "",
+      "newAuxValue": 0,
+      "newItemName": "minecraft:quartz",
+      "showInHand": true,
+      "userData": null
+    },
+    {
+      "auxValue": 0,
+      "canDestroy": [],
+      "canPlaceOn": [],
+      "count": 2,
+      "customTips": "",
+      "durability": 0,
+      "enchantData": [],
+      "extraId": "",
+      "isDiggerItem": false,
+      "itemId": -1,
+      "itemName": "endernet:quartz_dust",
+      "modEnchantData": [],
+      "modId": "",
+      "modItemId": "",
+      "newAuxValue": 0,
+      "newItemName": "endernet:quartz_dust",
+      "showInHand": true,
+      "userData": null
+    }
+  ],
+  "machine": {
+    "burn": 0,
+    "capacity": 32000,
+    "device_id": "endernet:resonance_inscriber",
+    "dimension": 0,
+    "duration": 80,
+    "energy": 32000,
+    "key": "endernet_resonance_inscriber.main",
+    "message": "",
+    "mode": "press",
+    "pos": [
+      58,
+      63,
+      37
+    ],
+    "progress": 0,
+    "status": "waiting_input"
+  },
+  "output": null,
+  "ui_mode_verified_by_mouse": "press",
+  "native_output_taken_by_mouse": true,
+  "furnace_passed": true,
+  "passed": true
+}

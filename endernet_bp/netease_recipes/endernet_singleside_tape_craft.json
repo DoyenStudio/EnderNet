@@ -1,0 +1,32 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:singleside_tape_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "endernet:magnetic_strip",
+                "data": 0
+            },
+            {
+                "item": "minecraft:iron_ingot",
+                "data": 0
+            },
+            {
+                "tag": "minecraft:planks"
+            }
+        ],
+        "result": {
+            "item": "endernet:singleside_tape",
+            "data": 0,
+            "count": 1
+        }
+    }
+}

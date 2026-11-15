@@ -351,6 +351,7 @@ def _install_stubs():
             "Binder": BinderStub,
             "RegistToolDeltaScreen": _registrable,
             "ToolDeltaScreen": ScreenBase,
+            "SCREEN_BASE_PATH": testsupport.SCREEN_BASE_PATH,
         }),
         ("tooldelta.define.item", {"Item": ItemStub}),
         ("tooldelta.api.client.player",

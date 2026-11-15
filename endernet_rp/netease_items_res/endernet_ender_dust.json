@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:ender_dust"
+        },
+        "description": {
+            "identifier": "endernet:ender_dust"
+        }
+    }
+}

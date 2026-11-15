@@ -27,6 +27,13 @@
         "ui/endernet/terminal/template_terminal_panel.json",
         "ui/endernet/terminal/universal_importer.json",
         "ui/endernet/storage/transcriber.json",
-        "ui/endernet/storage/storage_transfer.json"
+        "ui/endernet/storage/storage_transfer.json",
+        "ui/endernet/production/resonance_charger.json",
+        "ui/endernet/production/resonance_inscriber.json",
+        "ui/endernet/production/resonance_generator.json",
+        "ui/endernet/production/common.json",
+        "ui/endernet/mei_recipes/processing.json",
+        "ui/endernet/mei_recipes/fuel.json",
+        "ui/endernet/mei_recipes/charger.json"
     ]
 }

@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 64,
+            "netease:customtips": {
+                "value": "\n§7芯片封装的共同基底。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:silicon"
+        }
+    }
+}

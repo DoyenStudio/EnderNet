@@ -1,0 +1,38 @@
+{
+  "craft_outputs": 72,
+  "items_checked": 37,
+  "items_missing": [],
+  "players": [
+    "-8589934591"
+  ],
+  "production_started": true,
+  "recipe_missing": [],
+  "recipes_sample": [
+    {
+      "ingredients": [
+        {
+          "count": 2,
+          "data": 0,
+          "item": "minecraft:end_stone"
+        },
+        {
+          "count": 4,
+          "data": 0,
+          "item": "minecraft:quartz"
+        },
+        {
+          "count": 2,
+          "data": 0,
+          "item": "minecraft:iron_ingot"
+        }
+      ],
+      "result": [
+        {
+          "count": 2,
+          "data": 0,
+          "item": "endernet:end_casing"
+        }
+      ]
+    }
+  ]
+}

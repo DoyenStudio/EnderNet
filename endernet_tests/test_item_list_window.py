@@ -178,6 +178,28 @@ class ItemListWindowTests(unittest.TestCase):
         self.assertFalse(self.screen._dyna_bindings)
         self.assertNotIn(picker, self.catalog.windows)
 
+    def test_network_source_updates_owned_picker_and_preserves_search(self):
+        network = ["minecraft:stone", "minecraft:stone", "minecraft:air"]
+        self.module.show_item_list_window(
+            self.screen, self.items, 4, network_item_ids=network)
+        window = self.screen._vars[self.module.WINDOW_ATTRIBUTE]
+        self.addCleanup(window.close)
+        network.append("minecraft:dirt")
+        window.add()
+        picker = window.picker
+        picker._set_source("network")
+        self.assertEqual(picker.visible_ids, ["minecraft:stone"])
+        picker.on_search({"Text": "apple"})
+        self.assertEqual(picker.visible_ids, [])
+        window.set_network_item_ids(["minecraft:apple", "minecraft:dirt"])
+        self.assertEqual(picker.query, "apple")
+        self.assertEqual(picker.visible_ids, ["minecraft:apple"])
+        picker._select(0)
+        self.assertEqual(self.items[-1], "minecraft:apple")
+        window.add()
+        window.picker._set_source("network")
+        self.assertEqual(window.picker.visible_ids, ["minecraft:apple", "minecraft:dirt"])
+
     def test_duplicate_selects_existing_without_append_and_cancel_keeps_list(self):
         window = self.open()
         window.add()

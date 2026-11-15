@@ -1,0 +1,44 @@
+{
+    "format_version": "1.14.0",
+    "minecraft:feature_rules": {
+        "description": {
+            "identifier": "endernet:end_resonance_ore_rule",
+            "places_feature": "endernet:end_resonance_ore_feature"
+        },
+        "conditions": {
+            "placement_pass": "underground_pass",
+            "minecraft:biome_filter": [
+                {
+                    "test": "has_biome_tag",
+                    "operator": "==",
+                    "value": "the_end"
+                }
+            ]
+        },
+        "distribution": {
+            "iterations": 6,
+            "coordinate_eval_order": "yxz",
+            "x": {
+                "distribution": "uniform",
+                "extent": [
+                    0,
+                    16
+                ]
+            },
+            "y": {
+                "distribution": "uniform",
+                "extent": [
+                    32,
+                    72
+                ]
+            },
+            "z": {
+                "distribution": "uniform",
+                "extent": [
+                    0,
+                    16
+                ]
+            }
+        }
+    }
+}

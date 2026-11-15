@@ -1,0 +1,558 @@
+{
+  "mismatches": [
+    {
+      "actual": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 31968,
+        "journal": null,
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "actual_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 31968, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': None}",
+      "expected": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 31968,
+        "journal": {
+          "after": [
+            null,
+            null,
+            null,
+            {
+              "count": 4,
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust"
+            }
+          ],
+          "before": [
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 1,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": 406,
+              "itemName": "minecraft:quartz",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "minecraft:quartz",
+              "showInHand": true,
+              "userData": null
+            },
+            null,
+            null,
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 2,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": -1,
+              "itemName": "endernet:quartz_dust",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust",
+              "showInHand": true,
+              "userData": null
+            }
+          ],
+          "post": {
+            "progress": 0,
+            "recipe": ""
+          }
+        },
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "expected_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 31968, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': {'post': {'progress': 0, 'recipe': ''}, 'after': [None, None, None, {'newAuxValue': 0, 'newItemName': 'endernet:quartz_dust', 'count': 4}], 'before': [{'count': 1, 'newItemName': 'minecraft:quartz', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': 406, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'minecraft:quartz', 'auxValue': 0, 'showInHand': True}, None, None, {'count': 2, 'newItemName': 'endernet:quartz_dust', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': -1, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'endernet:quartz_dust', 'auxValue': 0, 'showInHand': True}]}}",
+      "key": "endernet:production"
+    },
+    {
+      "actual": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 31968,
+        "journal": null,
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "actual_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 31968, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': None}",
+      "expected": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 31976,
+        "journal": {
+          "after": [
+            null,
+            null,
+            null,
+            {
+              "count": 4,
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust"
+            }
+          ],
+          "before": [
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 1,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": 406,
+              "itemName": "minecraft:quartz",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "minecraft:quartz",
+              "showInHand": true,
+              "userData": null
+            },
+            null,
+            null,
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 2,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": -1,
+              "itemName": "endernet:quartz_dust",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust",
+              "showInHand": true,
+              "userData": null
+            }
+          ],
+          "post": {
+            "progress": 0,
+            "recipe": ""
+          }
+        },
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "expected_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 31976, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': {'post': {'progress': 0, 'recipe': ''}, 'after': [None, None, None, {'newAuxValue': 0, 'newItemName': 'endernet:quartz_dust', 'count': 4}], 'before': [{'count': 1, 'newItemName': 'minecraft:quartz', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': 406, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'minecraft:quartz', 'auxValue': 0, 'showInHand': True}, None, None, {'count': 2, 'newItemName': 'endernet:quartz_dust', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': -1, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'endernet:quartz_dust', 'auxValue': 0, 'showInHand': True}]}}",
+      "key": "endernet:production"
+    },
+    {
+      "actual": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 31968,
+        "journal": null,
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "actual_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 31968, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': None}",
+      "expected": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 31984,
+        "journal": {
+          "after": [
+            null,
+            null,
+            null,
+            {
+              "count": 4,
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust"
+            }
+          ],
+          "before": [
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 1,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": 406,
+              "itemName": "minecraft:quartz",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "minecraft:quartz",
+              "showInHand": true,
+              "userData": null
+            },
+            null,
+            null,
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 2,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": -1,
+              "itemName": "endernet:quartz_dust",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust",
+              "showInHand": true,
+              "userData": null
+            }
+          ],
+          "post": {
+            "progress": 0,
+            "recipe": ""
+          }
+        },
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "expected_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 31984, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': {'post': {'progress': 0, 'recipe': ''}, 'after': [None, None, None, {'newAuxValue': 0, 'newItemName': 'endernet:quartz_dust', 'count': 4}], 'before': [{'count': 1, 'newItemName': 'minecraft:quartz', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': 406, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'minecraft:quartz', 'auxValue': 0, 'showInHand': True}, None, None, {'count': 2, 'newItemName': 'endernet:quartz_dust', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': -1, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'endernet:quartz_dust', 'auxValue': 0, 'showInHand': True}]}}",
+      "key": "endernet:production"
+    },
+    {
+      "actual": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 31968,
+        "journal": null,
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "actual_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 31968, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': None}",
+      "expected": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 31992,
+        "journal": {
+          "after": [
+            null,
+            null,
+            null,
+            {
+              "count": 4,
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust"
+            }
+          ],
+          "before": [
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 1,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": 406,
+              "itemName": "minecraft:quartz",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "minecraft:quartz",
+              "showInHand": true,
+              "userData": null
+            },
+            null,
+            null,
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 2,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": -1,
+              "itemName": "endernet:quartz_dust",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust",
+              "showInHand": true,
+              "userData": null
+            }
+          ],
+          "post": {
+            "progress": 0,
+            "recipe": ""
+          }
+        },
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "expected_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 31992, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': {'post': {'progress': 0, 'recipe': ''}, 'after': [None, None, None, {'newAuxValue': 0, 'newItemName': 'endernet:quartz_dust', 'count': 4}], 'before': [{'count': 1, 'newItemName': 'minecraft:quartz', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': 406, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'minecraft:quartz', 'auxValue': 0, 'showInHand': True}, None, None, {'count': 2, 'newItemName': 'endernet:quartz_dust', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': -1, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'endernet:quartz_dust', 'auxValue': 0, 'showInHand': True}]}}",
+      "key": "endernet:production"
+    },
+    {
+      "actual": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 31968,
+        "journal": null,
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "actual_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 31968, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': None}",
+      "expected": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 32000,
+        "journal": {
+          "after": [
+            null,
+            null,
+            null,
+            {
+              "count": 4,
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust"
+            }
+          ],
+          "before": [
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 1,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": 406,
+              "itemName": "minecraft:quartz",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "minecraft:quartz",
+              "showInHand": true,
+              "userData": null
+            },
+            null,
+            null,
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 2,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": -1,
+              "itemName": "endernet:quartz_dust",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust",
+              "showInHand": true,
+              "userData": null
+            }
+          ],
+          "post": {
+            "progress": 0,
+            "recipe": ""
+          }
+        },
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "expected_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 32000, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': {'post': {'progress': 0, 'recipe': ''}, 'after': [None, None, None, {'newAuxValue': 0, 'newItemName': 'endernet:quartz_dust', 'count': 4}], 'before': [{'count': 1, 'newItemName': 'minecraft:quartz', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': 406, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'minecraft:quartz', 'auxValue': 0, 'showInHand': True}, None, None, {'count': 2, 'newItemName': 'endernet:quartz_dust', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': -1, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'endernet:quartz_dust', 'auxValue': 0, 'showInHand': True}]}}",
+      "key": "endernet:production"
+    },
+    {
+      "actual": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 31968,
+        "journal": null,
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "actual_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 31968, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': None}",
+      "expected": {
+        "burn": 0,
+        "cursor": 0,
+        "energy": 32000,
+        "journal": {
+          "after": [
+            null,
+            null,
+            null,
+            {
+              "count": 4,
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust"
+            }
+          ],
+          "before": [
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 1,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": 406,
+              "itemName": "minecraft:quartz",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "minecraft:quartz",
+              "showInHand": true,
+              "userData": null
+            },
+            null,
+            null,
+            {
+              "auxValue": 0,
+              "canDestroy": [],
+              "canPlaceOn": [],
+              "count": 2,
+              "customTips": "",
+              "durability": 0,
+              "enchantData": [],
+              "extraId": "",
+              "isDiggerItem": false,
+              "itemId": -1,
+              "itemName": "endernet:quartz_dust",
+              "modEnchantData": [],
+              "modId": "",
+              "modItemId": "",
+              "newAuxValue": 0,
+              "newItemName": "endernet:quartz_dust",
+              "showInHand": true,
+              "userData": null
+            }
+          ],
+          "post": {
+            "progress": 0,
+            "recipe": ""
+          }
+        },
+        "mode": "grind",
+        "progress": 80,
+        "recipe": "endernet:grind_quartz",
+        "version": 1
+      },
+      "expected_repr": "{'cursor': 0, 'version': 1, 'mode': 'grind', 'progress': 80, 'energy': 32000, 'burn': 0, 'recipe': 'endernet:grind_quartz', 'journal': {'post': {'progress': 0, 'recipe': ''}, 'after': [None, None, None, {'newAuxValue': 0, 'newItemName': 'endernet:quartz_dust', 'count': 4}], 'before': [{'count': 1, 'newItemName': 'minecraft:quartz', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': 406, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'minecraft:quartz', 'auxValue': 0, 'showInHand': True}, None, None, {'count': 2, 'newItemName': 'endernet:quartz_dust', 'canPlaceOn': [], 'modItemId': '', 'enchantData': [], 'durability': 0, 'itemId': -1, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'isDiggerItem': False, 'itemName': 'endernet:quartz_dust', 'auxValue': 0, 'showInHand': True}]}}",
+      "key": "endernet:production"
+    }
+  ],
+  "pos": [
+    66,
+    63,
+    36
+  ],
+  "slots": [
+    null,
+    null,
+    null,
+    {
+      "auxValue": 0,
+      "canDestroy": [],
+      "canPlaceOn": [],
+      "count": 4,
+      "customTips": "",
+      "durability": 0,
+      "enchantData": [],
+      "extraId": "",
+      "isDiggerItem": false,
+      "itemId": -1,
+      "itemName": "endernet:quartz_dust",
+      "modEnchantData": [],
+      "modId": "",
+      "modItemId": "",
+      "newAuxValue": 0,
+      "newItemName": "endernet:quartz_dust",
+      "showInHand": true,
+      "userData": null
+    }
+  ],
+  "start_ticks": 2236,
+  "state": {
+    "burn": 0,
+    "capacity": 32000,
+    "device_id": "endernet:resonance_inscriber",
+    "dimension": 0,
+    "duration": 80,
+    "energy": 32000,
+    "key": "endernet_resonance_inscriber.main",
+    "message": "",
+    "mode": "grind",
+    "pos": [
+      66,
+      63,
+      36
+    ],
+    "progress": 0,
+    "status": "waiting_input"
+  },
+  "ticks": 2941
+}

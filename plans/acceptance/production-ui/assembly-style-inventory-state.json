@@ -1,0 +1,9 @@
+{
+  "isError": false,
+  "content": [
+    {
+      "text": "Code executed successfully on server.\nReturn type: dict\nReturn repr: {'machine': {'status': 'waiting_input', 'burn_duration': 1600, 'capacity': 32000, 'mode': 'charge', 'duration': 80, 'progress': 0, 'energy': 16000, 'burn': 0, 'message': '', 'device_id': 'endernet:resonance_charger'}, 'input': None, 'hotbar0': {'count': 1, 'newItemName': 'endernet:charged_resonance_crystal', 'canPlaceOn': [], 'isDiggerItem': False, 'enchantData': [], 'durability': 0, 'itemId': -1, 'customTips': '', 'extraId': '', 'newAuxValue': 0, 'modEnchantData': [], 'canDestroy': [], 'modId': '', 'userData': None, 'modItemId': '', 'itemName': 'endernet:charged_resonance_crystal', 'auxValue': 0, 'showInHand': True}, 'output': None}\nReturn value JSON: {\n  \"hotbar0\": {\n    \"auxValue\": 0,\n    \"canDestroy\": [],\n    \"canPlaceOn\": [],\n    \"count\": 1,\n    \"customTips\": \"\",\n    \"durability\": 0,\n    \"enchantData\": [],\n    \"extraId\": \"\",\n    \"isDiggerItem\": false,\n    \"itemId\": -1,\n    \"itemName\": \"endernet:charged_resonance_crystal\",\n    \"modEnchantData\": [],\n    \"modId\": \"\",\n    \"modItemId\": \"\",\n    \"newAuxValue\": 0,\n    \"newItemName\": \"endernet:charged_resonance_crystal\",\n    \"showInHand\": true,\n    \"userData\": null\n  },\n  \"input\": null,\n  \"machine\": {\n    \"burn\": 0,\n    \"burn_duration\": 1600,\n    \"capacity\": 32000,\n    \"device_id\": \"endernet:resonance_charger\",\n    \"duration\": 80,\n    \"energy\": 16000,\n    \"message\": \"\",\n    \"mode\": \"charge\",\n    \"progress\": 0,\n    \"status\": \"waiting_input\"\n  },\n  \"output\": null\n}",
+      "type": "text"
+    }
+  ]
+}

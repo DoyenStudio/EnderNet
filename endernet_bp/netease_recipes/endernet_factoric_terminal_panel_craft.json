@@ -1,0 +1,49 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:factoric_terminal_panel_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "endernet:display_component",
+                "data": 0
+            },
+            {
+                "item": "endernet:logic_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:ender_glass_cable",
+                "data": 0
+            },
+            {
+                "item": "endernet:calculation_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:calculation_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:engineering_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:end_casing",
+                "data": 0
+            }
+        ],
+        "result": {
+            "item": "endernet:factoric_terminal_panel",
+            "data": 0,
+            "count": 1
+        }
+    }
+}

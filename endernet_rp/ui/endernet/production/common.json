@@ -1,0 +1,326 @@
+{
+    "namespace": "endernet_production_common",
+    "machine_slot_background@endernet_container_common.container_item_slot_background_img": {
+        "size": "$cell_image_size"
+    },
+    "hover_info@common.button": {
+        "type": "button",
+        "$control_alpha": 1.0,
+        "$default_texture": "",
+        "$hover_texture": "",
+        "$pressed_texture": "",
+        "$is_new_nine_slice": false,
+        "$label_color": [
+            1,
+            1,
+            1
+        ],
+        "$label_font_scale_factor": 1.0,
+        "$label_font_size": "normal",
+        "$label_layer": 3,
+        "$label_offset": [
+            0,
+            0
+        ],
+        "$label_text": "",
+        "$nine_slice_buttom": 0,
+        "$nine_slice_left": 0,
+        "$nine_slice_right": 0,
+        "$nine_slice_top": 0,
+        "$nineslice_size": [
+            0,
+            0,
+            0,
+            0
+        ],
+        "$pressed_button_name": "button.no_action",
+        "$texture_layer": 2,
+        "size": [
+            "100%",
+            "100%"
+        ],
+        "layer": 2,
+        "button_mappings": [],
+        "default_control": "default",
+        "hover_control": "hover",
+        "pressed_control": "pressed",
+        "is_handle_button_move_event": true,
+        "bindings": [
+            {
+                "binding_type": "collection_details",
+                "binding_collection_name": "",
+                "binding_condition": "always_when_visible"
+            }
+        ],
+        "controls": [
+            {
+                "default": {
+                    "type": "panel"
+                }
+            },
+            {
+                "hover": {
+                    "type": "image",
+                    "texture": "textures/ui/white_background",
+                    "alpha": 0.25,
+                    "fill": true,
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "hover_text@common.hover_text": {
+                                "layer": 29,
+                                "property_bag": {
+                                    "#hover_text": ""
+                                }
+                            }
+                        }
+                    ],
+                    "keep_ratio": false
+                }
+            },
+            {
+                "pressed": {
+                    "type": "image",
+                    "texture": "textures/ui/white_background",
+                    "alpha": 0.25,
+                    "fill": true,
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "hover_text@common.hover_text": {
+                                "layer": 29,
+                                "property_bag": {
+                                    "#hover_text": ""
+                                }
+                            }
+                        }
+                    ],
+                    "keep_ratio": false
+                }
+            }
+        ],
+        "sound_volume": 0.0
+    },
+    "status_ring": {
+        "type": "image",
+        "texture": "textures/endernet/ui/production/skybluetech/status_ring",
+        "nineslice_size": 1,
+        "visible": true,
+        "color": [
+            1,
+            1,
+            1
+        ],
+        "alpha": 1,
+        "layer": 10,
+        "keep_ratio": false,
+        "fill": true
+    },
+    "burn_flame": {
+        "type": "panel",
+        "size": [
+            13,
+            13
+        ],
+        "layer": 1,
+        "$mask_img|default": "textures/endernet/ui/production/skybluetech/flame_mask",
+        "controls": [
+            {
+                "bg": {
+                    "type": "image",
+                    "texture": "textures/endernet/ui/production/skybluetech/flame_img",
+                    "layer": 1,
+                    "keep_ratio": false,
+                    "fill": true
+                }
+            },
+            {
+                "mask": {
+                    "type": "image",
+                    "texture": "$mask_img",
+                    "clip_direction": "down",
+                    "clip_ratio": 1.0,
+                    "clip_pixelperfect": true,
+                    "layer": 2,
+                    "keep_ratio": false,
+                    "fill": true
+                }
+            },
+            {
+                "fill_up": {
+                    "type": "panel",
+                    "size": [
+                        0,
+                        0
+                    ],
+                    "visible": false
+                }
+            }
+        ]
+    },
+    "energy_meter_classic": {
+        "type": "panel",
+        "size": [
+            12,
+            54
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "bar": {
+                    "type": "panel",
+                    "size": [
+                        "100% - 2px",
+                        "100% - 2px"
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "bg": {
+                                "type": "image",
+                                "texture": "textures/endernet/ui/production/skybluetech/energy/classic_track",
+                                "tiled": "y",
+                                "layer": 1,
+                                "keep_ratio": false
+                            }
+                        },
+                        {
+                            "mask": {
+                                "type": "image",
+                                "texture": "textures/endernet/ui/production/skybluetech/energy/orig_fill_rose",
+                                "color": [
+                                    0.52,
+                                    0.68,
+                                    1.0
+                                ],
+                                "tiled": "y",
+                                "anchor_from": "bottom_middle",
+                                "anchor_to": "bottom_middle",
+                                "size": [
+                                    "100%",
+                                    "0%"
+                                ],
+                                "layer": 2,
+                                "keep_ratio": false
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "frame": {
+                    "type": "image",
+                    "texture": "textures/endernet/ui/production/skybluetech/frame_empty_slim",
+                    "nineslice_size": 1,
+                    "layer": 3,
+                    "keep_ratio": false,
+                    "fill": true
+                }
+            },
+            {
+                "classic_style": {
+                    "type": "panel",
+                    "size": [
+                        0,
+                        0
+                    ],
+                    "visible": false
+                }
+            },
+            {
+                "label": {
+                    "type": "label",
+                    "text": "",
+                    "visible": false,
+                    "layer": 5
+                }
+            },
+            {
+                "info@endernet_production_common.hover_info": {
+                    "layer": 6
+                }
+            }
+        ]
+    },
+    "energy_meter@endernet_production_common.energy_meter_classic": {},
+    "progress_arrow": {
+        "type": "panel",
+        "size": [
+            22,
+            15
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "bg": {
+                    "type": "image",
+                    "layer": 1,
+                    "keep_ratio": false,
+                    "fill": true,
+                    "texture": "textures/endernet/ui/production/skybluetech/progress/arrow_bg"
+                }
+            },
+            {
+                "mask": {
+                    "type": "image",
+                    "layer": 2,
+                    "keep_ratio": false,
+                    "fill": true,
+                    "texture": "textures/endernet/ui/production/skybluetech/progress/arrow_fill",
+                    "clip_direction": "left",
+                    "clip_ratio": 1.0,
+                    "clip_pixelperfect": true
+                }
+            }
+        ]
+    },
+    "progress_icon_bolt": {
+        "type": "panel",
+        "size": [
+            9,
+            14
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "bg": {
+                    "type": "image",
+                    "texture": "textures/endernet/ui/production/skybluetech/progress/bolt_bg",
+                    "size": [
+                        9,
+                        14
+                    ],
+                    "layer": 1,
+                    "keep_ratio": false,
+                    "fill": true
+                }
+            },
+            {
+                "mask": {
+                    "type": "image",
+                    "texture": "textures/endernet/ui/production/skybluetech/progress/bolt_fill",
+                    "size": [
+                        9,
+                        14
+                    ],
+                    "layer": 2,
+                    "clip_direction": "up",
+                    "clip_ratio": 1.0,
+                    "clip_pixelperfect": true,
+                    "keep_ratio": false,
+                    "fill": true
+                }
+            },
+            {
+                "fill_up": {
+                    "type": "panel",
+                    "size": [
+                        0,
+                        0
+                    ],
+                    "visible": false
+                }
+            }
+        ]
+    }
+}

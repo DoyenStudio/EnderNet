@@ -1,0 +1,179 @@
+{
+  "after": {
+    "hopper_slots": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "journal": null,
+    "machine_slots": [
+      null,
+      null,
+      null,
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:engineering_chip",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:engineering_chip",
+        "showInHand": true,
+        "userData": null
+      }
+    ],
+    "service_error": null,
+    "state": {
+      "burn": 0,
+      "capacity": 32000,
+      "device_id": "endernet:resonance_inscriber",
+      "dimension": 0,
+      "duration": 80,
+      "energy": 32000,
+      "key": "endernet_resonance_inscriber.main",
+      "message": "",
+      "mode": "assemble",
+      "pos": [
+        70,
+        63,
+        39
+      ],
+      "progress": 0,
+      "status": "waiting_input"
+    }
+  },
+  "before": {
+    "hopper_slots": [
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:engineering_circuit",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:engineering_circuit",
+        "showInHand": true,
+        "userData": null
+      },
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:silicon",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:silicon",
+        "showInHand": true,
+        "userData": null
+      },
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": 331,
+        "itemName": "minecraft:redstone",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "minecraft:redstone",
+        "showInHand": true,
+        "userData": null
+      },
+      null,
+      null
+    ],
+    "machine_slots": [
+      null,
+      null,
+      null,
+      null
+    ],
+    "state": {
+      "burn": 0,
+      "capacity": 32000,
+      "device_id": "endernet:resonance_inscriber",
+      "dimension": 0,
+      "duration": 80,
+      "energy": 32000,
+      "key": "endernet_resonance_inscriber.main",
+      "message": "",
+      "mode": "assemble",
+      "pos": [
+        70,
+        63,
+        39
+      ],
+      "progress": 0,
+      "status": "waiting_input"
+    }
+  },
+  "dimension": 0,
+  "elapsed_seconds": 34.07200002670288,
+  "execution": "vanilla hopper feeds real native container; normal BlockEntityTickEvent processes",
+  "hopper_original": "minecraft:dirt",
+  "hopper_placed": true,
+  "hopper_pos": [
+    69,
+    63,
+    39
+  ],
+  "hopper_states": {
+    "facing_direction": 5,
+    "toggle_bit": false
+  },
+  "inputs": [
+    "endernet:engineering_circuit",
+    "endernet:silicon",
+    "minecraft:redstone"
+  ],
+  "passed": true,
+  "pos": [
+    70,
+    63,
+    39
+  ],
+  "start_tick": 4500,
+  "started_epoch": 1794682869.316,
+  "ticks_elapsed": 674,
+  "writes": [
+    true,
+    true,
+    true
+  ]
+}

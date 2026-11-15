@@ -38,7 +38,6 @@ from .port_panel import (
 from .proxy_panel import ProxyPanelBase
 from ..windows.select_item import WINDOW_ATTRIBUTE, show_select_item_window
 from ..shared import id_aux
-from ..terminal import TerminalCache
 
 
 @RegistToolDeltaScreen("endernet_bus_item_output_io.main", is_proxy=True)
@@ -182,15 +181,10 @@ class BusItemPanel(ItemPortPanelBase):
 
     def _attach_models(self, device_ref, client):
         ItemPortPanelBase._attach_models(self, device_ref, client)
-        self.stock = TerminalCache(client=client)
         self.rendered_slots = None
 
-    def _detach_models(self):
-        self.stock = None
-        ItemPortPanelBase._detach_models(self)
-
     def _tick_extra(self):
-        self.stock.tick()
+        self._tick_stock()
         self._drain_receipts()
 
     def _refresh_controls(self):
@@ -236,10 +230,7 @@ class BusItemPanel(ItemPortPanelBase):
         if items[index]:
             select(None)
         else:
-            stock = self.stock.model
-            rows = stock.query_page(stock.query_generation(), 0, stock.count())
-            names = [row.key.name for row in rows if row.key.kind == "item" and row.stored > 0]
-            show_select_item_window(self, names, select)
+            show_select_item_window(self, self._network_item_ids(), select)
 
 
 @RegistToolDeltaScreen("endernet_memory_slot.main", is_proxy=True)

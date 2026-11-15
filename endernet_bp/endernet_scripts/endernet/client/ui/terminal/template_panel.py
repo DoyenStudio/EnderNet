@@ -70,6 +70,7 @@ from ..device_status import model as device_status
 from ..windows.list_bindings import ItemListWindowBindingsMixin
 from ..windows import ITEM_LIST_WINDOW_ATTRIBUTE
 from ...network_client import NetworkClient
+from ... import mei
 from ....common.identity import DeviceRef
 from ....common.resources import ResourceKey
 from ....common.protocol import MSG_TEMPLATE_STATE, STATUS_OK, Reason
@@ -167,6 +168,7 @@ ACTION_CELL_CLEAR = "template_cell_clear"
 ACTION_CLEAR = "template_clear"
 ACTION_IMPORT = "template_import"
 ACTION_UNIVERSAL_IMPORT = "template_universal_import"
+ACTION_MEI_IMPORT = "template_mei_import"
 RECIPE_LONG_PRESS_SECONDS = 0.5
 ACTION_CELL_COUNT = "template_cell_count"
 ACTION_ENCODE = "template_encode"
@@ -178,7 +180,7 @@ ACTION_OUTPUT_TAKE = "template_output_take"
 #: 是**背包槽锚**，意思完全不同——一张表说清哪个字段在哪条命令里什么意思。
 CONFIG_ACTIONS = frozenset([
     ACTION_MODE, ACTION_CELL_PUT, ACTION_CELL_CLEAR, ACTION_CELL_COUNT,
-    ACTION_ENCODE, ACTION_CLEAR, ACTION_IMPORT, ACTION_UNIVERSAL_IMPORT,
+    ACTION_ENCODE, ACTION_CLEAR, ACTION_IMPORT, ACTION_UNIVERSAL_IMPORT, ACTION_MEI_IMPORT,
 ])
 
 #: 面给玩家的失败原因。**只列界面必须点出来的那几条**，其余退化成空串。
@@ -675,6 +677,24 @@ class TemplateView(object):
             return None
         return self._send(ACTION_ENCODE)
 
+    def mei_import_error(self, include_pending=True):
+        # type: (bool) -> object
+        """MEI 的检查会缓存，实际提交前也要重新核对会话与在途编辑。"""
+        if self.is_unavailable() or self.revision < 0:
+            return u"样板终端尚未就绪，请重新打开"
+        if include_pending and self._requests:
+            return u"请等待样板终端完成当前操作"
+        return None
+
+    def on_mei_import(self, config):
+        # type: (dict) -> object
+        """模式与两组虚格一起提交，显示仍以服务端状态推送为准。"""
+        if self.mei_import_error() is not None:
+            return None
+        self.close_number_window()
+        self.close_recipe_windows()
+        return self._send(ACTION_MEI_IMPORT, config=config)
+
     def _pending_backpack_item(self):
         # type: () -> object
         """背包里选中的那一格 `(引擎槽号, key, 数量)`；没有返回 `None`。
@@ -818,7 +838,7 @@ class TemplateView(object):
             except Exception:
                 self.recipe_choice = None
                 self.errors += 1
-        if action in (ACTION_CLEAR, ACTION_UNIVERSAL_IMPORT):
+        if action in (ACTION_CLEAR, ACTION_UNIVERSAL_IMPORT, ACTION_MEI_IMPORT):
             self.selection = None
             self.presses.clear()
             self._clear_sources()
@@ -1335,6 +1355,7 @@ class TemplatePanel(RecipeChoiceBindings, ItemListWindowBindingsMixin, TerminalP
         self.status = device_status.DeviceStatusModel(device_ref)
         client.on_message(self._make_status_handler(client))
         self.template = TemplateView(self, client=client)
+        mei.set_template_view(self.template)
         client.on_message(self._make_template_handler(client))
         # **把协作口子挂上去**：两条共享手势（点背包槽、点网络行）在这台
         # 终端上多一层含义，见 `TerminalPanelBase.config` 的文档。
@@ -1395,6 +1416,7 @@ class TemplatePanel(RecipeChoiceBindings, ItemListWindowBindingsMixin, TerminalP
         self._sync_slot_frames()
 
     def OnDestroy(self):
+        mei.clear_template_view(self.template)
         if self.list_view is not None:
             self.list_view.close()
             self.list_view = None

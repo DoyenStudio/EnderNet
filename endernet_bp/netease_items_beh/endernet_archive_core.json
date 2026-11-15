@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 64,
+            "netease:customtips": {
+                "value": "\n§7数据库高密磁带的核心。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:archive_core"
+        }
+    }
+}

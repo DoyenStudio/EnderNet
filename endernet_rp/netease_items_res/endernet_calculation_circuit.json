@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:calculation_circuit"
+        },
+        "description": {
+            "identifier": "endernet:calculation_circuit"
+        }
+    }
+}

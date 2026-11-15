@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:reinforced_end_casing"
+        },
+        "description": {
+            "identifier": "endernet:reinforced_end_casing"
+        }
+    }
+}

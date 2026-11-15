@@ -1,0 +1,57 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:resonance_glass_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "minecraft:glass",
+                "data": 0
+            },
+            {
+                "item": "minecraft:glass",
+                "data": 0
+            },
+            {
+                "item": "minecraft:glass",
+                "data": 0
+            },
+            {
+                "item": "minecraft:glass",
+                "data": 0
+            },
+            {
+                "item": "minecraft:quartz",
+                "data": 0
+            },
+            {
+                "item": "minecraft:quartz",
+                "data": 0
+            },
+            {
+                "item": "minecraft:amethyst_shard",
+                "data": 0
+            },
+            {
+                "item": "endernet:resonance_crystal",
+                "data": 0
+            },
+            {
+                "item": "minecraft:dye",
+                "data": 6
+            }
+        ],
+        "result": {
+            "item": "endernet:resonance_glass",
+            "data": 0,
+            "count": 4
+        }
+    }
+}

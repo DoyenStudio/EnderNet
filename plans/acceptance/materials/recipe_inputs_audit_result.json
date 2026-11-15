@@ -1,0 +1,1338 @@
+{
+  "recipes": [
+    {
+      "id": "endernet:ender_dust_craft",
+      "pass": true,
+      "expected_slots": 2,
+      "actual_slots": 2,
+      "expected_output": [
+        "endernet:ender_dust",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:ender_dust",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:charged_resonance_crystal_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:charged_resonance_crystal",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:charged_resonance_crystal",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:resonance_glass_craft",
+      "pass": true,
+      "expected_slots": 9,
+      "actual_slots": 9,
+      "expected_output": [
+        "endernet:resonance_glass",
+        4,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:resonance_glass",
+          4,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:end_casing_craft",
+      "pass": true,
+      "expected_slots": 8,
+      "actual_slots": 8,
+      "expected_output": [
+        "endernet:end_casing",
+        2,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:end_casing",
+          2,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:reinforced_end_casing_craft",
+      "pass": true,
+      "expected_slots": 9,
+      "actual_slots": 9,
+      "expected_output": [
+        "endernet:reinforced_end_casing",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:reinforced_end_casing",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:magnetic_strip_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:magnetic_strip",
+        4,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:magnetic_strip",
+          4,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:convergence_core_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:convergence_core",
+        2,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:convergence_core",
+          2,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:expansion_core_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:expansion_core",
+        2,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:expansion_core",
+          2,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:display_component_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:display_component",
+        2,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:display_component",
+          2,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:fluid_seal_craft",
+      "pass": true,
+      "expected_slots": 5,
+      "actual_slots": 5,
+      "expected_output": [
+        "endernet:fluid_seal",
+        2,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:fluid_seal",
+          2,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:wireless_resonance_core_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:wireless_resonance_core",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:wireless_resonance_core",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:medium_casing_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:medium_casing",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:medium_casing",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:resonance_charger_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:resonance_charger",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:resonance_charger",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:resonance_inscriber_craft",
+      "pass": true,
+      "expected_slots": 8,
+      "actual_slots": 8,
+      "expected_output": [
+        "endernet:resonance_inscriber",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:resonance_inscriber",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:resonance_generator_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:resonance_generator",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:resonance_generator",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:dos_network_endpoint_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:dos_network_endpoint",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:dos_network_endpoint",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:tiny_network_endpoint_craft",
+      "pass": true,
+      "expected_slots": 9,
+      "actual_slots": 9,
+      "expected_output": [
+        "endernet:tiny_network_endpoint",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:tiny_network_endpoint",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:network_baseband_8_craft",
+      "pass": true,
+      "expected_slots": 8,
+      "actual_slots": 8,
+      "expected_output": [
+        "endernet:network_baseband_8",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:network_baseband_8",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:network_baseband_16_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:network_baseband_16",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:network_baseband_16",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:network_baseband_32_craft",
+      "pass": true,
+      "expected_slots": 8,
+      "actual_slots": 8,
+      "expected_output": [
+        "endernet:network_baseband_32",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:network_baseband_32",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:energy_input_interface_craft",
+      "pass": true,
+      "expected_slots": 8,
+      "actual_slots": 8,
+      "expected_output": [
+        "endernet:energy_input_interface",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:energy_input_interface",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:ender_glass_cable_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:ender_glass_cable",
+        8,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:ender_glass_cable",
+          8,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:ender_cable_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:ender_cable",
+        4,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:ender_cable",
+          4,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:ender_dense_cable_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:ender_dense_cable",
+        2,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:ender_dense_cable",
+          2,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:p2p_network_tunnel_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:p2p_network_tunnel",
+        2,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:p2p_network_tunnel",
+          2,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:wireless_connector_craft",
+      "pass": true,
+      "expected_slots": 5,
+      "actual_slots": 5,
+      "expected_output": [
+        "endernet:wireless_connector",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:wireless_connector",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:bus_item_input_io_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:bus_item_input_io",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:bus_item_input_io",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:bus_item_output_io_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:bus_item_output_io",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:bus_item_output_io",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:bus_item_io_craft",
+      "pass": true,
+      "expected_slots": 5,
+      "actual_slots": 5,
+      "expected_output": [
+        "endernet:bus_item_io",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:bus_item_io",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:bus_fluid_input_io_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:bus_fluid_input_io",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:bus_fluid_input_io",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:bus_fluid_output_io_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:bus_fluid_output_io",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:bus_fluid_output_io",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:bus_fluid_io_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:bus_fluid_io",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:bus_fluid_io",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:bus_template_io_craft",
+      "pass": true,
+      "expected_slots": 8,
+      "actual_slots": 8,
+      "expected_output": [
+        "endernet:bus_template_io",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:bus_template_io",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:storage_driver_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:storage_driver",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:storage_driver",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:transcriber_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:transcriber",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:transcriber",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:storage_transfer_craft",
+      "pass": true,
+      "expected_slots": 9,
+      "actual_slots": 9,
+      "expected_output": [
+        "endernet:storage_transfer",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:storage_transfer",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:common_terminal_part_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:common_terminal_part",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:common_terminal_part",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:crafting_terminal_part_craft",
+      "pass": true,
+      "expected_slots": 5,
+      "actual_slots": 5,
+      "expected_output": [
+        "endernet:crafting_terminal_part",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:crafting_terminal_part",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:template_terminal_part_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:template_terminal_part",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:template_terminal_part",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:factoric_terminal_part_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:factoric_terminal_part",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:factoric_terminal_part",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:common_terminal_panel_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:common_terminal_panel",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:common_terminal_panel",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:crafting_terminal_panel_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:crafting_terminal_panel",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:crafting_terminal_panel",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:template_terminal_panel_craft",
+      "pass": true,
+      "expected_slots": 8,
+      "actual_slots": 8,
+      "expected_output": [
+        "endernet:template_terminal_panel",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:template_terminal_panel",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:factoric_terminal_panel_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:factoric_terminal_panel",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:factoric_terminal_panel",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:parallel_processor_connector_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:parallel_processor_connector",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:parallel_processor_connector",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:parallel_processor_craft",
+      "pass": true,
+      "expected_slots": 6,
+      "actual_slots": 6,
+      "expected_output": [
+        "endernet:parallel_processor",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:parallel_processor",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:memory_slot_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:memory_slot",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:memory_slot",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:assemble_chamber_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:assemble_chamber",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:assemble_chamber",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:network_wrench_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:network_wrench",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:network_wrench",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:config_card_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:config_card",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:config_card",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:wireless_link_tool_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:wireless_link_tool",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:wireless_link_tool",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:factorical_template_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:factorical_template",
+        4,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:factorical_template",
+          4,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:storage_component_1k_craft",
+      "pass": true,
+      "expected_slots": 9,
+      "actual_slots": 9,
+      "expected_output": [
+        "endernet:storage_component_1k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:storage_component_1k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:storage_component_4k_craft",
+      "pass": true,
+      "expected_slots": 9,
+      "actual_slots": 9,
+      "expected_output": [
+        "endernet:storage_component_4k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:storage_component_4k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:storage_component_16k_craft",
+      "pass": true,
+      "expected_slots": 9,
+      "actual_slots": 9,
+      "expected_output": [
+        "endernet:storage_component_16k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:storage_component_16k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:archive_core_craft",
+      "pass": true,
+      "expected_slots": 9,
+      "actual_slots": 9,
+      "expected_output": [
+        "endernet:archive_core",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:archive_core",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:singleside_tape_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:singleside_tape",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:singleside_tape",
+          1,
+          0
+        ]
+      ],
+      "expanded_tags": [
+        [
+          "minecraft:acacia_planks",
+          "minecraft:bamboo_planks",
+          "minecraft:birch_planks",
+          "minecraft:cherry_planks",
+          "minecraft:crimson_planks",
+          "minecraft:dark_oak_planks",
+          "minecraft:jungle_planks",
+          "minecraft:mangrove_planks",
+          "minecraft:oak_planks",
+          "minecraft:pale_oak_planks",
+          "minecraft:spruce_planks",
+          "minecraft:warped_planks"
+        ]
+      ]
+    },
+    {
+      "id": "endernet:doubleside_tape_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:doubleside_tape",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:doubleside_tape",
+          1,
+          0
+        ]
+      ],
+      "expanded_tags": [
+        [
+          "minecraft:acacia_planks",
+          "minecraft:bamboo_planks",
+          "minecraft:birch_planks",
+          "minecraft:cherry_planks",
+          "minecraft:crimson_planks",
+          "minecraft:dark_oak_planks",
+          "minecraft:jungle_planks",
+          "minecraft:mangrove_planks",
+          "minecraft:oak_planks",
+          "minecraft:pale_oak_planks",
+          "minecraft:spruce_planks",
+          "minecraft:warped_planks"
+        ]
+      ]
+    },
+    {
+      "id": "endernet:database_compressed_tape_craft",
+      "pass": true,
+      "expected_slots": 9,
+      "actual_slots": 9,
+      "expected_output": [
+        "endernet:database_compressed_tape",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:database_compressed_tape",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:softdisk_1k_craft",
+      "pass": true,
+      "expected_slots": 5,
+      "actual_slots": 5,
+      "expected_output": [
+        "endernet:softdisk_1k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:softdisk_1k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:softdisk_4k_craft",
+      "pass": true,
+      "expected_slots": 5,
+      "actual_slots": 5,
+      "expected_output": [
+        "endernet:softdisk_4k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:softdisk_4k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:harddisk_1k_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:harddisk_1k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:harddisk_1k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:harddisk_4k_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:harddisk_4k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:harddisk_4k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:harddisk_16_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:harddisk_16",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:harddisk_16",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:memory_128b_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:memory_128b",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:memory_128b",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:memory_256b_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:memory_256b",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:memory_256b",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:memory_512b_craft",
+      "pass": true,
+      "expected_slots": 3,
+      "actual_slots": 3,
+      "expected_output": [
+        "endernet:memory_512b",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:memory_512b",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:memory_1k_craft",
+      "pass": true,
+      "expected_slots": 4,
+      "actual_slots": 4,
+      "expected_output": [
+        "endernet:memory_1k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:memory_1k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:memory_4k_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:memory_4k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:memory_4k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:memory_16k_craft",
+      "pass": true,
+      "expected_slots": 7,
+      "actual_slots": 7,
+      "expected_output": [
+        "endernet:memory_16k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:memory_16k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:memory_64k_craft",
+      "pass": true,
+      "expected_slots": 8,
+      "actual_slots": 8,
+      "expected_output": [
+        "endernet:memory_64k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:memory_64k",
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "id": "endernet:memory_256k_craft",
+      "pass": true,
+      "expected_slots": 8,
+      "actual_slots": 8,
+      "expected_output": [
+        "endernet:memory_256k",
+        1,
+        0
+      ],
+      "actual_outputs": [
+        [
+          "endernet:memory_256k",
+          1,
+          0
+        ]
+      ]
+    }
+  ],
+  "total": 72,
+  "passed": 72,
+  "normalization": {
+    "minecraft:dye:4": "minecraft:lapis_lazuli:0",
+    "minecraft:dye:6": "minecraft:cyan_dye:0"
+  }
+}

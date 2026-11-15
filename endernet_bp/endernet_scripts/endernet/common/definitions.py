@@ -39,6 +39,12 @@
 
 import math
 
+from .materials import (
+    MATERIAL_ITEMS as MATERIAL_ITEMS,
+    MACHINE_BLOCKS as MACHINE_BLOCKS,
+    ORE_BLOCKS as ORE_BLOCKS,
+)
+
 
 # -- 未配置哨兵 ------------------------------------------------------------
 
@@ -956,14 +962,11 @@ MEDIUMS = (
 #: 这一份是**内容注册的分阶段清单**——哪些型号已经真的做成了游戏物品
 #: （`endernet_bp/netease_items_beh/` 里有条目、资源包里有贴图、语言文件里有名字）。
 #:
-#: R10 的型号表尚未列全（items.md 里省略号代表的型号不算已定），因此
-#: 这里先创建**容量并列最小的两个**，其余型号目前只有规格、不能作为物品获得。
+#: 2026-11-15 生存材料实施：注册当前已有明确规格的全部八种介质。
+#: R10 省略号代表的未定义型号仍不在此表内。
 #: 领域层不读这一份：驱动器接受哪些型号由 `DriverPolicy.accepted_models` 决定，
 #: 两者是不同的规则。
-ITEM_MEDIUMS = (
-    "endernet:singleside_tape",
-    "endernet:softdisk_1k",
-)
+ITEM_MEDIUMS = tuple(spec.id for spec in MEDIUMS)
 
 
 # -- 内存表（items.md）-----------------------------------------------------
@@ -1953,6 +1956,7 @@ class DefinitionSet(object):
             + self.item_template_specs()
             + self.item_memory_specs()
             + self.item_tool_specs()
+            + list(MATERIAL_ITEMS)
         )
 
     def item_keys(self):
@@ -1963,6 +1967,7 @@ class DefinitionSet(object):
             + tuple(self.item_templates)
             + tuple(self.item_memories)
             + tuple(self.item_tools)
+            + tuple(spec.id for spec in MATERIAL_ITEMS)
         )
 
     def item_id_for_template_mode(self, mode):

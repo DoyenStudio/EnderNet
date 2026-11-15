@@ -1,0 +1,9 @@
+{
+  "isError": false,
+  "content": [
+    {
+      "text": "Code executed successfully on client.\nReturn type: list\nReturn repr: [{'hover': '\\xc2\\xa7b\\xe5\\x82\\xa8\\xe8\\x83\\xbd\\xef\\xbc\\x9a \\xc2\\xa7f0 FE\\n\\xc2\\xa77\\xe5\\xae\\xb9\\xe9\\x87\\x8f\\xef\\xbc\\x9a \\xc2\\xa7f32.00 kFE\\n\\xc2\\xa7c\\xe7\\x94\\xb5\\xe9\\x87\\x8f\\xe5\\x91\\x8a\\xe6\\x80\\xa5', 'fill_size': (10.0, 0.0), 'progress': 0.25, 'screen': 'endernet_resonance_charger.main', 'data': {'status': 'no_power', 'burn_duration': 1600, 'capacity': 32000, 'opened': False, 'energy': 0, 'burn': 0, 'pos': [55, 64, 34], 'session': 'f1d8affb94a94cf49024605a67941483', 'mode': 'charge', 'key': 'endernet_resonance_charger.main', 'duration': 80, 'progress': 20, 'message': '', 'dimension': 0, 'device_id': 'endernet:resonance_charger'}, 'energy': (0.0, 2)}]\nReturn value JSON: [\n  {\n    \"data\": {\n      \"burn\": 0,\n      \"burn_duration\": 1600,\n      \"capacity\": 32000,\n      \"device_id\": \"endernet:resonance_charger\",\n      \"dimension\": 0,\n      \"duration\": 80,\n      \"energy\": 0,\n      \"key\": \"endernet_resonance_charger.main\",\n      \"message\": \"\",\n      \"mode\": \"charge\",\n      \"opened\": false,\n      \"pos\": [\n        55,\n        64,\n        34\n      ],\n      \"progress\": 20,\n      \"session\": \"f1d8affb94a94cf49024605a67941483\",\n      \"status\": \"no_power\"\n    },\n    \"energy\": [\n      0.0,\n      2\n    ],\n    \"fill_size\": [\n      10.0,\n      0.0\n    ],\n    \"hover\": \"§b储能： §f0 FE\\n§7容量： §f32.00 kFE\\n§c电量告急\",\n    \"progress\": 0.25,\n    \"screen\": \"endernet_resonance_charger.main\"\n  }\n]",
+      "type": "text"
+    }
+  ]
+}

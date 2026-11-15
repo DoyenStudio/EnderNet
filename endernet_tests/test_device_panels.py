@@ -176,6 +176,7 @@ def _install_stubs():
             "Binder": BinderStub,
             "RegistToolDeltaScreen": _registrable,
             "ToolDeltaScreen": ScreenBase,
+            "SCREEN_BASE_PATH": testsupport.SCREEN_BASE_PATH,
         }),
         ("tooldelta.define.item", {"Item": ItemStub}),
         # `register_screens()` 经 `crafting_panel` → `select_item_window` 摸到
@@ -432,9 +433,66 @@ class TestPortConfigPanelLifecycle(unittest.TestCase):
         panel = self.panel()
         panel.OnCreate()
         self.assertIsNotNone(panel.port_config)
+        self.assertIs(panel.stock.client, panel.client)
         self.assertIsNone(panel.port_config.device_id)   # 还没收到推送
         panel.OnDestroy()
         self.assertIsNone(panel.port_config)
+        self.assertIsNone(panel.stock)
+
+    def test_active_port_network_picker_receives_snapshot_and_live_removals(self):
+        from test_select_item_window import Screen, ItemStub as SearchItem
+        from endernet_bp.endernet_scripts.endernet.client.ui.windows import select_item
+        from endernet_bp.endernet_scripts.endernet.common.resources.key import ResourceKey
+
+        for cls, role in ((device_panels.BusItemOutputPanel, "output"),
+                          (device_panels.BusItemInputPanel, "input")):
+            with self.subTest(panel=cls.__name__):
+                panel = self.panel(cls)
+                controls = Screen()
+                panel._vars = controls._vars
+                panel._activated = True
+                for name in ("GetBaseUIControl", "GetElement", "DynaBinding", "DynaBindingCollection",
+                             "DynaUnbinding", "DynaUnbindingCollection"):
+                    setattr(panel, name, getattr(controls, name))
+                client = NetworkClient(port=_RecordingPort())
+                panel._attach_models(self.ref, client)
+                panel.client = client
+                self.addCleanup(panel.OnDestroy)
+
+                def feed(message):
+                    self.assertTrue(client.receive(protocol.SyncEnvelope(
+                        message, "picker-session", "network", "epoch").to_dict()))
+
+                feed(protocol.SessionReady(1, 1))
+                config = {"enabled": True, "direction": "both", "filter_mode": "whitelist",
+                          "filter": [], "supply_slots": [], "limit": 0, "cache_enabled": False}
+                feed(protocol.PortConfigMessage(cls.DEVICE_ID, self.ref.generation,
+                                                role, config, 9, filter_modes=["whitelist"]))
+                panel._edit_filter()
+                window = panel.draft[0]
+                with mock.patch.object(select_item, "get_catalog", return_value=None), \
+                        mock.patch.object(select_item, "Item", SearchItem):
+                    window.add()
+                    picker = window.picker
+                    picker._set_source("network")
+                    self.assertEqual(picker.visible_ids, [])
+                    stone = ResourceKey.item("minecraft:stone")
+                    # Different aux values still represent one selectable identifier.
+                    records = ((stone, 20, 0, False),
+                               (ResourceKey.item("minecraft:stone", 1), 4, 0, False),
+                               (ResourceKey.item("minecraft:apple"), 0, 0, True))
+                    feed(protocol.SnapshotBegin("stock", 1, len(records)))
+                    feed(protocol.SnapshotChunk("stock", 0, records))
+                    feed(protocol.SnapshotEnd("stock", 1))
+                    panel._tick_stock()
+                    self.assertEqual(picker.visible_ids, ["minecraft:stone"])
+                    picker.on_search({"Text": "stone"})
+                    feed(protocol.ItemDelta("remove", 0, 1, 1, 2, (),
+                                            (stone, records[1][0])))
+                    panel._tick_stock()
+                    self.assertEqual(picker.query, "stone")
+                    self.assertEqual(picker.visible_ids, [])
+                    window.close()
 
     def test_a_tick_without_controls_degrades_instead_of_raising(self):
         """控件取不到（路径解析失败、这台设备的界面里没有那一格）时，
@@ -1484,7 +1542,9 @@ class TestJsonContract(unittest.TestCase):
                           device_id)
 
     def test_all_device_ui_content_contains_a_stat_bar(self):
-        """包含尚未注册代理的设备 UI，避免只检查 CONTAINER_SCREENS。"""
+        """网络设备必须有网络状态栏；独立加工机显示自身加工状态。"""
+        from endernet.common.materials import MACHINE_BLOCKS
+        independent_files = {machine.id.replace(":", "_") + ".json" for machine in MACHINE_BLOCKS}
         def count_stat_bars(node):
             count = 0
             for entry in node.get("controls", []):
@@ -1497,6 +1557,8 @@ class TestJsonContract(unittest.TestCase):
         block_dir = os.path.join(ROOT, "endernet_bp", "blocks")
         checked = []
         for filename in sorted(os.listdir(block_dir)):
+            if filename in independent_files:
+                continue
             if not filename.startswith("endernet_") or not filename.endswith(".json"):
                 continue
             ui_file = filename[len("endernet_"):]

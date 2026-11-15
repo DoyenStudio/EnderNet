@@ -1,0 +1,644 @@
+{
+    "content": {
+        "type": "panel",
+        "layer": 1,
+        "controls": [
+            {
+                "flying_item_renderer@common.flying_item_renderer": {
+                    "layer": 11,
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "container_gamepad_helpers@common.container_gamepad_helpers": {
+                    "layer": 3
+                }
+            },
+            {
+                "selected_item_details_factory@common.selected_item_details_factory": {
+                    "layer": 4,
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "item_lock_notification_factory@common.item_lock_notification_factory": {
+                    "size": [
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "root_panel@common.root_panel": {
+                    "controls": [
+                        {
+                            "bg@common.dialog_background_opaque": {
+                                "controls": [
+                                    {
+                                        "inventory_selected_icon_button@common.inventory_selected_icon_button": {}
+                                    },
+                                    {
+                                        "gamepad_cursor_button@common.gamepad_cursor_button": {
+                                            "visible": true
+                                        }
+                                    },
+                                    {
+                                        "close@endernet_ui_common.vanilla_close_button": {
+                                            "size": [
+                                                18,
+                                                18
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "main": {
+                                            "type": "panel",
+                                            "controls": [
+                                                {
+                                                    "title": {
+                                                        "type": "image",
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "size": [
+                                                            64,
+                                                            16
+                                                        ],
+                                                        "layer": 1,
+                                                        "texture": "textures/endernet/ui/device_title_background",
+                                                        "controls": [
+                                                            {
+                                                                "title_text": {
+                                                                    "type": "label",
+                                                                    "anchor_from": "top_left",
+                                                                    "anchor_to": "top_left",
+                                                                    "offset": [
+                                                                        3.0,
+                                                                        3.0
+                                                                    ],
+                                                                    "color": [
+                                                                        0.3058823529411765,
+                                                                        0.2549019607843137,
+                                                                        0.3137254901960784
+                                                                    ],
+                                                                    "font_scale_factor": 1.2,
+                                                                    "font_type": "default",
+                                                                    "text": "tile.endernet:resonance_inscriber.name",
+                                                                    "text_alignment": "center"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "mode_grind@endernet_ui_common.endernet_button": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            7,
+                                                            23
+                                                        ],
+                                                        "size": [
+                                                            50,
+                                                            18
+                                                        ],
+                                                        "layer": 5,
+                                                        "$pressed_button_name": "#EnderNetProduction.grind",
+                                                        "$default_texture": "textures/endernet/ui/button_light_default",
+                                                        "$label_text": "粉碎",
+                                                        "$label_color": [
+                                                            0.2,
+                                                            0.2,
+                                                            0.26
+                                                        ],
+                                                        "$label_font_size": "normal",
+                                                        "$button_content_control": "endernet_ui_common.button_label_content",
+                                                        "button_mappings": [
+                                                            {
+                                                                "from_button_id": "button.menu_select",
+                                                                "to_button_id": "$pressed_button_name",
+                                                                "mapping_type": "pressed"
+                                                            },
+                                                            {
+                                                                "from_button_id": "button.menu_ok",
+                                                                "to_button_id": "$pressed_button_name",
+                                                                "mapping_type": "focused"
+                                                            }
+                                                        ],
+                                                        "controls": [
+                                                            {
+                                                                "default": {
+                                                                    "type": "panel",
+                                                                    "controls": [
+                                                                        {
+                                                                            "normal@endernet_ui_common.button_default": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.grind_selected",
+                                                                                        "binding_name_override": "#mode_selected"
+                                                                                    },
+                                                                                    {
+                                                                                        "binding_type": "view",
+                                                                                        "source_property_name": "(not #mode_selected)",
+                                                                                        "target_property_name": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        },
+                                                                        {
+                                                                            "selected@endernet_ui_common.button_pressed": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.grind_selected",
+                                                                                        "binding_name_override": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "hover": {
+                                                                    "type": "panel",
+                                                                    "controls": [
+                                                                        {
+                                                                            "normal@endernet_ui_common.button_hover": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.grind_selected",
+                                                                                        "binding_name_override": "#mode_selected"
+                                                                                    },
+                                                                                    {
+                                                                                        "binding_type": "view",
+                                                                                        "source_property_name": "(not #mode_selected)",
+                                                                                        "target_property_name": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        },
+                                                                        {
+                                                                            "selected@endernet_ui_common.button_pressed": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.grind_selected",
+                                                                                        "binding_name_override": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "pressed@endernet_ui_common.button_pressed": {}
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "mode_press@endernet_ui_common.endernet_button": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            62,
+                                                            23
+                                                        ],
+                                                        "size": [
+                                                            50,
+                                                            18
+                                                        ],
+                                                        "layer": 5,
+                                                        "$pressed_button_name": "#EnderNetProduction.press",
+                                                        "$default_texture": "textures/endernet/ui/button_light_default",
+                                                        "$label_text": "压印",
+                                                        "$label_color": [
+                                                            0.2,
+                                                            0.2,
+                                                            0.26
+                                                        ],
+                                                        "$label_font_size": "normal",
+                                                        "$button_content_control": "endernet_ui_common.button_label_content",
+                                                        "button_mappings": [
+                                                            {
+                                                                "from_button_id": "button.menu_select",
+                                                                "to_button_id": "$pressed_button_name",
+                                                                "mapping_type": "pressed"
+                                                            },
+                                                            {
+                                                                "from_button_id": "button.menu_ok",
+                                                                "to_button_id": "$pressed_button_name",
+                                                                "mapping_type": "focused"
+                                                            }
+                                                        ],
+                                                        "controls": [
+                                                            {
+                                                                "default": {
+                                                                    "type": "panel",
+                                                                    "controls": [
+                                                                        {
+                                                                            "normal@endernet_ui_common.button_default": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.press_selected",
+                                                                                        "binding_name_override": "#mode_selected"
+                                                                                    },
+                                                                                    {
+                                                                                        "binding_type": "view",
+                                                                                        "source_property_name": "(not #mode_selected)",
+                                                                                        "target_property_name": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        },
+                                                                        {
+                                                                            "selected@endernet_ui_common.button_pressed": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.press_selected",
+                                                                                        "binding_name_override": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "hover": {
+                                                                    "type": "panel",
+                                                                    "controls": [
+                                                                        {
+                                                                            "normal@endernet_ui_common.button_hover": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.press_selected",
+                                                                                        "binding_name_override": "#mode_selected"
+                                                                                    },
+                                                                                    {
+                                                                                        "binding_type": "view",
+                                                                                        "source_property_name": "(not #mode_selected)",
+                                                                                        "target_property_name": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        },
+                                                                        {
+                                                                            "selected@endernet_ui_common.button_pressed": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.press_selected",
+                                                                                        "binding_name_override": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "pressed@endernet_ui_common.button_pressed": {}
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "mode_assemble@endernet_ui_common.endernet_button": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            117,
+                                                            23
+                                                        ],
+                                                        "size": [
+                                                            50,
+                                                            18
+                                                        ],
+                                                        "layer": 5,
+                                                        "$pressed_button_name": "#EnderNetProduction.assemble",
+                                                        "$default_texture": "textures/endernet/ui/button_light_default",
+                                                        "$label_text": "封装",
+                                                        "$label_color": [
+                                                            0.2,
+                                                            0.2,
+                                                            0.26
+                                                        ],
+                                                        "$label_font_size": "normal",
+                                                        "$button_content_control": "endernet_ui_common.button_label_content",
+                                                        "button_mappings": [
+                                                            {
+                                                                "from_button_id": "button.menu_select",
+                                                                "to_button_id": "$pressed_button_name",
+                                                                "mapping_type": "pressed"
+                                                            },
+                                                            {
+                                                                "from_button_id": "button.menu_ok",
+                                                                "to_button_id": "$pressed_button_name",
+                                                                "mapping_type": "focused"
+                                                            }
+                                                        ],
+                                                        "controls": [
+                                                            {
+                                                                "default": {
+                                                                    "type": "panel",
+                                                                    "controls": [
+                                                                        {
+                                                                            "normal@endernet_ui_common.button_default": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.assemble_selected",
+                                                                                        "binding_name_override": "#mode_selected"
+                                                                                    },
+                                                                                    {
+                                                                                        "binding_type": "view",
+                                                                                        "source_property_name": "(not #mode_selected)",
+                                                                                        "target_property_name": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        },
+                                                                        {
+                                                                            "selected@endernet_ui_common.button_pressed": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.assemble_selected",
+                                                                                        "binding_name_override": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "hover": {
+                                                                    "type": "panel",
+                                                                    "controls": [
+                                                                        {
+                                                                            "normal@endernet_ui_common.button_hover": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.assemble_selected",
+                                                                                        "binding_name_override": "#mode_selected"
+                                                                                    },
+                                                                                    {
+                                                                                        "binding_type": "view",
+                                                                                        "source_property_name": "(not #mode_selected)",
+                                                                                        "target_property_name": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        },
+                                                                        {
+                                                                            "selected@endernet_ui_common.button_pressed": {
+                                                                                "bindings": [
+                                                                                    {
+                                                                                        "binding_type": "global",
+                                                                                        "binding_condition": "always",
+                                                                                        "binding_name": "#EnderNetProduction.assemble_selected",
+                                                                                        "binding_name_override": "#visible"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            },
+                                                            {
+                                                                "pressed@endernet_ui_common.button_pressed": {}
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "power_bar@endernet_production_common.energy_meter": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            7,
+                                                            45
+                                                        ],
+                                                        "size": [
+                                                            12,
+                                                            54
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "ring_energy@endernet_production_common.status_ring": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            7,
+                                                            45
+                                                        ],
+                                                        "size": [
+                                                            12,
+                                                            54
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "slot_0@endernet_container_common.indexed_container_slot": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            31,
+                                                            63
+                                                        ],
+                                                        "$container_slot_index": 0
+                                                    }
+                                                },
+                                                {
+                                                    "slot_1@endernet_container_common.indexed_container_slot": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            49,
+                                                            63
+                                                        ],
+                                                        "$container_slot_index": 1
+                                                    }
+                                                },
+                                                {
+                                                    "slot_2@endernet_container_common.indexed_container_slot": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            67,
+                                                            63
+                                                        ],
+                                                        "$container_slot_index": 2
+                                                    }
+                                                },
+                                                {
+                                                    "slot_3@endernet_container_common.indexed_container_slot": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            136,
+                                                            63
+                                                        ],
+                                                        "$container_slot_index": 3
+                                                    }
+                                                },
+                                                {
+                                                    "ring_slot_0@endernet_production_common.status_ring": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            31,
+                                                            63
+                                                        ],
+                                                        "size": [
+                                                            18,
+                                                            18
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "ring_slot_1@endernet_production_common.status_ring": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            49,
+                                                            63
+                                                        ],
+                                                        "size": [
+                                                            18,
+                                                            18
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "ring_slot_2@endernet_production_common.status_ring": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            67,
+                                                            63
+                                                        ],
+                                                        "size": [
+                                                            18,
+                                                            18
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "ring_slot_3@endernet_production_common.status_ring": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            136,
+                                                            63
+                                                        ],
+                                                        "size": [
+                                                            18,
+                                                            18
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "progress@endernet_production_common.progress_arrow": {
+                                                        "anchor_from": "top_left",
+                                                        "anchor_to": "top_left",
+                                                        "offset": [
+                                                            99,
+                                                            65
+                                                        ]
+                                                    }
+                                                },
+                                                {
+                                                    "status": {
+                                                        "type": "label",
+                                                        "anchor_from": "top_middle",
+                                                        "anchor_to": "top_middle",
+                                                        "offset": [
+                                                            12,
+                                                            87
+                                                        ],
+                                                        "size": [
+                                                            132,
+                                                            12
+                                                        ],
+                                                        "text": "#text",
+                                                        "color": [
+                                                            0.24,
+                                                            0.24,
+                                                            0.3
+                                                        ],
+                                                        "text_alignment": "center",
+                                                        "layer": 3,
+                                                        "bindings": [
+                                                            {
+                                                                "binding_type": "global",
+                                                                "binding_condition": "always",
+                                                                "binding_name": "#EnderNetProduction.status",
+                                                                "binding_name_override": "#text"
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "inventory@endernet_container_common.inventory": {
+                                            "anchor_from": "bottom_middle",
+                                            "anchor_to": "bottom_middle",
+                                            "offset": [
+                                                0,
+                                                -4
+                                            ]
+                                        }
+                                    }
+                                ],
+                                "layer": 0,
+                                "texture": "textures/endernet/ui/background_panel_opaque"
+                            }
+                        }
+                    ],
+                    "layer": 0,
+                    "size": [
+                        176,
+                        196
+                    ]
+                }
+            }
+        ]
+    },
+    "main@common.inventory_screen_common": {
+        "$screen_background_alpha": 0.4,
+        "$screen_bg_content": "common.screen_background",
+        "$screen_content": "endernet_ui_common.screen_root",
+        "$window_content": "endernet_resonance_inscriber.content"
+    },
+    "namespace": "endernet_resonance_inscriber"
+}

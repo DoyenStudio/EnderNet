@@ -25,8 +25,10 @@ def _on_server_uninit():
     from .endernet.server.bootstrap import stop_server
     from .endernet.server.adapters.channels import stop_catalog
     from .endernet.server.adapters.channels import stop_slot_display
+    from .endernet.server.adapters.production import stop_production
 
     stop_slot_display()
+    stop_production()
     stop_catalog()
     stop_server()
 
@@ -51,8 +53,10 @@ class EnderNet(ToolDeltaMod):
         from .endernet.server.bootstrap import start_server
         from .endernet.server.adapters.channels import start_catalog
         from .endernet.server.adapters.channels import start_slot_display
+        from .endernet.server.adapters.production import start_production
 
         start_server()
+        start_production()
         start_catalog()
         start_slot_display()
 

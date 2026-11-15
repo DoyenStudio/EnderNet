@@ -91,6 +91,8 @@ from endernet.common.definitions import (  # noqa: E402
     UNPLACED_FACE,
     UNPLACED_HALF,
     DefinitionSet,
+    MACHINE_BLOCKS,
+    ORE_BLOCKS,
 )
 from endernet.common.channels.slot_display import DISPLAY_DEVICES  # noqa: E402
 from endernet.common.channels.cable_intent import WRENCH_ID  # noqa: E402
@@ -388,6 +390,65 @@ TIPS = {
 
 def short_name(device_id):
     return device_id.split(":", 1)[1]
+
+
+def independent_block_entries():
+    """独立加工机与矿石的资源映射，不进入仓储网络设备表。"""
+    out = {}
+    for spec in MACHINE_BLOCKS:
+        faces = dict((face, "endernet:common_device_side")
+                     for face in ("north", "south", "east", "west"))
+        faces.update({"up": "endernet:common_device_top", "down": "endernet:common_device_bottom",
+                      "north": "endernet:" + short_name(spec.id) + "_front"})
+        out[spec.id] = {"textures": faces, "sound": "stone"}
+    for block_id, _label in ORE_BLOCKS:
+        out[block_id] = {"textures": "endernet:" + short_name(block_id) + "_all", "sound": "stone"}
+    return out
+
+
+def independent_block_textures():
+    return [_device_texture(short_name(spec.id) + "_front") for spec in MACHINE_BLOCKS] + [
+        ("endernet:" + short_name(block_id) + "_all",
+         "textures/endernet/block_resources/" + short_name(block_id) + "_all")
+        for block_id, _label in ORE_BLOCKS]
+
+
+def build_independent_machine_json(spec):
+    components = mining_components("standalone_machine")
+    faces = independent_block_entries()[spec.id]["textures"]
+    components.update({
+        "minecraft:geometry": {"identifier": "minecraft:geometry.full_block"},
+        "minecraft:material_instances": dict((face, {"texture": texture, "render_method": "opaque"})
+                                             for face, texture in faces.items()),
+        "netease:block_entity": {"tick": True},
+        "netease:listen_block_remove": {"value": True},
+        "netease:block_container": {"custom_description": spec.label, "screen_name": spec.screen,
+                                     "container_size": spec.slots},
+        "netease:custom_tips": {"value": "\n§7" + spec.tip},
+    })
+    return {"format_version": FORMAT_VERSION, "minecraft:block": {
+        "description": {"identifier": spec.id, "category": CREATIVE_CATEGORY, "base_block": "netease_container",
+                        "traits": {"minecraft:placement_direction": {
+                            "enabled_states": ["minecraft:cardinal_direction"], "y_rotation_offset": 180.0}}},
+        "components": components,
+        "permutations": [{"condition": "q.block_state('minecraft:cardinal_direction') == '%s'" % face,
+                          "components": {"minecraft:transformation": {"rotation": [0, angle, 0]}}}
+                         for face, angle in FACING_ROTATIONS],
+    }}
+
+
+def build_ore_json(block_id):
+    return {"format_version": FORMAT_VERSION, "minecraft:block": {
+        "description": {"identifier": block_id, "category": CREATIVE_CATEGORY},
+        "components": {
+            "minecraft:destructible_by_mining": {"seconds_to_destroy": 3.0},
+            "netease:tier": {"destroy_special": True, "digger": "pickaxe", "level": 2},
+            "minecraft:loot": "loot_tables/endernet/end_resonance_ore.json",
+            "minecraft:geometry": {"identifier": "minecraft:geometry.full_block"},
+            "minecraft:material_instances": {"*": {
+                "texture": "endernet:" + short_name(block_id) + "_all", "render_method": "opaque"}},
+        },
+    }}
 
 
 def container_size_of(device_id):
@@ -1016,6 +1077,7 @@ def build_blocks_json(definitions):
     for part_id in sorted(definitions.parts):
         # 面板展示方块：模型方块，不写 textures（同上）
         payload[part_id] = {"sound": "stone"}
+    payload.update(independent_block_entries())
     payload = dict(sorted(payload.items()))
     payload["format_version"] = [1, 1, 0]
     return payload
@@ -1040,6 +1102,8 @@ def build_terrain_texture(existing, definitions):
             texture_data[key] = {"textures": path}
     for device_id in sorted(definitions.cables):
         key, path = cable_texture(device_id)
+        texture_data[key] = {"textures": path}
+    for key, path in independent_block_textures():
         texture_data[key] = {"textures": path}
     key, path = panel_item_texture()
     texture_data[key] = {"textures": path}
@@ -1140,6 +1204,15 @@ def main(argv=None):
         if write_json(path, build_part_item_json(part_id), args.check):
             changed.append(os.path.relpath(path, REPO))
 
+    for spec in MACHINE_BLOCKS:
+        path = os.path.join(BP_BLOCKS, block_file_name(spec.id))
+        if write_json(path, build_independent_machine_json(spec), args.check):
+            changed.append(os.path.relpath(path, REPO))
+    for block_id, _label in ORE_BLOCKS:
+        path = os.path.join(BP_BLOCKS, block_file_name(block_id))
+        if write_json(path, build_ore_json(block_id), args.check):
+            changed.append(os.path.relpath(path, REPO))
+
     if write_json(RP_BLOCKS, build_blocks_json(definitions), args.check):
         changed.append(os.path.relpath(RP_BLOCKS, REPO))
 
@@ -1151,6 +1224,7 @@ def main(argv=None):
     block_count = (
         len(definitions.devices) + len(definitions.cables) + len(definitions.part_holders)
         + len(definitions.parts)
+        + len(MACHINE_BLOCKS) + len(ORE_BLOCKS)
     )
 
     if args.check:

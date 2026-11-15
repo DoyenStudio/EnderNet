@@ -36,6 +36,7 @@ from endernet.common.crafting_recipe import (
     match_ordered,
     match_shapeless,
     normalize_recipe,
+    shapeless_slots,
 )
 
 
@@ -185,6 +186,48 @@ class TestNormalizeShapeless(unittest.TestCase):
     def test_a_shapeless_recipe_needs_no_pattern(self):
         self.assertNotIn("pattern", BOOK)
         self.assertFalse(normalize_recipe(BOOK).ordered)
+
+    def test_expanding_slots_preserves_raw_ingredients_and_existing_digest(self):
+        recipe = normalize_recipe(BOOK)
+        self.assertEqual("a87fa3fc", recipe.digest())
+        before = recipe.to_dict()
+        slots = shapeless_slots(recipe)
+        self.assertEqual(4, len(slots))
+        self.assertEqual([1] * 4, [group[0].count for group in slots])
+        self.assertEqual(before, recipe.to_dict())
+        self.assertEqual("a87fa3fc", recipe.digest())
+
+    def test_shapeless_tag_preserves_candidates_and_outer_quantity(self):
+        recipe = normalize_recipe({
+            "ingredients": [{"count": 2, "data": 3, "item": [
+                "minecraft:oak_planks", "minecraft:spruce_planks"]}],
+            "result": [{"item": "minecraft:stick"}],
+        })
+        ingredient = recipe.ingredients[0]
+        self.assertEqual(2, ingredient.count)
+        self.assertEqual([("minecraft:oak_planks", 3), ("minecraft:spruce_planks", 3)],
+                         [(item.name, item.aux) for item in ingredient.candidates()])
+        self.assertEqual(2, len(shapeless_slots(recipe)))
+        self.assertEqual(ingredient, RecipeIngredient.from_dict(ingredient.to_dict()))
+        self.assertNotEqual(ingredient, RecipeIngredient(ingredient.name, ingredient.aux, 2))
+
+    def test_oversized_shapeless_count_is_refused_during_normalization(self):
+        for count in (10, 10 ** 50):
+            with self.assertRaises(RecipeError) as caught:
+                normalize_recipe({"ingredients": [{"item": "minecraft:paper", "count": count}],
+                                  "result": [{"item": "minecraft:book"}]})
+            self.assertEqual(PATTERN_TOO_BIG, caught.exception.code)
+
+    def test_malformed_shapeless_candidates_are_recipe_errors(self):
+        for ingredient in (None, {}, {"item": 5}, {"item": [5]}, {"item": []}):
+            with self.assertRaises(RecipeError):
+                normalize_recipe({"ingredients": [ingredient],
+                                  "result": [{"item": "minecraft:book"}]})
+
+    def test_candidate_output_is_still_refused(self):
+        with self.assertRaises(RecipeError):
+            normalize_recipe({"ingredients": [{"item": "minecraft:paper"}],
+                              "result": [{"item": ["minecraft:book", "minecraft:stick"]}]})
 
 
 class TestNormalizeRejects(unittest.TestCase):
@@ -352,22 +395,21 @@ class TestMatchShapeless(unittest.TestCase):
     def setUp(self):
         self.recipe = normalize_recipe(BOOK)  # 3 paper + 1 leather
 
-    def test_the_stack_in_one_slot_is_enough(self):
+    def test_one_stacked_slot_does_not_replace_three_ingredient_slots(self):
         found = match_shapeless(self.recipe, cells(
             ("minecraft:paper", 0, 3), ("minecraft:leather", 0, 1), None,
             None, None, None, None, None, None,
         ))
-        self.assertIsNotNone(found)
-        self.assertEqual(((0, 3), (1, 1)), found.consumed)
+        self.assertIsNone(found)
 
     def test_position_does_not_matter(self):
         found = match_shapeless(self.recipe, cells(
             None, None, ("minecraft:leather", 0, 1),
-            None, None, None,
-            ("minecraft:paper", 0, 3), None, None,
+            ("minecraft:paper", 0, 1), None, ("minecraft:paper", 0, 1),
+            ("minecraft:paper", 0, 1), None, None,
         ))
         self.assertIsNotNone(found)
-        self.assertEqual(((2, 1), (6, 3)), found.consumed)
+        self.assertEqual(((2, 1), (3, 1), (5, 1), (6, 1)), found.consumed)
 
     def test_two_loose_sheets_are_not_three(self):
         # 只看名字会让这一格「够」——预览亮着，点下去却做不出来。
@@ -377,15 +419,14 @@ class TestMatchShapeless(unittest.TestCase):
         ))
         self.assertIsNone(found)
 
-    def test_paper_may_be_split_across_slots_is_not_supported(self):
-        # 一条配料要 3 张纸，而工作台里那 3 张是堆在一个格子里的；
-        # 分放在三格不是原版语义，这里明确判不匹配（保守那侧）。
+    def test_counted_ingredient_uses_three_separate_slots(self):
         found = match_shapeless(self.recipe, cells(
             ("minecraft:paper", 0, 1), ("minecraft:paper", 0, 1),
             ("minecraft:paper", 0, 1), ("minecraft:leather", 0, 1),
             None, None, None, None, None,
         ))
-        self.assertIsNone(found)
+        self.assertIsNotNone(found)
+        self.assertEqual(((0, 1), (1, 1), (2, 1), (3, 1)), found.consumed)
 
     def test_a_missing_ingredient_blocks_the_match(self):
         found = match_shapeless(self.recipe, cells(
@@ -395,23 +436,24 @@ class TestMatchShapeless(unittest.TestCase):
         self.assertIsNone(found)
 
     def test_an_extra_item_blocks_the_match(self):
-        # 配料都摆齐了，但旁边多出一件。原版比的是「非空格数 == 配料条目数」，
+        # 配料都摆齐了，但旁边多出一件；非空格数必须等于展开后的原料格数。
         # 多出来的那件让整条配方不成立——它既不会进产物，也不该被无视。
         found = match_shapeless(self.recipe, cells(
-            ("minecraft:paper", 0, 3), ("minecraft:leather", 0, 1),
-            ("minecraft:diamond", 0, 1),
-            None, None, None, None, None, None,
+            ("minecraft:paper", 0, 1), ("minecraft:paper", 0, 1),
+            ("minecraft:paper", 0, 1), ("minecraft:leather", 0, 1),
+            ("minecraft:diamond", 0, 1), None, None, None, None,
         ))
         self.assertIsNone(found)
 
     def test_an_extra_item_blocks_the_match_wherever_it_sits(self):
         # 无序配方不看位置，但「不许有剩货」对每一格都成立。
         for slot in range(SLOT_COUNT):
-            if slot in (0, 1):
+            if slot in (0, 1, 2, 3):
                 continue
             layout = [None] * SLOT_COUNT
-            layout[0] = ("minecraft:paper", 0, 3)
-            layout[1] = ("minecraft:leather", 0, 1)
+            for index in (0, 1, 2):
+                layout[index] = ("minecraft:paper", 0, 1)
+            layout[3] = ("minecraft:leather", 0, 1)
             layout[slot] = ("minecraft:diamond", 0, 1)
             self.assertIsNone(
                 match_shapeless(self.recipe, tuple(layout)),
@@ -419,14 +461,57 @@ class TestMatchShapeless(unittest.TestCase):
             )
 
     def test_a_bigger_stack_than_asked_for_is_not_extra(self):
-        # 「多摆一件」按**格子**算，不按数量算：一格里有 5 张纸而配方要 3 张，
-        # 仍然是「一格纸」，剩下 2 张留在格子里，不是多出来的第二件配料。
+        # 每格多放的堆叠数量留给下一次合成，一次只从各原料格扣一个。
         found = match_shapeless(self.recipe, cells(
-            ("minecraft:paper", 0, 5), ("minecraft:leather", 0, 1),
+            ("minecraft:paper", 0, 5), ("minecraft:paper", 0, 4),
+            ("minecraft:paper", 0, 3), ("minecraft:leather", 0, 2),
+            None, None, None, None, None,
+        ))
+        self.assertIsNotNone(found)
+        self.assertEqual(((0, 1), (1, 1), (2, 1), (3, 1)), found.consumed)
+
+
+class TestShapelessCandidates(unittest.TestCase):
+    def test_overlapping_tag_candidates_reassign_an_earlier_slot(self):
+        recipe = normalize_recipe({
+            "ingredients": [{"item": ["minecraft:oak_planks", "minecraft:spruce_planks"]},
+                            {"item": "minecraft:oak_planks"}],
+            "result": [{"item": "minecraft:stick"}],
+        })
+        found = match_shapeless(recipe, cells(
+            ("minecraft:oak_planks", 0), ("minecraft:spruce_planks", 0),
             None, None, None, None, None, None, None,
         ))
         self.assertIsNotNone(found)
-        self.assertEqual(((0, 3), (1, 1)), found.consumed)
+        self.assertEqual(((0, 1), (1, 1)), found.consumed)
+
+    def test_wildcard_and_exact_aux_candidates_can_reassign_slots(self):
+        recipe = PresetRecipe(False, (), {}, (
+            RecipeIngredient("minecraft:wool", None),
+            RecipeIngredient("minecraft:wool", 0),
+        ), (RecipeIngredient("minecraft:stick", 0),))
+        found = match_shapeless(recipe, cells(
+            ("minecraft:wool", 0), ("minecraft:wool", 4),
+            None, None, None, None, None, None, None,
+        ))
+        self.assertIsNotNone(found)
+
+    def test_missing_candidate_or_wrong_aux_cannot_match(self):
+        recipe = normalize_recipe({
+            "ingredients": [{"item": ["minecraft:oak_planks", "minecraft:spruce_planks"], "data": 2}],
+            "result": [{"item": "minecraft:stick"}],
+        })
+        for cell in (("minecraft:oak_planks", 0), ("minecraft:stone", 2)):
+            self.assertIsNone(match_shapeless(recipe, cells(cell, None, None, None, None, None, None, None, None)))
+
+    def test_more_than_nine_ingredients_are_rejected_before_expanding(self):
+        for count in (10, 10 ** 50):
+            recipe = PresetRecipe(False, (), {}, (RecipeIngredient("minecraft:paper", 0, count),),
+                                  (RecipeIngredient("minecraft:book", 0),))
+            with self.assertRaises(RecipeError) as caught:
+                shapeless_slots(recipe)
+            self.assertEqual(PATTERN_TOO_BIG, caught.exception.code)
+            self.assertIsNone(match_shapeless(recipe, cells(*[("minecraft:paper", 0, count)] * 9)))
 
 
 class TestAuxPolicy(unittest.TestCase):

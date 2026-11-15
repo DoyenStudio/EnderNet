@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:database_compressed_tape"
+        },
+        "description": {
+            "identifier": "endernet:database_compressed_tape"
+        }
+    }
+}

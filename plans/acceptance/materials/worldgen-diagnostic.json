@@ -1,0 +1,31 @@
+{
+  "initial_session": "materials-20261115",
+  "initial_world_generator": 0,
+  "initial_errors": [
+    "Feature rule identifier 'end_resonance_ore_rule' does not match filename 'endernet_end_resonance_ore'",
+    "No definition found for feature 'endernet:end_resonance_ore_feature'"
+  ],
+  "source_log": ".mcdev/lanes/materials-20261115/MinecraftPE_Netease/logs/ContentLog2026-11-15_02-40-47_1.txt",
+  "after_filename_fix_in_initial_world": {
+    "definition_errors_disappeared": true,
+    "new_end_chunks": 48,
+    "end_stone": 513394,
+    "ore": 0
+  },
+  "final_changes": [
+    "Feature and rule filenames now match the suffix of their identifiers.",
+    "Both feature and rule use format_version 1.14.0.",
+    "Natural generation validation uses a separate infinite world (Generator=1)."
+  ],
+  "causal_limit": "The filename mismatch was confirmed by native content logs. The failed old-world probes do not isolate the effect of world type from all format changes and are not evidence that the ore rule was the only cause.",
+  "final_evidence": "worldgen_infinite_result.json",
+  "final_result": "64 previously ungenerated End chunks naturally contained 956 ore blocks; no manual feature placement was used.",
+  "sources": [
+    "minecraft_docs: netease 特征规则 --top 1 (filename must match identifier suffix)",
+    "minecraft_docs: netease 特征 --top 6 (format_version 1.14.0; custom feature limits)",
+    "minecraft_docs: api DoTaskOnChunkAsync",
+    "minecraft_docs: api IsChunkGenerated",
+    "minecraft_docs: api GetBlockCountInBlockPalette"
+  ],
+  "raw_debug_artifacts": ".mcdev/materials-debug/"
+}

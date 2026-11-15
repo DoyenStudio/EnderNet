@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:fluid_seal"
+        },
+        "description": {
+            "identifier": "endernet:fluid_seal"
+        }
+    }
+}

@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 64,
+            "netease:customtips": {
+                "value": "\n§7黑石外甲、紫珀内衬与石英边框。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:reinforced_end_casing"
+        }
+    }
+}

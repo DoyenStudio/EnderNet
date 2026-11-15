@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:archive_core"
+        },
+        "description": {
+            "identifier": "endernet:archive_core"
+        }
+    }
+}

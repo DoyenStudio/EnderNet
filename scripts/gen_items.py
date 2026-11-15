@@ -56,6 +56,7 @@ from gen_blocks import CREATIVE_CATEGORY, plural_dumps, short_name  # noqa: E402
 
 from endernet.common.definitions import (  # noqa: E402
     DefinitionSet,
+    MATERIAL_ITEMS,
     devices_for_mode,
 )
 
@@ -246,6 +247,8 @@ def item_tips(definitions):
         out.append((spec, memory_tip(spec)))
     for spec in definitions.item_tool_specs():
         out.append((spec, tool_tip(spec)))
+    for spec in MATERIAL_ITEMS:
+        out.append((spec, "\n§7" + spec.tip))
     return out
 
 

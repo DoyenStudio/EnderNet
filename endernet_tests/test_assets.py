@@ -16,7 +16,9 @@ import unittest
 
 import testsupport  # noqa: F401  设置 sys.path
 
-from endernet.common.definitions import STORAGE_DRIVER_SLOT_COUNT, DefinitionSet
+from endernet.common.definitions import (
+    STORAGE_DRIVER_SLOT_COUNT, DefinitionSet, MACHINE_BLOCKS, ORE_BLOCKS, Value,
+)
 
 REPO = testsupport.REPO_ROOT
 BP_BLOCKS = os.path.join(REPO, "endernet_bp", "blocks")
@@ -121,7 +123,10 @@ class AssetFixture(unittest.TestCase):
         cls.holder_ids = sorted(cls.definitions.part_holders)
         cls.part_ids = sorted(cls.definitions.parts)
         cls.part_specs = [cls.definitions.get(part_id) for part_id in cls.part_ids]
-        cls.all_block_ids = sorted(cls.block_ids + cls.cable_ids + cls.holder_ids + cls.part_ids)
+        cls.machine_ids = [spec.id for spec in MACHINE_BLOCKS]
+        cls.ore_ids = [block_id for block_id, _label in ORE_BLOCKS]
+        cls.all_block_ids = sorted(cls.block_ids + cls.cable_ids + cls.holder_ids + cls.part_ids
+                                   + cls.machine_ids + cls.ore_ids)
         # **各类物品一起查**（介质 + 样板 + 内存条 + 工具）。分成几份清单的代价是新增一类时
         # 总有一处漏掉，而漏掉的表现是「游戏里有这件物品、但没人检查它的贴图与语言」——
         # 一个只在真机上才看得见的空洞。
@@ -168,7 +173,8 @@ class TestBlockJsonCoverage(AssetFixture):
     def placed_block_ids(self):
         """会被放进世界的方块：整方块设备、光缆、面板底座。终端面板的展示方块只为物品形态而
         注册、放不下（2026-11-10 方案 B），不需要方块实体与拆除监听。"""
-        return [device_id for device_id in self.all_block_ids if device_id not in self.part_ids]
+        return [device_id for device_id in self.all_block_ids
+                if device_id not in self.part_ids + self.ore_ids]
 
     def test_required_components_present(self):
         """缺少 block_entity 会没有方块实体数据；缺 listen_block_remove 会收不到拆除事件。"""
@@ -543,15 +549,15 @@ def declared_containers():
         sys.path.insert(0, scripts_dir)
     import gen_blocks
 
-    return gen_blocks.CONTAINERS
+    out = dict(gen_blocks.CONTAINERS)
+    out.update((spec.id, (spec.screen, Value(spec.slots))) for spec in MACHINE_BLOCKS)
+    return out
 
 
-#: 引擎的容器集合名。**只写死在公共模板 `container_grid_items` 里**
-#: （`container_common.json:128`），各设备界面靠继承拿到它。
+#: 引擎的容器集合名，公共网格和显式索引槽模板都提供该集合上下文。
 ENGINE_CONTAINER_COLLECTION = "netease_container"
 
-#: 渲染该集合的两种模板名：网格模板与逐槽模板。逐槽那种**连模板都不写集合名**，
-#: 靠 `$item_collection_name` 的默认值绑定（同文件 `:118`）。
+#: 网格、原生单槽和带显式索引的单槽包装模板。
 #:
 #: 短名与全名都收：控件键写成 `X@ns.template`，两侧各自可能被省略。
 ENGINE_CONTAINER_TEMPLATES = frozenset(
@@ -560,6 +566,8 @@ ENGINE_CONTAINER_TEMPLATES = frozenset(
         "container_grid_item",
         "endernet_container_common.container_grid_items",
         "endernet_container_common.container_grid_item",
+        "indexed_container_slot",
+        "endernet_container_common.indexed_container_slot",
     ]
 )
 
@@ -586,12 +594,8 @@ def _instantiates_engine_container_template(key):
 def screens_rendering_the_engine_container():
     """`命名空间 -> 界面文件名`：哪些界面画了引擎的 `netease_container` 集合。
 
-    **不能靠 grep `collection_name`。** 集合名全仓只出现在公共模板
-    `container_common.json:128` 一处，设备界面一律继承它；逐槽写法
-    更是连模板都不写集合名。全仓只有 2 个界面自己写了 `collection_name`
-    （`bus_item_io.json:146` 的编辑器残留 `test_grid` 与
-    `assemble_chamber.json:108` 的 `source_items`），**两个都不是**这个集合——
-    只看字面量会得出与事实相反的结论。
+    不能只查 `collection_name` 字面量：设备界面可能直接声明集合，
+    也可能继承公共网格或单槽模板，由模板提供集合上下文。
 
     只算「界面」：公共模板文件没有 `main` 屏幕，不计入。
     """
@@ -667,7 +671,7 @@ class TestBlockContainers(AssetFixture):
         declared = set(declared_containers())
         present = set(
             device_id
-            for device_id in self.block_ids
+            for device_id in self.block_ids + self.machine_ids
             if "netease:block_container" in self.components(device_id)
         )
         self.assertEqual(present, declared)
@@ -705,7 +709,7 @@ class TestBlockContainers(AssetFixture):
 
     def test_every_declared_container_is_a_known_device(self):
         for device_id in sorted(declared_containers()):
-            self.assertIn(device_id, self.definitions.devices)
+            self.assertIn(device_id, self.block_ids + self.machine_ids)
 
     def test_non_container_blocks_have_neither_component_nor_base_block(self):
         """没声明容器的设备不该顺手获得容器组件——那会让它们变成可开箱的方块。"""
@@ -759,6 +763,33 @@ class TestBlockContainers(AssetFixture):
                     ", ".join(sorted(n for n in names if not n.startswith("_"))[:8]),
                 ),
             )
+
+    def test_medium_bay_slots_have_native_collection_context(self):
+        common = read_json(os.path.join(
+            RP_UI, "endernet", "common", "container_common.json"))
+        wrapper = common["indexed_container_slot"]
+        self.assertEqual(wrapper["type"], "stack_panel")
+        self.assertEqual(wrapper["collection_name"], ENGINE_CONTAINER_COLLECTION)
+        slot = wrapper["controls"][0][
+            "slot@endernet_container_common.container_grid_item"]
+        self.assertEqual(slot["collection_index"], "$container_slot_index")
+        for name, size in (("transcriber", 8), ("storage_transfer", 4)):
+            payload = read_json(os.path.join(
+                RP_UI, "endernet", "storage", name + ".json"))
+            nodes = []
+            _iter_dicts(payload, nodes)
+            indices = []
+            for node in nodes:
+                # A plain panel cannot supply collection context to its children.
+                if node.get("type") == "panel":
+                    self.assertNotIn("collection_name", node, name)
+                for key, value in node.items():
+                    if key.startswith("medium_"):
+                        self.assertTrue(key.endswith(
+                            "@endernet_container_common.indexed_container_slot"), key)
+                        self.assertNotIn("collection_index", value, key)
+                        indices.append(value["$container_slot_index"])
+            self.assertEqual(sorted(indices), list(range(size)), name)
 
     def test_container_screens_actually_render_the_engine_collection(self):
         """声明了容器组件的方块，其界面必须真的画了 `netease_container` 集合。

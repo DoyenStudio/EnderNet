@@ -1,0 +1,181 @@
+{
+  "after": {
+    "generator": {
+      "burn": 560,
+      "capacity": 32000,
+      "device_id": "endernet:resonance_generator",
+      "dimension": 0,
+      "duration": 80,
+      "energy": 32000,
+      "key": "endernet_resonance_generator.main",
+      "message": "",
+      "mode": "charge",
+      "pos": [
+        64,
+        63,
+        37
+      ],
+      "progress": 0,
+      "status": "buffer_full"
+    },
+    "machine": {
+      "burn": 0,
+      "capacity": 32000,
+      "device_id": "endernet:resonance_charger",
+      "dimension": 0,
+      "duration": 80,
+      "energy": 32000,
+      "key": "endernet_resonance_charger.main",
+      "message": "",
+      "mode": "charge",
+      "pos": [
+        64,
+        63,
+        36
+      ],
+      "progress": 0,
+      "status": "output_full"
+    },
+    "slots": [
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:resonance_crystal",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:resonance_crystal",
+        "showInHand": true,
+        "userData": null
+      },
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 64,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:charged_resonance_crystal",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:charged_resonance_crystal",
+        "showInHand": true,
+        "userData": null
+      }
+    ]
+  },
+  "before": {
+    "generator": {
+      "burn": 560,
+      "capacity": 32000,
+      "device_id": "endernet:resonance_generator",
+      "dimension": 0,
+      "duration": 80,
+      "energy": 32000,
+      "key": "endernet_resonance_generator.main",
+      "message": "",
+      "mode": "charge",
+      "pos": [
+        64,
+        63,
+        37
+      ],
+      "progress": 0,
+      "status": "buffer_full"
+    },
+    "machine": {
+      "burn": 0,
+      "capacity": 32000,
+      "device_id": "endernet:resonance_charger",
+      "dimension": 0,
+      "duration": 80,
+      "energy": 32000,
+      "key": "endernet_resonance_charger.main",
+      "message": "",
+      "mode": "charge",
+      "pos": [
+        64,
+        63,
+        36
+      ],
+      "progress": 0,
+      "status": "waiting_input"
+    },
+    "slots": [
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:resonance_crystal",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:resonance_crystal",
+        "showInHand": true,
+        "userData": null
+      },
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 64,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:charged_resonance_crystal",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:charged_resonance_crystal",
+        "showInHand": true,
+        "userData": null
+      }
+    ]
+  },
+  "elapsed_seconds": 36.35199999809265,
+  "generator_pos": [
+    64,
+    63,
+    37
+  ],
+  "initial_ticks": 4073,
+  "passed": true,
+  "pos": [
+    64,
+    63,
+    36
+  ],
+  "started_epoch": 1794682539.164,
+  "ticks_elapsed": 727,
+  "writes": [
+    true,
+    true
+  ]
+}

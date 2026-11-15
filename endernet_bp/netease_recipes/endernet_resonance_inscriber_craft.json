@@ -1,0 +1,53 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:resonance_inscriber_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "endernet:end_casing",
+                "data": 0
+            },
+            {
+                "item": "minecraft:piston",
+                "data": 0
+            },
+            {
+                "item": "minecraft:piston",
+                "data": 0
+            },
+            {
+                "item": "minecraft:iron_ingot",
+                "data": 0
+            },
+            {
+                "item": "minecraft:iron_ingot",
+                "data": 0
+            },
+            {
+                "item": "endernet:resonance_crystal",
+                "data": 0
+            },
+            {
+                "item": "endernet:resonance_crystal",
+                "data": 0
+            },
+            {
+                "item": "minecraft:redstone",
+                "data": 0
+            }
+        ],
+        "result": {
+            "item": "endernet:resonance_inscriber",
+            "data": 0,
+            "count": 1
+        }
+    }
+}

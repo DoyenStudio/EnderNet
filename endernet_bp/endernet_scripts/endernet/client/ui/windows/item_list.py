@@ -27,6 +27,7 @@ from ..shared import window_control
 from .....tooldelta.define.item import Item
 from .select_item import (
     WINDOW_ATTRIBUTE as SELECT_WINDOW_ATTRIBUTE,
+    _unique_ids,
     show_select_item_window,
 )
 from .names import (
@@ -44,8 +45,9 @@ except NameError:
     INTEGER_TYPES = (int,)
 
 
-def show_item_list_window(screen, item_ids, max_items, title="物品列表", on_selected=None):
-    # type: (ToolDeltaScreen, list[str], int, str, object) -> bool
+def show_item_list_window(screen, item_ids, max_items, title="物品列表", on_selected=None,
+                          network_item_ids=None):
+    # type: (ToolDeltaScreen, list[str], int, str, object, object) -> bool
     """Edit a list, or close and call on_selected after picking one item."""
     if WINDOW_ATTRIBUTE in screen._vars:
         return False
@@ -55,7 +57,7 @@ def show_item_list_window(screen, item_ids, max_items, title="物品列表", on_
         raise ValueError("max_items must be a non-negative integer")
     if len(item_ids) > max_items:
         raise ValueError("item_ids exceeds max_items")
-    ItemListWindow(screen, item_ids, max_items, title, on_selected)
+    ItemListWindow(screen, item_ids, max_items, title, on_selected, network_item_ids)
     return True
 
 
@@ -67,7 +69,8 @@ class ItemListWindow(object):
     CONTROL_DEFINITION = "endernet_windows.item_list_window"
     CONTROL_NAME = "endernet_item_list_window"
 
-    def __init__(self, screen, item_ids, max_items, title, on_selected=None):
+    def __init__(self, screen, item_ids, max_items, title, on_selected=None,
+                 network_item_ids=None):
         self.screen = screen
         self.item_ids = item_ids
         self.max_items = max_items
@@ -77,6 +80,7 @@ class ItemListWindow(object):
         self.closed = False
         self.root = None
         self.picker = None
+        self.network_item_ids = _unique_ids(network_item_ids or ())
         self._icons = {}
         screen._vars[self.WINDOW_ATTRIBUTE] = self
         try:
@@ -129,13 +133,22 @@ class ItemListWindow(object):
     def add(self, params=None):
         if not self.can_add():
             return
-        # This API has no network snapshot argument; the picker still offers
-        # its loaded catalogue and the local backpack. Its network source is empty.
         if self._show_picker():
             self.picker = self.screen._vars[self.SELECT_WINDOW_ATTRIBUTE]
 
     def _show_picker(self):
-        return show_select_item_window(self.screen, [], self._on_item_selected)
+        return show_select_item_window(self.screen, self.network_item_ids, self._on_item_selected)
+
+    def set_network_item_ids(self, item_ids):
+        # type: (object) -> None
+        """Update the owned picker's network source without resetting its search."""
+        if self.closed:
+            return
+        self.network_item_ids = _unique_ids(item_ids)
+        if self.picker is not None and not self.picker.closed:
+            self.picker.network_item_ids = list(self.network_item_ids)
+            if self.picker.source == "network":
+                self.picker.refresh()
 
     def _on_item_selected(self, item_id):
         self.picker = None

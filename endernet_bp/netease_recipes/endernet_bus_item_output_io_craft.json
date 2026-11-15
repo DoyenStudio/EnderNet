@@ -1,0 +1,37 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:bus_item_output_io_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "endernet:end_casing",
+                "data": 0
+            },
+            {
+                "item": "endernet:expansion_core",
+                "data": 0
+            },
+            {
+                "item": "minecraft:piston",
+                "data": 0
+            },
+            {
+                "item": "endernet:ender_glass_cable",
+                "data": 0
+            }
+        ],
+        "result": {
+            "item": "endernet:bus_item_output_io",
+            "data": 0,
+            "count": 1
+        }
+    }
+}

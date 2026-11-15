@@ -20,6 +20,7 @@ from endernet.common.definitions import (
     FORM_BLOCK,
     FORM_PART,
     ITEM_TOOLS,
+    MATERIAL_ITEMS,
     PART_KIND_TUNNEL,
     TERMINAL_PARTS,
     TUNNEL_CAPACITY_QUARTERS,
@@ -590,7 +591,8 @@ class TestPatternTemplates(unittest.TestCase):
         defs = DefinitionSet()
         self.assertEqual(
             set(defs.item_keys()),
-            set(ITEM_MEDIUMS) | set(ITEM_TEMPLATES) | set(ITEM_MEMORIES) | set(ITEM_TOOLS),
+            set(ITEM_MEDIUMS) | set(ITEM_TEMPLATES) | set(ITEM_MEMORIES) | set(ITEM_TOOLS)
+            | set(spec.id for spec in MATERIAL_ITEMS),
         )
         self.assertTrue(set(ITEM_TEMPLATES).issubset(set(defs.item_keys())))
         self.assertEqual(len(defs.item_specs()), len(defs.item_keys()))

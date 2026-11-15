@@ -1,0 +1,251 @@
+{
+    "namespace": "EnderNetMei",
+    "RECIPES_GRID@mei_recipe_common.recipes_grid": {
+        "$recipe_ui_template": "EnderNetMei.recipe"
+    },
+    "PREVIEW@mei_recipe_common.preview": {
+        "$recipe_content_template": "EnderNetMei.content_panel"
+    },
+    "info_hover@mei_common.slot_base": {
+        "$binding_name_prefix|default": "mei_ui.recipe.power",
+        "size": [
+            "100%",
+            "100%"
+        ],
+        "controls": [
+            {
+                "overlay@mei_common.slot_overlay": {
+                    "$overlay_btn_control": "mei_common.slot_overlay_button_flat"
+                }
+            }
+        ]
+    },
+    "recipe@mei_recipe_common.recipe_panel": {
+        "size": [
+            188,
+            66
+        ],
+        "controls": [
+            {
+                "wrapper": {
+                    "type": "panel",
+                    "size": [
+                        154,
+                        62
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "content@EnderNetMei.content_panel": {}
+                        },
+                        {
+                            "buttons@mei_recipe_common.buttons_panel_vertical": {
+                                "$plus_button_ignored": false,
+                                "$tree_button_ignored": false
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "content_panel": {
+        "type": "panel",
+        "size": "$content_size",
+        "layer": 1,
+        "$recipe_power_hover": "EnderNetMei.info_hover",
+        "controls": [
+            {
+                "background": {
+                    "type": "image",
+                    "layer": 1,
+                    "nineslice_size": [
+                        2,
+                        2,
+                        2,
+                        2
+                    ],
+                    "texture": "textures/ui/skybluetech/rect_panel_bg"
+                }
+            },
+            {
+                "power@MachineRecipeLib.energy_meter": {
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "offset": [
+                        4,
+                        4
+                    ],
+                    "size": [
+                        12,
+                        54
+                    ],
+                    "layer": 2
+                }
+            },
+            {
+                "body": {
+                    "type": "panel",
+                    "size": [
+                        "100%",
+                        "100%"
+                    ],
+                    "layer": 2,
+                    "controls": [
+                        {
+                            "input0": {
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    22,
+                                    23
+                                ],
+                                "size": [
+                                    20,
+                                    20
+                                ],
+                                "type": "panel",
+                                "layer": 10,
+                                "controls": [
+                                    {
+                                        "0@mei_common.item_panel": {
+                                            "$binding_name_prefix": "mei_ui.recipe.input0"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "input1": {
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    44,
+                                    23
+                                ],
+                                "size": [
+                                    20,
+                                    20
+                                ],
+                                "type": "panel",
+                                "layer": 10,
+                                "controls": [
+                                    {
+                                        "0@mei_common.item_panel": {
+                                            "$binding_name_prefix": "mei_ui.recipe.input1"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "input2": {
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    66,
+                                    23
+                                ],
+                                "size": [
+                                    20,
+                                    20
+                                ],
+                                "type": "panel",
+                                "layer": 10,
+                                "controls": [
+                                    {
+                                        "0@mei_common.item_panel": {
+                                            "$binding_name_prefix": "mei_ui.recipe.input2"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "output": {
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": "$output_offset",
+                                "size": [
+                                    20,
+                                    20
+                                ],
+                                "type": "panel",
+                                "layer": 10,
+                                "controls": [
+                                    {
+                                        "0@mei_common.item_panel": {
+                                            "$binding_name_prefix": "mei_ui.recipe.output0"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "progress@SkybluePanelLib.progress_sprite": {
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": "$progress_offset",
+                                "size": [
+                                    24,
+                                    16
+                                ]
+                            }
+                        },
+                        {
+                            "progress_hover@EnderNetMei.info_hover": {
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": "$progress_offset",
+                                "size": [
+                                    24,
+                                    16
+                                ],
+                                "layer": 9,
+                                "$binding_name_prefix": "mei_ui.recipe.progress"
+                            }
+                        },
+                        {
+                            "mode": {
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [
+                                    22,
+                                    5
+                                ],
+                                "size": [
+                                    "100%-26px",
+                                    12
+                                ],
+                                "type": "label",
+                                "text": "",
+                                "font_size": "normal",
+                                "color": [
+                                    0.2,
+                                    0.2,
+                                    0.2
+                                ],
+                                "layer": 3
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "$content_size|default": [
+            154,
+            62
+        ],
+        "$output_offset|default": [
+            130,
+            23
+        ],
+        "$progress_offset|default": [
+            94,
+            25
+        ]
+    },
+    "progress_hover@EnderNetMei.info_hover": {
+        "$binding_name_prefix": "mei_ui.recipe.progress"
+    }
+}

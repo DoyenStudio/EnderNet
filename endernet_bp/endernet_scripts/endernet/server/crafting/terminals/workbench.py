@@ -35,7 +35,7 @@
 订单是有进度、可取消、要回流的东西，而这里点一次就是一次，没有进度可言。
 """
 
-from ....common.crafting_recipe import GRID_SIZE, SLOT_COUNT, match
+from ....common.crafting_recipe import GRID_SIZE, SLOT_COUNT, match, shapeless_slots
 from ....common.protocol import (
     ContainerCapabilities,
     Reason,
@@ -596,8 +596,9 @@ class WorkbenchContainer(ContainerAdapter):
         # type: (ResourceKey) -> tuple
         """先补已有的半堆，再开空格。
 
-        九宫格只有 9 格，先把同种的半堆叠满能省下一格——`minecraft:book`
-        那种「3 张纸 + 1 张皮革」的配方正好占满两格，散开摆会很快不够用。
+        九宫格只有 9 格，通用插入先把同种的半堆叠满能减少占用。
+        这是通用库存插入的合堆顺序；配方导入使用 `insert_at` 精确落格，
+        例如书本仍按三格纸加一格皮革摆放。
         **只影响先放哪儿，不影响能放多少。**
         """
         same = []
@@ -698,7 +699,7 @@ def plan_import(recipe, per_slot=1):
     返回 `((槽位, 候选原料元组, 数量), ...)`，**按槽位升序**。
 
     - 有序配方按 `slot_layout()` 的铺法（左上角对齐）；
-    - 无序配方没有位置可言，依次占 0、1、2…格；
+    - 无序配方按原料数量展开，依次占 0、1、2…格，每格数量为 `per_slot`；
     - **配方没有要求的位置不在结果里**，调用方据此保证不会被清空或覆盖；
     - 候选原料是一个**元组**（标签展开的那种符号有十几个候选），
       由调用方按「哪个来源真的有」去挑——挑哪一个是未定规则
@@ -711,10 +712,8 @@ def plan_import(recipe, per_slot=1):
                 continue
             plan.append((index, recipe.symbols[_symbol_at(recipe, index)], per_slot))
     else:
-        for offset, ingredient in enumerate(recipe.ingredients):
-            if offset >= SLOT_COUNT:
-                break
-            plan.append((offset, (ingredient,), ingredient.count))
+        for offset, alternatives in enumerate(shapeless_slots(recipe)):
+            plan.append((offset, alternatives, per_slot))
     return tuple(plan)
 
 
@@ -756,8 +755,9 @@ def _ingredient_for(recipe, cell):
                 return ingredient
         return None
     for ingredient in recipe.ingredients:
-        if ingredient.matches(name, aux):
-            return ingredient
+        for candidate in ingredient.candidates():
+            if candidate.matches(name, aux):
+                return candidate
     return None
 
 

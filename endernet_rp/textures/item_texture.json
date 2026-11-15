@@ -2,11 +2,74 @@
     "resource_pack_name": "vanilla",
     "texture_name": "atlas.items",
     "texture_data": {
+        "endernet:archive_core": {
+            "textures": "textures/endernet/items/archive_core"
+        },
+        "endernet:calculation_chip": {
+            "textures": "textures/endernet/items/calculation_chip"
+        },
+        "endernet:calculation_circuit": {
+            "textures": "textures/endernet/items/calculation_circuit"
+        },
+        "endernet:charged_resonance_crystal": {
+            "textures": "textures/endernet/items/charged_resonance_crystal"
+        },
         "endernet:config_card": {
             "textures": "textures/endernet/items/config_card"
         },
+        "endernet:convergence_core": {
+            "textures": "textures/endernet/items/convergence_core"
+        },
+        "endernet:database_compressed_tape": {
+            "textures": "textures/endernet/items/database_compressed_tape"
+        },
+        "endernet:display_component": {
+            "textures": "textures/endernet/items/display_component"
+        },
+        "endernet:doubleside_tape": {
+            "textures": "textures/endernet/items/doubleside_tape"
+        },
+        "endernet:end_casing": {
+            "textures": "textures/endernet/items/end_casing"
+        },
+        "endernet:ender_dust": {
+            "textures": "textures/endernet/items/ender_dust"
+        },
+        "endernet:engineering_chip": {
+            "textures": "textures/endernet/items/engineering_chip"
+        },
+        "endernet:engineering_circuit": {
+            "textures": "textures/endernet/items/engineering_circuit"
+        },
+        "endernet:expansion_core": {
+            "textures": "textures/endernet/items/expansion_core"
+        },
         "endernet:factorical_template": {
             "textures": "textures/endernet/items/factorical_template"
+        },
+        "endernet:fluid_seal": {
+            "textures": "textures/endernet/items/fluid_seal"
+        },
+        "endernet:harddisk_16": {
+            "textures": "textures/endernet/items/harddisk_16"
+        },
+        "endernet:harddisk_1k": {
+            "textures": "textures/endernet/items/harddisk_1k"
+        },
+        "endernet:harddisk_4k": {
+            "textures": "textures/endernet/items/harddisk_4k"
+        },
+        "endernet:logic_chip": {
+            "textures": "textures/endernet/items/logic_chip"
+        },
+        "endernet:logic_circuit": {
+            "textures": "textures/endernet/items/logic_circuit"
+        },
+        "endernet:magnetic_strip": {
+            "textures": "textures/endernet/items/magnetic_strip"
+        },
+        "endernet:medium_casing": {
+            "textures": "textures/endernet/items/medium_casing"
         },
         "endernet:memory_128b": {
             "textures": "textures/endernet/items/memory_128b"
@@ -38,14 +101,44 @@
         "endernet:network_wrench": {
             "textures": "textures/endernet/items/network_wrench"
         },
+        "endernet:quartz_dust": {
+            "textures": "textures/endernet/items/quartz_dust"
+        },
+        "endernet:reinforced_end_casing": {
+            "textures": "textures/endernet/items/reinforced_end_casing"
+        },
+        "endernet:resonance_crystal": {
+            "textures": "textures/endernet/items/resonance_crystal"
+        },
+        "endernet:resonance_glass": {
+            "textures": "textures/endernet/items/resonance_glass"
+        },
+        "endernet:silicon": {
+            "textures": "textures/endernet/items/silicon"
+        },
         "endernet:singleside_tape": {
             "textures": "textures/endernet/items/singleside_tape"
         },
         "endernet:softdisk_1k": {
             "textures": "textures/endernet/items/softdisk_1k"
         },
+        "endernet:softdisk_4k": {
+            "textures": "textures/endernet/items/softdisk_4k"
+        },
+        "endernet:storage_component_16k": {
+            "textures": "textures/endernet/items/storage_component_16k"
+        },
+        "endernet:storage_component_1k": {
+            "textures": "textures/endernet/items/storage_component_1k"
+        },
+        "endernet:storage_component_4k": {
+            "textures": "textures/endernet/items/storage_component_4k"
+        },
         "endernet:wireless_link_tool": {
             "textures": "textures/endernet/items/wireless_link_tool"
+        },
+        "endernet:wireless_resonance_core": {
+            "textures": "textures/endernet/items/wireless_resonance_core"
         }
     }
 }

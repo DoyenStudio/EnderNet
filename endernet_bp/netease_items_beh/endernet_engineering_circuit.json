@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 64,
+            "netease:customtips": {
+                "value": "\n§7钻石压印电路，尚未封装。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:engineering_circuit"
+        }
+    }
+}

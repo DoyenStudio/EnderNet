@@ -1,0 +1,53 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:network_baseband_8_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "endernet:end_casing",
+                "data": 0
+            },
+            {
+                "item": "minecraft:blackstone",
+                "data": 0
+            },
+            {
+                "item": "minecraft:blackstone",
+                "data": 0
+            },
+            {
+                "item": "endernet:charged_resonance_crystal",
+                "data": 0
+            },
+            {
+                "item": "endernet:charged_resonance_crystal",
+                "data": 0
+            },
+            {
+                "item": "minecraft:redstone",
+                "data": 0
+            },
+            {
+                "item": "minecraft:redstone",
+                "data": 0
+            },
+            {
+                "item": "endernet:resonance_glass",
+                "data": 0
+            }
+        ],
+        "result": {
+            "item": "endernet:network_baseband_8",
+            "data": 0,
+            "count": 1
+        }
+    }
+}

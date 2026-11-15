@@ -88,6 +88,10 @@
         "textures": "endernet:dos_network_endpoint_all",
         "sound": "stone"
     },
+    "endernet:end_resonance_ore": {
+        "textures": "endernet:end_resonance_ore_all",
+        "sound": "stone"
+    },
     "endernet:ender_cable": {
         "sound": "stone",
         "client_entity": {
@@ -159,6 +163,39 @@
             "hand_model_use_client_entity": false,
             "identifier": "endernet:ender_cable_panels"
         }
+    },
+    "endernet:resonance_charger": {
+        "textures": {
+            "north": "endernet:resonance_charger_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side",
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom"
+        },
+        "sound": "stone"
+    },
+    "endernet:resonance_generator": {
+        "textures": {
+            "north": "endernet:resonance_generator_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side",
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom"
+        },
+        "sound": "stone"
+    },
+    "endernet:resonance_inscriber": {
+        "textures": {
+            "north": "endernet:resonance_inscriber_front",
+            "south": "endernet:common_device_side",
+            "east": "endernet:common_device_side",
+            "west": "endernet:common_device_side",
+            "up": "endernet:common_device_top",
+            "down": "endernet:common_device_bottom"
+        },
+        "sound": "stone"
     },
     "endernet:storage_driver": {
         "sound": "stone",

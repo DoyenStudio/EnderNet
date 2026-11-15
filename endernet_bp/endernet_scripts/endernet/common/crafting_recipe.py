@@ -50,12 +50,12 @@
 ## 摆位（`cells`）
 
 匹配函数的第二个参数是一个 **9 元组**，下标 `行 * 3 + 列`，每项是
-`(名字, aux, 数量)` 或 `None`（空位）。**带数量**是因为无序配方的一条可以要
-3 个同种东西（`minecraft:book` 要 3 张纸），而工作台里那 3 张是堆在一个格子里的，
-只看名字会让「只剩 1 张纸」的格子满足一条要 3 张的配方。
+`(名字, aux, 数量)` 或 `None`（空位）。数量表示该格堆叠了多少份原料；一次工作台
+合成从每个要求的格子消耗一个。无序配方的原始 `count` 表示占用多少格，例如书本的
+3 张纸要占三个格子，而不是一格堆叠三张；原始条目与指纹不因此展开或改写。
 
 **匹配是精确的：九宫格里多摆的任何一件都会让配方不成立。** 有序配方靠
-「图案矩形之外也必须是空的」实现，无序配方靠「非空格数 == 配料条目数」。
+「图案矩形之外也必须是空的」实现，无序配方靠「非空格数 == 展开后的原料格数」。
 原版就是这么比的——多出来的物品不会参与合成，也不该被无视：一块木板加一颗
 钻石做不成按钮。曾经两处都漏了这一条，后果是预览亮着、点下去照做，多出来的
 那件既没进产物也没被吃掉（User 2026-10-02 报告的正是这个）。
@@ -191,16 +191,24 @@ def _aux_of(entry, policy):
 class RecipeIngredient(object):
     """配方要的一种东西：名字 + aux + 数量。"""
 
-    __slots__ = ("name", "aux", "count")
+    __slots__ = ("name", "aux", "count", "alternatives")
 
-    def __init__(self, name, aux, count=1):
+    def __init__(self, name, aux, count=1, alternatives=()):
         self.name = _text(name)
         #: `None` = 通配任意 aux。
         self.aux = aux
         self.count = count
+        #: 无序标签原料的候选组；普通原料为空，保持既有指纹与投影。
+        self.alternatives = tuple(alternatives)
+
+    def candidates(self):
+        # type: () -> tuple
+        return self.alternatives or (self,)
 
     def matches(self, name, aux):
         # type: (str, int) -> bool
+        if self.alternatives:
+            return any(item.matches(name, aux) for item in self.alternatives)
         if name != self.name:
             return False
         if self.aux is None:
@@ -209,21 +217,27 @@ class RecipeIngredient(object):
 
     def fingerprint(self):
         # type: () -> tuple
+        if self.alternatives:
+            return ("alternatives", tuple(item.fingerprint() for item in self.alternatives), self.count)
         return (self.name, self.aux, self.count)
 
     def to_dict(self):
         # type: () -> dict
-        return {"name": self.name, "aux": self.aux, "count": self.count}
+        payload = {"name": self.name, "aux": self.aux, "count": self.count}
+        if self.alternatives:
+            payload["alternatives"] = [item.to_dict() for item in self.alternatives]
+        return payload
 
     @classmethod
     def from_dict(cls, data):
         # type: (dict) -> RecipeIngredient
-        return cls(data["name"], data.get("aux"), data.get("count", 1))
+        return cls(data["name"], data.get("aux"), data.get("count", 1),
+                   [cls.from_dict(item) for item in data.get("alternatives", ())])
 
     def __eq__(self, other):
         if not isinstance(other, RecipeIngredient):
             return NotImplemented
-        return (self.name, self.aux, self.count) == (other.name, other.aux, other.count)
+        return self.fingerprint() == other.fingerprint()
 
     def __ne__(self, other):
         result = self.__eq__(other)
@@ -232,7 +246,7 @@ class RecipeIngredient(object):
         return not result
 
     def __hash__(self):
-        return hash((self.name, self.aux, self.count))
+        return hash(self.fingerprint())
 
     def __repr__(self):
         return "RecipeIngredient(%r, %r, %r)" % (self.name, self.aux, self.count)
@@ -452,10 +466,34 @@ def normalize_recipe(raw, policy=DEFAULT_POLICY):
     outputs = _normalize_outputs(raw.get("result"), policy)
     if "pattern" in raw:
         return _normalize_ordered(raw, outputs, policy)
-    ingredients = _ingredients_of(raw.get("ingredients"), policy)
+    ingredients = _shapeless_ingredients_of(raw.get("ingredients"), policy)
     if not ingredients:
         raise RecipeError(BAD_SHAPE, "ingredients 不能为空")
-    return PresetRecipe(False, (), {}, ingredients, outputs)
+    recipe = PresetRecipe(False, (), {}, ingredients, outputs)
+    shapeless_slots(recipe)
+    return recipe
+
+
+def _shapeless_ingredients_of(entries, policy):
+    # type: (list, RecipePolicy) -> tuple
+    """无序原料既可为单物品，也可为标签展开的候选列表；数量属于整组。"""
+    if not isinstance(entries, list):
+        raise RecipeError(BAD_SHAPE, "ingredients 必须是列表")
+    result = []
+    for entry in entries:
+        if (not isinstance(entry, dict)
+                or not isinstance(entry.get("item"), _TEXT_TYPES + (list,))):
+            raise RecipeError(BAD_SHAPE, "无序原料的 item 必须是字符串或候选列表")
+        alternatives = _symbol_alternatives(entry, policy)
+        count = _count_of(entry)
+        first = alternatives[0]
+        if len(alternatives) == 1:
+            result.append(RecipeIngredient(first.name, first.aux, count))
+        else:
+            candidates = tuple(RecipeIngredient(item.name, item.aux, 1)
+                               for item in alternatives)
+            result.append(RecipeIngredient(first.name, first.aux, count, candidates))
+    return tuple(result)
 
 
 def _normalize_ordered(raw, outputs, policy):
@@ -520,10 +558,8 @@ def _cell_matches(cell, ingredient):
     # type: (object, RecipeIngredient) -> bool
     """`cell` 是 `(name, aux, count)` 或 `None`。
 
-    **数量要够**：无序配方的一条可以要 `count: 3`（`minecraft:book` 就是
-    3 张纸），而工作台里那 3 张纸是**堆在一个格子里**的。所以「格子里的
-    东西对」还不够，还得「这一格够数」——只看名字会让一个只剩 1 张纸的
-    格子满足一条要 3 张的配方，预览亮着、点下去却做不出来。
+    工作台的无序原料已经按格展开，每格要求一个物品；这里仍核对数量，
+    避免数量为零的占位条目被当成真实原料。
     """
     if cell is None:
         return False
@@ -599,38 +635,67 @@ def _try_offset(recipe, cells, offset_row, offset_col):
     return tuple(consumed)
 
 
+def shapeless_slots(recipe):
+    # type: (PresetRecipe) -> tuple
+    """无序配方按数量展开成单位原料格，原始条目与配方指纹保持不变。
+
+    工作台至多九格，先验证总量再创建条目，避免超大 count 分配无界列表。
+    超出容量或原料数量错误时抛 `RecipeError`；导入不能取前九格冒充成功。
+    """
+    total = 0
+    for ingredient in recipe.ingredients:
+        count = ingredient.count
+        if isinstance(count, bool) or not isinstance(count, _INT_TYPES) or count <= 0:
+            raise RecipeError(BAD_SHAPE, "无序原料数量必须是正整数")
+        total += count
+        if total > SLOT_COUNT:
+            raise RecipeError(PATTERN_TOO_BIG, "无序配方超过工作台的九个输入格")
+    result = []
+    for ingredient in recipe.ingredients:
+        alternatives = tuple(RecipeIngredient(item.name, item.aux, 1)
+                             for item in ingredient.candidates())
+        result.extend([alternatives] * ingredient.count)
+    return tuple(result)
+
+
 def match_shapeless(recipe, cells):
     # type: (PresetRecipe, tuple) -> object
     """无序匹配：只看「每种东西够不够」，不看位置，**但九宫格不许有剩货**。
 
-    同名条目在 `ingredients` 里出现两次表示占**两个**格子，因此这里按条目
-    逐条去要一格，不能先把同名条目合并（合并会把「2 个格子各 1 个」读成
-    「1 个格子放 2 个」）。
+    原始条目的 `count` 表示占用格数，重复条目也各自占格；展开后每格要求一个
+    物品、一次消耗一个。不能先按物品合计数量而忽略摆了几格。
 
     配料都找到格子之后，还得**一格不剩**：原版无序配方比的是「非空格子的
-    张数」与配料条目数相等，多摆一件就整条不成立。少了这一条，一块木板
+    张数」与展开后的原料格数相等，多摆一件就整条不成立。少了这一条，一块木板
     加一颗钻石照样能做出按钮，而那颗钻石既没进产物也没被吃掉。
     """
-    needed = list(recipe.ingredients)
-    taken = []
-    used = set()
-    for ingredient in needed:
-        found = None
-        for slot in range(SLOT_COUNT):
-            if slot in used:
+    try:
+        needed = shapeless_slots(recipe)
+    except RecipeError:
+        return None
+    occupied = tuple(slot for slot in range(SLOT_COUNT) if cells[slot] is not None)
+    if len(occupied) != len(needed):
+        return None
+    assigned = {}
+
+    def assign(index, visited):
+        # type: (int, set) -> bool
+        # 二分匹配允许已有分配让位，避免宽泛候选先占走唯一的明确原料。
+        for slot in occupied:
+            if slot in visited or not any(_cell_matches(cells[slot], item)
+                                          for item in needed[index]):
                 continue
-            if _cell_matches(cells[slot], ingredient):
-                found = slot
-                break
-        if found is None:
+            visited.add(slot)
+            previous = assigned.get(slot)
+            if previous is None or assign(previous, visited):
+                assigned[slot] = index
+                return True
+        return False
+
+    for index in range(len(needed)):
+        if not assign(index, set()):
             return None
-        used.add(found)
-        taken.append((found, ingredient.count))
-    for slot in range(SLOT_COUNT):
-        if slot not in used and cells[slot] is not None:
-            return None
-    taken.sort()
-    return RecipeMatch(recipe, tuple(taken))
+    return RecipeMatch(recipe, tuple((slot, 1) for slot in sorted(assigned)))
 
 
 def match(recipe, cells):

@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:engineering_circuit"
+        },
+        "description": {
+            "identifier": "endernet:engineering_circuit"
+        }
+    }
+}

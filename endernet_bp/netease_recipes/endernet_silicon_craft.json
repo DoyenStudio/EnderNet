@@ -1,0 +1,13 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_furnace": {
+        "description": {
+            "identifier": "endernet:silicon_craft"
+        },
+        "tags": [
+            "furnace"
+        ],
+        "input": "endernet:quartz_dust",
+        "output": "endernet:silicon"
+    }
+}

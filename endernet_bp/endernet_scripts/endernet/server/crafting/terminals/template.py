@@ -518,6 +518,18 @@ class TemplateConfig(object):
         self.outputs = outputs
         self.revision.bump()
 
+    def replace_recipe(self, mode, source, outputs):
+        # type: (str, list, list) -> None
+        """一次替换模式和虚拟配方；校验失败不改变现有配置。"""
+        if mode not in PATTERN_MODES:
+            raise ValueError("未知样板模式: %r" % (mode,))
+        source = _cells_from(source, SOURCE_CELL_COUNT, "输入九宫格")
+        outputs = _cells_from(outputs, OUTPUT_CELL_COUNT, "输出格")
+        self.mode = mode
+        self.source = source
+        self.outputs = outputs
+        self.revision.bump()
+
     def clear_cell(self, group, index):
         # type: (str, int) -> bool
         """清空一格。**空格子返回假**——调用方据此决定要不要发通知。"""

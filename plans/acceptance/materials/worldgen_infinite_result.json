@@ -1,0 +1,768 @@
+{
+  "session": "materials-worldgen-20261115",
+  "world_type": 1,
+  "world_seed": 20261115,
+  "dimension": 2,
+  "natural_generation": true,
+  "manual_feature_placement": false,
+  "groups": [
+    {
+      "accepted": true,
+      "callback_code": 1,
+      "chunks": [
+        {
+          "air": 20378,
+          "before_generated": false,
+          "chunk": [
+            0,
+            0
+          ],
+          "end_stone": 12372,
+          "ore": 18,
+          "palette_ok": true
+        },
+        {
+          "air": 20492,
+          "before_generated": false,
+          "chunk": [
+            0,
+            1
+          ],
+          "end_stone": 12236,
+          "ore": 40,
+          "palette_ok": true
+        },
+        {
+          "air": 21463,
+          "before_generated": false,
+          "chunk": [
+            0,
+            2
+          ],
+          "end_stone": 8144,
+          "ore": 16,
+          "palette_ok": true
+        },
+        {
+          "air": 27318,
+          "before_generated": false,
+          "chunk": [
+            0,
+            3
+          ],
+          "end_stone": 5450,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 20063,
+          "before_generated": false,
+          "chunk": [
+            1,
+            0
+          ],
+          "end_stone": 12664,
+          "ore": 41,
+          "palette_ok": true
+        },
+        {
+          "air": 20351,
+          "before_generated": false,
+          "chunk": [
+            1,
+            1
+          ],
+          "end_stone": 10954,
+          "ore": 53,
+          "palette_ok": true
+        },
+        {
+          "air": 23906,
+          "before_generated": false,
+          "chunk": [
+            1,
+            2
+          ],
+          "end_stone": 8856,
+          "ore": 6,
+          "palette_ok": true
+        },
+        {
+          "air": 30672,
+          "before_generated": false,
+          "chunk": [
+            1,
+            3
+          ],
+          "end_stone": 2088,
+          "ore": 8,
+          "palette_ok": true
+        },
+        {
+          "air": 19371,
+          "before_generated": false,
+          "chunk": [
+            2,
+            0
+          ],
+          "end_stone": 11446,
+          "ore": 15,
+          "palette_ok": true
+        },
+        {
+          "air": 19181,
+          "before_generated": false,
+          "chunk": [
+            2,
+            1
+          ],
+          "end_stone": 9605,
+          "ore": 34,
+          "palette_ok": true
+        },
+        {
+          "air": 24233,
+          "before_generated": false,
+          "chunk": [
+            2,
+            2
+          ],
+          "end_stone": 8501,
+          "ore": 34,
+          "palette_ok": true
+        },
+        {
+          "air": 30102,
+          "before_generated": false,
+          "chunk": [
+            2,
+            3
+          ],
+          "end_stone": 2657,
+          "ore": 9,
+          "palette_ok": true
+        },
+        {
+          "air": 21578,
+          "before_generated": false,
+          "chunk": [
+            3,
+            0
+          ],
+          "end_stone": 11156,
+          "ore": 34,
+          "palette_ok": true
+        },
+        {
+          "air": 23870,
+          "before_generated": false,
+          "chunk": [
+            3,
+            1
+          ],
+          "end_stone": 8882,
+          "ore": 16,
+          "palette_ok": true
+        },
+        {
+          "air": 27639,
+          "before_generated": false,
+          "chunk": [
+            3,
+            2
+          ],
+          "end_stone": 5117,
+          "ore": 12,
+          "palette_ok": true
+        },
+        {
+          "air": 32106,
+          "before_generated": false,
+          "chunk": [
+            3,
+            3
+          ],
+          "end_stone": 662,
+          "ore": 0,
+          "palette_ok": true
+        }
+      ],
+      "origin": [
+        0,
+        0
+      ],
+      "phase": "complete"
+    },
+    {
+      "accepted": true,
+      "callback_code": 1,
+      "chunks": [
+        {
+          "air": 20779,
+          "before_generated": false,
+          "chunk": [
+            750,
+            0
+          ],
+          "end_stone": 11900,
+          "ore": 32,
+          "palette_ok": true
+        },
+        {
+          "air": 20959,
+          "before_generated": false,
+          "chunk": [
+            750,
+            1
+          ],
+          "end_stone": 11782,
+          "ore": 27,
+          "palette_ok": true
+        },
+        {
+          "air": 20498,
+          "before_generated": false,
+          "chunk": [
+            750,
+            2
+          ],
+          "end_stone": 12195,
+          "ore": 24,
+          "palette_ok": true
+        },
+        {
+          "air": 20486,
+          "before_generated": false,
+          "chunk": [
+            750,
+            3
+          ],
+          "end_stone": 12222,
+          "ore": 48,
+          "palette_ok": true
+        },
+        {
+          "air": 20325,
+          "before_generated": false,
+          "chunk": [
+            751,
+            0
+          ],
+          "end_stone": 12340,
+          "ore": 29,
+          "palette_ok": true
+        },
+        {
+          "air": 19905,
+          "before_generated": false,
+          "chunk": [
+            751,
+            1
+          ],
+          "end_stone": 12807,
+          "ore": 11,
+          "palette_ok": true
+        },
+        {
+          "air": 20692,
+          "before_generated": false,
+          "chunk": [
+            751,
+            2
+          ],
+          "end_stone": 12034,
+          "ore": 23,
+          "palette_ok": true
+        },
+        {
+          "air": 21133,
+          "before_generated": false,
+          "chunk": [
+            751,
+            3
+          ],
+          "end_stone": 11612,
+          "ore": 7,
+          "palette_ok": true
+        },
+        {
+          "air": 20827,
+          "before_generated": false,
+          "chunk": [
+            752,
+            0
+          ],
+          "end_stone": 11774,
+          "ore": 14,
+          "palette_ok": true
+        },
+        {
+          "air": 19919,
+          "before_generated": false,
+          "chunk": [
+            752,
+            1
+          ],
+          "end_stone": 12783,
+          "ore": 31,
+          "palette_ok": true
+        },
+        {
+          "air": 20009,
+          "before_generated": false,
+          "chunk": [
+            752,
+            2
+          ],
+          "end_stone": 12702,
+          "ore": 20,
+          "palette_ok": true
+        },
+        {
+          "air": 20396,
+          "before_generated": false,
+          "chunk": [
+            752,
+            3
+          ],
+          "end_stone": 12293,
+          "ore": 37,
+          "palette_ok": true
+        },
+        {
+          "air": 21312,
+          "before_generated": false,
+          "chunk": [
+            753,
+            0
+          ],
+          "end_stone": 11406,
+          "ore": 19,
+          "palette_ok": true
+        },
+        {
+          "air": 20139,
+          "before_generated": false,
+          "chunk": [
+            753,
+            1
+          ],
+          "end_stone": 12517,
+          "ore": 23,
+          "palette_ok": true
+        },
+        {
+          "air": 19835,
+          "before_generated": false,
+          "chunk": [
+            753,
+            2
+          ],
+          "end_stone": 12882,
+          "ore": 17,
+          "palette_ok": true
+        },
+        {
+          "air": 20091,
+          "before_generated": false,
+          "chunk": [
+            753,
+            3
+          ],
+          "end_stone": 12646,
+          "ore": 24,
+          "palette_ok": true
+        }
+      ],
+      "origin": [
+        12000,
+        0
+      ],
+      "phase": "complete"
+    },
+    {
+      "accepted": true,
+      "callback_code": 1,
+      "chunks": [
+        {
+          "air": 24821,
+          "before_generated": false,
+          "chunk": [
+            0,
+            750
+          ],
+          "end_stone": 7938,
+          "ore": 9,
+          "palette_ok": true
+        },
+        {
+          "air": 20647,
+          "before_generated": false,
+          "chunk": [
+            0,
+            751
+          ],
+          "end_stone": 12039,
+          "ore": 35,
+          "palette_ok": true
+        },
+        {
+          "air": 20622,
+          "before_generated": false,
+          "chunk": [
+            0,
+            752
+          ],
+          "end_stone": 12087,
+          "ore": 19,
+          "palette_ok": true
+        },
+        {
+          "air": 27331,
+          "before_generated": false,
+          "chunk": [
+            0,
+            753
+          ],
+          "end_stone": 5426,
+          "ore": 11,
+          "palette_ok": true
+        },
+        {
+          "air": 24578,
+          "before_generated": false,
+          "chunk": [
+            1,
+            750
+          ],
+          "end_stone": 8159,
+          "ore": 31,
+          "palette_ok": true
+        },
+        {
+          "air": 20623,
+          "before_generated": false,
+          "chunk": [
+            1,
+            751
+          ],
+          "end_stone": 12099,
+          "ore": 26,
+          "palette_ok": true
+        },
+        {
+          "air": 20473,
+          "before_generated": false,
+          "chunk": [
+            1,
+            752
+          ],
+          "end_stone": 12198,
+          "ore": 12,
+          "palette_ok": true
+        },
+        {
+          "air": 24493,
+          "before_generated": false,
+          "chunk": [
+            1,
+            753
+          ],
+          "end_stone": 8253,
+          "ore": 22,
+          "palette_ok": true
+        },
+        {
+          "air": 28888,
+          "before_generated": false,
+          "chunk": [
+            2,
+            750
+          ],
+          "end_stone": 3877,
+          "ore": 3,
+          "palette_ok": true
+        },
+        {
+          "air": 22500,
+          "before_generated": false,
+          "chunk": [
+            2,
+            751
+          ],
+          "end_stone": 10257,
+          "ore": 11,
+          "palette_ok": true
+        },
+        {
+          "air": 23454,
+          "before_generated": false,
+          "chunk": [
+            2,
+            752
+          ],
+          "end_stone": 9259,
+          "ore": 46,
+          "palette_ok": true
+        },
+        {
+          "air": 31042,
+          "before_generated": false,
+          "chunk": [
+            2,
+            753
+          ],
+          "end_stone": 1721,
+          "ore": 5,
+          "palette_ok": true
+        },
+        {
+          "air": 32757,
+          "before_generated": false,
+          "chunk": [
+            3,
+            750
+          ],
+          "end_stone": 11,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 31446,
+          "before_generated": false,
+          "chunk": [
+            3,
+            751
+          ],
+          "end_stone": 1318,
+          "ore": 4,
+          "palette_ok": true
+        },
+        {
+          "air": 31664,
+          "before_generated": false,
+          "chunk": [
+            3,
+            752
+          ],
+          "end_stone": 1104,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            3,
+            753
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        }
+      ],
+      "origin": [
+        0,
+        12000
+      ],
+      "phase": "complete"
+    },
+    {
+      "accepted": true,
+      "callback_code": 1,
+      "chunks": [
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            500,
+            500
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            500,
+            501
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            500,
+            502
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32664,
+          "before_generated": false,
+          "chunk": [
+            500,
+            503
+          ],
+          "end_stone": 104,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            501,
+            500
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            501,
+            501
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            501,
+            502
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32527,
+          "before_generated": false,
+          "chunk": [
+            501,
+            503
+          ],
+          "end_stone": 241,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            502,
+            500
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            502,
+            501
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            502,
+            502
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            502,
+            503
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            503,
+            500
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32768,
+          "before_generated": false,
+          "chunk": [
+            503,
+            501
+          ],
+          "end_stone": 0,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32759,
+          "before_generated": false,
+          "chunk": [
+            503,
+            502
+          ],
+          "end_stone": 9,
+          "ore": 0,
+          "palette_ok": true
+        },
+        {
+          "air": 32570,
+          "before_generated": false,
+          "chunk": [
+            503,
+            503
+          ],
+          "end_stone": 198,
+          "ore": 0,
+          "palette_ok": true
+        }
+      ],
+      "origin": [
+        8000,
+        8000
+      ],
+      "phase": "complete"
+    }
+  ],
+  "total_new_chunks": 64,
+  "total_ore": 956,
+  "all_chunks_new": true,
+  "level_dat_generator": {
+    "type": "int",
+    "value": 1
+  },
+  "source": "worldgen_infinite_probe.py",
+  "ore_feature_format": "1.14.0",
+  "feature_definition_errors_in_content_log": false
+}

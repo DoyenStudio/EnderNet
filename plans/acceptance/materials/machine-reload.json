@@ -1,0 +1,149 @@
+{
+  "passed": true,
+  "real_engine_ticks": true,
+  "reload_ready_before": 3,
+  "reload_ready_after": 4,
+  "initial_fe": 640,
+  "additional_fe_after_reload": 1920,
+  "before": {
+    "errors": {},
+    "saved": {
+      "burn": 0,
+      "cursor": 0,
+      "energy": 0,
+      "journal": null,
+      "mode": "charge",
+      "progress": 20,
+      "recipe": "endernet:charge_crystal",
+      "version": 2
+    },
+    "slots": [
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:resonance_crystal",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:resonance_crystal",
+        "showInHand": true,
+        "userData": null
+      },
+      null
+    ],
+    "snapshot": {
+      "burn": 0,
+      "capacity": 32000,
+      "device_id": "endernet:resonance_charger",
+      "duration": 80,
+      "energy": 0,
+      "message": "",
+      "mode": "charge",
+      "progress": 20,
+      "status": "no_power"
+    }
+  },
+  "after_reload": {
+    "errors": {},
+    "saved": {
+      "burn": 0,
+      "cursor": 0,
+      "energy": 0,
+      "journal": null,
+      "mode": "charge",
+      "progress": 20,
+      "recipe": "endernet:charge_crystal",
+      "version": 2
+    },
+    "slots": [
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:resonance_crystal",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:resonance_crystal",
+        "showInHand": true,
+        "userData": null
+      },
+      null
+    ],
+    "snapshot": {
+      "burn": 0,
+      "capacity": 32000,
+      "device_id": "endernet:resonance_charger",
+      "duration": 80,
+      "energy": 0,
+      "message": "",
+      "mode": "charge",
+      "progress": 20,
+      "status": "no_power"
+    }
+  },
+  "complete": {
+    "errors": {},
+    "saved": {
+      "burn": 0,
+      "cursor": 0,
+      "energy": 0,
+      "journal": null,
+      "mode": "charge",
+      "progress": 0,
+      "recipe": "",
+      "version": 2
+    },
+    "slots": [
+      null,
+      {
+        "auxValue": 0,
+        "canDestroy": [],
+        "canPlaceOn": [],
+        "count": 1,
+        "customTips": "",
+        "durability": 0,
+        "enchantData": [],
+        "extraId": "",
+        "isDiggerItem": false,
+        "itemId": -1,
+        "itemName": "endernet:charged_resonance_crystal",
+        "modEnchantData": [],
+        "modId": "",
+        "modItemId": "",
+        "newAuxValue": 0,
+        "newItemName": "endernet:charged_resonance_crystal",
+        "showInHand": true,
+        "userData": null
+      }
+    ],
+    "snapshot": {
+      "burn": 0,
+      "capacity": 32000,
+      "device_id": "endernet:resonance_charger",
+      "duration": 80,
+      "energy": 0,
+      "message": "",
+      "mode": "charge",
+      "progress": 0,
+      "status": "waiting_input"
+    }
+  }
+}

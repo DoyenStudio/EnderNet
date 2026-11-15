@@ -1,0 +1,53 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:memory_64k_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "endernet:memory_16k",
+                "data": 0
+            },
+            {
+                "item": "endernet:memory_16k",
+                "data": 0
+            },
+            {
+                "item": "endernet:memory_16k",
+                "data": 0
+            },
+            {
+                "item": "endernet:calculation_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:calculation_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:charged_resonance_crystal",
+                "data": 0
+            },
+            {
+                "item": "endernet:charged_resonance_crystal",
+                "data": 0
+            },
+            {
+                "item": "minecraft:gold_ingot",
+                "data": 0
+            }
+        ],
+        "result": {
+            "item": "endernet:memory_64k",
+            "data": 0,
+            "count": 1
+        }
+    }
+}

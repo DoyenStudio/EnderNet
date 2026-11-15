@@ -97,6 +97,9 @@
         "endernet:dos_network_endpoint_all_offline": {
             "textures": "textures/endernet/devices/dos_network_endpoint_all_offline"
         },
+        "endernet:end_resonance_ore_all": {
+            "textures": "textures/endernet/block_resources/end_resonance_ore_all"
+        },
         "endernet:ender_cable_model": {
             "textures": "textures/endernet/models/ender_cable"
         },
@@ -156,6 +159,15 @@
         },
         "endernet:parallel_processor_connector_all_offline": {
             "textures": "textures/endernet/devices/parallel_processor_connector_all_offline"
+        },
+        "endernet:resonance_charger_front": {
+            "textures": "textures/endernet/devices/resonance_charger_front"
+        },
+        "endernet:resonance_generator_front": {
+            "textures": "textures/endernet/devices/resonance_generator_front"
+        },
+        "endernet:resonance_inscriber_front": {
+            "textures": "textures/endernet/devices/resonance_inscriber_front"
         },
         "endernet:storage_driver_model": {
             "textures": "textures/endernet/models/storage_driver"

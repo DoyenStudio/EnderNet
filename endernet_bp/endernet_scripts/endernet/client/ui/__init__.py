@@ -33,6 +33,7 @@ def register_screens():
     from .terminal.template_panel import TemplatePanel
     from .terminal.panel import CommonTerminalPanel
     from .universal_importer.screen import UniversalImporterScreen
+    from .devices.production_panel import PRODUCTION_PANELS
 
     return (
         CommonTerminalPanel,
@@ -51,4 +52,4 @@ def register_screens():
         MemorySlotPanel,
         BusFluidInputPanel,
         BusFluidOutputPanel,
-    )
+    ) + PRODUCTION_PANELS

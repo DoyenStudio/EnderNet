@@ -1,0 +1,67 @@
+{
+  "passed": true,
+  "session": "materials-20261115",
+  "ready_count": 4,
+  "position": [
+    61,
+    63,
+    41
+  ],
+  "dimension": 0,
+  "method": "Native PlayerDestroyBlock with a survival player; original held tool restored, player not moved",
+  "tile_drops": true,
+  "cases": [
+    {
+      "case": "vanilla_control",
+      "passed": true,
+      "tool": "minecraft:iron_pickaxe",
+      "enchantments": [],
+      "remaining_durability": 249,
+      "drops": [
+        {
+          "id": "minecraft:diamond",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "case": "normal",
+      "passed": true,
+      "tool": "minecraft:iron_pickaxe",
+      "enchantments": [],
+      "remaining_durability": 249,
+      "drops": [
+        {
+          "id": "endernet:resonance_crystal",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "case": "silk",
+      "passed": true,
+      "tool": "minecraft:iron_pickaxe",
+      "enchantments": [
+        [
+          16,
+          1
+        ]
+      ],
+      "remaining_durability": 249,
+      "drops": [
+        {
+          "id": "endernet:end_resonance_ore",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "case": "low_tier",
+      "passed": true,
+      "tool": "minecraft:stone_pickaxe",
+      "enchantments": [],
+      "remaining_durability": 130,
+      "drops": []
+    }
+  ]
+}

@@ -117,6 +117,19 @@
     "container_grid_item@endernet_container_common.container_item": {
         "$item_collection_name": "netease_container"
     },
+    "indexed_container_slot": {
+        "type": "stack_panel",
+        "$container_slot_index|default": 0,
+        "size": [18, 18],
+        "collection_name": "netease_container",
+        "controls": [
+            {
+                "slot@endernet_container_common.container_grid_item": {
+                    "collection_index": "$container_slot_index"
+                }
+            }
+        ]
+    },
     "container_grid_items": {
         "type": "grid",
         "anchor_from": "top_left",

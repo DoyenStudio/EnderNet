@@ -1,0 +1,15 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:max_stack_size": 64,
+            "netease:customtips": {
+                "value": "\n§7可手工充能，也可使用谐振充能器。"
+            }
+        },
+        "description": {
+            "category": "endernet",
+            "identifier": "endernet:charged_resonance_crystal"
+        }
+    }
+}

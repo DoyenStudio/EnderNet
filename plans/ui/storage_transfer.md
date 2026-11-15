@@ -6,7 +6,7 @@
 
 - 文件：`endernet_rp/ui/endernet/storage/storage_transfer.json`。
 - namespace / 原生代理屏幕：`endernet_storage_transfer.main`。
-- 原生四槽采用 2×2 布局，索引从左上到右下为 0、1、2、3，继承 `endernet_container_common.container_grid_item`，集合为 `netease_container`。
+- 原生四槽采用 2×2 布局，索引从左上到右下为 0、1、2、3，继承 `endernet_container_common.indexed_container_slot`，由 `$container_slot_index` 指定索引。模板的 `stack_panel` 提供 `netease_container` 集合上下文，内部原生 `slot` 用 `collection_index` 绑定；不能把集合名挂在普通面板上。
 - 174×200 主面板复用公共背景、标题、关闭按钮、玩家背包、状态栏及详情弹窗；保留 PC、触屏与手柄的原生容器输入。
 - 标题使用 `tile.endernet:storage_transfer.name`。界面上部是四槽，下方为三行摘要，再下方是玩家物品栏。
 
@@ -14,7 +14,7 @@
 
 | 控件 | 契约 |
 | --- | --- |
-| `window/root_panel/bg/main/medium_0`～`medium_3` | 原生真实介质槽，脚本不伪造物品；服务端校验非空身份。 |
+| `window/root_panel/bg/main/medium_0/slot`～`medium_3/slot` | 原生真实介质槽，脚本不伪造物品；服务端校验非空身份。 |
 | `window/root_panel/bg/main/summary` | `#EnderNetStorageTransfer.summary` 静态字符串绑定，最近一秒单位物/s、EN/t、工作状态、四槽剩余单位物。 |
 | `window/root_panel/bg/main/stat_bar` | 公共总体在线状态，点击 `interact_btn` 打开详情。 |
 | `window/device_status_popup` | 公共控制器、带宽、能源详情；关闭沿用公共事件绑定。 |
@@ -28,3 +28,5 @@
 ## 验证
 
 实机原生四槽、在线状态、三行摘要、详情弹窗已验证；截图及离线/实机结果见 [验收记录](../tasks/validation/storage_transfer/README.md)。移动设备触屏和手柄未在对应硬件上验证。
+
+2026-11-13 集合上下文修复：离线完整门禁通过 4881 项测试、181 个运行时文件的 Python 2.7 兼容检查，`gen_blocks.py --check` 通过。MCDK 原生 UI 热重载后，运行时树确认四个 `StackPanel` 包裹真实槽位，18×18 尺寸及 2×2 位置保持不变；截图检查正常，增量日志未再出现 `collection_index` / `collection_name` 未知属性报错。本轮未重复验收物品拖拽、触屏和手柄操作。

@@ -10,7 +10,7 @@
 终端自己的状态（工作台、样板终端、配方来源与两份未定口径）归本对象所有。
 """
 
-from ....common.crafting_recipe import match
+from ....common.crafting_recipe import RecipeError, match
 from ....common.definitions import (
     ITEM_TEMPLATES,
     PATTERN_MODE_CRAFTING,
@@ -54,6 +54,7 @@ from .template import (
     INTEGER_TYPES,
     PUT_COUNT_ONE,
     RESULT_SLOT,
+    TemplateConfig,
     TemplatePolicy,
     detect_crafting_output,
     encode_template_item,
@@ -92,6 +93,7 @@ class TerminalActions(object):
         ("template_cell_put", "_cmd_template_cell_put"),
         ("template_import", "_cmd_template_import"),
         ("template_universal_import", "_cmd_template_universal_import"),
+        ("template_mei_import", "_cmd_template_mei_import"),
         ("template_cell_clear", "_cmd_template_cell_clear"),
         ("template_clear", "_cmd_template_clear"),
         ("template_cell_count", "_cmd_template_cell_count"),
@@ -294,7 +296,15 @@ class TerminalActions(object):
         if self.recipes is None:
             return None, None
         try:
-            return list(self.recipes.recipes_for(output_key)), None
+            recipes = list(self.recipes.recipes_for(output_key))
+            for recipe in recipes:
+                # 来源通常已规范化；鸭子类型来源也不能让超容量配方截断导入。
+                plan_import(recipe)
+            return recipes, None
+        except RecipeError as error:
+            return None, CommandResult.blocked(
+                "", [BlockReason(Reason.CRAFT_NO_RECIPE, error.detail)],
+            )
         except Exception as error:
             self.storage.last_error = "%s: %s" % (type(error).__name__, error)
             return None, CommandResult.blocked(
@@ -789,7 +799,12 @@ class TerminalActions(object):
         「你摆的东西没有配方」，玩家只会去改配方——与 `_craft_recipes_for`
         同一个理由。
         """
-        if state.config.mode != PATTERN_MODE_CRAFTING:
+        return self._template_detect_config(state.config)
+
+    def _template_detect_config(self, config):
+        # type: (object) -> tuple
+        """也可检测尚未提交的配置，避免导入失败留下半份编辑。"""
+        if config.mode != PATTERN_MODE_CRAFTING:
             return None, None
         if self.recipes is None:
             return None, CommandResult.blocked(
@@ -797,7 +812,7 @@ class TerminalActions(object):
             )
         try:
             return detect_crafting_output(
-                state.config.cells(GROUP_SOURCE), self.recipes), None
+                config.cells(GROUP_SOURCE), self.recipes), None
         except Exception as error:
             self.storage.last_error = "%s: %s" % (type(error).__name__, error)
             return None, CommandResult.blocked(
@@ -941,6 +956,79 @@ class TerminalActions(object):
             "action": "template_universal_import",
             "state": self._template_state_payload(state),
         })
+
+    def _cmd_template_mei_import(self, command, payload):
+        # type: (object, dict) -> CommandResult
+        """MEI 配方只编辑虚格；模式、输入与输出验证后一次提交。"""
+        state, refusal = self._template_state_for(command)
+        if refusal is not None:
+            return refusal
+        gate = self._template_gate(command, payload, state)
+        if gate is not None:
+            return gate
+        config = payload.get("config")
+        if (not isinstance(config, dict)
+                or config.get("mode") not in (PATTERN_MODE_CRAFTING, PATTERN_MODE_FACTORY)):
+            return self._reject(command, Reason.BAD_PARAMETER, "MEI 样板模式不合法")
+        mode = config["mode"]
+        groups = {}
+        for field, group in (("inputs", GROUP_SOURCE), ("outputs", GROUP_OUTPUTS)):
+            cells, refusal = self._template_mei_cells(command, mode, group, config.get(field))
+            if refusal is not None:
+                return refusal
+            groups[group] = cells
+        source, outputs = groups[GROUP_SOURCE], groups[GROUP_OUTPUTS]
+        if not any(source) or not any(outputs):
+            return self._reject(command, Reason.TEMPLATE_CONFIG_INVALID, "配方必须有输入和产物")
+        if mode == PATTERN_MODE_CRAFTING:
+            expected = [entry for entry in outputs if entry is not None]
+            if len(expected) != 1:
+                return self._reject(command, Reason.TEMPLATE_CONFIG_INVALID, "工作台配方只能有一个产物")
+            candidate = TemplateConfig(mode=mode, source=source)
+            preview, blocked = self._template_detect_config(candidate)
+            if blocked is not None:
+                return CommandResult.blocked(command.request_id, blocked.reasons)
+            if (preview is None or expected[0] != (
+                    ResourceKey.item(preview["name"], preview.get("aux") or 0), preview["count"])):
+                return self._reject(command, Reason.CRAFT_NO_RECIPE,
+                                    "服务端工作台配方与 MEI 不一致，请重新选择")
+            # 合成产物始终由服务端推导，不把 MEI 产物写成可编辑输出格。
+            outputs = [None] * CELL_COUNT_OF[GROUP_OUTPUTS]
+        state.config.replace_recipe(mode, source, outputs)
+        return CommandResult.ok(command.request_id, {
+            "action": "template_mei_import", "state": self._template_state_payload(state),
+        })
+
+    def _template_mei_cells(self, command, mode, group, items):
+        # type: (object, str, str, object) -> tuple
+        """完整验证一组配置，容量不足时拒绝，不截断配方。"""
+        if not isinstance(items, list) or len(items) > CELL_COUNT_OF[group]:
+            return None, self._reject(command, Reason.BAD_PARAMETER, "MEI 配方槽位数量不合法")
+        cells = [None] * CELL_COUNT_OF[group]
+        for index, item in enumerate(items):
+            if item is None:
+                continue
+            if not isinstance(item, dict):
+                return None, self._reject(command, Reason.BAD_PARAMETER, "MEI 配方物品格式不合法")
+            try:
+                key = ResourceKey.from_dict(item["key"])
+            except (KeyError, TypeError, ValueError):
+                return None, self._reject(command, Reason.BAD_PARAMETER, "MEI 配方资源标识不合法")
+            count, refusal = self._template_count_of(command, item)
+            if refusal is not None:
+                return None, refusal
+            if key.name == "minecraft:air":
+                return None, self._reject(command, Reason.BAD_PARAMETER, "不能导入空气")
+            slot = index if mode == PATTERN_MODE_CRAFTING and group == GROUP_SOURCE else None
+            if slot is not None and count != 1:
+                return None, self._reject(command, Reason.TEMPLATE_CONFIG_INVALID,
+                                          "工作台配方每格只能配置一个原料")
+            try:
+                PatternStack(key, count, slot=slot)
+            except (PatternValidationError, TypeError, ValueError):
+                return None, self._reject(command, Reason.PATTERN_INVALID, "MEI 配方资源不能写入样板")
+            cells[index] = (key, count)
+        return cells, None
 
     def _cmd_template_cell_put(self, command, payload):
         # type: (object, dict) -> CommandResult

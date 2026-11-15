@@ -19,7 +19,7 @@ import unittest
 
 import testsupport  # noqa: F401 - 导入即完成 sys.path 设置
 
-from endernet.common.crafting_recipe import normalize_recipe
+from endernet.common.crafting_recipe import PATTERN_TOO_BIG, PresetRecipe, RecipeError, RecipeIngredient, normalize_recipe
 from endernet.common.identity import DeviceRef, NodeKey
 from endernet.common.protocol import TransferStatus
 from endernet.common.resources.key import ResourceKey
@@ -449,9 +449,33 @@ class TestPlanImport(unittest.TestCase):
 
     def test_a_shapeless_recipe_takes_successive_slots(self):
         plan = plan_import(normalize_recipe(BOOK))
+        self.assertEqual([0, 1, 2, 3], [slot for slot, _alts, _n in plan])
+        self.assertEqual([1, 1, 1, 1], [count for _slot, _alts, count in plan])
+        self.assertEqual(["minecraft:paper"] * 3 + ["minecraft:leather"],
+                         [alts[0].name for _slot, alts, _count in plan])
+
+    def test_counted_shapeless_slots_use_the_same_per_slot_policy(self):
+        plan = plan_import(normalize_recipe(BOOK), per_slot=5)
+        self.assertEqual([5] * 4, [count for _slot, _alts, count in plan])
+
+    def test_shapeless_tag_keeps_every_candidate_in_each_expanded_slot(self):
+        recipe = normalize_recipe({
+            "ingredients": [{"count": 2, "item": ["minecraft:oak_planks", "minecraft:birch_planks"]}],
+            "result": [{"item": "minecraft:stick"}],
+        })
+        plan = plan_import(recipe)
         self.assertEqual([0, 1], [slot for slot, _alts, _n in plan])
-        self.assertEqual(3, plan[0][2])   # 三张纸
-        self.assertEqual(1, plan[1][2])   # 一张皮革
+        for _slot, alternatives, count in plan:
+            self.assertEqual(["minecraft:oak_planks", "minecraft:birch_planks"],
+                             [ingredient.name for ingredient in alternatives])
+            self.assertEqual(1, count)
+
+    def test_oversized_shapeless_plan_is_refused_not_truncated(self):
+        recipe = PresetRecipe(False, (), {}, (RecipeIngredient("minecraft:paper", 0, 10 ** 50),),
+                              (RecipeIngredient("minecraft:book", 0),))
+        with self.assertRaises(RecipeError) as caught:
+            plan_import(recipe)
+        self.assertEqual(PATTERN_TOO_BIG, caught.exception.code)
 
     def test_untouched_cells_are_absent_from_the_plan(self):
         # 「配方本来没有原料的位置保持为空」：计划里不出现，调用方就不会去动它。
@@ -503,6 +527,16 @@ class TestPlanRefill(unittest.TestCase):
         cells[5] = ("minecraft:leather", 0, 1)
         plan = plan_refill(recipe, tuple(cells))
         self.assertEqual([2, 5], [slot for slot, _alts, _n in plan])
+
+    def test_shapeless_refill_preserves_the_actual_tag_candidate(self):
+        recipe = normalize_recipe({
+            "ingredients": [{"item": ["minecraft:oak_planks", "minecraft:birch_planks"]}],
+            "result": [{"item": "minecraft:stick"}],
+        })
+        cells = [None] * SLOT_COUNT
+        cells[4] = ("minecraft:birch_planks", 0, 1)
+        plan = plan_refill(recipe, tuple(cells))
+        self.assertEqual("minecraft:birch_planks", plan[0][1][0].name)
 
 
 if __name__ == "__main__":

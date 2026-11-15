@@ -1,0 +1,57 @@
+{
+    "format_version": "1.20.10",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "endernet:archive_core_craft"
+        },
+        "tags": [
+            "crafting_table"
+        ],
+        "unlock": {
+            "context": "AlwaysUnlocked"
+        },
+        "ingredients": [
+            {
+                "item": "endernet:storage_component_16k",
+                "data": 0
+            },
+            {
+                "item": "endernet:storage_component_16k",
+                "data": 0
+            },
+            {
+                "item": "endernet:storage_component_16k",
+                "data": 0
+            },
+            {
+                "item": "endernet:storage_component_16k",
+                "data": 0
+            },
+            {
+                "item": "endernet:engineering_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:engineering_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:engineering_chip",
+                "data": 0
+            },
+            {
+                "item": "endernet:engineering_chip",
+                "data": 0
+            },
+            {
+                "item": "minecraft:nether_star",
+                "data": 0
+            }
+        ],
+        "result": {
+            "item": "endernet:archive_core",
+            "data": 0,
+            "count": 1
+        }
+    }
+}

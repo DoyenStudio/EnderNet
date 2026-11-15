@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:softdisk_4k"
+        },
+        "description": {
+            "identifier": "endernet:softdisk_4k"
+        }
+    }
+}

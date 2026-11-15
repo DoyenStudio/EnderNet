@@ -1,0 +1,29 @@
+{
+    "format_version": "1.21.70",
+    "minecraft:block": {
+        "description": {
+            "identifier": "endernet:end_resonance_ore",
+            "category": "endernet"
+        },
+        "components": {
+            "minecraft:destructible_by_mining": {
+                "seconds_to_destroy": 3.0
+            },
+            "netease:tier": {
+                "destroy_special": true,
+                "digger": "pickaxe",
+                "level": 2
+            },
+            "minecraft:loot": "loot_tables/endernet/end_resonance_ore.json",
+            "minecraft:geometry": {
+                "identifier": "minecraft:geometry.full_block"
+            },
+            "minecraft:material_instances": {
+                "*": {
+                    "texture": "endernet:end_resonance_ore_all",
+                    "render_method": "opaque"
+                }
+            }
+        }
+    }
+}

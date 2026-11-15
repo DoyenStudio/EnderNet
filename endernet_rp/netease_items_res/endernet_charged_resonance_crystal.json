@@ -1,0 +1,11 @@
+{
+    "format_version": "1.10",
+    "minecraft:item": {
+        "components": {
+            "minecraft:icon": "endernet:charged_resonance_crystal"
+        },
+        "description": {
+            "identifier": "endernet:charged_resonance_crystal"
+        }
+    }
+}
