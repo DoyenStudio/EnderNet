@@ -14,16 +14,32 @@
 
 配方脚本支持 MEI 的预览布局，所有槽位沿用 MEI 的 20×20 控件。空槽由外层面板隐藏，避免槽位自己的可见性绑定覆盖隐藏状态。
 
-## SkyBlueTech 布局对齐
+## MEI 贴图与独立能量控件（2026-11-15）
 
-按用户后续要求，资源引用现有前置 SkyBlueTech 的公共 JSON UI 控件，不导入其 Python 实现：
+配方页已移除 `SkybluePanelLib`、`MachineRecipeLib` 和
+`textures/ui/skybluetech/` 的外部引用。公共显示控件位于
+`ui/endernet/mei_recipes/common.json`，能量控件单独放在同目录 `energy.json`。
 
-- 发电机直接继承 `MachineRecipeLib.ThermalGenerator`：85×62 内容区，燃料上方火焰、右侧 18×54 能量条；燃烧预览时火焰递减、能量条递增。
-- 充能器采用与磨粉机相同的 108×62 内容区、左侧 12×54 能量条；压印机横向扩展到 154×62，容纳三种原料。两者保留模式文字、加工箭头，能量条随进度递减。
-- 能量条沿用 `MachineRecipeLib.energy_meter` 的 17 段轨道；悬停显示 FE/t 和单次总量，进度箭头／火焰悬停显示模式及真实耗时。预览最长循环 20 秒，与 SkyBlueTech 一致；发电燃料的实际 80 秒仍由提示如实显示。
-- MEI 的统一 `OnAnimTick` 驱动动画，没有增加独立定时器。回归测试覆盖满／空端点、循环复位、发电与耗电方向、耗时上限及悬停数值。
+- 背景与 MEI 内置配方页一致，使用 `textures/ui/mei/recipe/recipe_bg` 及 3 px 九宫格边距。
+- 加工箭头使用 MEI 熔炉页相同的原版 `arrow_inactive` / `arrow_active`，尺寸 24×17；火焰使用 `flame_empty_image` / `flame_full_image`，尺寸 15×15。裁剪比例由原有 Python 脚本更新，JSON 不设字面 `clip_ratio`。
+- 能量条为本地 `EnderNetMeiEnergy.energy_meter`，轨道、渐变填充和边框均取本资源包已经携带的 `textures/endernet/ui/production/skybluetech/` 资源，许可见 [SkyBlueTech MIT 说明](../../../third_party/skybluetech-ui-LICENSE.txt)。目录中的来源名称不代表运行时依赖。
+- 发电页显式定义 85×62 内容区、20×20 燃料槽和右侧 18×54 能量条；充能页保持 108×62，压印页保持 154×62，两者左侧能量条为 12×54。三类布局及 tooltip 配方预览共用相同本地控件，保留脚本依赖的槽位和动画路径。
+- 能量条保留 17 段量化、悬停信息和原有动画方向；发电显示 EN，耗电显示 FE。动画继续由 MEI 的统一 `OnAnimTick` 驱动，预览最长循环 20 秒，燃料实际 80 秒由提示如实显示。
 
-实机已检查三类布局、充能条运行时高度变化、发电条悬停提示和切页；最终检查期间无新增错误日志。全量门禁结果仍为下述已有贴图失败，详见 [本次离线日志](offline-checks.txt)。
+UI 的第三方控件引用仅保留 MEI 自身公开的 `mei_common` / `mei_recipe_common`；MEI 缺席时仍由原有组件探测跳过扩展注册。离线回归检查全资源包命名空间闭包、外部贴图残留，以及三类配方页实际继承展开后的能量遮罩、进度遮罩、MEI 悬停层和燃料槽。
+
+本轮实机和全量门禁基于包含其他未提交改动的当前工作区，其中发电单位改为 EN 的调整不属于本次 UI 去依赖改动。
+
+本轮验证：
+
+- 全量 `run_tests.py`：**4997 项全部通过**，190 个运行时文件通过 Python 2.7 语法门禁；新增 3 项依赖与真实控件路径回归。`gen_blocks.py --check`（39 个方块）及 `gen_production_ui.py --check` 均通过。
+- 提交前单独导出本次暂存版本，排除其他工作区改动后，**4989 项全部通过**，190 个运行时文件通过 Python 2.7 语法门禁。
+- 离线渲染只加载 EnderNet、MEI 和原版资源，不加载 SkyBlueTech，配方背景、能量条、箭头及火焰可解析并绘制。
+- 完整重进后，充能／压印／发电三个类别自动注册，配方数仍为 1／7／1。实机检查充能页、压印页的三原料封装配方，以及发电页；图标、背景、箭头、火焰和能量条正常。
+- 运行时能量填充高度：加工页循环起点／终点／复位为 51／0／51 px，发电页为 0／51／0 px；箭头为 24×17，火焰为 15×15。真实鼠标悬停可见充能耗能 32 FE/t、合计 2560 FE，以及发电产能 64 EN/t、合计 102400 EN。
+- 完整重进后的本轮页面检查没有新增错误日志。此前只做原生 UI 热重载时，MEI 留有旧界面引用并报空控件错误；完整重进后不再复现。
+
+本次实机仍同时加载 SkyBlueTech；未验证卸载 SkyBlueTech 后的完整游戏启动，去依赖由离线引用检查与不加载该包的渲染验证。触屏和 tooltip 配方预览未进行本轮实机操作；preview 的本地继承与自包含性已静态复核。
 
 ## 离线结果
 
@@ -109,8 +125,8 @@ aux、超容量拒绝，以及导入后预览／编码；旧单物品配方 dige
 
 截图：[无序书本](template_shapeless_book.jpg) · [含木板候选的双面胶带](template_shapeless_tape.jpg)。
 
-![充能配方：左侧能量条](charger-layout.jpg)
+![MEI 样式充能配方：左侧独立能量条及悬停提示](mei-style-charger.jpg)
 
-![芯片封装配方：三原料及能量条](inscriber-layout.jpg)
+![MEI 样式芯片封装配方：三原料及独立能量条](mei-style-inscriber.jpg)
 
-![燃料发电配方：火焰及右侧能量条](generator-layout.jpg)
+![MEI 样式燃料发电配方：火焰、右侧独立能量条及悬停提示](mei-style-generator.jpg)

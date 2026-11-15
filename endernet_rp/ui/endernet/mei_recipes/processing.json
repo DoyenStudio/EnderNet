@@ -6,20 +6,6 @@
     "PREVIEW@mei_recipe_common.preview": {
         "$recipe_content_template": "EnderNetMei.content_panel"
     },
-    "info_hover@mei_common.slot_base": {
-        "$binding_name_prefix|default": "mei_ui.recipe.power",
-        "size": [
-            "100%",
-            "100%"
-        ],
-        "controls": [
-            {
-                "overlay@mei_common.slot_overlay": {
-                    "$overlay_btn_control": "mei_common.slot_overlay_button_flat"
-                }
-            }
-        ]
-    },
     "recipe@mei_recipe_common.recipe_panel": {
         "size": [
             188,
@@ -53,23 +39,12 @@
         "type": "panel",
         "size": "$content_size",
         "layer": 1,
-        "$recipe_power_hover": "EnderNetMei.info_hover",
         "controls": [
             {
-                "background": {
-                    "type": "image",
-                    "layer": 1,
-                    "nineslice_size": [
-                        2,
-                        2,
-                        2,
-                        2
-                    ],
-                    "texture": "textures/ui/skybluetech/rect_panel_bg"
-                }
+                "background@EnderNetMeiCommon.background": {}
             },
             {
-                "power@MachineRecipeLib.energy_meter": {
+                "power@EnderNetMeiEnergy.energy_meter": {
                     "anchor_from": "top_left",
                     "anchor_to": "top_left",
                     "offset": [
@@ -182,24 +157,24 @@
                             }
                         },
                         {
-                            "progress@SkybluePanelLib.progress_sprite": {
+                            "progress@EnderNetMeiCommon.progress_arrow": {
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
                                 "offset": "$progress_offset",
                                 "size": [
                                     24,
-                                    16
+                                    17
                                 ]
                             }
                         },
                         {
-                            "progress_hover@EnderNetMei.info_hover": {
+                            "progress_hover@EnderNetMeiCommon.info_hover": {
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
                                 "offset": "$progress_offset",
                                 "size": [
                                     24,
-                                    16
+                                    17
                                 ],
                                 "layer": 9,
                                 "$binding_name_prefix": "mei_ui.recipe.progress"
@@ -244,8 +219,5 @@
             94,
             25
         ]
-    },
-    "progress_hover@EnderNetMei.info_hover": {
-        "$binding_name_prefix": "mei_ui.recipe.progress"
     }
 }

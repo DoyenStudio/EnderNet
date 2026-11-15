@@ -35,9 +35,66 @@
             }
         ]
     },
-    "content_panel@MachineRecipeLib.ThermalGenerator": {
-        "$recipe_item_slot": "mei_common.item_panel",
-        "$recipe_power_hover": "EnderNetMei.info_hover",
-        "$recipe_progress_hover": "EnderNetMei.progress_hover"
+    "content_panel": {
+        "type": "panel",
+        "size": [85, 62],
+        "layer": 1,
+        "controls": [
+            {
+                "background@EnderNetMeiCommon.background": {}
+            },
+            {
+                "power@EnderNetMeiEnergy.energy_meter": {
+                    "anchor_from": "top_left",
+                    "anchor_to": "top_left",
+                    "layer": 2,
+                    "offset": [63, 4],
+                    "size": [18, 54]
+                }
+            },
+            {
+                "body": {
+                    "type": "panel",
+                    "size": ["100%", "100%"],
+                    "layer": 2,
+                    "controls": [
+                        {
+                            "input": {
+                                "type": "panel",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [4, 23],
+                                "size": [20, 20],
+                                "layer": 10,
+                                "controls": [
+                                    {
+                                        "0@mei_common.item_panel": {
+                                            "$binding_name_prefix": "mei_ui.recipe.input0"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "flame@EnderNetMeiCommon.burn_flame": {
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "offset": [6, 6]
+                            }
+                        },
+                        {
+                            "progress_hover@EnderNetMeiCommon.info_hover": {
+                                "$binding_name_prefix": "mei_ui.recipe.progress",
+                                "anchor_from": "top_left",
+                                "anchor_to": "top_left",
+                                "layer": 9,
+                                "offset": [6, 6],
+                                "size": [15, 15]
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
     }
 }

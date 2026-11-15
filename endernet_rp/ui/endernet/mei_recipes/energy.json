@@ -1,0 +1,54 @@
+{
+    "namespace": "EnderNetMeiEnergy",
+    "energy_meter": {
+        "type": "panel",
+        "size": [12, 54],
+        "layer": 1,
+        "controls": [
+            {
+                "bar": {
+                    "type": "panel",
+                    "size": ["100%-2px", "100%-2px"],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "bg": {
+                                "type": "image",
+                                "layer": 1,
+                                "keep_ratio": false,
+                                "texture": "textures/endernet/ui/production/skybluetech/energy/classic_track",
+                                "tiled": "y"
+                            }
+                        },
+                        {
+                            "mask": {
+                                "type": "image",
+                                "anchor_from": "bottom_middle",
+                                "anchor_to": "bottom_middle",
+                                "size": ["100%", "100%"],
+                                "layer": 2,
+                                "keep_ratio": false,
+                                "texture": "textures/endernet/ui/production/skybluetech/energy_bar_top"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "frame": {
+                    "type": "image",
+                    "layer": 3,
+                    "fill": true,
+                    "keep_ratio": false,
+                    "nineslice_size": 1,
+                    "texture": "textures/endernet/ui/production/skybluetech/frame_empty_slim"
+                }
+            },
+            {
+                "info@EnderNetMeiCommon.info_hover": {
+                    "layer": 4
+                }
+            }
+        ]
+    }
+}

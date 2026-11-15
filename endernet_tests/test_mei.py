@@ -3,6 +3,7 @@
 import unittest
 import json
 import os
+import re
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
@@ -100,6 +101,112 @@ def context():
               Slots=NS(render_slot=lambda control, ingredient: (control, ingredient))),
         Log=Mock(),
     )
+
+
+def registered_ui_documents():
+    root = os.path.join(testsupport.REPO_ROOT, 'endernet_rp')
+    with open(os.path.join(root, 'ui', '_ui_defs.json'), encoding='utf-8') as handle:
+        paths = json.load(handle)['ui_defs']
+    documents = {}
+    for relative in paths:
+        with open(os.path.join(root, relative), encoding='utf-8') as handle:
+            document = json.load(handle)
+        documents[document['namespace']] = document
+    return documents
+
+
+def ui_control_references(value):
+    """Find inherited controls and qualified control templates, excluding inputs."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if '@' in key:
+                reference = key.split('@', 1)[1]
+                if not reference.startswith('$') and '.' in reference:
+                    yield reference
+            if ((key.startswith('$') or key.endswith('_template')) and isinstance(child, str)
+                    and re.match(r'^[A-Za-z_]\w*\.[A-Za-z_]\w*$', child)
+                    and not child.startswith('button.')):
+                yield child
+            for reference in ui_control_references(child):
+                yield reference
+    elif isinstance(value, list):
+        for child in value:
+            for reference in ui_control_references(child):
+                yield reference
+
+
+def local_ui_instance(documents, key, value):
+    """Resolve the local inheritance needed by the recipe script's control paths."""
+    result = {}
+    if '@' in key:
+        reference = key.split('@', 1)[1]
+        if reference.split('.', 1)[0] in documents:
+            result.update(local_ui_control(documents, reference))
+    result.update(value)
+    return result
+
+
+def local_ui_control(documents, reference):
+    namespace, name = reference.split('.', 1)
+    document = documents[namespace]
+    key = next(key for key in document if key.split('@', 1)[0] == name)
+    return local_ui_instance(documents, key, document[key])
+
+
+def local_ui_path(documents, reference, path):
+    control = local_ui_control(documents, reference)
+    for segment in path.split('/'):
+        children = [(key, child) for entry in control.get('controls', [])
+                    for key, child in entry.items() if key.split('@', 1)[0] == segment]
+        if len(children) != 1:
+            raise AssertionError('%s/%s: missing or ambiguous %s' % (reference, path, segment))
+        control = local_ui_instance(documents, *children[0])
+    return control
+
+
+class MeiUiDependencyTests(unittest.TestCase):
+    def test_registered_ui_uses_only_bundled_vanilla_and_mei_namespaces(self):
+        documents = registered_ui_documents()
+        allowed = set(documents) | {
+            'common', 'common_toggles', 'container', 'gameplay',
+            'netease_container_pocket', 'netease_editor_template_namespace',
+            'mei_common', 'mei_recipe_common',
+        }
+        missing = sorted((namespace, reference)
+                         for namespace, document in documents.items()
+                         for reference in ui_control_references(document)
+                         if reference.split('.', 1)[0] not in allowed)
+        self.assertEqual(missing, [], 'UI controls require an unbundled optional mod')
+
+    def test_recipe_pages_do_not_use_skybluetech_resource_paths(self):
+        documents = registered_ui_documents()
+        for namespace, document in documents.items():
+            with self.subTest(namespace=namespace):
+                self.assertFalse('textures/ui/skybluetech/' in json.dumps(document),
+                                 '%s requires an unbundled SkyBlueTech texture' % namespace)
+
+    def test_three_recipe_layouts_keep_real_animation_masks_and_mei_hover(self):
+        documents = registered_ui_documents()
+        for namespace in ('EnderNetMei', 'EnderNetMeiCharge', 'EnderNetMeiFuel'):
+            reference = namespace + '.content_panel'
+            generating = namespace == 'EnderNetMeiFuel'
+            with self.subTest(namespace=namespace):
+                power_mask = local_ui_path(documents, reference, 'power/bar/mask')
+                self.assertEqual(power_mask['type'], 'image')
+                texture = power_mask['texture']
+                self.assertTrue(texture.startswith('textures/endernet/'), texture)
+                self.assertTrue(os.path.isfile(os.path.join(
+                    testsupport.REPO_ROOT, 'endernet_rp', texture + '.png')), texture)
+                info = local_ui_path(documents, reference, 'power/info')
+                overlay = next(key for entry in info['controls'] for key in entry
+                               if key.split('@', 1)[0] == 'overlay')
+                self.assertEqual(overlay, 'overlay@mei_common.slot_overlay')
+                progress = 'body/flame/mask' if generating else 'body/progress/mask'
+                self.assertEqual(local_ui_path(documents, reference, progress)['type'], 'image')
+                if generating:
+                    self.assertEqual(local_ui_path(documents, reference, 'body/input')['type'], 'panel')
+                    slot = local_ui_path(documents, reference, 'body/input')
+                    self.assertIn('0@mei_common.item_panel', slot['controls'][0])
 
 
 class MeiRecipesTests(unittest.TestCase):

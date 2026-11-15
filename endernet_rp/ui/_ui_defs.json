@@ -34,6 +34,8 @@
         "ui/endernet/production/common.json",
         "ui/endernet/mei_recipes/processing.json",
         "ui/endernet/mei_recipes/fuel.json",
-        "ui/endernet/mei_recipes/charger.json"
+        "ui/endernet/mei_recipes/charger.json",
+        "ui/endernet/mei_recipes/common.json",
+        "ui/endernet/mei_recipes/energy.json"
     ]
 }
