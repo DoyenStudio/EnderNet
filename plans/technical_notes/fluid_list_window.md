@@ -31,8 +31,9 @@ if window is not None:
 
 ## 资源与绑定
 
-窗口定义为 `endernet_windows.fluid_list_window`，实例名为 `endernet_fluid_list_window`，运行时 layer=30，低于流体选择器的 50。
-滚动内容引用 `endernet_windows.fluid_list_grid`，格子模板为 `endernet_windows.fluid_can_be_selected`。
+窗口定义为 `endernet_windows.fluid_list_window`，实例名为 `endernet_fluid_list_window`，由宿主预制，根层级为 55，流体选择器为 65。
+滚动区相对层级为 2，内容引用 `endernet_windows.fluid_list_grid`，格子模板为 `endernet_windows.fluid_can_be_selected`。
+父子层级累加后，格子图标、选中框和点击层仍须低于选择器的 `modal_backdrop`。
 
 collection 为 `endernet_fluid_list`；前缀为 `#EnderNetFluidList.`。
 
@@ -58,3 +59,8 @@ ToolDelta 的旧动态回调名称解析缺陷已于 2026-10-03 修复，见
 2026-09-28：`python -B endernet_tests/run_tests.py` 通过 2218 项测试，75 个源码文件通过 Python 2.7 兼容门禁。
 新增测试覆盖 JSON／Binder 契约、增删、去重、容量边界、长列表、重复打开、创建失败清理、选择器归属、真实流体选择器联动、背包桶映射及两类名单共存。
 尚未进行游戏内验证；本次提供公共组件，不代表流体输入总线 Screen 和服务端配置保存已经接入。
+
+2026-11-15：同步修复滚动区层级过高导致的穿透，离线回归覆盖流体输入、输出
+两个宿主的累计层级约束；完整 4987 项测试及 Python 2.7 语法门禁通过。
+本次物品选择器完成实机遮挡与点击验证；流体选择器初始化仍会因继承逻辑查找
+`item_search_editor`（资源中为 `fluid_search_editor`）失败，未完成流体选择器实机验收。

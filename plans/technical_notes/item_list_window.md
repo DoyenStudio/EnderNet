@@ -53,9 +53,12 @@ ID 列表、最多物品数和可选标题。创建成功返回 `True`；该 Scr
 
 ## 控件与绑定
 
-使用 `screen.AddElement("endernet_windows.item_list_window", ...)` 创建窗口，
-根层级为 30，为滚动容器的子层级留出空间，低于选择窗口的 50。资源中的 `scroll_view` 继续引用
-`endernet_windows.item_list_grid`；格子模板为 `endernet_windows.item_can_be_selected`。
+宿主内容区预制 `endernet_item_list_window@endernet_windows.item_list_window`，
+控制器通过 `window_control` 获取并显示；宿主根层级为 55，选择窗口为 65。
+`scroll_view` 的相对层级为 2，引用 `endernet_windows.item_list_grid`；
+格子模板为 `endernet_windows.item_can_be_selected`。层级沿父子控件累加，
+滚动视口额外增加 1 层；格子图标、数量、选中框和点击层均须低于选择窗的
+`modal_backdrop`（相对窗口为 -1），防止穿透遮挡及点击。
 
 当前实现由宿主的 `ItemListWindowBindingsMixin` 声明静态 Binder 绑定，
 窗口对象提供数据与操作；关闭窗口清理实例，静态绑定保留并返回安全值。
@@ -98,3 +101,11 @@ collection 名统一为 `endernet_item_list`。图标来自
 完整离线 4941 项测试、190 个文件的 Python 2.7 语法门禁、生成资产检查通过。
 MCDK 实机重开取货口后，缓存收到 27 条库存记录，“网络”页正常显示其中
 23 种有库存物品；点击物品可添加至名单草稿，验证后移除该草稿项，未提交配置。
+
+2026-11-15（弹窗层级）：将物品及流体列表滚动区的相对层级从 9 降为 2。
+新增回归检查覆盖五处列表／选择器宿主，旧值均触发失败；完整离线 4987 项测试、
+190 个文件的 Python 2.7 语法门禁、生成资产检查通过。
+MCDK 3.10 在原界面临时设置层级后确认图标穿透消失；随后原生重载 JSON UI，
+用存货口资源及临时测试宿主重新创建名单和选择器，确认资源加载的滚动区层级为 2。
+鼠标点击搜索框可输入并筛选，未选中下层格子；关闭选择器后下层格子恢复正常选择。
+测试不连接设备配置会话。[选择器截图](../tasks/validation/ui_modal_layering_2026-11-15.jpg)。

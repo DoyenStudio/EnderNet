@@ -589,7 +589,7 @@
                     ],
                     "anchor_from": "top_middle",
                     "anchor_to": "top_middle",
-                    "layer": 9,
+                    "layer": 2,
                     "offset": [
                         0,
                         18
@@ -1065,7 +1065,7 @@
                     ],
                     "anchor_from": "top_middle",
                     "anchor_to": "top_middle",
-                    "layer": 9,
+                    "layer": 2,
                     "offset": [
                         0,
                         18

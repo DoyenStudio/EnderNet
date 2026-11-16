@@ -73,8 +73,10 @@ ID 列表，窗口复制并按首次出现顺序去重，不发送网络库存�
 
 ## UI 接入约定
 
-资源定义是 `endernet_windows.select_item_window`，由 `screen.AddElement`
-创建根实例 `endernet_select_item_window`，随后调用 `SetLayer(50)`。
+资源定义是 `endernet_windows.select_item_window`，由宿主预制根实例
+`endernet_select_item_window`，层级为 65；控制器通过 `window_control` 获取并显示。
+下层名单根层级为 55，滚动区相对层级为 2；须把滚动视口及格子的子层级
+一并计入，保证低于选择器的 `modal_backdrop`，不能只比较两窗口根层级。
 资源已在 `_ui_defs.json` 登记。使用的相对路径：
 
 | 路径 | 接入方式 |
