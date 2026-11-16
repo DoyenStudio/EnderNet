@@ -1,16 +1,26 @@
 {
-    "namespace": "EnderNetMeiCharge",
-    "RECIPES_GRID@mei_recipe_common.recipes_grid": {
-        "$recipe_ui_template": "EnderNetMeiCharge.recipe"
-    },
     "PREVIEW@mei_recipe_common.preview": {
         "$recipe_content_template": "EnderNetMeiCharge.content_panel"
     },
-    "recipe@mei_recipe_common.recipe_panel": {
-        "size": [
-            188,
-            66
+    "RECIPES_GRID@mei_recipe_common.recipes_grid": {
+        "$recipe_ui_template": "EnderNetMeiCharge.recipe"
+    },
+    "content_panel@EnderNetMei.content_panel": {
+        "$content_size": [
+            108,
+            62
         ],
+        "$output_offset": [
+            84,
+            23
+        ],
+        "$progress_offset": [
+            52,
+            25
+        ]
+    },
+    "namespace": "EnderNetMeiCharge",
+    "recipe@mei_recipe_common.recipe_panel": {
         "controls": [
             {
                 "wrapper": {
@@ -32,20 +42,10 @@
                     ]
                 }
             }
-        ]
-    },
-    "content_panel@EnderNetMei.content_panel": {
-        "$content_size": [
-            108,
-            62
         ],
-        "$output_offset": [
-            84,
-            23
-        ],
-        "$progress_offset": [
-            52,
-            25
+        "size": [
+            188,
+            66
         ]
     }
 }

@@ -1,42 +1,24 @@
 {
-    "namespace": "EnderNetMei",
-    "RECIPES_GRID@mei_recipe_common.recipes_grid": {
-        "$recipe_ui_template": "EnderNetMei.recipe"
-    },
     "PREVIEW@mei_recipe_common.preview": {
         "$recipe_content_template": "EnderNetMei.content_panel"
     },
-    "recipe@mei_recipe_common.recipe_panel": {
-        "size": [
-            188,
-            66
-        ],
-        "controls": [
-            {
-                "wrapper": {
-                    "type": "panel",
-                    "size": [
-                        154,
-                        62
-                    ],
-                    "layer": 1,
-                    "controls": [
-                        {
-                            "content@EnderNetMei.content_panel": {}
-                        },
-                        {
-                            "buttons@mei_recipe_common.buttons_panel_vertical": {
-                                "$plus_button_ignored": false,
-                                "$tree_button_ignored": false
-                            }
-                        }
-                    ]
-                }
-            }
-        ]
+    "RECIPES_GRID@mei_recipe_common.recipes_grid": {
+        "$recipe_ui_template": "EnderNetMei.recipe"
     },
     "content_panel": {
         "type": "panel",
+        "$content_size|default": [
+            154,
+            62
+        ],
+        "$output_offset|default": [
+            130,
+            23
+        ],
+        "$progress_offset|default": [
+            94,
+            25
+        ],
         "size": "$content_size",
         "layer": 1,
         "controls": [
@@ -47,6 +29,7 @@
                 "power@EnderNetMeiEnergy.energy_meter": {
                     "anchor_from": "top_left",
                     "anchor_to": "top_left",
+                    "layer": 2,
                     "offset": [
                         4,
                         4
@@ -54,8 +37,7 @@
                     "size": [
                         12,
                         54
-                    ],
-                    "layer": 2
+                    ]
                 }
             },
             {
@@ -69,17 +51,17 @@
                     "controls": [
                         {
                             "input0": {
+                                "type": "panel",
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
                                 "offset": [
                                     22,
-                                    23
+                                    24
                                 ],
                                 "size": [
                                     20,
                                     20
                                 ],
-                                "type": "panel",
                                 "layer": 10,
                                 "controls": [
                                     {
@@ -92,17 +74,17 @@
                         },
                         {
                             "input1": {
+                                "type": "panel",
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
                                 "offset": [
-                                    44,
+                                    42.0,
                                     23
                                 ],
                                 "size": [
                                     20,
                                     20
                                 ],
-                                "type": "panel",
                                 "layer": 10,
                                 "controls": [
                                     {
@@ -115,17 +97,17 @@
                         },
                         {
                             "input2": {
+                                "type": "panel",
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
                                 "offset": [
-                                    66,
+                                    62.0,
                                     23
                                 ],
                                 "size": [
                                     20,
                                     20
                                 ],
-                                "type": "panel",
                                 "layer": 10,
                                 "controls": [
                                     {
@@ -138,6 +120,7 @@
                         },
                         {
                             "output": {
+                                "type": "panel",
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
                                 "offset": "$output_offset",
@@ -145,7 +128,6 @@
                                     20,
                                     20
                                 ],
-                                "type": "panel",
                                 "layer": 10,
                                 "controls": [
                                     {
@@ -169,19 +151,20 @@
                         },
                         {
                             "progress_hover@EnderNetMeiCommon.info_hover": {
+                                "$binding_name_prefix": "mei_ui.recipe.progress",
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
+                                "layer": 9,
                                 "offset": "$progress_offset",
                                 "size": [
                                     24,
                                     17
-                                ],
-                                "layer": 9,
-                                "$binding_name_prefix": "mei_ui.recipe.progress"
+                                ]
                             }
                         },
                         {
                             "mode": {
+                                "type": "label",
                                 "anchor_from": "top_left",
                                 "anchor_to": "top_left",
                                 "offset": [
@@ -192,32 +175,49 @@
                                     "100%-26px",
                                     12
                                 ],
-                                "type": "label",
-                                "text": "",
-                                "font_size": "normal",
+                                "layer": 3,
                                 "color": [
                                     0.2,
                                     0.2,
                                     0.2
                                 ],
-                                "layer": 3
+                                "font_size": "normal",
+                                "text": ""
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    },
+    "namespace": "EnderNetMei",
+    "recipe@mei_recipe_common.recipe_panel": {
+        "controls": [
+            {
+                "wrapper": {
+                    "type": "panel",
+                    "size": [
+                        154,
+                        62
+                    ],
+                    "layer": 1,
+                    "controls": [
+                        {
+                            "content@EnderNetMei.content_panel": {}
+                        },
+                        {
+                            "buttons@mei_recipe_common.buttons_panel_vertical": {
+                                "$plus_button_ignored": false,
+                                "$tree_button_ignored": false
                             }
                         }
                     ]
                 }
             }
         ],
-        "$content_size|default": [
-            154,
-            62
-        ],
-        "$output_offset|default": [
-            130,
-            23
-        ],
-        "$progress_offset|default": [
-            94,
-            25
+        "size": [
+            188,
+            66
         ]
     }
 }
