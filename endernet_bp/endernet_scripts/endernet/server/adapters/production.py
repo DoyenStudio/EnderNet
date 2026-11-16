@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Native containers, block-entity ticks and radium ports for production machines."""
+"""Native containers and ticks; only standalone processing machines expose FE ports."""
 
 import uuid
 
@@ -17,8 +17,7 @@ from .world import ToolDeltaWorldAdapter
 
 _EVENT_CLASSES = {}
 _SERVICE = None
-FACES = ((0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1), (-1, 0, 0), (1, 0, 0))
-OPPOSITE = (1, 0, 3, 2, 5, 4)
+FE_MACHINE_IDS = tuple(device_id for device_id in MACHINE_IDS if device_id != GENERATOR)
 SCREENS = dict((machine.id, machine.screen) for machine in MACHINE_BLOCKS)
 
 
@@ -86,7 +85,7 @@ class ProductionService(object):
         api = get_transfer_api()
         if api is None or getattr(api, "API_VERSION", ())[:1] != (1,):
             return False
-        for device_id in MACHINE_IDS:
+        for device_id in FE_MACHINE_IDS:
             api.register_provider(api.ENERGY, device_id, self.provider)
         self.api = api
         return True
@@ -122,9 +121,9 @@ class ProductionService(object):
 
     def provide_energy(self, dimension, pos, face):
         machine = self.load(dimension, pos)
-        if machine is None:
+        if machine is None or machine.device_id == GENERATOR:
             return None
-        return machine.energy_output if machine.device_id == GENERATOR else machine.energy_input
+        return machine.energy_input
 
     def snapshot(self, dimension, pos):
         machine = self.load(dimension, pos)
@@ -200,14 +199,6 @@ class ProductionService(object):
             return
         self._send(player, key, session, message=message)
 
-    def _neighbors(self, key):
-        result = []
-        pos = key.as_tuple()
-        for face, delta in enumerate(FACES):
-            target = tuple(pos[i] + delta[i] for i in range(3))
-            result.append(self.api.query(self.api.ENERGY, key.dimension, target, face=OPPOSITE[face]))
-        return result
-
     def _tick(self, event):
         if event.blockName not in MACHINE_IDS:
             return
@@ -217,8 +208,6 @@ class ProductionService(object):
             return
         try:
             machine.tick()
-            if machine.device_id == GENERATOR:
-                machine.push_energy(self._neighbors(key))
         except (ValueError, IOError, self.api.TransactionError) as exc:
             error = str(exc)
             if self.errors.get(key) != error:
@@ -307,7 +296,7 @@ class ProductionService(object):
         self.registrations = []
         if self.api is not None:
             self.api.flush()
-            for device_id in MACHINE_IDS:
+            for device_id in FE_MACHINE_IDS:
                 self.api.unregister_provider(self.api.ENERGY, device_id, self.provider)
             for key in list(self.machines):
                 self.unload(key)

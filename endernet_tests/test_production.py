@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Production rules: conserved material, resumed progress and shared FE budget."""
+"""Production rules: conserved material, resumed progress and native EN supply."""
 
 import copy
 import json
@@ -313,12 +313,14 @@ class TestProduction(unittest.TestCase):
         self.assertTrue(machine.accepts(1, plain_item("minecraft:amethyst_shard", 1)))
         self.assertFalse(machine.accepts(0, plain_item("minecraft:amethyst_shard", 1)))
 
-    def test_one_coal_generates_exactly_102400_fe(self):
+    def test_one_coal_generates_exactly_102400_en(self):
         machine, slots, _ = make_machine(GENERATOR, [plain_item("minecraft:coal", 1)], amount=0)
         target = Energy(200000)
         for _ in range(1600):
             machine.tick()
-            machine.push_energy([target, None, None, None, None, None])
+            with machine.api.open_transaction() as tx:
+                machine.api.move_energy(machine.energy_output, target, 64, tx)
+                tx.commit()
         self.assertEqual(target.amount, 102400)
         self.assertEqual(machine.burn, 0)
         self.assertIsNone(slots.items[0])
@@ -332,18 +334,20 @@ class TestProduction(unittest.TestCase):
         self.assertEqual(slots.items[0]["count"], 2)
         self.assertEqual(machine.status, "buffer_full")
 
-    def test_six_faces_and_external_pulls_share_64_fe_budget(self):
+    def test_network_settlements_share_64_en_budget(self):
         machine, _, _ = make_machine(GENERATOR, amount=1000)
         machine.tick()
         api = machine.api
         with api.open_transaction() as tx:
             self.assertEqual(machine.energy_output.extract(30, tx), 30)
             tx.commit()
-        targets = [Energy(1000) for _ in range(6)]
-        self.assertEqual(machine.push_energy(targets), 34)
-        self.assertEqual(sum(t.amount for t in targets), 34)
-        self.assertEqual(machine.push_energy(targets), 0)
-        self.assertGreater(sum(t.amount > 0 for t in targets), 1)
+        with api.open_transaction() as tx:
+            self.assertEqual(machine.energy_output.extract(1000, tx), 34)
+            tx.commit()
+        with api.open_transaction() as tx:
+            self.assertEqual(machine.energy_output.extract(1, tx), 0)
+            tx.commit()
+        self.assertEqual(machine.energy.get_amount(), 936)
 
     def test_aborted_output_transaction_preserves_budget_and_energy(self):
         machine, _, _ = make_machine(GENERATOR, amount=1000)

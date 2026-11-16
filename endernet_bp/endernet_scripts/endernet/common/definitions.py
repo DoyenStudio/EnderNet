@@ -40,6 +40,7 @@
 import math
 
 from .materials import (
+    GENERATOR_ID,
     MATERIAL_ITEMS as MATERIAL_ITEMS,
     MACHINE_BLOCKS as MACHINE_BLOCKS,
     ORE_BLOCKS as ORE_BLOCKS,
@@ -718,6 +719,7 @@ def looks_unplaced(states):
 #: 没有离线外观的整方块设备：创造能量源是电源（作者画的离线图与在线图一样）。
 #: 转录器与存储转储器尚无离线贴图，沿用原有外观。
 NO_STATUS_LOOK = frozenset([
+    GENERATOR_ID,
     "endernet:creative_energy_source",
     TRANSCRIBER_ID,
     STORAGE_TRANSFER_ID,
@@ -1141,6 +1143,7 @@ DEVICES = (
             "endernet:network_baseband_32",
             "endernet:storage_driver",
             ENERGY_INPUT_ID,
+            GENERATOR_ID,
             TRANSCRIBER_ID,
             "endernet:common_terminal_panel",
             "endernet:crafting_terminal_panel",
@@ -1348,7 +1351,7 @@ DEVICES = (
         notes="占用 1 个配方处理槽位。",
     ),
     # --- 其他 ---
-    # 这一组两台都是「能源类设备」：不占带宽。2026-11-09 起与其他设备一样
+    # 这一组都是「能源类设备」：不占带宽。2026-11-09 起与其他设备一样
     # 接基带、光缆或别的设备（透传），不再「只连基带」。
     # 分类复用 CATEGORY_ENERGY_INPUT 而不是再开一个：blocks.md 把它们同放在
     # 「其他」下，连接规则也完全一样；新开分类要同时改 ConnectionRules 与
@@ -1372,6 +1375,15 @@ DEVICES = (
         ),
         capabilities=(CAP_ENERGY_PORT,),
         notes="不占带宽不代表耗能为零；耗能未列，归入 R10。",
+    ),
+    DeviceDefinition(
+        GENERATOR_ID,
+        "谐振燃料发电机",
+        CATEGORY_ENERGY_INPUT,
+        bandwidth=BandwidthSpec(0),
+        energy=EnergySpec(Value(0)),
+        supply=Value(UNCONFIGURED, note="实际供能由燃料发电机 EN 缓存和每 tick 64 EN 输出预算结算"),
+        notes="直接向网络供给 EN；不耗能、不占带宽，燃烧不受网络断电影响。",
     ),
     DeviceDefinition(
         "endernet:creative_energy_source",

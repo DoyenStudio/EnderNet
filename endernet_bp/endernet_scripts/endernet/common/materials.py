@@ -58,13 +58,14 @@ class MachineSpec(object):
 MACHINE_BLOCKS = (
     MachineSpec("resonance_charger", "谐振充能器", 2, "独立充能：32 FE/t，每次 4 秒。"),
     MachineSpec("resonance_inscriber", "谐振压印机", 4, "粉碎、压印和封装：32 FE/t，每次 4 秒。"),
-    MachineSpec("resonance_generator", "谐振燃料发电机", 1, "煤炭或木炭发电，六面合计 64 FE/t。"),
+    MachineSpec("resonance_generator", "谐振燃料发电机", 1, "煤炭或木炭发电，直接向网络提供 64 EN/t；不耗能、不占带宽。"),
 )
 ORE_BLOCKS = (("endernet:end_resonance_ore", "末地谐振矿石"),)
 ORE_ID = ORE_BLOCKS[0][0]
 
 # Shared by the authoritative generator and optional recipe viewers.
-GENERATOR_RATE = 64
+GENERATOR_ID = "endernet:resonance_generator"
+GENERATOR_RATE = 64  # EN/t
 FUEL_TICKS = 1600
 GENERATOR_FUELS = (("minecraft:coal", 0), ("minecraft:coal", 1),
                    ("minecraft:charcoal", 0))

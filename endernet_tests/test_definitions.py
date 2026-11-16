@@ -70,7 +70,7 @@ DOCUMENTED_CONTROLLERS = {
     "endernet:tiny_network_endpoint",
 }
 
-#: blocks.md 列出的全部 26 个方块（含转录器、存储转储器与无线连接器）
+#: blocks.md 列出的全部网络设备方块。
 DOCUMENTED_BLOCKS = {
     "endernet:transcriber",
     "endernet:storage_transfer",
@@ -96,6 +96,7 @@ DOCUMENTED_BLOCKS = {
     "endernet:memory_slot",
     "endernet:assemble_chamber",
     "endernet:energy_input_interface",
+    "endernet:resonance_generator",
     "endernet:creative_energy_source",
     "endernet:wireless_connector",
 }
@@ -403,6 +404,7 @@ class TestSupplyNumbers(unittest.TestCase):
             [
                 "endernet:creative_energy_source.supply",
                 "endernet:energy_input_interface.supply",
+                "endernet:resonance_generator.supply",
             ],
         )
 

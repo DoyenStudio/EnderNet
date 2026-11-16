@@ -1,0 +1,130 @@
+{
+  "date": "2026-11-15",
+  "method": "Native block entity ticks and simulation pulses; no direct ProductionMachine.tick calls",
+  "before": {
+    "before": {
+      "energy": {
+        "demand_total": 8,
+        "missing_spec": [
+          "endernet:ender_cable",
+          "endernet:network_baseband_8"
+        ],
+        "suppliers": 1,
+        "supply_total": 0,
+        "unknown_supply": [],
+        "unwired_inputs": []
+      },
+      "fe_port": false,
+      "generator_online": true,
+      "machine": {
+        "burn": 0,
+        "burn_duration": 1600,
+        "capacity": 32000,
+        "device_id": "endernet:resonance_generator",
+        "duration": 80,
+        "energy": 0,
+        "message": "",
+        "mode": "charge",
+        "progress": 0,
+        "status": "waiting_fuel"
+      },
+      "native_ticks": 245,
+      "network_state": "no_power"
+    },
+    "fuel_write": true
+  },
+  "after": {
+    "energy": {
+      "demand_total": 8,
+      "missing_spec": [
+        "endernet:ender_cable",
+        "endernet:network_baseband_8"
+      ],
+      "suppliers": 1,
+      "supply_total": 8,
+      "unknown_supply": [],
+      "unwired_inputs": []
+    },
+    "errors": [],
+    "fuel_count": 0,
+    "generator_online": true,
+    "machine": {
+      "burn": 1356,
+      "burn_duration": 1600,
+      "capacity": 32000,
+      "device_id": "endernet:resonance_generator",
+      "duration": 80,
+      "energy": 13696,
+      "message": "",
+      "mode": "charge",
+      "progress": 0,
+      "status": "generating"
+    },
+    "native_ticks_elapsed": 244,
+    "network_state": "runnable",
+    "saved": {
+      "burn": 1356,
+      "energy": 13696,
+      "journal": null,
+      "mode": "charge",
+      "progress": 0,
+      "recipe": "",
+      "version": 2
+    }
+  },
+  "cleanup": {
+    "cleanup": [
+      {
+        "cleared": true,
+        "pos": [
+          -21,
+          86,
+          -27
+        ]
+      },
+      {
+        "cleared": true,
+        "pos": [
+          -22,
+          86,
+          -27
+        ]
+      },
+      {
+        "cleared": true,
+        "pos": [
+          -23,
+          86,
+          -27
+        ]
+      },
+      {
+        "cleared": true,
+        "pos": [
+          -24,
+          87,
+          -27
+        ]
+      },
+      {
+        "cleared": true,
+        "pos": [
+          -24,
+          86,
+          -27
+        ]
+      }
+    ],
+    "full_buffer": {
+      "burn": 774,
+      "energy": 31960,
+      "status": "buffer_full"
+    },
+    "reload": {
+      "burn": 774,
+      "burn_equal": true,
+      "energy": 31960,
+      "energy_equal": true
+    }
+  }
+}

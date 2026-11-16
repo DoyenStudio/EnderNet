@@ -32,17 +32,17 @@ def energy_display(amount, capacity, height, generator=False):
     return shown, level
 
 
-def format_energy(amount):
-    # type: (int) -> str
+def format_energy(amount, unit="FE"):
+    # type: (int, str) -> str
     if 0 <= amount < 1000:
-        return "%d FE" % amount
+        return "%d %s" % (amount, unit)
     number = float(amount)
     suffixes = ("", "k", "M", "G", "T", "P", "E", "Z", "Y")
     index = 0
     while number >= 1000 and index < len(suffixes) - 1:
         number /= 1000
         index += 1
-    return "%.2f %sFE" % (number, suffixes[index])
+    return "%.2f %s%s" % (number, suffixes[index], unit)
 
 
 def set_hover_text(control, text):
@@ -85,7 +85,8 @@ class ProductionGauges(object):
             self.fill.SetSpriteColor(ENERGY_PURPLE if level == 0 else (1.0, 1.0, 1.0))
             self.previous_energy = (shown, level)
         hover = "§b储能： §f%s\n§7容量： §f%s%s" % (
-            format_energy(amount), format_energy(capacity), ENERGY_TIPS[level])
+            format_energy(amount, "EN" if self.generator else "FE"),
+            format_energy(capacity, "EN" if self.generator else "FE"), ENERGY_TIPS[level])
         set_hover_text(self.power, hover if data else "等待能源数据")
 
         progress = fraction(data.get("burn", 0), data.get("burn_duration", 0)) if self.generator else fraction(

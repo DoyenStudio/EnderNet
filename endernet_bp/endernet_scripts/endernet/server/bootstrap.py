@@ -66,6 +66,7 @@ from .adapters.containers import (
 from .adapters import ServerEventBinder
 from .adapters import engine_play_sound
 from ..common.definitions import ENERGY_INPUT_ID
+from ..common.materials import GENERATOR_ID
 from .adapters.compat import EnergyInputs
 from .adapters.compat import RadiumFluidProvider
 from .adapters import AdapterSyncPort
@@ -1841,7 +1842,9 @@ class ServerBootstrap(object):
         networks = {}
         for key in self._energy_nodes:
             if self.energy_inputs.api is not None:
-                self.energy_inputs.load(key)
+                record = self.registry.get(key)
+                if record is not None:
+                    self.energy_inputs.load(key, record.device_id)
             runtime = self.runtimes.runtime_of(key)
             if runtime is not None and runtime.is_open():
                 networks.setdefault(runtime, []).append(key)
@@ -2666,7 +2669,7 @@ class ServerBootstrap(object):
             # 两条路径分叉就会出「拓扑知道设备没了、驱动器/接口还以为在」。
             self.drivers.observe(change)
             self.ports.observe(change)
-            if self.energy_inputs is not None and change.device_id == ENERGY_INPUT_ID:
+            if self.energy_inputs is not None and change.device_id in (ENERGY_INPUT_ID, GENERATOR_ID):
                 key = change.ref.node_key
                 if change.kind in (ChangeKind.ADDED, ChangeKind.LOADED):
                     self._energy_nodes.add(key)

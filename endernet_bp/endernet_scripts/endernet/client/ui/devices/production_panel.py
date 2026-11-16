@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Independent machines use native slots and server-owned FE/progress snapshots."""
+"""Production machines use native slots and server-owned energy/progress snapshots."""
 import time
 
 from .....tooldelta.ui import Binder, RegistToolDeltaScreen, ToolDeltaScreen, SCREEN_BASE_PATH
@@ -78,7 +78,8 @@ class ProductionPanel(ToolDeltaScreen):
         data = self.snapshot()
         if not data:
             return "等待能源数据"
-        return "能量：%s / %s FE" % (data.get("energy", 0), data.get("capacity", 0))
+        return "能量：%s / %s %s" % (data.get("energy", 0), data.get("capacity", 0),
+                                  "EN" if self.IS_GENERATOR else "FE")
 
     @Binder.binding(Binder.BF_BindString, "#EnderNetProduction.progress")
     def progress_text(self):

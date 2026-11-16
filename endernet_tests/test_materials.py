@@ -9,7 +9,7 @@ import unittest
 import testsupport
 
 from endernet.common.definitions import DefinitionSet, MATERIAL_ITEMS, MACHINE_BLOCKS, ORE_BLOCKS
-from endernet.common.materials import CRAFT_RECIPES, MACHINE_RECIPES, ORE_ID
+from endernet.common.materials import CRAFT_RECIPES, MACHINE_RECIPES, ORE_ID, GENERATOR_ID
 
 SCRIPTS = os.path.join(testsupport.REPO_ROOT, "scripts")
 if SCRIPTS not in sys.path:
@@ -118,10 +118,10 @@ class TestProductionAssets(unittest.TestCase):
                 actual = json.loads(handle.read().decode("utf-8"))
             self.assertEqual(actual, expected, relative)
 
-    def test_independent_machines_do_not_enter_network_catalog(self):
+    def test_only_generator_enters_network_catalog_and_native_containers_remain(self):
         defs = DefinitionSet()
         for spec in MACHINE_BLOCKS:
-            self.assertFalse(defs.has(spec.id))
+            self.assertEqual(defs.has(spec.id), spec.id == GENERATOR_ID)
             payload = gen_blocks.build_independent_machine_json(spec)["minecraft:block"]
             self.assertEqual(payload["components"]["netease:block_container"]["container_size"], spec.slots)
             self.assertTrue(payload["components"]["netease:block_entity"]["tick"])

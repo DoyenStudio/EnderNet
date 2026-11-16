@@ -147,6 +147,7 @@ LAYOUT_PORT = "port"
 LAYOUT_MODEL = "model"
 
 BLOCK_LAYOUTS = {
+    "endernet:resonance_generator": LAYOUT_FRONT,
     "endernet:storage_transfer": LAYOUT_FRONT,
     "endernet:transcriber": LAYOUT_FRONT,
     # 六面同图：传输介质、无朝向的设备、以及 User 2026-11-05 指定改回单图的设备
@@ -398,7 +399,7 @@ def short_name(device_id):
 
 
 def independent_block_entries():
-    """独立加工机与矿石的资源映射，不进入仓储网络设备表。"""
+    """带原生容器的生产机器与矿石的资源映射。"""
     out = {}
     for spec in MACHINE_BLOCKS:
         faces = dict((face, "endernet:common_device_side")
@@ -420,7 +421,8 @@ def independent_block_textures():
 
 def build_independent_machine_json(spec):
     components = mining_components("standalone_machine")
-    faces = independent_block_entries()[spec.id]["textures"]
+    faces = (face_textures(spec.id) if spec.id in BLOCK_LAYOUTS
+             else independent_block_entries()[spec.id]["textures"])
     components.update({
         "minecraft:geometry": {"identifier": "minecraft:geometry.full_block"},
         "minecraft:material_instances": dict((face, {"texture": texture, "render_method": "opaque"})
@@ -652,6 +654,9 @@ _DEFINITIONS = DefinitionSet()
 
 def build_block_json(device_id, definition):
     """生成单个方块的行为包定义。"""
+    for spec in MACHINE_BLOCKS:
+        if spec.id == device_id:
+            return build_independent_machine_json(spec)
     components = mining_components(definition.category)
     layout = layout_of(device_id)
     if layout != LAYOUT_UNIFORM and not DIRECTIONAL.get(device_id):
@@ -1210,6 +1215,8 @@ def main(argv=None):
             changed.append(os.path.relpath(path, REPO))
 
     for spec in MACHINE_BLOCKS:
+        if definitions.has(spec.id):
+            continue
         path = os.path.join(BP_BLOCKS, block_file_name(spec.id))
         if write_json(path, build_independent_machine_json(spec), args.check):
             changed.append(os.path.relpath(path, REPO))
@@ -1229,7 +1236,7 @@ def main(argv=None):
     block_count = (
         len(definitions.devices) + len(definitions.cables) + len(definitions.part_holders)
         + len(definitions.parts)
-        + len(MACHINE_BLOCKS) + len(ORE_BLOCKS)
+        + sum(1 for spec in MACHINE_BLOCKS if not definitions.has(spec.id)) + len(ORE_BLOCKS)
     )
 
     if args.check:

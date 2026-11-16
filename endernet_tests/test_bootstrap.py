@@ -512,7 +512,7 @@ class TestFullScenario(unittest.TestCase):
         self.drive(NormalizedEvent.place(key(0), BB8))
         report = self.server.diagnostics()
         self.assertTrue(report["started"])
-        self.assertEqual(report["definitions"]["devices"], 26)
+        self.assertEqual(report["definitions"]["devices"], 27)
         self.assertEqual(report["registry"]["devices"], 1)
         self.assertIn("scope_note", report)
 

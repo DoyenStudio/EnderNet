@@ -252,8 +252,9 @@ def build_ui_script(ctx, generating=False):
         def PowerPanel(self, index):
             data = self.Recipe.Data
             label = u"产能" if generating else u"耗能"
-            return RecipeInfoPanel(u"§7%s：§f%d FE/t\n§7合计：§f%d FE" % (
-                label, data["power"], data["ticks"] * data["power"]))
+            unit = "EN" if generating else "FE"
+            return RecipeInfoPanel(u"§7%s：§f%d %s/t\n§7合计：§f%d %s" % (
+                label, data["power"], unit, data["ticks"] * data["power"], unit))
 
         @binding.RecipeBinder.Group(["mei_ui.recipe.progress"])
         def ProgressPanel(self, index):

@@ -343,8 +343,9 @@ class MeiRecipesTests(unittest.TestCase):
                     self.assertFalse(hasattr(script, 'OutputPanel'))
                 power = script.PowerPanel(0)
                 self.assertTrue(power.OverlayControlVisible)
-                self.assertIn(('%d FE/t' % recipe.Data['power']).encode('utf-8'), power.HoverText)
-                self.assertIn(('%d FE' % (recipe.Data['power'] * recipe.Data['ticks'])).encode('utf-8'), power.HoverText)
+                unit = 'EN' if generating else 'FE'
+                self.assertIn(('%d %s/t' % (recipe.Data['power'], unit)).encode('utf-8'), power.HoverText)
+                self.assertIn(('%d %s' % (recipe.Data['power'] * recipe.Data['ticks'], unit)).encode('utf-8'), power.HoverText)
                 self.assertIn(mei.MODE_LABELS[recipe.Data['mode']].encode('utf-8'), script.ProgressPanel(0).HoverText)
                 mask = controls['power/bar/mask']
                 initial = mask.SetFullSize.call_args.args[1]['relativeValue']

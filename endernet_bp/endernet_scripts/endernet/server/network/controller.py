@@ -820,6 +820,10 @@ def compose_device_status(
     reasons = []
     notes = []
     node_key = ref.node_key
+    definition = definitions.get(device_id)
+    self_powered = (definition.supply is not None
+                    and definition.energy.value_for_state("idle") == 0
+                    and definition.energy.value_for_state("work") == 0)
 
     if master is not None:
         blockers = master.blockers()
@@ -833,6 +837,11 @@ def compose_device_status(
         run_state = run_state_of(tuple(blockers))
         master_instance_id = None
         master_device_id = None
+    if self_powered:
+        # A zero-demand source can join and start even when its network is in brownout.
+        blockers = tuple(reason for reason in blockers
+                         if reason_code(reason) not in (Reason.BROWNOUT, Reason.ENERGY_UNAVAILABLE))
+        run_state = run_state_of(blockers)
     reasons.extend(blockers)
 
     bandwidth = admission.status_of(ref)
@@ -842,7 +851,7 @@ def compose_device_status(
             reasons.append(BlockReason(Reason.BANDWIDTH_UNKNOWN, "网络带宽确认中，请稍候"))
     notes.extend(bandwidth.notes)
 
-    power_ok = power_state_of(services, key)
+    power_ok = True if self_powered else power_state_of(services, key)
     served = True
     if master_device_id is None:
         served = False

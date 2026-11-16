@@ -11,11 +11,11 @@ import json
 
 from ...common.resources import is_empty_item, normalize_engine_item, item_key_from_dict
 from ...common.resources.key import _TEXT_TYPES
-from ...common.materials import GENERATOR_RATE, FUEL_TICKS, GENERATOR_FUELS
+from ...common.materials import GENERATOR_ID, GENERATOR_RATE, FUEL_TICKS, GENERATOR_FUELS
 
 CHARGER = "endernet:resonance_charger"
 INSCRIBER = "endernet:resonance_inscriber"
-GENERATOR = "endernet:resonance_generator"
+GENERATOR = GENERATOR_ID
 MACHINE_IDS = (CHARGER, INSCRIBER, GENERATOR)
 STATE_FIELD = "endernet:production"
 CAPACITY = 32000
@@ -53,7 +53,7 @@ def fuel_item(item):
 
 
 class BudgetedOutput(object):
-    """A public radium energy endpoint sharing one transactional six-face budget."""
+    """Internal EN source with a transactional per-tick network output budget."""
 
     def __init__(self, machine, budget):
         self.machine = machine
@@ -112,7 +112,6 @@ class ProductionMachine(object):
         self.progress = int(saved.get("progress", 0))
         self.recipe_id = saved.get("recipe", "")
         self.burn = int(saved.get("burn", 0))
-        self.cursor = int(saved.get("cursor", 0)) % 6
         journal = saved.get("journal")
         # Version 1 stored the journal as a nested dictionary. Native block data
         # silently rejects mixed [item-dict, None] lists, so version 2 uses JSON.
@@ -140,7 +139,7 @@ class ProductionMachine(object):
         journal = (json.dumps(self.journal, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
                    if self.journal is not None else None)
         value = {"version": 2, "mode": self.mode, "progress": self.progress,
-                 "recipe": self.recipe_id, "burn": self.burn, "cursor": self.cursor,
+                 "recipe": self.recipe_id, "burn": self.burn,
                  "energy": int(self.energy.get_amount()), "journal": journal}
         self.entity[STATE_FIELD] = value
         if self.entity[STATE_FIELD] != value:
@@ -316,7 +315,7 @@ class ProductionMachine(object):
             self.status = "complete"
 
     def _generate(self):
-        # Reset a shared transactional allowance: all pulls and pushes use this endpoint.
+        # Reset the network's transactional EN allowance independently of network power.
         with self.api.open_transaction() as tx:
             self.budget.insert(GENERATOR_RATE, tx)
             tx.commit()
@@ -348,33 +347,3 @@ class ProductionMachine(object):
             raise
         self.save()
         self.status = "generating"
-
-    def push_energy(self, neighbors):
-        """Round robin in small quanta; source budget caps all six faces together."""
-        moved = 0
-        start = self.cursor
-        targets = list(neighbors)
-        if len(targets) != 6:
-            raise ValueError("six energy neighbors required")
-        # At most 64 FE / 8 FE slices = 8 passes; failed/full neighbors do not burn budget.
-        for _ in range(8):
-            changed = False
-            for offset in range(6):
-                face = (start + offset) % 6
-                target = targets[face]
-                if target is None:
-                    continue
-                with self.api.open_transaction() as tx:
-                    amount = self.api.move_energy(self.energy_output, target, 8, tx)
-                    tx.commit()
-                if amount:
-                    moved += amount
-                    changed = True
-                    self.cursor = (face + 1) % 6
-                if not self.budget.get_amount():
-                    self.save()
-                    return moved
-            if not changed:
-                break
-        self.save()
-        return moved

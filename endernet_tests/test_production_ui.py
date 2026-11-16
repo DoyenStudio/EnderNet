@@ -175,6 +175,8 @@ class ProductionGaugeTests(unittest.TestCase):
         self.assertEqual(fraction(81, 80), 1.0)
         self.assertEqual(format_energy(32), "32 FE")
         self.assertEqual(format_energy(32000), "32.00 kFE")
+        self.assertEqual(format_energy(64, "EN"), "64 EN")
+        self.assertEqual(format_energy(32000, "EN"), "32.00 kEN")
 
     def test_gauges_open_without_removed_title_led_or_static_slot_frames(self):
         class Control(object):
